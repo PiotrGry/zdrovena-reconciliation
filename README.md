@@ -20,6 +20,9 @@ zdrovena products --active-only           # aktywne produkty
 zdrovena close 2025-06                    # zamknięcie miesiąca
 zdrovena close 2025-06 --dry-run          # symulacja
 zdrovena close 2025-06 --zip --send       # ZIP + wysyłka
+
+zdrovena setup                            # wizard credentiali
+zdrovena setup --check                    # sprawdź co skonfigurowane
 ```
 
 ## Commands
@@ -32,6 +35,7 @@ zdrovena close 2025-06 --zip --send       # ZIP + wysyłka
 | `summary`  | Summary table: WZ dispatched vs FV invoiced (plastic / glass) |
 | `products` | List Fakturownia products (with `--active-only`) |
 | `close`    | Month-close pipeline — preflight → invoices → KSeF → ZIP → e-mail |
+| `setup`    | Keychain & OAuth credential wizard (`--check`, `zoho`, `gads`) |
 
 ## Month-close pipeline (`zdrovena close`)
 
@@ -52,12 +56,38 @@ Flags: `--dry-run`, `--zip`, `--send`, `--reset`, `--verbose`.
 
 ## Credentials
 
-All secrets are stored in **macOS Keychain** via `keyring`:
+All secrets are stored in **macOS Keychain** via `keyring`. Use the built-in setup wizard:
 
 ```bash
-python -c "import keyring; keyring.set_password('fakturownia_api_token', 'humio', 'TOKEN')"
-python -c "import keyring; keyring.set_password('zoho_mail_password', 'humio', 'PASSWORD')"
+zdrovena setup                # interactive wizard — prompts for all secrets
+zdrovena setup --check        # verify which secrets are configured
+zdrovena setup zoho           # Zoho Mail OAuth flow (grant code → refresh token)
+zdrovena setup gads           # Google Ads OAuth flow (browser → token exchange)
 ```
+
+### Required secrets
+
+| Service (Keychain)         | What                    | How to get |
+|----------------------------|-------------------------|------------|
+| `fakturownia_api_token`    | Fakturownia API token   | zdrovena.fakturownia.pl → Settings → API |
+| `zoho_smtp_password`       | Zoho SMTP password      | Your Zoho email password |
+| `zoho_client_id`           | Zoho OAuth Client ID    | api-console.zoho.eu → Self Client |
+| `zoho_client_secret`       | Zoho OAuth Client Secret| api-console.zoho.eu → Self Client |
+| `zoho_refresh_token`       | Zoho OAuth Refresh Token| `zdrovena setup zoho` |
+
+### Optional secrets
+
+| Service (Keychain)         | What                    | How to get |
+|----------------------------|-------------------------|------------|
+| `ksef_certificate`         | KSeF X.509 cert (.crt)  | Wizard imports file → base64 → Keychain |
+| `ksef_private_key`         | KSeF private key (.key) | Wizard imports file → base64 → Keychain |
+| `ksef_key_password`        | KSeF key passphrase     | `zdrovena setup` |
+| `gads_developer_token`     | Google Ads dev token    | Google Ads → API Center |
+| `gads_client_id`           | Google Ads OAuth ID     | Google Cloud Console → Credentials |
+| `gads_client_secret`       | Google Ads OAuth Secret | Google Cloud Console → Credentials |
+| `gads_refresh_token`       | Google Ads refresh token| `zdrovena setup gads` |
+
+All secrets use Keychain account `humio`.
 
 ## Optional dependencies
 
@@ -100,7 +130,8 @@ zdrovena/
     ├── preflight.py                # PreflightChecker
     ├── orchestrator.py             # MonthCloseOrchestrator
     └── commands/
-        └── close_cmd.py
+        ├── close_cmd.py
+        └── setup_cmd.py            # secrets wizard + OAuth flows
 ```
 
 ## Requirements
