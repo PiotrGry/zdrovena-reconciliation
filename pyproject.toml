@@ -13,6 +13,11 @@ dependencies = [
     "xlrd>=2.0.1",
 ]
 
+[project.optional-dependencies]
+ksef = ["cryptography>=42.0.0", "signxml>=4.0.0", "lxml>=5.0.0"]
+pdf = ["pypdf>=4.0.0", "pdf2image>=1.17.0"]
+all = ["zdrovena-reconciliation[ksef,pdf]"]
+
 [project.scripts]
 zdrovena = "zdrovena.cli:main"
 

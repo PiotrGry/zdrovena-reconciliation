@@ -285,3 +285,53 @@ class FakturowniaClient:
             time.sleep(self.pdf_delay)
 
         return saved
+
+    def download_cost_pdfs(
+        self,
+        invoices: list[dict[str, Any]],
+        target_dir: Path,
+        *,
+        dry_run: bool = False,
+    ) -> list[Path]:
+        """Download cost-invoice PDFs with vendor-prefixed filenames."""
+
+        def _cost_name(inv: dict[str, Any]) -> str:
+            vendor = (inv.get("buyer_name") or "unknown")[:30]
+            safe_vendor = vendor.replace(" ", "_").replace("/", "_").replace(".", "").replace(",", "")
+            safe_number = (
+                inv.get("number", str(inv["id"]))
+                .replace("/", "_")
+                .replace("\\", "_")
+                .replace(" ", "_")
+            )
+            return f"{safe_vendor}_{safe_number}"
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        saved: list[Path] = []
+        seen: set[str] = set()
+
+        for idx, inv in enumerate(invoices, 1):
+            inv_id = inv["id"]
+            number: str = inv.get("number", str(inv_id))
+            if number in seen:
+                logger.warning("Duplicate invoice number %s – skipped", number)
+                continue
+            seen.add(number)
+
+            safe_name = _cost_name(inv)
+            pdf_path = target_dir / f"{safe_name}.pdf"
+
+            if dry_run:
+                logger.info("[DRY-RUN] Would download: %s", pdf_path.name)
+                continue
+            if pdf_path.exists():
+                logger.debug("Already exists, skipping: %s", pdf_path.name)
+                saved.append(pdf_path)
+                continue
+
+            self.download_pdf(inv_id, pdf_path)
+            saved.append(pdf_path)
+            logger.info("[%d/%d] Downloaded: %s", idx, len(invoices), pdf_path.name)
+            time.sleep(self.pdf_delay)
+
+        return saved

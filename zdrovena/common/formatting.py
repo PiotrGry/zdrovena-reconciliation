@@ -35,3 +35,18 @@ def status_icon(delta: int) -> str:
     if delta == 0:
         return "✅"
     return "⚠️" if abs(delta) <= 12 else "❌"
+
+
+# ── Decimal helper ───────────────────────────────────────────────────────────
+
+from decimal import Decimal, ROUND_HALF_UP
+
+
+def to_decimal(value: object) -> Decimal:
+    """Safely convert any value to a 2-place Decimal."""
+    if value is None:
+        return Decimal("0.00")
+    try:
+        return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except Exception:
+        return Decimal("0.00")
