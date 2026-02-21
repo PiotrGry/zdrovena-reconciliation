@@ -137,6 +137,17 @@ KEYCHAIN_SERVICE_KSEF_CERT = "ksef_certificate"
 KEYCHAIN_SERVICE_KSEF_KEY = "ksef_private_key"
 KEYCHAIN_SERVICE_KSEF_KEY_PASS = "ksef_key_password"
 
+KEYCHAIN_SERVICE_GADS_DEV_TOKEN = "gads_developer_token"
+KEYCHAIN_SERVICE_GADS_CLIENT_ID = "gads_client_id"
+KEYCHAIN_SERVICE_GADS_CLIENT_SECRET = "gads_client_secret"
+KEYCHAIN_SERVICE_GADS_REFRESH_TOKEN = "gads_refresh_token"
+
+# ─── Google Ads ───────────────────────────────────────────────────────────────
+
+GOOGLE_ADS_ENABLED = True
+GOOGLE_ADS_CUSTOMER_ID = "3849995102"
+GOOGLE_ADS_LOGIN_CUSTOMER_ID: str | None = None
+
 # ─── KSeF ─────────────────────────────────────────────────────────────────────
 
 KSEF_ENABLED = True

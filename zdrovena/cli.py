@@ -18,7 +18,7 @@ import sys
 from datetime import date
 
 from zdrovena.audit.commands import audit_cmd, list_cmd, export, summary, products
-from zdrovena.month_closing.commands import close_cmd
+from zdrovena.month_closing.commands import close_cmd, setup_cmd
 
 
 def main() -> None:
@@ -39,6 +39,8 @@ def main() -> None:
             "  zdrovena products                       # lista produktów\n"
             "  zdrovena close 2025-06                  # zamknięcie miesiąca\n"
             "  zdrovena close 2025-06 --dry-run        # symulacja\n"
+            "  zdrovena setup                           # wizard credentiali\n"
+            "  zdrovena setup --check                   # sprawdź sekrety\n"
         ),
     )
 
@@ -80,6 +82,7 @@ def main() -> None:
     summary.add_subparser(subparsers)
     products.add_subparser(subparsers)
     close_cmd.add_subparser(subparsers)
+    setup_cmd.add_subparser(subparsers)
 
     args = parser.parse_args()
 
