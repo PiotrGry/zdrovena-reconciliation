@@ -34,6 +34,8 @@ from zdrovena.month_closing.config import (
     GOOGLE_ADS_ENABLED,
     KEYCHAIN_ACCOUNT,
     KEYCHAIN_SERVICE_FAKTUROWNIA,
+    KEYCHAIN_SERVICE_FAKTUROWNIA_LOGIN,
+    KEYCHAIN_SERVICE_FAKTUROWNIA_PASSWORD,
     KEYCHAIN_SERVICE_GADS_CLIENT_ID,
     KEYCHAIN_SERVICE_GADS_CLIENT_SECRET,
     KEYCHAIN_SERVICE_GADS_DEV_TOKEN,
@@ -56,6 +58,16 @@ REQUIRED_SECRETS: list[dict[str, str]] = [
         "service": KEYCHAIN_SERVICE_FAKTUROWNIA,
         "label": "Fakturownia API Token",
         "hint": "Find it at: https://zdrovena.fakturownia.pl → Settings → API",
+    },
+    {
+        "service": KEYCHAIN_SERVICE_FAKTUROWNIA_LOGIN,
+        "label": "Fakturownia Web Login",
+        "hint": "Email used to log in to the Fakturownia UI (for report downloads)",
+    },
+    {
+        "service": KEYCHAIN_SERVICE_FAKTUROWNIA_PASSWORD,
+        "label": "Fakturownia Web Password",
+        "hint": "Password for the Fakturownia UI account",
     },
     {
         "service": KEYCHAIN_SERVICE_ZOHO_SMTP,
@@ -537,16 +549,17 @@ def add_subparser(subparsers: Any) -> None:
             "  zdrovena setup             # pełny wizard\n"
             "  zdrovena setup --check     # sprawdź czy wszystkie sekrety istnieją\n"
             "  zdrovena setup zoho        # Zoho Mail OAuth flow\n"
-            "  zdrovena setup gads        # Google Ads OAuth flow"
+            "  zdrovena setup gads        # Google Ads OAuth flow\n"
+            "  zdrovena setup canva-login # Canva manual login to save session"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
         "target",
         nargs="?",
-        choices=["zoho", "gads"],
+        choices=["zoho", "gads", "canva-login"],
         default=None,
-        help="Konkretny flow: zoho (Zoho Mail OAuth) lub gads (Google Ads OAuth)",
+        help="Konkretny flow: zoho (Zoho Mail OAuth), gads (Google Ads OAuth), lub canva-login",
     )
     p.add_argument(
         "--check",
@@ -564,5 +577,8 @@ def _run(args: argparse.Namespace) -> None:
         setup_zoho()
     elif args.target == "gads":
         setup_gads()
+    elif args.target == "canva-login":
+        from zdrovena.month_closing.canva_downloader import setup_canva_login
+        setup_canva_login()
     else:
         setup_interactive()

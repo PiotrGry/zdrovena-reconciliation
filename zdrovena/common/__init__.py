@@ -15,10 +15,20 @@ from zdrovena.common.config import (
     KEYCHAIN_ACCOUNT,
     KEYCHAIN_SERVICE,
 )
+from zdrovena.common.exceptions import (
+    APIError,
+    MissingSecretError,
+    PipelineAbortError,
+    ZdrovenaError,
+)
 
 __all__ = [
     "FakturowniaClient",
     "DEFAULT_DOMAIN",
     "KEYCHAIN_ACCOUNT",
     "KEYCHAIN_SERVICE",
+    "ZdrovenaError",
+    "MissingSecretError",
+    "APIError",
+    "PipelineAbortError",
 ]

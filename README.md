@@ -2,9 +2,9 @@
 
 Unified CLI for **Zdrovena / Humio** — invoice audit, bottle tracking & month-close pipeline.
 
-```
-pip install -e .            # base (audit, list, export, summary, products)
-pip install -e '.[all]'     # + KSeF + PDF processing
+```bash
+pip install -e '.[all]'
+playwright install chromium
 ```
 
 ## Quick start
@@ -16,6 +16,9 @@ zdrovena -y 2025 -m 6 list               # faktury z czerwca
 zdrovena -y 2025 export                   # CSV per miesiąc
 zdrovena -y 2025 summary                  # WZ vs FV (plastik/szkło)
 zdrovena products --active-only           # aktywne produkty
+
+zdrovena -y 2025 -m 2 report              # Wykaz sprzedaży VAT → PDF
+zdrovena -y 2025 -m 2 report -k expenses  # raport kosztów
 
 zdrovena close 2025-06                    # zamknięcie miesiąca
 zdrovena close 2025-06 --dry-run          # symulacja
@@ -34,8 +37,33 @@ zdrovena setup --check                    # sprawdź co skonfigurowane
 | `export`   | Export bottle line-items to monthly CSV files |
 | `summary`  | Summary table: WZ dispatched vs FV invoiced (plastic / glass) |
 | `products` | List Fakturownia products (with `--active-only`) |
+| `report`   | Download Fakturownia reports as PDF (VAT sales, income, expenses, etc.) |
 | `close`    | Month-close pipeline — preflight → invoices → KSeF → ZIP → e-mail |
 | `setup`    | Keychain & OAuth credential wizard (`--check`, `zoho`, `gads`) |
+
+## Report download (`zdrovena report`)
+
+Downloads reports from Fakturownia's web UI as PDF using a headless Chromium browser
+(Playwright). These reports are not available via the REST API.
+
+```bash
+zdrovena -y 2025 -m 2 report                          # VAT sales (default)
+zdrovena -y 2025 -m 2 report -k expenses              # expenses
+zdrovena -y 2025 -m 2 report -o ~/my-report.pdf       # custom output path
+zdrovena -y 2025 -m 2 report --show-browser            # visible browser (debug)
+```
+
+Available report kinds: `vat-sales` (default), `income`, `expenses`, `unpaid`,
+`products-sales`, `products-expense`, `products-margin`.
+
+Output defaults to `~/Downloads/report_<kind>_<year>-<month>.pdf`.
+
+### Report credentials
+
+| Service (Keychain)         | What                      |
+|----------------------------|---------------------------|
+| `fakturownia_login`        | Fakturownia web login     |
+| `fakturownia_password`     | Fakturownia web password  |
 
 ## Month-close pipeline (`zdrovena close`)
 
@@ -70,6 +98,8 @@ zdrovena setup gads           # Google Ads OAuth flow (browser → token exchang
 | Service (Keychain)         | What                    | How to get |
 |----------------------------|-------------------------|------------|
 | `fakturownia_api_token`    | Fakturownia API token   | zdrovena.fakturownia.pl → Settings → API |
+| `fakturownia_login`        | Fakturownia web login   | Email used to log in to Fakturownia UI |
+| `fakturownia_password`     | Fakturownia web password| Password for the Fakturownia UI account |
 | `zoho_smtp_password`       | Zoho SMTP password      | Your Zoho email password |
 | `zoho_client_id`           | Zoho OAuth Client ID    | api-console.zoho.eu → Self Client |
 | `zoho_client_secret`       | Zoho OAuth Client Secret| api-console.zoho.eu → Self Client |
@@ -95,7 +125,8 @@ All secrets use Keychain account `humio`.
 |--------|----------|---------|
 | `ksef`  | cryptography, signxml, lxml | KSeF 2.0 e-invoicing |
 | `pdf`   | pypdf, pdf2image | PDF date extraction |
-| `all`   | ksef + pdf | everything |
+| `report`| playwright | Browser-based report download |
+| `all`   | ksef + pdf + report | everything |
 
 ## Project structure
 
@@ -110,11 +141,13 @@ zdrovena/
 ├── audit/
 │   ├── api.py                      # AuditAPI (WZ/FV data)
 │   ├── bottles.py                  # BottleReconciler
+│   ├── report_downloader.py            # Playwright-based report download
 │   └── commands/
 │       ├── audit_cmd.py
 │       ├── export.py
 │       ├── list_cmd.py
 │       ├── products.py
+│       ├── report_cmd.py
 │       └── summary.py
 └── month_closing/
     ├── __init__.py
@@ -139,6 +172,7 @@ zdrovena/
 - Python ≥ 3.12
 - macOS (Keychain for credentials)
 - Fakturownia API token
+- Playwright + Chromium (for `report` command): `pip install playwright && playwright install chromium`
 - Zoho Mail credentials (for month-close)
 
 ## License

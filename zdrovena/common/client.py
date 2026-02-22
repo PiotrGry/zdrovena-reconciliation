@@ -18,6 +18,8 @@ from typing import Any
 import keyring
 import requests
 
+from zdrovena.common.exceptions import MissingSecretError
+from zdrovena.common.retry import retry_request
 from zdrovena.common.config import (
     DEFAULT_DOMAIN,
     DEFAULT_PDF_DELAY,
@@ -79,12 +81,7 @@ class FakturowniaClient:
         """
         token = keyring.get_password(service, account)
         if not token:
-            raise RuntimeError(
-                f"Fakturownia API token not found in Keychain "
-                f"(service={service!r}, account={account!r}). "
-                f"Store it with:  security add-generic-password "
-                f"-s {service} -a {account} -w 'YOUR_TOKEN'"
-            )
+            raise MissingSecretError(service, account)
         return cls(api_token=token, domain=domain, **kwargs)
 
     # ── Low-level request with retry ─────────────────────────────────────────
@@ -103,42 +100,22 @@ class FakturowniaClient:
             params = {}
         params["api_token"] = self.api_token
 
-        delay = self.retry_delay
-        last_exc: Exception | None = None
+        safe = {
+            k: ("***" if k == "api_token" else v)
+            for k, v in params.items()
+        }
+        logger.debug("→ %s %s params=%s", method, url, safe)
 
-        for attempt in range(1, self.retry_count + 1):
-            try:
-                safe = {
-                    k: ("***" if k == "api_token" else v)
-                    for k, v in params.items()
-                }
-                logger.debug(
-                    "→ %s %s params=%s (attempt %d)", method, url, safe, attempt
-                )
-                resp = self.session.request(
-                    method,
-                    url,
-                    params=params,
-                    timeout=self.timeout,
-                    stream=stream,
-                )
-                resp.raise_for_status()
-                return resp
-            except requests.exceptions.RequestException as exc:
-                last_exc = exc
-                logger.warning(
-                    "Request failed (attempt %d/%d): %s",
-                    attempt,
-                    self.retry_count,
-                    exc,
-                )
-                if attempt < self.retry_count:
-                    time.sleep(delay)
-                    delay *= 2
-
-        raise RuntimeError(
-            f"Fakturownia API request failed after {self.retry_count} "
-            f"attempts: {last_exc}"
+        return retry_request(
+            self.session,
+            method,
+            url,
+            max_retries=self.retry_count,
+            initial_delay=self.retry_delay,
+            timeout=self.timeout,
+            caller="Fakturownia",
+            params=params,
+            stream=stream,
         )
 
     def get_json(

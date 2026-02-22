@@ -16,6 +16,8 @@ from typing import Any
 import keyring
 import requests
 
+from zdrovena.common.exceptions import MissingSecretError
+from zdrovena.common.retry import retry_request
 from zdrovena.month_closing.config import (
     API_RETRY_COUNT,
     API_RETRY_DELAY,
@@ -69,9 +71,9 @@ class KSeFClient:
         cert_pem = self._read_from_keychain(KEYCHAIN_SERVICE_KSEF_CERT, "certificate")
         key_pem = self._read_from_keychain(KEYCHAIN_SERVICE_KSEF_KEY, "private key")
         if cert_pem is None or key_pem is None:
-            raise RuntimeError(
-                "KSeF certificate / key not found in macOS Keychain.\n"
-                "Run:  python setup_secrets.py"
+            raise MissingSecretError(
+                KEYCHAIN_SERVICE_KSEF_CERT,
+                KEYCHAIN_ACCOUNT,
             )
         key_password: bytes | None = None
         key_pass_str = keyring.get_password(KEYCHAIN_SERVICE_KSEF_KEY_PASS, KEYCHAIN_ACCOUNT)
@@ -303,19 +305,15 @@ class KSeFClient:
         headers: dict[str, str] | None = None,
         data: bytes | None = None,
     ) -> requests.Response:
-        delay = API_RETRY_DELAY
-        last_exc: Exception | None = None
-        for attempt in range(1, API_RETRY_COUNT + 1):
-            try:
-                resp = self._http.post(
-                    url, json=json_payload, headers=headers, data=data, timeout=API_TIMEOUT
-                )
-                resp.raise_for_status()
-                return resp
-            except requests.RequestException as exc:
-                last_exc = exc
-                logger.warning("KSeF request failed (attempt %d/%d): %s", attempt, API_RETRY_COUNT, exc)
-                if attempt < API_RETRY_COUNT:
-                    time.sleep(delay)
-                    delay *= 2
-        raise RuntimeError(f"KSeF request failed after {API_RETRY_COUNT} attempts: {last_exc}")
+        return retry_request(
+            self._http,
+            "POST",
+            url,
+            max_retries=API_RETRY_COUNT,
+            initial_delay=API_RETRY_DELAY,
+            timeout=API_TIMEOUT,
+            caller="KSeF",
+            json=json_payload,
+            headers=headers,
+            data=data,
+        )

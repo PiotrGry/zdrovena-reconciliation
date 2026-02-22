@@ -27,6 +27,7 @@ from pathlib import Path
 import keyring
 
 from zdrovena.common import FakturowniaClient
+from zdrovena.common.exceptions import MissingSecretError
 from zdrovena.common.formatting import to_decimal
 from zdrovena.month_closing.config import (
     ACCOUNTANT_EMAIL,
@@ -46,6 +47,7 @@ from zdrovena.month_closing.config import (
     VendorConfig,
 )
 from zdrovena.month_closing.console import ConsoleReporter
+from zdrovena.month_closing.download_watcher import interactive_download
 from zdrovena.month_closing.email_service import EmailService
 from zdrovena.month_closing.invoice_date_check import (
     delete_rejected,
@@ -57,6 +59,7 @@ from zdrovena.month_closing.preflight import PreflightChecker
 from zdrovena.month_closing.state import PipelineState
 from zdrovena.month_closing.zip_service import create_month_archive
 from zdrovena.month_closing.zoho_mail import ZohoMailClient
+from zdrovena.month_closing.canva_downloader import download_canva_invoice
 
 logger = logging.getLogger("zdrovena.month_closing.orchestrator")
 
@@ -116,10 +119,7 @@ class MonthCloseOrchestrator:
     def _get_secret(service: str, required: bool = True) -> str | None:
         value = keyring.get_password(service, KEYCHAIN_ACCOUNT)
         if not value and required:
-            raise RuntimeError(
-                f"Missing secret in Keychain: service={service!r}, account={KEYCHAIN_ACCOUNT!r}. "
-                "Run: python setup_secrets.py"
-            )
+            raise MissingSecretError(service, KEYCHAIN_ACCOUNT)
         return value
 
     def _skip_if_done(self, step_name: str) -> bool:
@@ -225,6 +225,18 @@ class MonthCloseOrchestrator:
         self.report.warnings.extend(pf.warnings)
         self._preflight_checker = checker
 
+        # Try interactive download for manual vendors that have a fallback_url
+        watchable = [
+            v for v in pf.missing_vendors
+            if v.fallback_url and v.download_glob
+        ]
+        if watchable and not self.dry_run:
+            resolved = self._interactive_download(watchable, checker)
+            # Remove resolved vendors from missing list
+            for v in resolved:
+                if v in pf.missing_vendors:
+                    pf.missing_vendors.remove(v)
+
         blockers = checker.build_blockers()
         if blockers:
             self.out.blocker_box(blockers)
@@ -237,6 +249,19 @@ class MonthCloseOrchestrator:
             self.out.plain()
             raise SystemExit(1)
         self._mark_step_done("Pre-flight")
+
+    def _interactive_download(
+        self,
+        vendors: list[VendorConfig],
+        checker: PreflightChecker,
+    ) -> list[VendorConfig]:
+        """Open fallback URLs and watch ~/Downloads for matching files."""
+
+        def _on_match(vendor: VendorConfig, path: Path) -> None:
+            checker.result.matches.append((vendor, path))
+
+        results = interactive_download(vendors, self.out, on_match=_on_match)
+        return [v for v, _ in results]
 
     def _step_1_create_folders(self) -> None:
         self.out.step(1, "Creating folder structure")
@@ -389,11 +414,24 @@ class MonthCloseOrchestrator:
         still_missing = [
             v
             for v in EXPECTED_VENDORS
-            if v.name not in found_vendors and not v.manual and not v.skip
+            if v.name not in found_vendors
+            and not v.manual
+            and not v.skip
+            and not v.browser_download
         ]
-        if still_missing:
+        browser_pending = [
+            v
+            for v in EXPECTED_VENDORS
+            if v.browser_download
+            and v.name not in found_vendors
+            and v.invoice_id_re
+            and not v.skip
+        ]
+        need_zoho = bool(still_missing or browser_pending)
+        if need_zoho:
+            total_zoho = len(still_missing) + len(browser_pending)
             self.out.section_mid(
-                f"Phase 3: Zoho Mail (searching {len(still_missing)} missing vendor(s))"
+                f"Phase 3: Zoho Mail (searching {total_zoho} missing vendor(s))"
             )
             client_id = self._get_secret(KEYCHAIN_SERVICE_ZOHO_CLIENT_ID, required=False)
             client_secret = self._get_secret(KEYCHAIN_SERVICE_ZOHO_CLIENT_SECRET, required=False)
@@ -428,7 +466,55 @@ class MonthCloseOrchestrator:
                         )
                     else:
                         logger.info("Zoho Mail: no invoices found for %s", vendor_cfg.name)
+                # Phase 3b: Browser-download vendors (e.g. Canva)
+                for vendor_cfg in browser_pending:
+                    email_pattern = vendor_cfg.email or vendor_cfg.pattern
+                    invoice_ids = zoho.extract_invoice_ids(
+                        search_term=email_pattern,
+                        date_from=zf,
+                        date_to=zt,
+                        invoice_id_re=vendor_cfg.invoice_id_re,
+                    )
+                    if not invoice_ids:
+                        logger.info(
+                            "Zoho Mail: no invoice IDs found for %s", vendor_cfg.name
+                        )
+                        continue
 
+                    self.out.item(
+                        f"🔍 {vendor_cfg.name}: found {len(invoice_ids)} invoice ID(s) in email"
+                    )
+                    saved_count = 0
+                    for inv in invoice_ids:
+                        inv_id = inv["id"]
+                        tpl = vendor_cfg.invoice_file_tpl or "invoice-{id}.pdf"
+                        filename = tpl.format(id=inv_id)
+                        dest = self.costs_dir / filename
+                        if dest.exists():
+                            logger.info(
+                                "Skipping %s — already exists", dest.name
+                            )
+                            saved_count += 1
+                            continue
+                        if self.dry_run:
+                            self.out.detail(f"  [dry-run] would download {inv_id}")
+                            saved_count += 1
+                            continue
+                        try:
+                            download_canva_invoice(inv_id, dest)
+                            zoho_all_paths.append(dest)
+                            saved_count += 1
+                        except Exception as exc:
+                            logger.error(
+                                "Failed to download %s invoice %s: %s",
+                                vendor_cfg.name, inv_id, exc,
+                            )
+                    if saved_count:
+                        found_vendors[vendor_cfg.name] = "Zoho Mail + Browser"
+                        total_cost_files += saved_count
+                        self.out.item(
+                            f"✅ {vendor_cfg.name}: {saved_count} PDF(s) downloaded"
+                        )
                 # Candidate gate: validate issue dates
                 if zoho_all_paths and not self.dry_run:
                     self.out.section_mid("Candidate gate: verifying invoice issue dates…")

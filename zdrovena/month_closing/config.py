@@ -17,21 +17,25 @@ from zdrovena.common.config import (
     DEFAULT_TIMEOUT as API_TIMEOUT,
     DEFAULT_PDF_DELAY as PDF_DOWNLOAD_DELAY,
     KEYCHAIN_ACCOUNT,
+    KEYCHAIN_SERVICE_FAKTUROWNIA,
+    KEYCHAIN_SERVICE_FAKTUROWNIA_LOGIN,
+    KEYCHAIN_SERVICE_FAKTUROWNIA_PASSWORD,
+    KEYCHAIN_SERVICE_ZOHO_SMTP,
+    KEYCHAIN_SERVICE_ZOHO_CLIENT_ID,
+    KEYCHAIN_SERVICE_ZOHO_CLIENT_SECRET,
+    KEYCHAIN_SERVICE_ZOHO_REFRESH_TOKEN,
+    KEYCHAIN_SERVICE_KSEF_CERT,
+    KEYCHAIN_SERVICE_KSEF_KEY,
+    KEYCHAIN_SERVICE_KSEF_KEY_PASS,
+    KEYCHAIN_SERVICE_GADS_DEV_TOKEN,
+    KEYCHAIN_SERVICE_GADS_CLIENT_ID,
+    KEYCHAIN_SERVICE_GADS_CLIENT_SECRET,
+    KEYCHAIN_SERVICE_GADS_REFRESH_TOKEN,
 )
-
-# ─── Polish Month Names (filesystem-safe, no diacritics) ─────────────────────
-
-POLISH_MONTHS: dict[int, str] = {
-    1: "styczen", 2: "luty", 3: "marzec", 4: "kwiecien",
-    5: "maj", 6: "czerwiec", 7: "lipiec", 8: "sierpien",
-    9: "wrzesien", 10: "pazdziernik", 11: "listopad", 12: "grudzien",
-}
-
-ENGLISH_MONTHS: dict[int, str] = {
-    1: "January", 2: "February", 3: "March", 4: "April",
-    5: "May", 6: "June", 7: "July", 8: "August",
-    9: "September", 10: "October", 11: "November", 12: "December",
-}
+from zdrovena.common.formatting import (
+    ENGLISH_MONTHS,
+    MONTHS_FULL as POLISH_MONTHS,
+)
 
 # ─── Base Directory ───────────────────────────────────────────────────────────
 
@@ -99,6 +103,7 @@ class VendorConfig:
     fallback_url: str | None = None
     invoice_id_re: str | None = None
     invoice_file_tpl: str | None = None
+    browser_download: bool = False
     skip: bool = False
 
 
@@ -111,7 +116,7 @@ EXPECTED_VENDORS: list[VendorConfig] = [
     VendorConfig(name="InPost",            pattern="inpost",     email="inpost"),
     VendorConfig(name="Apaczka",           pattern="alsendo",    email="apaczka"),
     VendorConfig(name="Canva",             pattern="canva",      email="canva",
-                 manual=True,
+                 browser_download=True,
                  download_glob="invoice-?????-????????.pdf",
                  fallback_url="https://www.canva.com/invoices",
                  invoice_id_re=r"invoices(?:/|%2[Ff]|%252[Ff])(\d{5}-\d{8})",
@@ -125,22 +130,6 @@ EXPECTED_VENDORS: list[VendorConfig] = [
     VendorConfig(name="PulsePure",         pattern="pulsepure",  email="pulsepure"),
     VendorConfig(name="Accounting/Bożena", pattern="ogorzalek",  email="ogorzalek"),
 ]
-
-# ─── Keychain Service Names (macOS Keyring) ──────────────────────────────────
-
-KEYCHAIN_SERVICE_FAKTUROWNIA = "fakturownia_api_token"
-KEYCHAIN_SERVICE_ZOHO_SMTP = "zoho_smtp_password"
-KEYCHAIN_SERVICE_ZOHO_CLIENT_ID = "zoho_client_id"
-KEYCHAIN_SERVICE_ZOHO_CLIENT_SECRET = "zoho_client_secret"
-KEYCHAIN_SERVICE_ZOHO_REFRESH_TOKEN = "zoho_refresh_token"
-KEYCHAIN_SERVICE_KSEF_CERT = "ksef_certificate"
-KEYCHAIN_SERVICE_KSEF_KEY = "ksef_private_key"
-KEYCHAIN_SERVICE_KSEF_KEY_PASS = "ksef_key_password"
-
-KEYCHAIN_SERVICE_GADS_DEV_TOKEN = "gads_developer_token"
-KEYCHAIN_SERVICE_GADS_CLIENT_ID = "gads_client_id"
-KEYCHAIN_SERVICE_GADS_CLIENT_SECRET = "gads_client_secret"
-KEYCHAIN_SERVICE_GADS_REFRESH_TOKEN = "gads_refresh_token"
 
 # ─── Google Ads ───────────────────────────────────────────────────────────────
 
