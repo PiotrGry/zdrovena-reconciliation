@@ -17,6 +17,7 @@ from zdrovena.common.config import (
 )
 from zdrovena.common.exceptions import (
     APIError,
+    ApiResponseFormatError,
     MissingSecretError,
     PipelineAbortError,
     ZdrovenaError,
@@ -30,5 +31,6 @@ __all__ = [
     "ZdrovenaError",
     "MissingSecretError",
     "APIError",
+    "ApiResponseFormatError",
     "PipelineAbortError",
 ]

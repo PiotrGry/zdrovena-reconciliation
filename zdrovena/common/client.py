@@ -11,6 +11,8 @@ Provides:
 from __future__ import annotations
 
 import logging
+import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -18,7 +20,7 @@ from typing import Any
 import keyring
 import requests
 
-from zdrovena.common.exceptions import MissingSecretError
+from zdrovena.common.exceptions import ApiResponseFormatError, MissingSecretError
 from zdrovena.common.retry import retry_request
 from zdrovena.common.config import (
     DEFAULT_DOMAIN,
@@ -56,6 +58,7 @@ class FakturowniaClient:
         self.per_page = per_page
         self.pdf_delay = pdf_delay
         self.session = requests.Session()
+        self.session.headers["User-Agent"] = "zdrovena-reconciliation/2.0"
 
     # ── Factory: create from macOS Keychain ──────────────────────────────────
 
@@ -69,17 +72,18 @@ class FakturowniaClient:
         **kwargs: Any,
     ) -> FakturowniaClient:
         """
-        Create a client using the API token stored in macOS Keychain.
+        Create a client using the API token from env or macOS Keychain.
 
-        Reads the token via the ``keyring`` library, which maps to
-        macOS Keychain, GNOME Keyring, or Windows Credential Locker.
+        Resolution order:
+          1. ``FAKTUROWNIA_API_TOKEN`` environment variable
+          2. Keychain via ``keyring``
 
         Raises
         ------
-        RuntimeError
-            If the token is not found in the Keychain.
+        MissingSecretError
+            If the token is not found in either location.
         """
-        token = keyring.get_password(service, account)
+        token = os.environ.get("FAKTUROWNIA_API_TOKEN") or keyring.get_password(service, account)
         if not token:
             raise MissingSecretError(service, account)
         return cls(api_token=token, domain=domain, **kwargs)
@@ -121,9 +125,21 @@ class FakturowniaClient:
     def get_json(
         self, endpoint: str, params: dict | None = None
     ) -> Any:
-        """GET request → parsed JSON response."""
+        """GET request → parsed JSON response.
+
+        Raises
+        ------
+        ApiResponseFormatError
+            If the response body is not valid JSON.
+        """
         resp = self._request("GET", endpoint, params=params)
-        return resp.json()
+        try:
+            return resp.json()
+        except ValueError:
+            # Sanitize body: strip potential api_token leak
+            raw = resp.text[:200]
+            raw = re.sub(r"api_token=[^&\s]+", "api_token=***", raw)
+            raise ApiResponseFormatError(resp.status_code, raw)
 
     def get_binary(
         self, endpoint: str, params: dict | None = None

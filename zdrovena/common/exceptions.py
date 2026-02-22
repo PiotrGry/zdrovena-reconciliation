@@ -43,6 +43,17 @@ class APIError(ZdrovenaError):
         super().__init__(msg)
 
 
+class ApiResponseFormatError(ZdrovenaError):
+    """Raised when an API response cannot be decoded as JSON."""
+
+    def __init__(self, status_code: int, body_preview: str) -> None:
+        self.status_code = status_code
+        self.body_preview = body_preview
+        super().__init__(
+            f"Expected JSON but got status={status_code}: {body_preview}"
+        )
+
+
 class PipelineAbortError(ZdrovenaError):
     """Raised when the month-close pipeline must abort (missing docs, warnings)."""
 

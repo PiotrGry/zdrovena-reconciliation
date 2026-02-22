@@ -17,7 +17,11 @@ build/
 
 # OS
 .DS_Store
+__MACOSX/
 Thumbs.db
 
 # CSV output (generated)
 csv/
+
+# Logs
+*.log

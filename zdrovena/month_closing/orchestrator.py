@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import calendar
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -86,7 +87,15 @@ class CloseReport:
 
 
 class MonthCloseOrchestrator:
-    def __init__(self, year: int, month: int, dry_run: bool = False) -> None:
+    def __init__(
+        self,
+        year: int,
+        month: int,
+        dry_run: bool = False,
+        *,
+        non_interactive: bool = False,
+        ignore_warnings: bool = False,
+    ) -> None:
         if not (1 <= month <= 12):
             raise ValueError(f"Invalid month: {month}")
         if year < 2020:
@@ -95,6 +104,8 @@ class MonthCloseOrchestrator:
         self.year = year
         self.month = month
         self.dry_run = dry_run
+        self.non_interactive = non_interactive
+        self.ignore_warnings = ignore_warnings
         self.month_pl = POLISH_MONTHS[month]
         self.month_en = ENGLISH_MONTHS[month]
         last_day = calendar.monthrange(year, month)[1]
@@ -117,7 +128,9 @@ class MonthCloseOrchestrator:
 
     @staticmethod
     def _get_secret(service: str, required: bool = True) -> str | None:
-        value = keyring.get_password(service, KEYCHAIN_ACCOUNT)
+        # Env var: FAKTUROWNIA_API_TOKEN for service="fakturownia_api_token" etc.
+        env_key = service.upper()
+        value = os.environ.get(env_key) or keyring.get_password(service, KEYCHAIN_ACCOUNT)
         if not value and required:
             raise MissingSecretError(service, KEYCHAIN_ACCOUNT)
         return value
@@ -231,6 +244,12 @@ class MonthCloseOrchestrator:
             if v.fallback_url and v.download_glob
         ]
         if watchable and not self.dry_run:
+            if self.non_interactive:
+                names = [v.name for v in watchable]
+                raise RuntimeError(
+                    f"--non-interactive: required manual downloads missing: "
+                    f"{', '.join(names)}. Place files in ~/Downloads and retry."
+                )
             resolved = self._interactive_download(watchable, checker)
             # Remove resolved vendors from missing list
             for v in resolved:
@@ -584,14 +603,30 @@ class MonthCloseOrchestrator:
         self._mark_step_done("Bank statement check")
 
     def _check_warnings_gate(self) -> None:
-        if self.report.warnings:
-            self.out.plain(f"\n  🛑 WARNINGS GATE: {len(self.report.warnings)} issue(s) detected:")
-            for w in self.report.warnings:
-                self.out.detail(f"• {w}")
-            raise RuntimeError(
-                f"Aborting: {len(self.report.warnings)} warning(s) detected. "
-                "Fix all issues before creating ZIP/email."
+        """Block pipeline on warnings unless ``--ignore-warnings`` is set.
+
+        When *ignore_warnings* is True the gate logs clearly but allows
+        ZIP creation to proceed.  Email sending is always blocked when
+        warnings exist (checked again in ``_step_7_email``).
+        """
+        if not self.report.warnings:
+            return
+
+        self.out.plain(f"\n  🚧 WARNINGS GATE: {len(self.report.warnings)} issue(s) detected:")
+        for w in self.report.warnings:
+            self.out.detail(f"• {w}")
+
+        if self.ignore_warnings:
+            self.out.warn(
+                "--ignore-warnings: continuing to ZIP despite warnings. "
+                "Email sending is still blocked."
             )
+            return
+
+        raise RuntimeError(
+            f"Aborting: {len(self.report.warnings)} warning(s) detected. "
+            "Fix all issues or rerun with --ignore-warnings."
+        )
 
     def _step_6_zip_archive(self) -> None:
         self.out.step(6, "Creating ZIP archive")
@@ -607,16 +642,16 @@ class MonthCloseOrchestrator:
 
     def _step_7_email(self) -> None:
         self.out.step(7, "Sending email to accountant")
-        if self.dry_run:
-            self.out.info(f"[DRY-RUN] Would send email to {ACCOUNTANT_EMAIL}")
-            self._mark_step_done("Email (dry-run)")
-            return
         if self.report.errors or self.report.warnings:
             issues = self.report.errors + self.report.warnings
             raise RuntimeError(
                 f"Cannot send email — {len(issues)} issue(s) detected:\n"
                 + "\n".join(f"  • {i}" for i in issues)
             )
+        if self.dry_run:
+            self.out.info(f"[DRY-RUN] Would send email to {ACCOUNTANT_EMAIL}")
+            self._mark_step_done("Email (dry-run)")
+            return
         smtp_pass = self._get_secret(KEYCHAIN_SERVICE_ZOHO_SMTP)
         svc = EmailService(smtp_password=smtp_pass)
         subject = (

@@ -84,6 +84,18 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
         default=False,
         help="Szczegółowe logowanie (DEBUG)",
     )
+    sp.add_argument(
+        "--non-interactive",
+        action="store_true",
+        default=False,
+        help="Tryb nieinteraktywny — pomiń ręczne pobieranie, wymaga plików już obecnych",
+    )
+    sp.add_argument(
+        "--ignore-warnings",
+        action="store_true",
+        default=False,
+        help="Kontynuuj tworzenie ZIP mimo ostrzeżeń (wysyłka e-mail nadal zablokowana)",
+    )
     sp.set_defaults(func=_run)
 
 
@@ -122,6 +134,8 @@ def _run(args: argparse.Namespace) -> None:
     do_zip = getattr(args, "zip", False)
     do_send = getattr(args, "send", False)
     do_reset = getattr(args, "reset", False)
+    non_interactive = getattr(args, "non_interactive", False)
+    ignore_warnings = getattr(args, "ignore_warnings", False)
 
     zip_only = do_zip and not do_send
     send_only = do_send and not do_zip
@@ -142,7 +156,11 @@ def _run(args: argparse.Namespace) -> None:
     from zdrovena.month_closing.orchestrator import MonthCloseOrchestrator
 
     try:
-        orchestrator = MonthCloseOrchestrator(year=year, month=month, dry_run=dry_run)
+        orchestrator = MonthCloseOrchestrator(
+            year=year, month=month, dry_run=dry_run,
+            non_interactive=non_interactive,
+            ignore_warnings=ignore_warnings,
+        )
 
         if do_reset:
             orchestrator.state.reset()
