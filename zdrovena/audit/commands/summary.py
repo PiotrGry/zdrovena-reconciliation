@@ -12,15 +12,23 @@ from zdrovena.audit.api import (
     fetch_warehouse_actions, build_actions_by_doc, build_wz_by_id,
     build_inv_by_wz, month_of, sell_date_of,
 )
-from zdrovena.audit.bottles import extract_bottles, BOTTLE_PRODUCTS
-from zdrovena.common.formatting import MONTHS_PL, BOLD, RESET, GREEN, YELLOW
+from zdrovena.audit.bottles import extract_bottles, BOTTLE_ALIASES, BOTTLE_PRODUCTS
+from zdrovena.audit.sections import check_numbering
+from zdrovena.common.formatting import MONTHS_PL, BOLD, RESET, GREEN, YELLOW, RED
 
 
-def add_subparser(subparsers: argparse._SubParsersAction) -> None:
+def add_subparser(subparsers: argparse._SubParsersAction, *, parents: list | None = None) -> None:
     p = subparsers.add_parser(
         "summary",
-        help="Tabela podsumowująca: WZ vs FV (plastik/szkło)",
-        description="Kompaktowe porównanie magazynu (WZ) z fakturami z podziałem plastik/szkło.",
+        parents=parents or [],
+        help="Tabela WZ vs FV (plastik/szkło) per miesiąc",
+        description=(
+            "Kompaktowe porównanie magazynu (WZ) z fakturami\n"
+            "z podziałem plastik/szkło per miesiąc.\n\n"
+            "Przykłady:\n"
+            "  zdrovena summary -y 2026             # cały rok"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.set_defaults(func=run)
 
@@ -53,9 +61,10 @@ def run(args: argparse.Namespace) -> None:
 
         # WZ actions
         for a in actions_by_doc.get(wd["id"], []):
-            if a.get("product_name") in BOTTLE_PRODUCTS:
+            pname = BOTTLE_ALIASES.get(a.get("product_name", ""), a.get("product_name", ""))
+            if pname in BOTTLE_PRODUCTS:
                 q = int(abs(float(a["quantity"])))
-                if "szkło" in a["product_name"].lower():
+                if "szkło" in pname.lower():
                     m_wz[month][1] += q
                 else:
                     m_wz[month][0] += q
@@ -96,4 +105,19 @@ def run(args: argparse.Namespace) -> None:
     ft = tf[0] + tf[1]
     print(f"{'ROK':>4}  {tw[0]:>6} {tw[1]:>6} {wt:>7}  │  "
           f"{tf[0]:>6} {tf[1]:>6} {ft:>7}  │  {wt - ft:>+4}")
+
+    # Numbering check
+    print()
+    print(f"{BOLD}Numeracja faktur:{RESET}")
+    results = check_numbering(all_inv)
+    for sr in results:
+        if sr.ok:
+            print(f"  /{sr.series}:  {sr.first}–{sr.last} ({sr.count} dok.) ✅")
+        else:
+            print(f"  /{sr.series}:  {sr.first}–{sr.last}, "
+                  f"jest {sr.count}, oczekiwano {sr.expected}")
+            if sr.gaps:
+                print(f"    {RED}❌ Brakuje: {sr.gaps}{RESET}")
+            if sr.duplicates:
+                print(f"    {RED}❌ Duplikaty: {sr.duplicates}{RESET}")
     print()

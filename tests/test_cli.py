@@ -72,7 +72,7 @@ class TestCLINoCommand:
 class TestCLIDayRequiresMonth:
     def test_day_without_month_fails(self):
         result = subprocess.run(
-            [sys.executable, "-m", "zdrovena.cli", "-y", "2025", "-d", "15", "audit"],
+            [sys.executable, "-m", "zdrovena.cli", "audit", "-y", "2025", "-d", "15"],
             capture_output=True, text=True,
         )
         assert result.returncode != 0

@@ -14,7 +14,7 @@ import re
 # Non-bottle items (shipping, fees, etc.) – skip these positions entirely
 SKIP_RE = re.compile(
     r"inpost|dpd|allegro|poczta|kurier|orlen|pobraniem|koszt dostawy|"
-    r"niestandardowa|paczkomat|paczkopunkt|pickup",
+    r"niestandardowa|paczkomat|paczkopunkt|pickup|kaucja",
     re.IGNORECASE,
 )
 
@@ -35,10 +35,15 @@ FIXED_COUNTS: dict[str, int] = {
 
 # WZ warehouse action product names that represent bottles
 BOTTLE_PRODUCTS = frozenset({
-    "Woda Humio butelka",
     "Woda Humio butelka plastik",
     "Woda Humio butelka szkło",
 })
+
+# Legacy product names → current canonical name.
+# Old WZ documents used "Woda Humio butelka" before the plastik/szkło split.
+BOTTLE_ALIASES: dict[str, str] = {
+    "Woda Humio butelka": "Woda Humio butelka plastik",
+}
 
 
 # ── Core extraction ──────────────────────────────────────────────────────────
@@ -134,9 +139,10 @@ def wz_bottles(wz_id: int, actions_by_doc: dict[int, list[dict]]) -> tuple[int, 
     """
     p, g = 0, 0
     for a in actions_by_doc.get(wz_id, []):
-        if a.get("product_name") in BOTTLE_PRODUCTS:
+        pname = BOTTLE_ALIASES.get(a.get("product_name", ""), a.get("product_name", ""))
+        if pname in BOTTLE_PRODUCTS:
             q = int(abs(float(a["quantity"])))
-            if "szkło" in a["product_name"].lower():
+            if "szkło" in pname.lower():
                 g += q
             else:
                 p += q

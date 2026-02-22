@@ -16,11 +16,18 @@ from zdrovena.audit.bottles import invoice_bottle_details
 from zdrovena.common.formatting import MONTHS_FULL, MONTHS_PL, BOLD, RESET, GREEN, DIM
 
 
-def add_subparser(subparsers: argparse._SubParsersAction) -> None:
+def add_subparser(subparsers: argparse._SubParsersAction, *, parents: list | None = None) -> None:
     p = subparsers.add_parser(
         "export",
-        help="Eksportuj pozycje butelkowe do plików CSV (per miesiąc)",
-        description="Generuje pliki CSV z pozycjami butelkowymi, pogrupowane wg miesiąca.",
+        parents=parents or [],
+        help="Eksport pozycji butelkowych do CSV (per miesiąc)",
+        description=(
+            "Generuje pliki CSV z pozycjami butelkowymi per miesiąc.\n\n"
+            "Przykłady:\n"
+            "  zdrovena export -y 2026              # cały rok → csv/\n"
+            "  zdrovena export -y 2026 -o raporty   # inny katalog"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
         "--output-dir", "-o",

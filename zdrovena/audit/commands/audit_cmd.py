@@ -59,11 +59,19 @@ class Verdict:
 
 # ── Subcommand ────────────────────────────────────────────────────────────────
 
-def add_subparser(subparsers: argparse._SubParsersAction) -> None:
+def add_subparser(subparsers: argparse._SubParsersAction, *, parents: list | None = None) -> None:
     p = subparsers.add_parser(
         "audit",
-        help="Pełny audyt: WZ vs FV — analiza rozbieżności",
-        description="Wielosekcyjny audyt porównujący faktury, WZ, daty i anomalie.",
+        parents=parents or [],
+        help="Pełny audyt butelek: FV vs WZ, daty, numeracja, magazyn",
+        description=(
+            "Wielosekcyjny audyt butelek — porównuje faktury z dokumentami\n"
+            "magazynowymi WZ, sprawdza daty, ciągłość numeracji i bilans.\n\n"
+            "Przykłady:\n"
+            "  zdrovena audit  -y 2026          # cały rok\n"
+            "  zdrovena audit  -y 2026 -m 02    # tylko luty"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.set_defaults(func=run)
 
@@ -72,8 +80,8 @@ def run(args: argparse.Namespace) -> None:
     client = get_client()
     print("Pobieranie danych...")
 
-    invoices = fetch_invoices(client, args.year, include_proforma=False)
-    wz_docs = fetch_wz_documents(client, args.year)
+    invoices = fetch_invoices(client, args.year, month=args.month, include_proforma=False)
+    wz_docs = fetch_wz_documents(client, args.year, month=args.month)
     wz_actions = fetch_warehouse_actions(client)
     all_actions = fetch_all_warehouse_actions(client)
     products = fetch_products(client)
@@ -92,59 +100,35 @@ def run(args: argparse.Namespace) -> None:
     print(f"\n{SEP}")
     print("1. RĘCZNE LICZENIE KAŻDEJ FAKTURY (pozycje butelkowe)")
     print(SEP)
-    grand_fv, grand_wz, _, _ = section_recount(inv_by_wz, doc_actions, verdict)
+    grand_fv, grand_wz, _, _ = section_recount(inv_by_wz, doc_actions, verdict, month=args.month)
 
-    # §2 Type-level match (plastik/szkło)
+    # §2 Quick checks (type match, orphans, dates)
     print(f"\n{SEP}")
-    print("2. ZGODNOŚĆ TYPÓW: plastik FV = plastik WZ, szkło FV = szkło WZ")
+    print("2. KONTROLE")
     print(SEP)
     section_type_match(inv_by_wz, doc_actions, verdict)
-
-    # §3 Orphan WZ
-    print(f"\n{SEP}")
-    print("3. WZ BEZ FAKTUR (orphan WZ)")
-    print(SEP)
     section_orphan_wz(wz_docs, inv_by_wz, doc_actions, verdict)
-
-    # §4 Invoices without WZ
-    print(f"\n{SEP}")
-    print("4. FAKTURY BEZ WZ (mają pozycje butelkowe ale brak warehouse_document_id)")
-    print(SEP)
     no_wz = section_no_wz(invoices, inv_by_wz, verdict)
-
-    # §5 Date comparison
-    print(f"\n{SEP}")
-    print("5. PORÓWNANIE DAT: sell_date FV vs issue_date WZ")
-    print(SEP)
     section_date_comparison(inv_by_wz, wz_by_id, verdict)
-
-    # §6 sell_date vs issue_date on invoice
-    print(f"\n{SEP}")
-    print("6. sell_date vs issue_date NA FAKTURZE (cross-month)")
-    print(SEP)
     section_cross_month_sell_issue(invoices, verdict)
 
-    # §7 Numbering continuity
+    # §3 Numbering & stock balance
     print(f"\n{SEP}")
-    print("7. CIĄGŁOŚĆ NUMERACJI (luki i duplikaty per seria)")
+    print("3. NUMERACJA I MAGAZYN")
     print(SEP)
     section_numbering(invoices, verdict)
+    print()
+    section_stock_balance(all_actions, products, args.year, args.month, verdict)
 
-    # §8 Stock balance
+    # §4 Anomalies
     print(f"\n{SEP}")
-    print("8. BILANS MAGAZYNOWY (ΣPZ − ΣWZ = warehouse_quantity)")
-    print(SEP)
-    section_stock_balance(all_actions, products, verdict)
-
-    # §9 Anomalies
-    print(f"\n{SEP}")
-    print("9. ANOMALIE")
+    print("4. ANOMALIE")
     print(SEP)
     section_anomalies(inv_by_wz, wz_by_id, invoices)
 
-    # §10 Final verdict
+    # §5 Final verdict
     print(f"\n{SEP}")
-    print("10. PODSUMOWANIE")
+    print("5. PODSUMOWANIE")
     print(SEP)
 
     orphan_count = len([w for w in wz_docs if w["id"] not in inv_by_wz])

@@ -121,11 +121,20 @@ def _print_table(invoices: list[dict], *, show_positions: bool = False) -> None:
     print(f"  {DIM}Dokumentów z butelkami: {len(rows)} ({fv_count} FV{par_info}){RESET}\n")
 
 
-def add_subparser(subparsers: argparse._SubParsersAction) -> None:
+def add_subparser(subparsers: argparse._SubParsersAction, *, parents: list | None = None) -> None:
     p = subparsers.add_parser(
         "list",
-        help="Wyświetl faktury sprzedażowe z liczbą butelek",
-        description="Pobiera faktury z Fakturowni i wyświetla tabelę z podziałem plastik/szkło.",
+        parents=parents or [],
+        help="Wyświetl faktury z liczbą butelek (plastik/szkło)",
+        description=(
+            "Pobiera faktury z Fakturowni i wyświetla tabelę\n"
+            "z podziałem plastik/szkło.\n\n"
+            "Przykłady:\n"
+            "  zdrovena list -y 2026 -m 02       # faktury z lutego\n"
+            "  zdrovena list -y 2026 -m 02 -d 15 # konkretny dzień\n"
+            "  zdrovena list -y 2026 -m 02 -p    # z pozycjami"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--proforma", action="store_true", help="Uwzględnij proformy")
     p.add_argument("--positions", "-p", action="store_true", help="Pokaż pozycje butelkowe")

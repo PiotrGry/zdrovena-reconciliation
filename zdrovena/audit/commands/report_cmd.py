@@ -17,14 +17,19 @@ from zdrovena.audit.report_downloader import (
 )
 
 
-def add_subparser(subparsers: argparse._SubParsersAction) -> None:
+def add_subparser(subparsers: argparse._SubParsersAction, *, parents: list | None = None) -> None:
     p = subparsers.add_parser(
         "report",
-        help="Pobierz raport z Fakturowni (PDF via przeglądarka)",
+        parents=parents or [],
+        help="Pobierz raport z Fakturowni jako PDF",
         description=(
-            "Pobiera raporty z interfejsu webowego Fakturowni jako pliki PDF.\n"
-            "Wymaga: pip install playwright && playwright install chromium"
+            "Pobiera raporty z interfejsu webowego Fakturowni jako PDF.\n"
+            "Wymaga: pip install playwright && playwright install chromium\n\n"
+            "Przykłady:\n"
+            "  zdrovena report -y 2026 -m 02           # VAT sprzedaż\n"
+            "  zdrovena report -y 2026 -m 02 -k income # przychód"
         ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
         "--kind", "-k",

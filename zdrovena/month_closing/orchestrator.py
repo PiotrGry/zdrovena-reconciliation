@@ -27,6 +27,7 @@ from pathlib import Path
 
 import keyring
 
+from zdrovena.audit.sections import check_numbering
 from zdrovena.common import FakturowniaClient
 from zdrovena.common.exceptions import MissingSecretError
 from zdrovena.common.formatting import to_decimal
@@ -266,7 +267,14 @@ class MonthCloseOrchestrator:
                 f"{' --dry-run' if self.dry_run else ''}"
             )
             self.out.plain()
-            raise SystemExit(1)
+            if self.dry_run:
+                # In dry-run mode don't abort; surface blockers as warnings
+                for b in blockers:
+                    msg = f"Preflight blocker (dry-run): {b}"
+                    self.report.warnings.append(msg)
+                    self.out.warn(msg)
+            else:
+                raise SystemExit(1)
         self._mark_step_done("Pre-flight")
 
     def _interactive_download(
@@ -309,11 +317,34 @@ class MonthCloseOrchestrator:
                 f"No sales invoices found for {self.date_from} – {self.date_to}. "
                 "Check Fakturownia for the correct date range."
             )
-        saved = client.download_all_pdfs(invoices, self.sales_dir, dry_run=self.dry_run)
-        self.report.sales_pdfs_downloaded = len(saved)
         self.out.ok(
             f"{len(invoices)} invoice(s), gross total: {self.report.sales_gross_total:,.2f} PLN"
         )
+
+        # Numbering gap check — abort before downloading if gaps found
+        numbering_ok = True
+        for sr in check_numbering(invoices):
+            if sr.gaps:
+                numbering_ok = False
+                msg = (f"Numeracja /{sr.series}: jest {sr.count}, "
+                       f"oczekiwano {sr.expected} — brakuje: {sr.gaps}")
+                self.out.warn(msg)
+                self.report.warnings.append(msg)
+            elif sr.duplicates:
+                numbering_ok = False
+                msg = f"Numeracja /{sr.series}: duplikaty: {sr.duplicates}"
+                self.out.warn(msg)
+                self.report.warnings.append(msg)
+            else:
+                self.out.ok(f"Numeracja /{sr.series}: {sr.first}–{sr.last} ({sr.count} dok.)")
+
+        if not numbering_ok:
+            raise RuntimeError(
+                "Brakuje faktur — uzupełnij numerację w Fakturowni przed zamknięciem miesiąca."
+            )
+
+        saved = client.download_all_pdfs(invoices, self.sales_dir, dry_run=self.dry_run)
+        self.report.sales_pdfs_downloaded = len(saved)
         self._mark_step_done("Sales invoices")
 
     def _step_3_jpk_reports(self) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from zdrovena.audit.bottles import (
+    BOTTLE_ALIASES,
     BOTTLE_PRODUCTS,
     bottles_per_unit,
     extract_bottles,
@@ -74,6 +75,10 @@ class TestExtractBottles:
     def test_allegro_skipped(self):
         assert extract_bottles("Allegro prowizja", 1) == (0, 0)
 
+    def test_kaucja_skipped(self):
+        assert extract_bottles("Kaucja za butelki 12 butelek", 5) == (0, 0)
+        assert extract_bottles("kaucja szklana", 1) == (0, 0)
+
 
 # ── invoice_bottles ───────────────────────────────────────────────────────────
 
@@ -123,6 +128,28 @@ class TestBottleProducts:
         assert isinstance(BOTTLE_PRODUCTS, frozenset)
 
     def test_contains_expected(self):
-        assert "Woda Humio butelka" in BOTTLE_PRODUCTS
         assert "Woda Humio butelka plastik" in BOTTLE_PRODUCTS
         assert "Woda Humio butelka szkło" in BOTTLE_PRODUCTS
+
+    def test_legacy_name_not_in_products(self):
+        assert "Woda Humio butelka" not in BOTTLE_PRODUCTS
+
+
+class TestBottleAliases:
+    def test_legacy_alias(self):
+        assert BOTTLE_ALIASES["Woda Humio butelka"] == "Woda Humio butelka plastik"
+
+    def test_wz_bottles_resolves_legacy(self):
+        """Old WZ actions with legacy product name should count as plastik."""
+        actions = {
+            300: [
+                {
+                    "warehouse_document_id": 300,
+                    "product_name": "Woda Humio butelka",
+                    "quantity": "-24",
+                },
+            ],
+        }
+        p, g = wz_bottles(300, actions)
+        assert p == 24
+        assert g == 0

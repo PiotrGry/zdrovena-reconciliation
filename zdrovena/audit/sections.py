@@ -11,19 +11,15 @@ via ``verdict.fail()``.
 Sections
 --------
 1. Recount (FV vs WZ totals per month)
-2. Type-level match (plastic/glass per document)
-3. Orphan WZ (no linked invoice)
-4. Invoices without WZ
-5. Date comparison (sell_date vs WZ issue_date)
-6. Cross-month sell/issue on same invoice
-7. Numbering continuity (gaps & duplicates)
-8. Stock balance (ΣPZ − ΣWZ = warehouse_quantity)
-9. Anomalies (large invoices, multi-linked WZ)
+2. Checks: type match, orphan WZ, missing WZ, dates, cross-month
+3. Numbering continuity & stock balance
+4. Anomalies (large invoices, multi-linked WZ)
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date as Date
 from typing import TYPE_CHECKING
 
@@ -32,7 +28,7 @@ from zdrovena.audit.api import (
     month_of,
     sell_date_of,
 )
-from zdrovena.audit.bottles import BOTTLE_PRODUCTS, invoice_bottles, wz_bottles
+from zdrovena.audit.bottles import BOTTLE_ALIASES, BOTTLE_PRODUCTS, invoice_bottles, wz_bottles
 from zdrovena.common.formatting import MONTHS_PL
 
 if TYPE_CHECKING:
@@ -45,6 +41,7 @@ def section_recount(
     inv_by_wz: dict[int, dict],
     doc_actions: dict[int, list[dict]],
     verdict: Verdict,
+    month: int | None = None,
 ) -> tuple[int, int, dict[int, list[dict]], dict[int, int]]:
     """§1 — Recount every invoice and WZ by month (sell_date)."""
     month_invoices: dict[int, list[dict]] = defaultdict(list)
@@ -80,16 +77,21 @@ def section_recount(
         mark = "✅" if delta == 0 else f"Δ={delta:+d} ⚠️"
 
         print(f"\n  {MONTHS_PL.get(m, '?')} — {len(items)} dok., FV={mt}, WZ={wt} {mark}")
+        print(f"  {'─' * 88}")
+        print(f"  {'#':>4}  {'Numer':>18}  {'Typ':^5}  {'Data sprz.':^10}  {'Data wyst.':^10}  "
+              f"{'Plastik':>7}  {'Szkło':>5}  {'Razem':>5}")
+        print(f"  {'─' * 88}")
         for i, item in enumerate(items, 1):
             kind_tag = "PAR" if item["kind"] == "receipt" else "VAT"
-            print(f"    {i:3d}. {item['number']:>18s} [{kind_tag}]  "
-                  f"sell={item['sell_date']}  issue={item['issue_date']}  "
-                  f"plastik={item['plastic']:4d}  szkło={item['glass']:3d}  "
-                  f"RAZEM={item['total']:4d}")
+            print(f"  {i:4d}  {item['number']:>18s}  {kind_tag:^5}  "
+                  f"{item['sell_date']:^10}  {item['issue_date']:^10}  "
+                  f"{item['plastic']:7d}  {item['glass']:5d}  {item['total']:5d}")
+        print(f"  {'─' * 88}")
 
     print(f"\n  {'─' * 80}")
     delta = grand_fv - grand_wz
-    print(f"  RAZEM ROK:  FV={grand_fv}  WZ={grand_wz}  Δ={delta:+d}")
+    period = MONTHS_PL.get(month, "?").upper() if month else "ROK"
+    print(f"  RAZEM {period}:  FV={grand_fv}  WZ={grand_wz}  Δ={delta:+d}")
 
     if delta != 0:
         verdict.fail(f"FV↔WZ total mismatch: Δ={delta:+d}")
@@ -128,7 +130,7 @@ def section_type_match(
                   f"ΔP={dp:+d} ΔG={dg:+d}")
         verdict.fail(f"Type-level mismatch: {len(mismatches)} documents")
     else:
-        print("  ✅ Plastik i szkło zgadzają się na każdym dokumencie")
+        print("  ✅ Typy plastik/szkło: FV = WZ")
 
     return mismatches
 
@@ -158,7 +160,7 @@ def section_orphan_wz(
         print(f"\n  Łącznie orphan WZ: {len(orphans)}, butelki: {total_btl}")
         verdict.fail(f"Orphan WZ: {len(orphans)} documents, {total_btl} bottles")
     else:
-        print("  Brak ✅")
+        print("  ✅ Brak WZ bez faktur")
 
     return orphans
 
@@ -190,7 +192,7 @@ def section_no_wz(
         print(f"\n  Łącznie: {len(no_wz)}, butelki: {sum(i['total'] for i in no_wz)}")
         verdict.fail(f"Invoices without WZ: {len(no_wz)}")
     else:
-        print("  Brak ✅")
+        print("  ✅ Brak faktur bez WZ")
 
     return no_wz
 
@@ -227,16 +229,15 @@ def section_date_comparison(
                 "diff_days": diff_days, "bottles": p + g,
             })
 
-    print(f"\n  Łącznie par FV↔WZ: {total_pairs}")
     if month_mismatch:
-        print(f"  ⚠️  Miesiące się różnią: {len(month_mismatch)}")
+        print(f"  ❌ Daty FV↔WZ: {len(month_mismatch)}/{total_pairs} par niezgodnych")
         for r in sorted(month_mismatch, key=lambda x: x["sell_date"]):
             print(f"    {r['inv_number']:>18s}  sell={r['sell_date']}  wz={r['wz_date']}  "
                   f"FV:{MONTHS_PL.get(r['sell_month'], '?')} "
                   f"WZ:{MONTHS_PL.get(r['wz_month'], '?')}  btl={r['bottles']}")
         verdict.fail(f"Cross-month FV↔WZ: {len(month_mismatch)} pairs")
     else:
-        print("  ✅ Wszystkie miesiące się zgadzają")
+        print(f"  ✅ Daty FV↔WZ: {total_pairs} par, zgodne")
 
     return month_mismatch
 
@@ -262,25 +263,38 @@ def section_cross_month_sell_issue(
             mismatched.append(inv)
 
     if mismatched:
-        print(f"\n  ⚠️  Faktury cross-month: {len(mismatched)}")
+        print(f"  ⚠️  sell/issue cross-month: {len(mismatched)} faktur")
         for inv in sorted(mismatched, key=lambda x: x.get("sell_date", "")):
             p, g = invoice_bottles(inv)
             print(f"    {doc_type_label(inv)} {inv.get('number', '?'):>18s}  "
                   f"sell={inv.get('sell_date', '')}  issue={inv.get('issue_date', '')}  "
                   f"btl={p + g}")
     else:
-        print("  ✅ sell_date i issue_date zawsze w tym samym miesiącu")
+        print("  ✅ sell/issue_date w tym samym miesiącu")
 
     return mismatched
 
 
 # ── §7 Numbering continuity ──────────────────────────────────────────────────
 
-def section_numbering(
-    invoices: list[dict],
-    verdict: Verdict,
-) -> None:
-    """§7 — Invoice numbering continuity: detect gaps & duplicates per series."""
+@dataclass
+class SeriesResult:
+    """Numbering analysis for a single invoice series."""
+    series: str
+    count: int
+    first: int
+    last: int
+    expected: int
+    gaps: list[int]
+    duplicates: list[int]
+
+    @property
+    def ok(self) -> bool:
+        return not self.gaps and not self.duplicates
+
+
+def check_numbering(invoices: list[dict]) -> list[SeriesResult]:
+    """Analyse invoice numbering continuity — pure logic, no I/O."""
     series_nums: dict[str, list[tuple[int, str]]] = defaultdict(list)
 
     for inv in invoices:
@@ -294,7 +308,7 @@ def section_numbering(
             except ValueError:
                 pass
 
-    issues_found = False
+    results: list[SeriesResult] = []
     for series in sorted(series_nums.keys()):
         nums = sorted(series_nums[series], key=lambda x: x[0])
         seqs = [n[0] for n in nums]
@@ -312,16 +326,37 @@ def section_numbering(
                 if expected not in seen:
                     gaps.append(expected)
 
-        if duplicates or gaps:
+        expected_count = (seqs[-1] - seqs[0] + 1) if seqs else 0
+        results.append(SeriesResult(
+            series=series,
+            count=len(seqs),
+            first=seqs[0] if seqs else 0,
+            last=seqs[-1] if seqs else 0,
+            expected=expected_count,
+            gaps=gaps,
+            duplicates=duplicates,
+        ))
+    return results
+
+
+def section_numbering(
+    invoices: list[dict],
+    verdict: Verdict,
+) -> None:
+    """§7 — Invoice numbering continuity: detect gaps & duplicates per series."""
+    results = check_numbering(invoices)
+    issues_found = False
+    for sr in results:
+        if not sr.ok:
             issues_found = True
-            print(f"\n  Seria /{series}:  zakres {seqs[0]}–{seqs[-1]}, "
-                  f"{len(seqs)} dokumentów")
-            if duplicates:
-                print(f"    ❌ Duplikaty: {duplicates}")
-            if gaps:
-                print(f"    ❌ Luki: {gaps}")
+            print(f"\n  Seria /{sr.series}:  zakres {sr.first}–{sr.last}, "
+                  f"{sr.count} dokumentów (oczekiwano {sr.expected})")
+            if sr.duplicates:
+                print(f"    ❌ Duplikaty: {sr.duplicates}")
+            if sr.gaps:
+                print(f"    ❌ Luki: {sr.gaps}")
         else:
-            print(f"  Seria /{series}:  {seqs[0]}–{seqs[-1]}  ({len(seqs)} dok.) ✅")
+            print(f"  Seria /{sr.series}:  {sr.first}–{sr.last}  ({sr.count} dok.) ✅")
 
     if issues_found:
         verdict.fail("Numbering issues found (gaps or duplicates)")
@@ -332,34 +367,69 @@ def section_numbering(
 def section_stock_balance(
     all_actions: list[dict],
     products: list[dict],
+    year: int,
+    month: int | None,
     verdict: Verdict,
 ) -> None:
-    """§8 — Stock balance: ΣPZ − ΣWZ = warehouse_quantity."""
-    computed: dict[str, float] = defaultdict(float)
+    """Stock balance: PZ/WZ movements for the audited period."""
+    if month:
+        prefix = f"{year}-{month:02d}"
+    else:
+        prefix = str(year)
+
+    # ── Monthly movements for bottle products ─────────────────────────────
+    month_pz: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    month_wz: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+
     for a in all_actions:
-        computed[a["product_name"]] += float(a["quantity"])
-
-    actual: dict[str, float] = {}
-    for p in products:
-        wq = float(p.get("warehouse_quantity") or 0)
-        if wq != 0 or p.get("name", "") in BOTTLE_PRODUCTS:
-            actual[p["name"]] = wq
-
-    issues_found = False
-    for name in sorted(set(list(computed.keys()) + list(actual.keys()))):
-        if name not in BOTTLE_PRODUCTS and name not in actual:
+        issue = a.get("wd_issue_date", "")
+        if not issue.startswith(prefix):
             continue
-        c = computed.get(name, 0)
-        a = actual.get(name, 0)
-        delta = c - a
-        if abs(delta) > 0.5:
-            issues_found = True
-            print(f"  ❌ {name:45s}  computed={c:>+.0f}  actual={a:>+.0f}  Δ={delta:>+.0f}")
+        name = BOTTLE_ALIASES.get(a["product_name"], a["product_name"])
+        if name not in BOTTLE_PRODUCTS:
+            continue
+        m = int(issue.split("-")[1])
+        qty = float(a["quantity"])
+        if qty > 0:
+            month_pz[m][name] += qty
         else:
-            print(f"  ✅ {name:45s}  stock={a:>.0f}")
+            month_wz[m][name] += abs(qty)
 
-    if issues_found:
-        verdict.fail("Stock balance mismatch")
+    all_months = sorted(set(list(month_pz.keys()) + list(month_wz.keys())))
+    totals_pz: dict[str, float] = defaultdict(float)
+    totals_wz: dict[str, float] = defaultdict(float)
+
+    for m in all_months:
+        label = MONTHS_PL.get(m, "?")
+        parts: list[str] = []
+        for prod in sorted(BOTTLE_PRODUCTS):
+            short = "P" if "plastik" in prod else "S"
+            pz = month_pz[m].get(prod, 0)
+            wz = month_wz[m].get(prod, 0)
+            totals_pz[prod] += pz
+            totals_wz[prod] += wz
+            if pz > 0 or wz > 0:
+                parts.append(f"{short}: PZ=+{pz:.0f} WZ=-{wz:.0f}")
+        if parts:
+            print(f"  {label:3s}  {'  '.join(parts)}")
+
+    # ── Year totals ───────────────────────────────────────────────────────
+    issues_found = False
+    print(f"  {'─' * 50}")
+    for prod in sorted(BOTTLE_PRODUCTS):
+        short = "plastik" if "plastik" in prod else "szkło"
+        pz = totals_pz.get(prod, 0)
+        wz = totals_wz.get(prod, 0)
+        net = pz - wz
+        print(f"  {short:8s}  PZ=+{pz:.0f}  WZ=-{wz:.0f}  netto={net:+.0f}")
+
+    # ── Current stock (informational) ─────────────────────────────────────
+    for p in products:
+        name = p.get("name", "")
+        if name in BOTTLE_PRODUCTS:
+            wq = float(p.get("warehouse_quantity") or 0)
+            short = "plastik" if "plastik" in name else "szkło"
+            print(f"  {short:8s}  stan magazynu: {wq:.0f}")
 
 
 # ── §9 Anomalies ─────────────────────────────────────────────────────────────
@@ -369,9 +439,7 @@ def section_anomalies(
     wz_by_id: dict[int, dict],
     invoices: list[dict],
 ) -> None:
-    """§9 — Large invoices, duplicate WZ links."""
-    # a) Large invoices
-    print("\n  a) Dokumenty z >72 butelkami:")
+    """§4 — Large invoices, duplicate WZ links."""
     big = []
     for wz_id, inv in inv_by_wz.items():
         p, g = invoice_bottles(inv)
@@ -379,24 +447,25 @@ def section_anomalies(
         if total > 72:
             big.append((inv, total))
     big.sort(key=lambda x: -x[1])
-    if big:
-        for inv, total in big:
-            print(f"    {doc_type_label(inv)} {inv.get('number', '?'):>18s}  "
-                  f"sell={sell_date_of(inv)}  btl={total}")
-    else:
-        print("    Brak")
 
-    # b) Multiple invoices linked to the same WZ
-    print("\n  b) Wiele faktur → ten sam WZ:")
     wz_inv_count: dict[int, list] = defaultdict(list)
     for inv in invoices:
         wd_id = inv.get("warehouse_document_id")
         if wd_id and wd_id in wz_by_id:
             wz_inv_count[wd_id].append(inv)
     multi = {k: v for k, v in wz_inv_count.items() if len(v) > 1}
+
+    if not big and not multi:
+        print("  ✅ Brak anomalii")
+        return
+
+    if big:
+        print("  >72 butelek:")
+        for inv, total in big:
+            print(f"    {doc_type_label(inv)} {inv.get('number', '?'):>18s}  "
+                  f"sell={sell_date_of(inv)}  btl={total}")
     if multi:
+        print("  Wiele faktur → ten sam WZ:")
         for wz_id, invs in multi.items():
             wz = wz_by_id[wz_id]
             print(f"    WZ #{wz_id} (nr={wz.get('number', '?')}) → {len(invs)} faktur")
-    else:
-        print("    Brak ✅")

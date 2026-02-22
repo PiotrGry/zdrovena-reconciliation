@@ -145,9 +145,9 @@ def fetch_invoices(
     return invoices
 
 
-def fetch_wz_documents(client: FakturowniaClient, year: int) -> list[dict]:
-    """Fetch all WZ (warehouse issue) documents for *year*."""
-    prefix = str(year)
+def fetch_wz_documents(client: FakturowniaClient, year: int, month: int | None = None) -> list[dict]:
+    """Fetch WZ (warehouse issue) documents for *year* (optionally filtered to *month*)."""
+    prefix = f"{year}-{month:02d}" if month else str(year)
     docs = _paginate(client, "warehouse_documents.json", {"kind": "wz"})
     return [d for d in docs if d["issue_date"].startswith(prefix)]
 
