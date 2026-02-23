@@ -1,0 +1,5 @@
+FROM qwen2.5
+
+PARAMETER num_ctx 32768
+PARAMETER temperature 0.2
+PARAMETER top_p 0.9
