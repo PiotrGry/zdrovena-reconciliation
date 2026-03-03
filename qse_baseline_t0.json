@@ -1,0 +1,37 @@
+{
+  "gate": "PASS",
+  "qse4": 0.8947,
+  "threshold": 0.8,
+  "failures": [],
+  "report": {
+    "qse_total": 0.8947,
+    "metrics": {
+      "S": 1.0,
+      "T_ddd": 0.6667,
+      "G": 0.8071,
+      "E": 1.0,
+      "Risk": 1.0
+    },
+    "defects": {
+      "anemic_entity": [],
+      "fat_service": [],
+      "zombie_entity": [],
+      "layer_violation": []
+    },
+    "graph": {
+      "nodes": 99,
+      "total_edges": 223,
+      "static_only_edges": 223,
+      "dynamic_only_edges": 0,
+      "both_edges": 0
+    },
+    "weights": [
+      0.2,
+      0.2,
+      0.2,
+      0.2,
+      0.2
+    ],
+    "trace_enabled": false
+  }
+}

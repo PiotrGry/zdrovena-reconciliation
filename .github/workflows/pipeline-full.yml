@@ -1,0 +1,140 @@
+name: Full Quality Gate
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  full-analysis:
+    name: QSE + Analyzers + Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install all tools
+        run: |
+          pip install "git+https://github.com/PiotrGry/qse.git"
+          pip install ruff mypy bandit radon pylint
+          pip install -e ".[dev]" 2>/dev/null || pip install -e . || true
+          pip install pytest pytest-cov pytest-json-report
+
+      # ── QSE ────────────────────────────────────────────────────────────────
+      - name: QSE scan
+        run: |
+          qse gate zdrovena/ \
+            --threshold 0.80 \
+            --fail-on-defects anemic_entity,zombie_entity,layer_violation \
+            --output-json qse_report.json \
+            --no-trace || true
+
+      # ── Static analyzers ───────────────────────────────────────────────────
+      - name: ruff
+        run: ruff check zdrovena/ --output-format json > ruff_report.json || true
+
+      - name: mypy
+        run: mypy zdrovena/ --ignore-missing-imports --json-report mypy_report || true
+
+      - name: bandit
+        run: bandit -r zdrovena/ -f json -o bandit_report.json || true
+
+      - name: radon
+        run: |
+          radon cc zdrovena/ -j > radon_cc.json
+          radon mi zdrovena/ -j > radon_mi.json
+
+      - name: pylint
+        run: pylint zdrovena/ --output-format=json --exit-zero > pylint_report.json
+
+      # ── Tests + coverage ───────────────────────────────────────────────────
+      - name: Tests + coverage
+        run: |
+          pytest tests/ \
+            --cov=zdrovena \
+            --cov-report=json:coverage.json \
+            --json-report --json-report-file=pytest_report.json \
+            -v || true
+
+      # ── Aggregate all ──────────────────────────────────────────────────────
+      - name: Aggregate full report
+        run: |
+          python scripts/aggregate_quality.py \
+            --qse qse_report.json \
+            --ruff ruff_report.json \
+            --radon-cc radon_cc.json \
+            --radon-mi radon_mi.json \
+            --pylint pylint_report.json \
+            --coverage coverage.json \
+            --bandit bandit_report.json \
+            --pytest pytest_report.json \
+            --commit "${{ github.sha }}" \
+            --ref "${{ github.ref_name }}" \
+            --output full_report.json
+
+      - name: Upload full report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: full-report-${{ github.sha }}
+          path: full_report.json
+          retention-days: 90
+
+      - name: Comment PR — Full report
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            let body = ''
+            try {
+              const r = JSON.parse(fs.readFileSync('full_report.json', 'utf8'))
+              const qseGate = r.qse.gate === 'PASS' ? '✅' : '❌'
+              const anlGate = r.analyzers.gate === 'PASS' ? '✅' : '❌'
+              const tstGate = r.tests.gate === 'PASS' ? '✅' : '❌'
+              const fullGate = r.gate === 'PASS' ? '✅ PASS' : '❌ FAIL'
+              body = [
+                '## Full Quality Gate ' + fullGate,
+                `_commit: \`${r.commit.slice(0,7)}\`_`,
+                '',
+                '| Pipeline | Gate | Key metric |',
+                '|----------|------|------------|',
+                `| QSE | ${qseGate} | QSE4=${r.qse.qse4} |`,
+                `| Analyzers | ${anlGate} | pylint=${r.analyzers.pylint_score} · CC=${r.analyzers.radon_cc_avg} |`,
+                `| Tests | ${tstGate} | coverage=${r.tests.coverage_line}% · passed=${r.tests.tests_passed} |`,
+                '',
+                '<details><summary>QSE defects</summary>',
+                '',
+                '```json',
+                JSON.stringify(r.qse.defects, null, 2),
+                '```',
+                '</details>',
+              ].join('\n')
+              if (r.failures.length > 0) {
+                body += '\n\n### Gate failures\n'
+                r.failures.forEach(f => body += `- ${f}\n`)
+              }
+            } catch (e) {
+              body = '## Full Gate — ERROR\n' + e.message
+            }
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            })
+
+      - name: Final gate decision
+        run: |
+          GATE=$(python -c "import json; print(json.load(open('full_report.json'))['gate'])")
+          if [ "$GATE" != "PASS" ]; then
+            echo "Full quality gate FAILED."
+            exit 1
+          fi
+          echo "Full quality gate PASSED."

@@ -1,0 +1,177 @@
+name: Analyzers Gate
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  static:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install static analyzers
+        run: pip install ruff mypy bandit radon pylint
+
+      - name: ruff
+        run: ruff check zdrovena/ --output-format json > ruff_report.json || true
+
+      - name: mypy
+        run: |
+          pip install -e ".[dev]" 2>/dev/null || pip install -e . 2>/dev/null || true
+          mypy zdrovena/ --ignore-missing-imports \
+            --json-report mypy_report || true
+
+      - name: bandit
+        run: bandit -r zdrovena/ -f json -o bandit_report.json || true
+
+      - name: radon complexity
+        run: radon cc zdrovena/ -j > radon_cc.json
+
+      - name: radon maintainability
+        run: radon mi zdrovena/ -j > radon_mi.json
+
+      - name: pylint
+        run: pylint zdrovena/ --output-format=json --exit-zero > pylint_report.json
+
+      - name: Upload static reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: static-reports-${{ github.sha }}
+          path: |
+            ruff_report.json
+            mypy_report/
+            bandit_report.json
+            radon_cc.json
+            radon_mi.json
+            pylint_report.json
+          retention-days: 90
+
+  dynamic:
+    name: Tests + Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]" 2>/dev/null || pip install -e . || true
+          pip install pytest pytest-cov pytest-json-report
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ \
+            --cov=zdrovena \
+            --cov-report=json:coverage.json \
+            --cov-report=term-missing \
+            --json-report --json-report-file=pytest_report.json \
+            -v || true
+
+      - name: Upload dynamic reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dynamic-reports-${{ github.sha }}
+          path: |
+            coverage.json
+            pytest_report.json
+          retention-days: 90
+
+  gate-decision:
+    name: Analyzers Gate Decision
+    runs-on: ubuntu-latest
+    needs: [static, dynamic]
+    if: always()
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-reports-${{ github.sha }}"
+          merge-multiple: true
+
+      - name: Evaluate gate
+        id: gate
+        run: |
+          python scripts/analyzers_gate.py \
+            --ruff ruff_report.json \
+            --radon-cc radon_cc.json \
+            --radon-mi radon_mi.json \
+            --pylint pylint_report.json \
+            --coverage coverage.json \
+            --bandit bandit_report.json \
+            --output analyzers_gate_report.json
+
+      - name: Upload gate report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: analyzers-gate-${{ github.sha }}
+          path: analyzers_gate_report.json
+          retention-days: 90
+
+      - name: Comment PR — Analyzers
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            let body = ''
+            try {
+              const r = JSON.parse(fs.readFileSync('analyzers_gate_report.json', 'utf8'))
+              const gate = r.gate === 'PASS' ? '✅ PASS' : '❌ FAIL'
+              body = [
+                '## Analyzers Gate ' + gate,
+                '',
+                '| Tool | Metric | Value | Threshold | Status |',
+                '|------|--------|-------|-----------|--------|',
+                `| pylint | score | ${r.pylint_score} | ≥ 7.0 | ${r.pylint_score >= 7.0 ? '✅' : '❌'} |`,
+                `| radon | avg CC | ${r.radon_cc_avg} | ≤ 10 | ${r.radon_cc_avg <= 10 ? '✅' : '❌'} |`,
+                `| radon | avg MI | ${r.radon_mi_avg} | ≥ 50 | ${r.radon_mi_avg >= 50 ? '✅' : '❌'} |`,
+                `| coverage | line % | ${r.coverage_line} | ≥ 70 | ${r.coverage_line >= 70 ? '✅' : '❌'} |`,
+                `| bandit | high severity | ${r.bandit_high} | = 0 | ${r.bandit_high === 0 ? '✅' : '❌'} |`,
+                `| ruff | violations | ${r.ruff_violations} | ≤ 20 | ${r.ruff_violations <= 20 ? '✅' : '❌'} |`,
+              ].join('\n')
+              if (r.failures.length > 0) {
+                body += '\n\n### Gate failures\n'
+                r.failures.forEach(f => body += `- ${f}\n`)
+              }
+            } catch (e) {
+              body = '## Analyzers Gate — ERROR\n' + e.message
+            }
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            })
+
+      - name: Fail if gate failed
+        run: |
+          GATE=$(python -c "import json; print(json.load(open('analyzers_gate_report.json'))['gate'])")
+          if [ "$GATE" != "PASS" ]; then
+            echo "Analyzers gate failed."
+            exit 1
+          fi

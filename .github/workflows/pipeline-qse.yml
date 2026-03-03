@@ -1,0 +1,113 @@
+name: QSE Gate
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  qse:
+    name: QSE Architecture Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install QSE
+        run: pip install "git+https://github.com/PiotrGry/qse.git"
+
+      - name: Run QSE gate
+        id: qse_gate
+        run: |
+          qse gate zdrovena/ \
+            --threshold 0.80 \
+            --fail-on-defects anemic_entity,zombie_entity,layer_violation \
+            --output-json qse_report.json \
+            --no-trace
+        continue-on-error: true
+
+      - name: Set gate outcome
+        id: outcome
+        run: |
+          if [ -f qse_report.json ]; then
+            echo "gate=$(python -c "import json; d=json.load(open('qse_report.json')); print(d['gate'])")" >> $GITHUB_OUTPUT
+            echo "qse4=$(python -c "import json; d=json.load(open('qse_report.json')); print(d['qse4'])")" >> $GITHUB_OUTPUT
+          else
+            echo "gate=ERROR" >> $GITHUB_OUTPUT
+            echo "qse4=0.0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload QSE report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qse-report-${{ github.sha }}
+          path: qse_report.json
+          retention-days: 90
+
+      - name: Comment PR — QSE
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            let body = ''
+            try {
+              const r = JSON.parse(fs.readFileSync('qse_report.json', 'utf8'))
+              const gate = r.gate === 'PASS' ? '✅ PASS' : '❌ FAIL'
+              const rep = r.report
+              body = [
+                '## QSE Architecture Gate ' + gate,
+                '',
+                `**QSE4:** ${r.qse4} (threshold: ${r.threshold})`,
+                `**QSE_test:** ${rep.qse_test ?? 'n/a'}`,
+                `**QSE_combined:** ${rep.qse_combined ?? 'n/a'}`,
+                '',
+                '### Sub-metrics',
+                '| Metric | Score |',
+                '|--------|-------|',
+                `| S (Structure) | ${rep.metrics.S} |`,
+                `| T_ddd (DDD Conformance) | ${rep.metrics.T_ddd} |`,
+                `| G (Graph Coupling) | ${rep.metrics.G} |`,
+                `| E (Excess Complexity) | ${rep.metrics.E} |`,
+                '',
+              ].join('\n')
+
+              const defects = rep.defects
+              const total = Object.values(defects).reduce((a, b) => a + b.length, 0)
+              if (total > 0) {
+                body += '### Defects\n'
+                for (const [type, files] of Object.entries(defects)) {
+                  if (files.length > 0) {
+                    body += `**${type}** (${files.length}):\n`
+                    files.forEach(f => body += `  - \`${f}\`\n`)
+                  }
+                }
+              }
+
+              if (r.failures.length > 0) {
+                body += '\n### Gate failures\n'
+                r.failures.forEach(f => body += `- ${f}\n`)
+              }
+            } catch (e) {
+              body = '## QSE Gate — ERROR\nCould not parse report: ' + e.message
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            })
+
+      - name: Fail if gate failed
+        if: steps.outcome.outputs.gate != 'PASS'
+        run: |
+          echo "QSE gate failed. See report above."
+          exit 1
