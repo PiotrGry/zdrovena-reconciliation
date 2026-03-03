@@ -52,7 +52,14 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
     sp.add_argument(
         "period",
         type=str,
-        help="Miesiąc w formacie YYYY-MM (np. 2025-06)",
+        nargs="?",
+        help="Miesiąc w formacie YYYY-MM (np. 2025-06). Można też użyć --period.",
+    )
+    sp.add_argument(
+        "--period",
+        type=str,
+        dest="period_flag",
+        help="Miesiąc w formacie YYYY-MM (np. 2025-06). Alternatywa dla pozycyjnego argumentu.",
     )
     sp.add_argument(
         "--dry-run",
@@ -120,11 +127,15 @@ def _configure_logging(verbose: bool = False) -> None:
 
 
 def _run(args: argparse.Namespace) -> None:
-    try:
-        year, month = _parse_month(args.period)
-    except argparse.ArgumentTypeError as exc:
-        print(f"❌ {exc}", file=sys.stderr)
-        sys.exit(1)
+        period_value = getattr(args, "period_flag", None) or getattr(args, "period", None)
+        if not period_value:
+            print("❌ Musisz podać miesiąc w formacie YYYY-MM jako argument pozycyjny lub --period YYYY-MM", file=sys.stderr)
+            sys.exit(1)
+        try:
+            year, month = _parse_month(period_value)
+        except argparse.ArgumentTypeError as exc:
+            print(f"❌ {exc}", file=sys.stderr)
+            sys.exit(1)
 
     verbose = getattr(args, "verbose", False)
     _configure_logging(verbose=verbose)
