@@ -20,7 +20,7 @@ jobs:
           cache: pip
 
       - name: Install QSE
-        run: pip install "git+https://github.com/PiotrGry/qse.git"
+        run: pip install "git+https://github.com/PiotrGry/qse-pkg.git"
 
       - name: Run QSE gate
         id: qse_gate
@@ -28,8 +28,8 @@ jobs:
           qse gate zdrovena/ \
             --threshold 0.80 \
             --fail-on-defects anemic_entity,zombie_entity,layer_violation \
-            --output-json qse_report.json \
-            --no-trace
+            --config qse.json \
+            --output-json qse_report.json
         continue-on-error: true
 
       - name: Set gate outcome
