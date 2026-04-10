@@ -80,11 +80,24 @@ Output defaults to `~/Downloads/report_<kind>_<year>-<month>.pdf`.
 | 6 | Build ZIP archive | — |
 | 7 | Send e-mail to accountant | Zoho SMTP |
 
-Flags: `--dry-run`, `--zip`, `--send`, `--reset`, `--verbose`.
+Flags: `--dry-run`, `--zip`, `--send`, `--reset`, `--verbose`, `--non-interactive`, `--ignore-warnings`.
+
+## Canva invoice download
+
+The `close` pipeline can automatically download Canva subscription invoices
+using a persistent Playwright browser profile. On first use (or when the session
+expires), a visible browser window opens for manual login:
+
+```bash
+zdrovena setup canva                      # one-time Canva login
+```
+
+The session is saved to `~/.zdrovena/canva_profile/` and reused in subsequent
+headless runs.
 
 ## Credentials
 
-All secrets are stored in **macOS Keychain** via `keyring`. Use the built-in setup wizard:
+All secrets are stored via `keyring` (macOS Keychain, Linux SecretService, etc.). Use the built-in setup wizard:
 
 ```bash
 zdrovena setup                # interactive wizard — prompts for all secrets
@@ -125,23 +138,28 @@ All secrets use Keychain account `humio`.
 |--------|----------|---------|
 | `ksef`  | cryptography, signxml, lxml | KSeF 2.0 e-invoicing |
 | `pdf`   | pypdf, pdf2image | PDF date extraction |
-| `report`| playwright | Browser-based report download |
+| `report`| playwright, playwright-stealth | Browser-based report & Canva download |
 | `all`   | ksef + pdf + report | everything |
+| `dev`   | pytest, pytest-cov, responses | testing |
 
 ## Project structure
 
 ```
 zdrovena/
 ├── cli.py                          # entry-point, argparse
+├── __init__.py                     # package version
 ├── common/
 │   ├── __init__.py                 # re-exports
 │   ├── client.py                   # FakturowniaClient
 │   ├── config.py                   # shared constants
-│   └── formatting.py               # ANSI, months, to_decimal
+│   ├── exceptions.py               # typed exception hierarchy
+│   ├── formatting.py               # ANSI, months, to_decimal
+│   └── retry.py                    # retry-with-backoff for HTTP calls
 ├── audit/
 │   ├── api.py                      # AuditAPI (WZ/FV data)
 │   ├── bottles.py                  # BottleReconciler
-│   ├── report_downloader.py            # Playwright-based report download
+│   ├── sections.py                 # audit analysis sections (§1–§9)
+│   ├── report_downloader.py        # Playwright-based report download
 │   └── commands/
 │       ├── audit_cmd.py
 │       ├── export.py
@@ -154,6 +172,8 @@ zdrovena/
     ├── config.py                   # vendors, company, Zoho/KSeF cfg
     ├── state.py                    # PipelineState (.state.json)
     ├── console.py                  # ConsoleReporter
+    ├── canva_downloader.py         # Canva invoice PDF download (Playwright)
+    ├── download_watcher.py         # interactive download watcher (~/Downloads)
     ├── email_service.py            # Zoho SMTP
     ├── zip_service.py              # ZIP archive
     ├── invoice_date_check.py       # PDF date extraction / OCR
@@ -165,14 +185,25 @@ zdrovena/
     └── commands/
         ├── close_cmd.py
         └── setup_cmd.py            # secrets wizard + OAuth flows
+tests/                              # pytest test suite
+scripts/                            # CI helpers (quality gate, analyzers)
+docs/                               # SPEC, PLAN, RUNBOOK, ADRs
+.github/workflows/                  # CI pipelines
+```
+
+## Development
+
+```bash
+pip install -e '.[all,dev]'
+pytest
 ```
 
 ## Requirements
 
 - Python ≥ 3.12
-- macOS (Keychain for credentials)
+- `keyring`-supported secret backend (macOS Keychain, Linux SecretService, etc.)
 - Fakturownia API token
-- Playwright + Chromium (for `report` command): `pip install playwright && playwright install chromium`
+- Playwright + Chromium (for `report` and `close` commands): `pip install playwright && playwright install chromium`
 - Zoho Mail credentials (for month-close)
 
 ## License

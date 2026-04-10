@@ -15,8 +15,12 @@ build/
 *.swp
 *.swo
 
+# Secrets
+.env
+
 # OS
 .DS_Store
+._*
 __MACOSX/
 Thumbs.db
 

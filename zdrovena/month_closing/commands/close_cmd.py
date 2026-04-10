@@ -127,15 +127,15 @@ def _configure_logging(verbose: bool = False) -> None:
 
 
 def _run(args: argparse.Namespace) -> None:
-        period_value = getattr(args, "period_flag", None) or getattr(args, "period", None)
-        if not period_value:
-            print("❌ Musisz podać miesiąc w formacie YYYY-MM jako argument pozycyjny lub --period YYYY-MM", file=sys.stderr)
-            sys.exit(1)
-        try:
-            year, month = _parse_month(period_value)
-        except argparse.ArgumentTypeError as exc:
-            print(f"❌ {exc}", file=sys.stderr)
-            sys.exit(1)
+    period_value = getattr(args, "period_flag", None) or getattr(args, "period", None)
+    if not period_value:
+        print("❌ Musisz podać miesiąc w formacie YYYY-MM jako argument pozycyjny lub --period YYYY-MM", file=sys.stderr)
+        sys.exit(1)
+    try:
+        year, month = _parse_month(period_value)
+    except argparse.ArgumentTypeError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        sys.exit(1)
 
     verbose = getattr(args, "verbose", False)
     _configure_logging(verbose=verbose)
