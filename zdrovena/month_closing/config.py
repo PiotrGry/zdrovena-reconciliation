@@ -150,6 +150,6 @@ COST_INVOICE_OVERLAP_DAYS = 20
 
 # ─── Manual Invoice Download Watcher ──────────────────────────────────────
 
-DOWNLOAD_WATCH_DIR = Path.home() / "Downloads"
+DOWNLOAD_WATCH_DIR = BASE_DIR / "inbox"
 DOWNLOAD_WATCH_TIMEOUT = 120
 DOWNLOAD_WATCH_POLL = 2

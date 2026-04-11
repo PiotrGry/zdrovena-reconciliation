@@ -130,7 +130,7 @@ class PreflightChecker:
         if not watch_dir.exists():
             for v in manual_vendors:
                 self.result.missing_vendors.append(v)
-                print(f"  │  ⚠️  {v.name}: ~/Downloads not found")
+                print(f"  │  ⚠️  {v.name}: inbox/ not found")
             return
 
         zoho: ZohoMailClient | None = None
@@ -200,7 +200,7 @@ class PreflightChecker:
                     self.result.matches.append((vendor_cfg, target))
                     print(f"  │  ✅ {name}: found {target.name} (from email)")
                     return True
-            print(f"  │  ⚠️  {name}: expected {', '.join(expected_files)} — not in ~/Downloads")
+            print(f"  │  ⚠️  {name}: expected {', '.join(expected_files)} — not in inbox/")
             if email_urls:
                 for url in email_urls:
                     print(f"  │     🔗 {url}")
@@ -215,7 +215,7 @@ class PreflightChecker:
             print(f"  │  ✅ {name}: found {newest.name} (glob match)")
             return True
 
-        print(f"  │  ⚠️  {name}: no matching PDF in ~/Downloads")
+        print(f"  │  ⚠️  {name}: no matching PDF in inbox/")
         if fallback_url:
             print(f"  │     🔗 Download from: {fallback_url}")
         return False
@@ -250,7 +250,7 @@ class PreflightChecker:
                     ({"name": "PKO BP", "download_glob": "Wyciag_na_zadanie_*.pdf"}, best)
                 )
                 self.result.bank_statement_found = True
-                print(f"  └─ ✅ Bank statement: {best.name} (in ~/Downloads)")
+                print(f"  └─ ✅ Bank statement: {best.name} (in inbox/)")
                 return
             if pko_downloads:
                 wrong = pko_downloads[0]
@@ -259,7 +259,7 @@ class PreflightChecker:
         self.result.bank_statement_found = False
         self.result.warnings.append(
             f"Bank statement (PKO BP) for {self.year}-{self.month:02d} not found. "
-            "Download from iPKO and place in ~/Downloads."
+            "Download from iPKO and place in inbox/."
         )
         if self.month == 12:
             gen_year, gen_month = self.year + 1, 1
@@ -278,7 +278,7 @@ class PreflightChecker:
                 continue
             if not watch_dir.exists():
                 self.result.missing_reports.append(rpt)
-                print(f"  │  ⚠️  {rpt['name']}: ~/Downloads not found")
+                print(f"  │  ⚠️  {rpt['name']}: inbox/ not found")
                 continue
             matches = sorted(
                 watch_dir.glob(rpt["glob"]), key=lambda f: f.stat().st_mtime, reverse=True
@@ -291,7 +291,7 @@ class PreflightChecker:
                 print(f"  │  ✅ {rpt['name']}: found {newest.name}")
             else:
                 self.result.missing_reports.append(rpt)
-                print(f"  │  ⚠️  {rpt['name']}: not found in ~/Downloads")
+                print(f"  │  ⚠️  {rpt['name']}: not found in inbox/")
                 if rpt.get("url"):
                     print(f"  │     🔗 {rpt['url']}")
         print("  └─")

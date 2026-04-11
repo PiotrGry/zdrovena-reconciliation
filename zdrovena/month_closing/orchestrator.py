@@ -3,7 +3,7 @@ zdrovena.month_closing.orchestrator – Month Close Orchestrator
 ================================================================
 Central controller that runs the full monthly accounting close pipeline:
 
-  0. Pre-flight: check ~/Downloads for manual invoices, reports & bank statement
+  0. Pre-flight: check inbox/ for manual invoices, reports & bank statement
   1. Create folder structure
   2. Download sales invoices (Fakturownia)
   3. Verify JPK_FA, JPK_V7M, VAT register
@@ -49,7 +49,6 @@ from zdrovena.month_closing.config import (
     VendorConfig,
 )
 from zdrovena.month_closing.console import ConsoleReporter
-from zdrovena.month_closing.download_watcher import interactive_download
 from zdrovena.month_closing.email_service import EmailService
 from zdrovena.month_closing.invoice_date_check import (
     delete_rejected,
@@ -239,29 +238,12 @@ class MonthCloseOrchestrator:
         self.report.warnings.extend(pf.warnings)
         self._preflight_checker = checker
 
-        # Try interactive download for manual vendors that have a fallback_url
-        watchable = [
-            v for v in pf.missing_vendors
-            if v.fallback_url and v.download_glob
-        ]
-        if watchable and not self.dry_run:
-            if self.non_interactive:
-                names = [v.name for v in watchable]
-                raise RuntimeError(
-                    f"--non-interactive: required manual downloads missing: "
-                    f"{', '.join(names)}. Place files in ~/Downloads and retry."
-                )
-            resolved = self._interactive_download(watchable, checker)
-            # Remove resolved vendors from missing list
-            for v in resolved:
-                if v in pf.missing_vendors:
-                    pf.missing_vendors.remove(v)
-
         blockers = checker.build_blockers()
         if blockers:
             self.out.blocker_box(blockers)
             self.out.plain()
-            self.out.plain("  Place all files in: ~/Downloads")
+            self.out.plain(f"  Run:  zdrovena preflight {self.year}-{self.month:02d}  for download links")
+            self.out.plain("  Place files in: inbox/")
             self.out.plain(
                 f"  Then rerun:  zdrovena close {self.year}-{self.month:02d}"
                 f"{' --dry-run' if self.dry_run else ''}"
@@ -276,19 +258,6 @@ class MonthCloseOrchestrator:
             else:
                 raise SystemExit(1)
         self._mark_step_done("Pre-flight")
-
-    def _interactive_download(
-        self,
-        vendors: list[VendorConfig],
-        checker: PreflightChecker,
-    ) -> list[VendorConfig]:
-        """Open fallback URLs and watch ~/Downloads for matching files."""
-
-        def _on_match(vendor: VendorConfig, path: Path) -> None:
-            checker.result.matches.append((vendor, path))
-
-        results = interactive_download(vendors, self.out, on_match=_on_match)
-        return [v for v, _ in results]
 
     def _step_1_create_folders(self) -> None:
         self.out.step(1, "Creating folder structure")
