@@ -1,0 +1,9 @@
+{
+  "layer_map": {
+    "common": "domain",
+    "audit": "application",
+    "month_closing": "application"
+  },
+  "fat_threshold": 10,
+  "enable_trace": false
+}

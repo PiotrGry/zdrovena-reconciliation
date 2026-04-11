@@ -1,21 +1,35 @@
 {
-  "gate": "PASS",
-  "qse4": 0.8947,
+  "gate": "FAIL",
+  "qse4": 0.6185,
   "threshold": 0.8,
-  "failures": [],
+  "failures": [
+    "QSE4=0.6185 below threshold 0.80",
+    "anemic_entity: 1 instance(s) \u2014 common/exceptions.py",
+    "zombie_entity: 2 instance(s) \u2014 common/client.py, common/exceptions.py"
+  ],
   "report": {
-    "qse_total": 0.8947,
+    "qse_total": 0.6185,
     "metrics": {
-      "S": 1.0,
-      "T_ddd": 0.6667,
+      "S": 0.1667,
+      "T_ddd": 0.4333,
       "G": 0.8071,
-      "E": 1.0,
+      "E": 0.6855,
       "Risk": 1.0
     },
     "defects": {
-      "anemic_entity": [],
-      "fat_service": [],
-      "zombie_entity": [],
+      "anemic_entity": [
+        "common/exceptions.py"
+      ],
+      "fat_service": [
+        "month_closing/console.py",
+        "month_closing/ksef.py",
+        "month_closing/orchestrator.py",
+        "month_closing/zoho_mail.py"
+      ],
+      "zombie_entity": [
+        "common/client.py",
+        "common/exceptions.py"
+      ],
       "layer_violation": []
     },
     "graph": {

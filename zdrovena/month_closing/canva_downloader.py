@@ -12,8 +12,13 @@ import os
 import time
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
-from playwright_stealth import Stealth
+try:
+    from playwright.sync_api import sync_playwright
+    from playwright_stealth import Stealth
+
+    _PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    _PLAYWRIGHT_AVAILABLE = False
 
 logger = logging.getLogger("zdrovena.canva")
 
@@ -92,6 +97,8 @@ def setup_canva_login() -> None:
     Opens a non-headless browser to allow the user to log in manually.
     Saves the session state to PROFILE_DIR.
     """
+    if not _PLAYWRIGHT_AVAILABLE:
+        raise RuntimeError("Playwright is required: pip install 'zdrovena[report]'")
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     _clean_singleton_locks()
 
@@ -140,6 +147,9 @@ def download_canva_invoice(
     Returns:
         The path to the saved PDF.
     """
+    if not _PLAYWRIGHT_AVAILABLE:
+        raise RuntimeError("Playwright is required: pip install 'zdrovena[report]'")
+
     if not PROFILE_DIR.exists():
         PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 

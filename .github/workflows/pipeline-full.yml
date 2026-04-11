@@ -21,10 +21,12 @@ jobs:
 
       - name: Install all tools
         run: |
-          pip install "git+https://github.com/PiotrGry/qse.git"
+          pip install "git+https://github.com/PiotrGry/qse-pkg.git"
           pip install ruff mypy bandit radon pylint
           pip install -e ".[dev]" 2>/dev/null || pip install -e . || true
           pip install pytest pytest-cov pytest-json-report
+          pip install playwright playwright-stealth 2>/dev/null || true
+          python -m playwright install --with-deps chromium 2>/dev/null || true
 
       # ── QSE ────────────────────────────────────────────────────────────────
       - name: QSE scan
@@ -32,8 +34,8 @@ jobs:
           qse gate zdrovena/ \
             --threshold 0.80 \
             --fail-on-defects anemic_entity,zombie_entity,layer_violation \
-            --output-json qse_report.json \
-            --no-trace || true
+            --config qse.json \
+            --output-json qse_report.json || true
 
       # ── Static analyzers ───────────────────────────────────────────────────
       - name: ruff

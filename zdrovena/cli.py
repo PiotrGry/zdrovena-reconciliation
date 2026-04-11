@@ -16,9 +16,17 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import date
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from project root (secrets for Zoho, Fakturownia, KSeF)
+_env_file = Path(__file__).resolve().parent.parent / ".env"
+if _env_file.is_file():
+    load_dotenv(_env_file)
 
 from zdrovena.audit.commands import audit_cmd, list_cmd, export, summary, products, report_cmd
-from zdrovena.month_closing.commands import close_cmd, setup_cmd
+from zdrovena.month_closing.commands import close_cmd, preflight_cmd, setup_cmd
 
 
 # ── Shared argument groups ────────────────────────────────────────────────────
@@ -98,6 +106,7 @@ def main() -> None:
     report_cmd.add_subparser(subparsers, parents=[period])
     products.add_subparser(subparsers)
     close_cmd.add_subparser(subparsers)
+    preflight_cmd.add_subparser(subparsers)
     setup_cmd.add_subparser(subparsers)
 
     args = parser.parse_args()

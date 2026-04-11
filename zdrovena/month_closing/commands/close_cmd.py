@@ -127,12 +127,14 @@ def _configure_logging(verbose: bool = False) -> None:
 
 
 def _run(args: argparse.Namespace) -> None:
-    period_value = getattr(args, "period_flag", None) or getattr(args, "period", None)
+    pos_period = getattr(args, "period", None)
+    flag_period = getattr(args, "period_flag", None)
+    if pos_period and flag_period and pos_period != flag_period:
+        print(f"❌ Podano dwa różne okresy: '{pos_period}' (pozycyjny) i '{flag_period}' (--period). Użyj jednego.", file=sys.stderr)
+        sys.exit(1)
+    period_value = flag_period or pos_period
     if not period_value:
-        print(
-            "❌ Musisz podać miesiąc w formacie YYYY-MM jako argument pozycyjny lub --period YYYY-MM",
-            file=sys.stderr,
-        )
+        print("❌ Musisz podać miesiąc w formacie YYYY-MM jako argument pozycyjny lub --period YYYY-MM", file=sys.stderr)
         sys.exit(1)
     try:
         year, month = _parse_month(period_value)
@@ -193,6 +195,9 @@ def _run(args: argparse.Namespace) -> None:
         else:
             report = orchestrator.execute()
 
+    except KeyboardInterrupt:
+        print("\n⏹ Przerwano przez użytkownika.")
+        sys.exit(130)
     except SystemExit:
         raise
     except Exception as exc:
