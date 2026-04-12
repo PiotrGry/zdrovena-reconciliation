@@ -44,6 +44,7 @@ class PreflightChecker:
         cost_date_to: str,
         dry_run: bool,
         get_secret: object,
+        no_browser: bool = False,
     ) -> None:
         self.year = year
         self.month = month
@@ -53,6 +54,7 @@ class PreflightChecker:
         self.cost_date_to = cost_date_to
         self.dry_run = dry_run
         self._get_secret = get_secret
+        self.no_browser = no_browser
         self.result = PreflightResult()
 
     def run(self) -> PreflightResult:
@@ -271,29 +273,59 @@ class PreflightChecker:
     def _check_reports(self) -> None:
         watch_dir = DOWNLOAD_WATCH_DIR
         print("  ┌─ Fakturownia reports")
+
+        # First pass: check what's already present
+        missing: list[dict] = []
         for rpt in FAKTUROWNIA_REPORTS:
             dest = self.month_dir / rpt["dest_name"]
             if dest.exists():
                 print(f"  │  ✅ {rpt['name']}: {dest.name} (in month folder)")
                 continue
-            if not watch_dir.exists():
-                self.result.missing_reports.append(rpt)
-                print(f"  │  ⚠️  {rpt['name']}: inbox/ not found")
-                continue
-            matches = sorted(
-                watch_dir.glob(rpt["glob"]), key=lambda f: f.stat().st_mtime, reverse=True
-            )
-            if matches:
-                newest = matches[0]
-                self.result.matches.append(
-                    ({"name": rpt["name"], "dest_name": rpt["dest_name"]}, newest)
+            if watch_dir.exists():
+                matches = sorted(
+                    watch_dir.glob(rpt["glob"]),
+                    key=lambda f: f.stat().st_mtime,
+                    reverse=True,
                 )
-                print(f"  │  ✅ {rpt['name']}: found {newest.name}")
-            else:
-                self.result.missing_reports.append(rpt)
-                print(f"  │  ⚠️  {rpt['name']}: not found in inbox/")
-                if rpt.get("url"):
-                    print(f"  │     🔗 {rpt['url']}")
+                if matches:
+                    newest = matches[0]
+                    self.result.matches.append(
+                        ({"name": rpt["name"], "dest_name": rpt["dest_name"]}, newest)
+                    )
+                    print(f"  │  ✅ {rpt['name']}: found {newest.name}")
+                    continue
+            missing.append(rpt)
+
+        # Second pass: auto-download missing reports via Playwright
+        if missing and not self.no_browser:
+            try:
+                from zdrovena.month_closing.fakturownia_reports import (
+                    download_fakturownia_reports,
+                )
+
+                print(f"  │  🌐 Attempting auto-download of {len(missing)} report(s)...")
+                downloaded = download_fakturownia_reports(
+                    missing,
+                    self.date_from,
+                    self.date_to,
+                    watch_dir,
+                )
+                for rpt_cfg, path in downloaded:
+                    self.result.matches.append(
+                        ({"name": rpt_cfg["name"], "dest_name": rpt_cfg["dest_name"]}, path)
+                    )
+                    print(f"  │  ✅ {rpt_cfg['name']}: auto-downloaded {path.name}")
+                    missing = [r for r in missing if r["name"] != rpt_cfg["name"]]
+            except Exception as exc:
+                logger.warning("Auto-download failed: %s", exc)
+                print(f"  │  ⚠️  Auto-download failed: {exc}")
+
+        # Remaining missing reports → manual URLs
+        for rpt in missing:
+            self.result.missing_reports.append(rpt)
+            print(f"  │  ⚠️  {rpt['name']}: not found in inbox/")
+            if rpt.get("url"):
+                print(f"  │     🔗 {rpt['url']}")
         print("  └─")
 
 

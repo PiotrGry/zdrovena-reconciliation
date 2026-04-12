@@ -232,6 +232,7 @@ class MonthCloseOrchestrator:
             cost_date_to=self.cost_date_to,
             dry_run=self.dry_run,
             get_secret=self._get_secret,
+            no_browser=self.non_interactive,
         )
         pf = checker.run()
         self.report.bank_statement_found = pf.bank_statement_found

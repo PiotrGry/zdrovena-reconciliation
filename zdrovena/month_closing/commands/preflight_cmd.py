@@ -65,6 +65,11 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Szczegółowe logowanie (DEBUG)",
     )
+    sp.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Skip Playwright auto-download of Fakturownia reports",
+    )
     sp.set_defaults(func=_run)
 
 
@@ -109,6 +114,7 @@ def _run(args: argparse.Namespace) -> None:
     print()
 
     try:
+        no_browser = getattr(args, "no_browser", False)
         checker = PreflightChecker(
             year=year,
             month=month,
@@ -118,6 +124,7 @@ def _run(args: argparse.Namespace) -> None:
             cost_date_to=cost_date_to,
             dry_run=True,
             get_secret=_get_secret,
+            no_browser=no_browser,
         )
         result = checker.run()
     except KeyboardInterrupt:
