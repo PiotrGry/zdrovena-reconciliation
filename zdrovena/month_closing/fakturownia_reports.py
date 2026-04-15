@@ -82,6 +82,40 @@ def download_fakturownia_reports(
     -------
     List of (report_config, downloaded_path) for successful downloads.
     """
+    from zdrovena.month_closing.config import (
+        FAKTUROWNIA_REPORT_RUNTIME,
+        FAKTUROWNIA_REPORT_TIMEOUT_MS,
+    )
+
+    runtime = FAKTUROWNIA_REPORT_RUNTIME.strip().lower()
+    resolved_timeout = timeout if timeout != 120_000 else FAKTUROWNIA_REPORT_TIMEOUT_MS
+    if runtime == "playwright":
+        return _download_reports_with_playwright(
+            reports,
+            date_from,
+            date_to,
+            output_dir,
+            headless=headless,
+            timeout=resolved_timeout,
+        )
+
+    logger.warning(
+        "Unsupported report runtime '%s' — skipping auto-download (manual fallback remains)",
+        runtime,
+    )
+    return []
+
+
+def _download_reports_with_playwright(
+    reports: list[dict],
+    date_from: str,
+    date_to: str,
+    output_dir: Path,
+    *,
+    headless: bool,
+    timeout: int,
+) -> list[tuple[dict, Path]]:
+    """Current runtime adapter: Playwright implementation."""
     try:
         from playwright.sync_api import sync_playwright
         from playwright_stealth import Stealth
@@ -168,7 +202,9 @@ def _download_one_report(
     name = rpt["name"]
     url = rpt["url"]
     dest_name = rpt["dest_name"]
-    selector = rpt.get("download_selector", DL_LINK_SEL)
+    from zdrovena.month_closing.config import FAKTUROWNIA_REPORT_DOWNLOAD_SELECTOR
+
+    selector = rpt.get("download_selector", FAKTUROWNIA_REPORT_DOWNLOAD_SELECTOR or DL_LINK_SEL)
 
     params = (
         f"?date_from={date_from}&date_to={date_to}"

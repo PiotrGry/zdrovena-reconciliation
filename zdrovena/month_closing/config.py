@@ -74,6 +74,12 @@ FAKTUROWNIA_REPORTS: list[dict] = [
     },
 ]
 
+# Runtime config for report automation. Keep Playwright as default now, but
+# this seam allows a future browser-use/cloud adapter without changing preflight.
+FAKTUROWNIA_REPORT_RUNTIME = "playwright"
+FAKTUROWNIA_REPORT_TIMEOUT_MS = 120_000
+FAKTUROWNIA_REPORT_DOWNLOAD_SELECTOR = "#job_download_link a[href*='/jobs/']"
+
 # ─── Zoho Mail ────────────────────────────────────────────────────────────────
 
 ZOHO_EMAIL = "piotr@wodahumio.pl"

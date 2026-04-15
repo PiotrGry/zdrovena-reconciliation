@@ -119,6 +119,37 @@ class TestGetCredentials:
 
 
 class TestDownloadFakturowniaReportsContract:
+    def test_unknown_runtime_returns_empty(self, tmp_path):
+        from zdrovena.month_closing.fakturownia_reports import download_fakturownia_reports
+
+        with patch("zdrovena.month_closing.config.FAKTUROWNIA_REPORT_RUNTIME", "browser-use"):
+            result = download_fakturownia_reports(
+                [{"name": "JPK_FA", "url": "http://x", "dest_name": "JPK_FA.xml"}],
+                "2026-03-01",
+                "2026-04-01",
+                tmp_path,
+            )
+        assert result == []
+
+    def test_default_timeout_uses_config_runtime_timeout(self, tmp_path):
+        from zdrovena.month_closing.fakturownia_reports import download_fakturownia_reports
+
+        with (
+            patch("zdrovena.month_closing.config.FAKTUROWNIA_REPORT_RUNTIME", "playwright"),
+            patch("zdrovena.month_closing.config.FAKTUROWNIA_REPORT_TIMEOUT_MS", 7777),
+            patch(
+                "zdrovena.month_closing.fakturownia_reports._download_reports_with_playwright",
+                return_value=[],
+            ) as mock_runtime,
+        ):
+            download_fakturownia_reports(
+                [{"name": "JPK_FA", "url": "http://x", "dest_name": "JPK_FA.xml"}],
+                "2026-03-01",
+                "2026-04-01",
+                tmp_path,
+            )
+        assert mock_runtime.call_args.kwargs["timeout"] == 7777
+
     def test_returns_empty_when_playwright_missing(self, tmp_path):
         from zdrovena.month_closing.fakturownia_reports import download_fakturownia_reports
 
@@ -289,3 +320,56 @@ class TestDownloadFakturowniaReportsContract:
         )
         assert result is None
         assert not (tmp_path / "JPK_FA.xml").exists()
+
+    def test_download_selector_uses_config_default_when_not_in_report(self, tmp_path):
+        from zdrovena.month_closing.fakturownia_reports import _download_one_report
+
+        class _DownloadContext:
+            def __init__(self, target_path: Path):
+                self.target_path = target_path
+                self.value = SimpleNamespace(save_as=self._save_as)
+
+            def _save_as(self, _path: str) -> None:
+                self.target_path.write_text("x" * 120)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakePage:
+            used_selector = None
+
+            def goto(self, *_args, **_kwargs):
+                return None
+
+            def wait_for_timeout(self, *_args, **_kwargs):
+                return None
+
+            def wait_for_selector(self, selector, *_args, **_kwargs):
+                self.used_selector = selector
+                return None
+
+            def expect_download(self, *_args, **_kwargs):
+                return _DownloadContext(tmp_path / "JPK_FA.xml")
+
+            def click(self, selector, *_args, **_kwargs):
+                self.used_selector = selector
+                return None
+
+        fake_page = _FakePage()
+        with patch(
+            "zdrovena.month_closing.config.FAKTUROWNIA_REPORT_DOWNLOAD_SELECTOR",
+            "#custom_selector",
+        ):
+            result = _download_one_report(
+                fake_page,
+                {"name": "JPK_FA", "url": "http://x", "dest_name": "JPK_FA.xml"},
+                "2026-03-01",
+                "2026-04-01",
+                tmp_path,
+                1000,
+            )
+        assert result == tmp_path / "JPK_FA.xml"
+        assert fake_page.used_selector == "#custom_selector"
