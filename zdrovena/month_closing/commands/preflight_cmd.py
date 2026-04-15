@@ -136,11 +136,14 @@ def _run(args: argparse.Namespace) -> None:
 
     # Summary
     print()
-    if result.missing_vendors or not result.bank_statement_found:
+    if result.missing_vendors or result.missing_reports or not result.bank_statement_found:
         missing = [v.name for v in result.missing_vendors]
+        missing_reports = [r["name"] for r in result.missing_reports]
         parts = []
         if missing:
             parts.append(f"missing invoices: {', '.join(missing)}")
+        if missing_reports:
+            parts.append(f"missing reports: {', '.join(missing_reports)}")
         if not result.bank_statement_found:
             parts.append("bank statement not found")
         print(f"⚠️  {'; '.join(parts)}")

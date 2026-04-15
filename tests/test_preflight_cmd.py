@@ -10,6 +10,7 @@ import pytest
 def _mock_result(missing=None, bank_found=True):
     result = MagicMock()
     result.missing_vendors = missing or []
+    result.missing_reports = []
     result.bank_statement_found = bank_found
     result.warnings = []
     return result
@@ -67,6 +68,19 @@ class TestPreflightCheckerContract:
         vendor = MagicMock()
         vendor.name = "Canva"
         mock_checker_cls.return_value.run.return_value = _mock_result(missing=[vendor])
+
+        from zdrovena.month_closing.commands.preflight_cmd import _run
+        with pytest.raises(SystemExit) as exc_info:
+            _run(_make_args(period="2025-03"))
+        assert exc_info.value.code == 1
+
+    @patch("zdrovena.month_closing.commands.preflight_cmd._get_secret", return_value=None)
+    @patch("zdrovena.month_closing.preflight.PreflightChecker")
+    def test_missing_reports_exits_nonzero(self, mock_checker_cls, mock_secret):
+        """Missing reports should cause exit code 1."""
+        result = _mock_result()
+        result.missing_reports = [{"name": "JPK_V7M"}]
+        mock_checker_cls.return_value.run.return_value = result
 
         from zdrovena.month_closing.commands.preflight_cmd import _run
         with pytest.raises(SystemExit) as exc_info:
