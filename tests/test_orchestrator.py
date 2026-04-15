@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -75,6 +76,22 @@ class TestNonInteractive:
     def test_flag_default_false(self):
         orch = _make_orchestrator()
         assert orch.non_interactive is False
+
+    @patch("zdrovena.month_closing.orchestrator.PreflightChecker")
+    def test_step0_preflight_forwards_non_interactive_as_no_browser(self, mock_checker_cls):
+        orch = _make_orchestrator(non_interactive=True)
+        mock_checker = MagicMock()
+        mock_checker.run.return_value = SimpleNamespace(
+            bank_statement_found=True,
+            warnings=[],
+        )
+        mock_checker.build_blockers.return_value = []
+        mock_checker_cls.return_value = mock_checker
+
+        orch._step_0_preflight()
+
+        call_kwargs = mock_checker_cls.call_args.kwargs
+        assert call_kwargs["no_browser"] is True
 
 
 # ── Constructor validation ────────────────────────────────────────────────────

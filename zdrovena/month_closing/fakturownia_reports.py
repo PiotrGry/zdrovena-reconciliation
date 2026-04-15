@@ -89,14 +89,22 @@ def download_fakturownia_reports(
         logger.warning("Playwright not installed — skipping auto-download")
         return []
 
-    login, password = _get_credentials()
+    try:
+        login, password = _get_credentials()
+    except Exception as exc:
+        logger.warning("Fakturownia credentials unavailable — skipping auto-download: %s", exc)
+        return []
     output_dir.mkdir(parents=True, exist_ok=True)
     downloaded: list[tuple[dict, Path]] = []
 
     logger.info("Launching browser (headless=%s) for Fakturownia reports...", headless)
 
     with Stealth().use_sync(sync_playwright()) as pw:
-        browser = pw.chromium.launch(headless=headless)
+        try:
+            browser = pw.chromium.launch(headless=headless)
+        except Exception as exc:
+            logger.warning("Unable to launch Playwright browser — skipping auto-download: %s", exc)
+            return []
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
 
