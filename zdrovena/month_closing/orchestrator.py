@@ -355,8 +355,8 @@ class MonthCloseOrchestrator:
         if self._skip_if_done("Cost invoices"):
             return
         self.out.info(
-            f"📅 Issue date: {self.date_from} → {self.date_to} "
-            f"(Zoho email search extends to {self.cost_date_to})"
+            f"📅 Issue date: {self.date_from} → {self.cost_date_to} "
+            f"(overlap window: +{COST_INVOICE_OVERLAP_DAYS} days for early-next-month invoices)"
         )
         found_vendors: dict[str, str] = {}
         total_cost_files = 0
@@ -367,7 +367,7 @@ class MonthCloseOrchestrator:
             self.out.section_start("Phase 1: KSeF verification")
             ksef_client = KSeFClient()
             ksef_client.authenticate()
-            ksef_invoices = ksef_client.query_purchase_invoices(self.date_from, self.date_to)
+            ksef_invoices = ksef_client.query_purchase_invoices(self.date_from, self.cost_date_to)
             self.report.ksef_count = len(ksef_invoices)
             ksef_numbers = {
                 inv.get("ksefNumber", "") for inv in ksef_invoices if inv.get("ksefNumber")
@@ -383,7 +383,7 @@ class MonthCloseOrchestrator:
         # Phase 2: Fakturownia
         self.out.section_mid("Phase 2: Fakturownia (cost invoices + PDFs)")
         fakt_client = FakturowniaClient.from_keyring()
-        fakt_invoices = fakt_client.fetch_cost_invoices(self.date_from, self.date_to)
+        fakt_invoices = fakt_client.fetch_cost_invoices(self.date_from, self.cost_date_to)
         self._cost_invoices = fakt_invoices
 
         # Phase 2a: Cross-verify KSeF vs Fakturownia
@@ -402,6 +402,12 @@ class MonthCloseOrchestrator:
             self.out.item(
                 f"✅ KSeF cross-check: all {len(ksef_numbers)} invoice(s) found in Fakturownia"
             )
+
+        # Narrow fakt_invoices to the actual month (fetch was wide to catch early-next-month invoices)
+        fakt_invoices = [
+            inv for inv in fakt_invoices
+            if self.date_from <= (inv.get("sell_date") or inv.get("issue_date") or "") <= self.date_to
+        ]
 
         for vendor_cfg in EXPECTED_VENDORS:
             if vendor_cfg.skip:
