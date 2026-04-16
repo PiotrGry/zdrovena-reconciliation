@@ -103,6 +103,14 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
         default=False,
         help="Kontynuuj tworzenie ZIP mimo ostrzeżeń (wysyłka e-mail nadal zablokowana)",
     )
+    sp.add_argument(
+        "--ignore-vendor",
+        action="append",
+        dest="ignore_vendors",
+        default=[],
+        metavar="VENDOR",
+        help="Pomiń weryfikację podanego dostawcy (można podać wielokrotnie, np. --ignore-vendor PayU)",
+    )
     sp.set_defaults(func=_run)
 
 
@@ -152,6 +160,7 @@ def _run(args: argparse.Namespace) -> None:
     do_reset = getattr(args, "reset", False)
     non_interactive = getattr(args, "non_interactive", False)
     ignore_warnings = getattr(args, "ignore_warnings", False)
+    ignore_vendors: list[str] = getattr(args, "ignore_vendors", [])
 
     zip_only = do_zip and not do_send
     send_only = do_send and not do_zip
@@ -178,6 +187,7 @@ def _run(args: argparse.Namespace) -> None:
             dry_run=dry_run,
             non_interactive=non_interactive,
             ignore_warnings=ignore_warnings,
+            ignore_vendors=ignore_vendors,
         )
 
         if do_reset:

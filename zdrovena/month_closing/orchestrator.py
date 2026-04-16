@@ -96,6 +96,7 @@ class MonthCloseOrchestrator:
         *,
         non_interactive: bool = False,
         ignore_warnings: bool = False,
+        ignore_vendors: list[str] | None = None,
     ) -> None:
         if not (1 <= month <= 12):
             raise ValueError(f"Invalid month: {month}")
@@ -107,6 +108,7 @@ class MonthCloseOrchestrator:
         self.dry_run = dry_run
         self.non_interactive = non_interactive
         self.ignore_warnings = ignore_warnings
+        self.ignore_vendors: set[str] = {v.lower() for v in (ignore_vendors or [])}
         self.month_pl = POLISH_MONTHS[month]
         self.month_en = ENGLISH_MONTHS[month]
         last_day = calendar.monthrange(year, month)[1]
@@ -458,6 +460,7 @@ class MonthCloseOrchestrator:
             and not v.manual
             and not v.skip
             and not v.browser_download
+            and v.name.lower() not in self.ignore_vendors
         ]
         browser_pending = [
             v
@@ -466,6 +469,7 @@ class MonthCloseOrchestrator:
             and v.name not in found_vendors
             and v.invoice_id_re
             and not v.skip
+            and v.name.lower() not in self.ignore_vendors
         ]
         need_zoho = bool(still_missing or browser_pending)
         if need_zoho:
