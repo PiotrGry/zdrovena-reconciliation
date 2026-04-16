@@ -97,9 +97,6 @@ class PreflightChecker:
             blockers.append(
                 f"  ❌ PKO BP bank statement for {self.year}-{self.month:02d} → download from iPKO"
             )
-        for rpt in self.result.missing_reports:
-            url = rpt.get("url", "")
-            blockers.append(f"  ❌ {rpt['name']}: {url}" if url else f"  ❌ {rpt['name']}")
         return blockers
 
     def copy_to_folders(self, month_dir: Path, costs_dir: Path) -> None:
@@ -296,36 +293,7 @@ class PreflightChecker:
                     continue
             missing.append(rpt)
 
-        # Second pass: auto-download missing reports via Playwright
-        if missing and not self.no_browser:
-            try:
-                from zdrovena.month_closing.fakturownia_reports import (
-                    download_fakturownia_reports,
-                )
-
-                print(f"  │  🌐 Attempting auto-download of {len(missing)} report(s)...")
-                downloaded = download_fakturownia_reports(
-                    missing,
-                    self.date_from,
-                    self.date_to,
-                    watch_dir,
-                )
-                for rpt_cfg, path in downloaded:
-                    self.result.matches.append(
-                        ({"name": rpt_cfg["name"], "dest_name": rpt_cfg["dest_name"]}, path)
-                    )
-                    print(f"  │  ✅ {rpt_cfg['name']}: auto-downloaded {path.name}")
-                    missing = [r for r in missing if r["name"] != rpt_cfg["name"]]
-                if missing and not downloaded:
-                    print(
-                        "  │  ℹ️  Auto-download did not complete. If needed, try: "
-                        ".venv/bin/python -m playwright install chromium"
-                    )
-            except Exception as exc:
-                logger.warning("Auto-download failed: %s", exc)
-                print(f"  │  ⚠️  Auto-download failed: {exc}")
-
-        # Remaining missing reports → manual URLs
+        # Remaining missing reports listed below (auto-download happens in orchestrator step 3)
         for rpt in missing:
             self.result.missing_reports.append(rpt)
             print(f"  │  ⚠️  {rpt['name']}: not found in inbox/")

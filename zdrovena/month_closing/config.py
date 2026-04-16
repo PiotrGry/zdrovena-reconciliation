@@ -58,14 +58,18 @@ FAKTUROWNIA_REPORTS: list[dict] = [
         "name": "JPK_FA",
         "glob": "zdrovena-*-jpk_fa*",
         "dest_name": "JPK_FA.xml",
-        "url": "https://zdrovena.fakturownia.pl/reports/jpk_fa",
+        # The server requires kind, query_date_kind and form_variant to start the
+        # async generation job.  Without them, submitted=true is ignored and no job
+        # is triggered.  date_from/date_to/submitted=true are appended at runtime.
+        "url": "https://zdrovena.fakturownia.pl/reports/jpk_fa?kind=jpk_fa&query_date_kind=transaction_date&form_variant=4",
         "download_button_texts": ["Eksport do XML", "Export do XML"],
+        "use_wizard_navigation": True,
     },
     {
         "name": "JPK_V7M",
         "glob": "zdrovena-*-jpkv7m*",
         "dest_name": "JPK_V7M.xml",
-        "url": "https://zdrovena.fakturownia.pl/accounting/app/reports/jpk_vat/18277?form_variant=3",
+        "url": "https://zdrovena.fakturownia.pl/accounting/app/reports/jpk_vat",
         "append_date_params": False,
         "download_button_texts": ["Pobierz XML", "zapisz i generuj xml"],
         "use_wizard_navigation": True,
@@ -74,7 +78,11 @@ FAKTUROWNIA_REPORTS: list[dict] = [
         "name": "VAT Sales Register",
         "glob": "zdrovena-????-??-??_*",
         "dest_name": "Wykaz_sprzedazy_VAT.pdf",
+        # submitted=true starts the async job; the page then auto-navigates to S3.
+        # use_wizard_navigation routes through _run_manual_browser_session which
+        # captures the S3 PDF URL via page.on("response") and re-fetches it.
         "url": "https://zdrovena.fakturownia.pl/reports/income_tax_records",
+        "use_wizard_navigation": True,
     },
 ]
 

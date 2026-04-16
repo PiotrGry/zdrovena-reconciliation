@@ -55,6 +55,7 @@ from zdrovena.month_closing.invoice_date_check import (
     move_unverified,
     validate_invoice_dates,
 )
+from zdrovena.month_closing.fakturownia_reports import download_fakturownia_reports
 from zdrovena.month_closing.ksef import KSeFClient
 from zdrovena.month_closing.preflight import PreflightChecker
 from zdrovena.month_closing.state import PipelineState
@@ -243,21 +244,13 @@ class MonthCloseOrchestrator:
         if blockers:
             self.out.blocker_box(blockers)
             self.out.plain()
-            self.out.plain(f"  Run:  zdrovena preflight {self.year}-{self.month:02d}  for download links")
-            self.out.plain("  Place files in: inbox/")
+            self.out.plain("  Place missing files in: inbox/")
             self.out.plain(
                 f"  Then rerun:  zdrovena close {self.year}-{self.month:02d}"
                 f"{' --dry-run' if self.dry_run else ''}"
             )
             self.out.plain()
-            if self.dry_run:
-                # In dry-run mode don't abort; surface blockers as warnings
-                for b in blockers:
-                    msg = f"Preflight blocker (dry-run): {b}"
-                    self.report.warnings.append(msg)
-                    self.out.warn(msg)
-            else:
-                raise SystemExit(1)
+            raise SystemExit(1)
         self._mark_step_done("Pre-flight")
 
     def _step_1_create_folders(self) -> None:
@@ -319,21 +312,42 @@ class MonthCloseOrchestrator:
 
     def _step_3_jpk_reports(self) -> None:
         self.out.step(3, "Verifying JPK and VAT reports")
-        all_found = True
+
+        missing = [
+            rpt for rpt in FAKTUROWNIA_REPORTS
+            if not (self.month_dir / rpt["dest_name"]).exists()
+        ]
         for rpt in FAKTUROWNIA_REPORTS:
-            dest = self.month_dir / rpt["dest_name"]
-            if dest.exists():
-                self.out.ok(f"{rpt['name']}: {dest.name}")
-            else:
-                self.out.warn(f"{rpt['name']}: MISSING — {dest}")
-                self.report.warnings.append(f"{rpt['name']} not found in month folder.")
-                all_found = False
-        if all_found:
+            if rpt not in missing:
+                self.out.ok(f"{rpt['name']}: {rpt['dest_name']}")
+
+        if missing and not self.non_interactive and not self.dry_run:
+            self.out.info(
+                f"🌐 {len(missing)} report(s) missing — launching browser session..."
+            )
+            try:
+                downloaded = download_fakturownia_reports(
+                    missing,
+                    self.date_from,
+                    self.date_to,
+                    self.month_dir,
+                )
+                for rpt_cfg, path in downloaded:
+                    self.out.ok(f"{rpt_cfg['name']}: downloaded → {path.name}")
+                    missing = [r for r in missing if r["name"] != rpt_cfg["name"]]
+            except Exception as exc:
+                logger.warning("Playwright report download failed: %s", exc)
+                self.out.warn(f"Auto-download failed: {exc}")
+
+        for rpt in missing:
+            self.out.warn(f"{rpt['name']}: MISSING — {self.month_dir / rpt['dest_name']}")
+
+        if not missing:
             self._mark_step_done("JPK & VAT reports")
         else:
             raise RuntimeError(
-                "JPK/VAT reports incomplete. Download missing reports from "
-                "Fakturownia UI and place them in the month folder."
+                f"JPK/VAT reports incomplete: {', '.join(r['name'] for r in missing)}. "
+                "Download from Fakturownia UI and place in the month folder."
             )
 
     def _step_4_cost_invoices(self) -> None:
