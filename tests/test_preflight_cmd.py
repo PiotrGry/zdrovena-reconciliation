@@ -46,7 +46,8 @@ class TestPreflightCheckerContract:
         assert isinstance(call_kwargs["cost_date_to"], str), \
             f"cost_date_to must be str, got {type(call_kwargs['cost_date_to'])}"
         assert call_kwargs["date_from"] == "2025-03-01"
-        assert call_kwargs["date_to"] == "2025-04-01"
+        assert call_kwargs["date_to"] == "2025-03-31"
+        assert call_kwargs["cost_date_to"] == "2025-04-01"
 
     @patch("zdrovena.month_closing.commands.preflight_cmd._get_secret", return_value=None)
     @patch("zdrovena.month_closing.preflight.PreflightChecker")
@@ -59,7 +60,8 @@ class TestPreflightCheckerContract:
 
         call_kwargs = mock_checker_cls.call_args.kwargs
         assert call_kwargs["date_from"] == "2025-12-01"
-        assert call_kwargs["date_to"] == "2026-01-01"
+        assert call_kwargs["date_to"] == "2025-12-31"
+        assert call_kwargs["cost_date_to"] == "2026-01-01"
 
     @patch("zdrovena.month_closing.commands.preflight_cmd._get_secret", return_value=None)
     @patch("zdrovena.month_closing.preflight.PreflightChecker")

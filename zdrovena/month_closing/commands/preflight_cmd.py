@@ -10,6 +10,7 @@ Does NOT start the month-close pipeline.
 from __future__ import annotations
 
 import argparse
+import calendar
 import logging
 import re
 import sys
@@ -101,13 +102,14 @@ def _run(args: argparse.Namespace) -> None:
 
     month_dir = BASE_DIR / str(year) / MONTHS_FULL[month]
 
-    # Date range as strings (PreflightChecker expects "YYYY-MM-DD" strings)
+    # Date ranges as strings (PreflightChecker expects "YYYY-MM-DD" strings)
     date_from = f"{year}-{month:02d}-01"
+    last_day = calendar.monthrange(year, month)[1]
+    date_to = f"{year}-{month:02d}-{last_day:02d}"  # for Fakturownia reports
     if month == 12:
-        date_to = f"{year + 1}-01-01"
+        cost_date_to = f"{year + 1}-01-01"
     else:
-        date_to = f"{year}-{month + 1:02d}-01"
-    cost_date_to = date_to
+        cost_date_to = f"{year}-{month + 1:02d}-01"
 
     print(f"\n🔍 Pre-flight check for {year}-{month:02d}\n")
     print(f"   Inbox folder: {DOWNLOAD_WATCH_DIR}")

@@ -316,6 +316,11 @@ class PreflightChecker:
                     )
                     print(f"  │  ✅ {rpt_cfg['name']}: auto-downloaded {path.name}")
                     missing = [r for r in missing if r["name"] != rpt_cfg["name"]]
+                if missing and not downloaded:
+                    print(
+                        "  │  ℹ️  Auto-download did not complete. If needed, try: "
+                        ".venv/bin/python -m playwright install chromium"
+                    )
             except Exception as exc:
                 logger.warning("Auto-download failed: %s", exc)
                 print(f"  │  ⚠️  Auto-download failed: {exc}")

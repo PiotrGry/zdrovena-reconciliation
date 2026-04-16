@@ -59,12 +59,15 @@ FAKTUROWNIA_REPORTS: list[dict] = [
         "glob": "zdrovena-*-jpk_fa*",
         "dest_name": "JPK_FA.xml",
         "url": "https://zdrovena.fakturownia.pl/reports/jpk_fa",
+        "download_button_texts": ["Eksport do XML", "Export do XML"],
     },
     {
         "name": "JPK_V7M",
         "glob": "zdrovena-*-jpkv7m*",
         "dest_name": "JPK_V7M.xml",
-        "url": "https://zdrovena.fakturownia.pl/accounting/app/reports/jpk_vat",
+        "url": "https://zdrovena.fakturownia.pl/accounting/app/reports/jpk_vat/18277?form_variant=3",
+        "append_date_params": False,
+        "download_button_texts": ["Pobierz XML"],
     },
     {
         "name": "VAT Sales Register",

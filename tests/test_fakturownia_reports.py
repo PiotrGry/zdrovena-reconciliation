@@ -92,6 +92,19 @@ class TestPreflightReportBoundary:
             checker._check_reports()
         assert len(checker.result.missing_reports) == 3
 
+    def test_autodownload_empty_prints_playwright_install_hint(self, tmp_path, capsys):
+        checker, inbox = _make_checker(tmp_path, no_browser=False)
+        with (
+            patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox),
+            patch(
+                "zdrovena.month_closing.fakturownia_reports.download_fakturownia_reports",
+                return_value=[],
+            ),
+        ):
+            checker._check_reports()
+        out = capsys.readouterr().out
+        assert "playwright install chromium" in out
+
 
 class TestGetCredentials:
     def test_env_vars_override_keyring(self, monkeypatch):
@@ -119,6 +132,22 @@ class TestGetCredentials:
 
 
 class TestDownloadFakturowniaReportsContract:
+    def test_build_report_url_respects_append_flag(self):
+        from zdrovena.month_closing.fakturownia_reports import _build_report_url
+
+        params = "?date_from=2026-03-01&date_to=2026-03-31"
+        assert _build_report_url("https://x/reports/jpk_fa", params, append_date_params=True).endswith(
+            "jpk_fa?date_from=2026-03-01&date_to=2026-03-31"
+        )
+        assert (
+            _build_report_url(
+                "https://x/accounting/app/reports/jpk_vat/18277?form_variant=3",
+                params,
+                append_date_params=False,
+            )
+            == "https://x/accounting/app/reports/jpk_vat/18277?form_variant=3"
+        )
+
     def test_unknown_runtime_returns_empty(self, tmp_path):
         from zdrovena.month_closing.fakturownia_reports import download_fakturownia_reports
 
@@ -373,3 +402,229 @@ class TestDownloadFakturowniaReportsContract:
             )
         assert result == tmp_path / "JPK_FA.xml"
         assert fake_page.used_selector == "#custom_selector"
+
+    def test_click_timeout_falls_back_to_direct_job_url_download(self, tmp_path):
+        from zdrovena.month_closing.fakturownia_reports import _download_one_report
+
+        class _Response:
+            ok = True
+
+            @staticmethod
+            def body() -> bytes:
+                return b"x" * 256
+
+        class _DownloadContext:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class _LocatorFirst:
+            @staticmethod
+            def get_attribute(_name: str):
+                return "/jobs/123/result"
+
+        class _Locator:
+            first = _LocatorFirst()
+
+        class _Context:
+            class request:
+                @staticmethod
+                def get(_url: str, timeout: int = 0):  # noqa: ARG004
+                    return _Response()
+
+        class _FakePage:
+            context = _Context()
+            url = "https://zdrovena.fakturownia.pl/reports/income_tax_records?job_id=123"
+
+            def goto(self, *_args, **_kwargs):
+                return None
+
+            def wait_for_timeout(self, *_args, **_kwargs):
+                return None
+
+            def wait_for_selector(self, *_args, **_kwargs):
+                return None
+
+            def expect_download(self, *_args, **_kwargs):
+                return _DownloadContext()
+
+            def click(self, *_args, **_kwargs):
+                raise RuntimeError("not visible")
+
+            def locator(self, *_args, **_kwargs):
+                return _Locator()
+
+            def reload(self, *_args, **_kwargs):
+                return None
+
+        result = _download_one_report(
+            _FakePage(),
+            {"name": "VAT Sales Register", "url": "http://x", "dest_name": "vat.pdf"},
+            "2026-03-01",
+            "2026-04-01",
+            tmp_path,
+            1000,
+        )
+        assert result == tmp_path / "vat.pdf"
+        assert (tmp_path / "vat.pdf").exists()
+
+    def test_job_id_url_fallback_when_dom_link_missing(self, tmp_path):
+        from zdrovena.month_closing.fakturownia_reports import _download_via_job_url
+
+        class _Response:
+            ok = True
+
+            @staticmethod
+            def body() -> bytes:
+                return b"x" * 256
+
+        class _LocatorFirst:
+            @staticmethod
+            def get_attribute(_name: str):
+                return None
+
+        class _Locator:
+            first = _LocatorFirst()
+
+        class _Context:
+            class request:
+                @staticmethod
+                def get(_url: str, timeout: int = 0):  # noqa: ARG004
+                    return _Response()
+
+        class _FakePage:
+            context = _Context()
+            url = "https://zdrovena.fakturownia.pl/reports/jpk_fa?job_id=999"
+
+            def locator(self, *_args, **_kwargs):
+                return _Locator()
+
+            def wait_for_timeout(self, *_args, **_kwargs):
+                return None
+
+            def reload(self, *_args, **_kwargs):
+                return None
+
+        out = tmp_path / "jpk.xml"
+        ok = _download_via_job_url(_FakePage(), "#job_download_link a[href*='/jobs/']", out, timeout_ms=5000)
+        assert ok is True
+        assert out.exists()
+
+    def test_try_generate_and_download_uses_commit_button(self, tmp_path):
+        from zdrovena.month_closing.fakturownia_reports import _try_generate_and_download
+
+        class _Locator:
+            def __init__(self, count_value: int):
+                self._count_value = count_value
+
+            def count(self):
+                return self._count_value
+
+        class _DownloadContext:
+            def __init__(self, output: Path):
+                self.value = SimpleNamespace(save_as=lambda _p: output.write_text("x" * 120))
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakePage:
+            clicked = None
+
+            def locator(self, selector: str):
+                if selector == "a[href*='/jobs/']":
+                    return _Locator(0)
+                if selector == "input[name='commit']":
+                    return _Locator(1)
+                return _Locator(0)
+
+            def click(self, selector: str, **_kwargs):
+                self.clicked = selector
+
+            def expect_download(self, *_args, **_kwargs):
+                return _DownloadContext(tmp_path / "gen.xml")
+
+        ok = _try_generate_and_download(_FakePage(), tmp_path / "gen.xml", 5000)
+        assert ok is True
+
+    def test_try_download_by_button_text_clicks_export_button(self, tmp_path):
+        from zdrovena.month_closing.fakturownia_reports import _try_download_by_button_text
+
+        class _Locator:
+            def __init__(self, count_value: int):
+                self._count = count_value
+                self.first = self
+
+            def count(self):
+                return self._count
+
+            def click(self, **_kwargs):
+                return None
+
+        class _DownloadContext:
+            def __init__(self, output: Path):
+                self.value = SimpleNamespace(save_as=lambda _p: output.write_text("x" * 120))
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakePage:
+            def get_by_text(self, label: str, exact: bool = False):  # noqa: ARG002
+                if "XML" in label:
+                    return _Locator(1)
+                return _Locator(0)
+
+            def expect_download(self, *_args, **_kwargs):
+                return _DownloadContext(tmp_path / "btn.xml")
+
+        ok = _try_download_by_button_text(
+            _FakePage(),
+            tmp_path / "btn.xml",
+            5000,
+            ["Eksport do XML"],
+        )
+        assert ok is True
+
+    def test_launch_error_logs_install_hint(self, tmp_path, monkeypatch, caplog):
+        monkeypatch.setenv("FAKTUROWNIA_LOGIN", "x")
+        monkeypatch.setenv("FAKTUROWNIA_PASSWORD", "y")
+        from zdrovena.month_closing.fakturownia_reports import download_fakturownia_reports
+
+        fake_stealth_cm = MagicMock()
+        fake_pw = MagicMock()
+        fake_pw.chromium.launch.side_effect = RuntimeError("Executable doesn't exist")
+        fake_stealth_cm.__enter__.return_value = fake_pw
+        fake_stealth_cm.__exit__.return_value = False
+
+        fake_playwright_sync_api = types.ModuleType("playwright.sync_api")
+        fake_playwright_sync_api.sync_playwright = lambda: object()
+        fake_stealth_module = types.ModuleType("playwright_stealth")
+        mock_stealth_cls = MagicMock()
+        fake_stealth_module.Stealth = mock_stealth_cls
+
+        with (
+            patch.dict(
+                "sys.modules",
+                {
+                    "playwright.sync_api": fake_playwright_sync_api,
+                    "playwright_stealth": fake_stealth_module,
+                },
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            mock_stealth_cls.return_value.use_sync.return_value = fake_stealth_cm
+            result = download_fakturownia_reports(
+                [{"name": "JPK_FA", "url": "http://x", "dest_name": "JPK_FA.xml"}],
+                "2026-03-01",
+                "2026-04-01",
+                tmp_path,
+            )
+        assert result == []
+        assert "playwright install chromium" in caplog.text
