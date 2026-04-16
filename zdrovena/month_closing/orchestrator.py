@@ -38,6 +38,7 @@ from zdrovena.month_closing.config import (
     COST_INVOICE_OVERLAP_DAYS,
     ENGLISH_MONTHS,
     EXPECTED_VENDORS,
+    POLISH_MONTHS,
     FAKTUROWNIA_REPORTS,
     KEYCHAIN_ACCOUNT,
     KEYCHAIN_SERVICE_ZOHO_CLIENT_ID,
@@ -590,7 +591,11 @@ class MonthCloseOrchestrator:
 
         # Final vendor status
         final_missing = [
-            v.name for v in EXPECTED_VENDORS if v.name not in found_vendors and not v.skip
+            v.name
+            for v in EXPECTED_VENDORS
+            if v.name not in found_vendors
+            and not v.skip
+            and v.name.lower() not in self.ignore_vendors
         ]
         self.report.cost_invoice_count = total_cost_files
         self.report.cost_found_vendors = found_vendors
@@ -679,9 +684,10 @@ class MonthCloseOrchestrator:
             return
         smtp_pass = self._get_secret(KEYCHAIN_SERVICE_ZOHO_SMTP)
         svc = EmailService(smtp_password=smtp_pass)
+        month_pl = POLISH_MONTHS[self.month].capitalize()
         subject = (
-            f"{COMPANY_BRAND} \u2013 Accounting documents \u2013 "
-            f"{self.month_en} {self.year}"
+            f"{COMPANY_BRAND} – Dokumenty księgowe – "
+            f"{month_pl} {self.year}"
         )
         body = self._build_email_body()
         attachments = [self.report.zip_path] if self.report.zip_path else []
