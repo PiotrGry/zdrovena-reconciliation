@@ -215,6 +215,7 @@ def _download_one_report(
     selector = rpt.get("download_selector", FAKTUROWNIA_REPORT_DOWNLOAD_SELECTOR or DL_LINK_SEL)
     button_texts: list[str] = rpt.get("download_button_texts", [])
     append_date_params = rpt.get("append_date_params", True)
+    use_wizard_navigation = bool(rpt.get("use_wizard_navigation", False))
 
     params = (
         f"?date_from={date_from}&date_to={date_to}"
@@ -225,6 +226,14 @@ def _download_one_report(
     page.goto(target_url, wait_until="domcontentloaded")
     page.wait_for_timeout(2000)
     output_path = output_dir / dest_name
+    if use_wizard_navigation and _try_v7_wizard_download(page, output_path, timeout):
+        size = output_path.stat().st_size
+        if size < 100:
+            logger.warning("%s: generated file too small (%d bytes), removing", name, size)
+            output_path.unlink()
+            return None
+        logger.info("%s: saved %s (%d bytes)", name, output_path, size)
+        return output_path
     if _try_download_by_button_text(page, output_path, timeout, button_texts):
         size = output_path.stat().st_size
         if size < 100:
@@ -291,6 +300,9 @@ def _try_download_by_button_text(
     timeout_ms: int,
     button_texts: list[str],
 ) -> bool:
+    if _try_v7_generate_then_download(page, output_path, timeout_ms):
+        return True
+    _accept_pouczenia_if_present(page, button_texts)
     for label in button_texts:
         try:
             if page.get_by_text(label, exact=False).count() == 0:
@@ -303,6 +315,82 @@ def _try_download_by_button_text(
         except Exception:
             continue
     return False
+
+
+def _try_v7_generate_then_download(page, output_path: Path, timeout_ms: int) -> bool:
+    """VAT V7 flow: accept consent, generate XML, then click download button."""
+    # This flow mirrors the verified manual sequence from Playwright Inspector:
+    # checkbox -> "zapisz i generuj xml" -> "pobierz xml".
+    try:
+        if page.get_by_role("button", name=re.compile(r"zapisz i generuj xml", re.I)).count() == 0:
+            return False
+    except Exception:
+        return False
+
+    try:
+        _accept_pouczenia_if_present(page, ["pobierz xml", "zapisz i generuj xml"])
+        page.get_by_role("button", name=re.compile(r"zapisz i generuj xml", re.I)).first.click(
+            force=True,
+            timeout=10_000,
+        )
+        with page.expect_download(timeout=timeout_ms) as download_info:
+            page.get_by_role("button", name=re.compile(r"pobierz xml", re.I)).first.click(
+                force=True,
+                timeout=10_000,
+            )
+        download = download_info.value
+        download.save_as(str(output_path))
+        return True
+    except Exception:
+        return False
+
+
+def _try_v7_wizard_download(page, output_path: Path, timeout_ms: int) -> bool:
+    """VAT V7 path verified in UI: navigate wizard and download XML."""
+    try:
+        # These steps are resilient no-ops when the link/button is absent.
+        _safe_click_role(page, "link", r"Raporty")
+        _safe_click_role(page, "link", r"Moje JPK")
+        _safe_click_role(page, "link", r"Nowy JPK V7")
+        _safe_click_role(page, "button", r"Nowy raport")
+        _accept_pouczenia_if_present(page, ["pobierz xml", "zapisz i generuj xml"])
+        _safe_click_role(page, "button", r"zapisz i generuj xml", required=True)
+        with page.expect_download(timeout=timeout_ms) as download_info:
+            _safe_click_role(page, "button", r"pobierz xml", required=True)
+        download = download_info.value
+        download.save_as(str(output_path))
+        return True
+    except Exception:
+        return False
+
+
+def _safe_click_role(page, role: str, name_pattern: str, *, required: bool = False) -> bool:
+    locator = page.get_by_role(role, name=re.compile(name_pattern, re.I))
+    if locator.count() == 0:
+        if required:
+            raise RuntimeError(f"Required {role} '{name_pattern}' not found")
+        return False
+    locator.first.click(force=True, timeout=10_000)
+    page.wait_for_timeout(300)
+    return True
+
+
+def _accept_pouczenia_if_present(page, button_texts: list[str]) -> None:
+    """JPK_V7 pages can require consent checkbox before XML button is enabled."""
+    lowered = [b.strip().lower() for b in button_texts]
+    needs_consent = any("pobierz xml" in b or "zapisz i generuj xml" in b for b in lowered)
+    if not needs_consent:
+        return
+    try:
+        checkbox = page.locator("input[type='checkbox']").first
+        if page.locator("input[type='checkbox']").count() == 0:
+            return
+        if not checkbox.is_checked():
+            checkbox.click(force=True, timeout=5000)
+            page.wait_for_timeout(500)
+    except Exception:
+        # If consent UI is absent or custom-wired, keep fallback behavior.
+        return
 
 
 def _extract_job_result_href(page, selector: str) -> str | None:

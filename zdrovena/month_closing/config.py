@@ -67,7 +67,8 @@ FAKTUROWNIA_REPORTS: list[dict] = [
         "dest_name": "JPK_V7M.xml",
         "url": "https://zdrovena.fakturownia.pl/accounting/app/reports/jpk_vat/18277?form_variant=3",
         "append_date_params": False,
-        "download_button_texts": ["Pobierz XML"],
+        "download_button_texts": ["Pobierz XML", "zapisz i generuj xml"],
+        "use_wizard_navigation": True,
     },
     {
         "name": "VAT Sales Register",

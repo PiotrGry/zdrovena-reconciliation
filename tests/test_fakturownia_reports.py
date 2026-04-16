@@ -592,6 +592,149 @@ class TestDownloadFakturowniaReportsContract:
         )
         assert ok is True
 
+    def test_accept_pouczenia_checks_checkbox_for_v7_button_text(self):
+        from zdrovena.month_closing.fakturownia_reports import _accept_pouczenia_if_present
+
+        class _Checkbox:
+            def __init__(self):
+                self.checked = False
+                self.first = self
+
+            def is_checked(self):
+                return self.checked
+
+            def click(self, **_kwargs):
+                self.checked = True
+
+            def count(self):
+                return 1
+
+        class _FakePage:
+            def __init__(self):
+                self.cb = _Checkbox()
+
+            def locator(self, selector: str):
+                if selector == "input[type='checkbox']":
+                    return self.cb
+                return self.cb
+
+            def wait_for_timeout(self, *_args, **_kwargs):
+                return None
+
+        page = _FakePage()
+        _accept_pouczenia_if_present(page, ["Pobierz XML"])
+        assert page.cb.checked is True
+
+    def test_try_v7_generate_then_download(self, tmp_path):
+        from zdrovena.month_closing.fakturownia_reports import _try_v7_generate_then_download
+
+        class _Locator:
+            def __init__(self, count_value: int):
+                self._count = count_value
+                self.first = self
+
+            def count(self):
+                return self._count
+
+            def click(self, **_kwargs):
+                return None
+
+            def is_checked(self):
+                return True
+
+        class _DownloadContext:
+            def __init__(self, output: Path):
+                self.value = SimpleNamespace(save_as=lambda _p: output.write_text("x" * 128))
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakePage:
+            def get_by_role(self, role: str, name=None):  # noqa: ARG002
+                if role == "button":
+                    return _Locator(1)
+                return _Locator(0)
+
+            def locator(self, selector: str):
+                if selector == "input[type='checkbox']":
+                    return _Locator(1)
+                return _Locator(0)
+
+            def expect_download(self, *_args, **_kwargs):
+                return _DownloadContext(tmp_path / "v7.xml")
+
+            def wait_for_timeout(self, *_args, **_kwargs):
+                return None
+
+        ok = _try_v7_generate_then_download(_FakePage(), tmp_path / "v7.xml", 5000)
+        assert ok is True
+
+    def test_try_v7_wizard_download_uses_ui_path(self, tmp_path):
+        from zdrovena.month_closing.fakturownia_reports import _try_v7_wizard_download
+
+        class _RoleLocator:
+            def __init__(self, count_value: int):
+                self._count = count_value
+                self.first = self
+
+            def count(self):
+                return self._count
+
+            def click(self, **_kwargs):
+                return None
+
+        class _CheckboxLocator:
+            first = None
+
+            def __init__(self):
+                self.first = self
+                self._checked = False
+
+            def count(self):
+                return 1
+
+            def is_checked(self):
+                return self._checked
+
+            def click(self, **_kwargs):
+                self._checked = True
+
+        class _DownloadContext:
+            def __init__(self, output: Path):
+                self.value = SimpleNamespace(save_as=lambda _p: output.write_text("x" * 256))
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakePage:
+            def __init__(self):
+                self.cb = _CheckboxLocator()
+
+            def get_by_role(self, role: str, name=None):  # noqa: ARG002
+                if role in {"link", "button"}:
+                    return _RoleLocator(1)
+                return _RoleLocator(0)
+
+            def locator(self, selector: str):
+                if selector == "input[type='checkbox']":
+                    return self.cb
+                return _RoleLocator(0)
+
+            def expect_download(self, *_args, **_kwargs):
+                return _DownloadContext(tmp_path / "wizard.xml")
+
+            def wait_for_timeout(self, *_args, **_kwargs):
+                return None
+
+        ok = _try_v7_wizard_download(_FakePage(), tmp_path / "wizard.xml", 5000)
+        assert ok is True
+
     def test_launch_error_logs_install_hint(self, tmp_path, monkeypatch, caplog):
         monkeypatch.setenv("FAKTUROWNIA_LOGIN", "x")
         monkeypatch.setenv("FAKTUROWNIA_PASSWORD", "y")
