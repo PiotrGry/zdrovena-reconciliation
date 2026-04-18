@@ -55,13 +55,13 @@ def get_secret(service: str, required: bool = True) -> str | None:
         except Exception as exc:
             logger.debug("Keyring unavailable for %s: %s", service, exc)
 
-    # 3. Azure Key Vault (placeholder — activated in Faza G)
-    # keyvault_url = os.environ.get("AZURE_KEYVAULT_URL")
-    # if keyvault_url:
-    #     from zdrovena.common._keyvault import get_keyvault_secret
-    #     value = get_keyvault_secret(keyvault_url, service)
-    #     if value:
-    #         return value
+    # 3. Azure Key Vault — activated when AZURE_KEYVAULT_URL is set
+    keyvault_url = os.environ.get("AZURE_KEYVAULT_URL")
+    if keyvault_url:
+        from zdrovena.common._keyvault import get_keyvault_secret
+        value = get_keyvault_secret(keyvault_url, service)
+        if value:
+            return value
 
     if required:
         raise MissingSecretError(service, KEYCHAIN_ACCOUNT)

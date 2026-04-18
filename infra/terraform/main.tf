@@ -154,8 +154,47 @@ resource "azurerm_container_app" "api" {
         name  = "ALLOWED_ORIGINS"
         value = "https://${azurerm_static_web_app.ui.default_host_name}"
       }
+
+      env {
+        name  = "AZURE_KEYVAULT_URL"
+        value = azurerm_key_vault.kv.vault_uri
+      }
     }
   }
+}
+
+# ── Key Vault ──────────────────────────────────────────────────────────────────
+# Stores all application secrets (Fakturownia, Zoho, KSeF, Google Ads).
+# Container App reads them via managed identity — no secrets in env vars or code.
+
+data "azurerm_client_config" "current" {}
+
+resource "azurerm_key_vault" "kv" {
+  name                       = "${replace(var.prefix, "-", "")}kv"
+  resource_group_name        = azurerm_resource_group.rg.name
+  location                   = azurerm_resource_group.rg.location
+  tenant_id                  = data.azurerm_client_config.current.tenant_id
+  sku_name                   = "standard"
+  soft_delete_retention_days = 7
+  purge_protection_enabled   = false
+  tags                       = local.tags
+
+  # Allow Terraform operator (current CLI identity) to manage secrets
+  access_policy {
+    tenant_id = data.azurerm_client_config.current.tenant_id
+    object_id = data.azurerm_client_config.current.object_id
+
+    secret_permissions = ["Get", "List", "Set", "Delete", "Purge"]
+  }
+}
+
+# ── RBAC: Container App → Key Vault Secrets User ──────────────────────────────
+
+resource "azurerm_role_assignment" "app_kv_secrets_user" {
+  scope                = azurerm_key_vault.kv.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_container_app.api.identity[0].principal_id
+  depends_on           = [azurerm_container_app.api]
 }
 
 # ── Static Web App (frontend) ──────────────────────────────────────────────────

@@ -50,3 +50,8 @@ output "github_secret_AZURE_SUBSCRIPTION_ID" {
   description = "Set as GitHub Secret AZURE_SUBSCRIPTION_ID"
   value       = var.subscription_id
 }
+
+output "key_vault_url" {
+  description = "Key Vault URI — set as AZURE_KEYVAULT_URL in .env.local and GitHub Secrets"
+  value       = azurerm_key_vault.kv.vault_uri
+}
