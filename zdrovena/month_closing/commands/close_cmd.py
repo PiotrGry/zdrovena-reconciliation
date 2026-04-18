@@ -135,6 +135,8 @@ def _configure_logging(verbose: bool = False) -> None:
 
 
 def _run(args: argparse.Namespace) -> None:
+    import os
+
     pos_period = getattr(args, "period", None)
     flag_period = getattr(args, "period_flag", None)
     if pos_period and flag_period and pos_period != flag_period:
@@ -150,9 +152,55 @@ def _run(args: argparse.Namespace) -> None:
         print(f"❌ {exc}", file=sys.stderr)
         sys.exit(1)
 
+    api_url = os.environ.get("ZDROVENA_API_URL")
+    if api_url:
+        _run_api(args, year, month, api_url)
+    else:
+        _run_local(args)
+
+
+def _run_api(args: argparse.Namespace, year: int, month: int, api_url: str) -> None:
+    import os
+    from zdrovena.api.client import ApiClient, ApiError
+
+    token = os.environ.get("ZDROVENA_API_TOKEN") or None
+    dry_run = getattr(args, "dry_run", False)
+    ignore_warnings = getattr(args, "ignore_warnings", False)
+    ignore_vendors: list[str] = getattr(args, "ignore_vendors", [])
+
+    try:
+        client = ApiClient(api_url, token=token)
+        result = client.close(
+            year=year,
+            month=month,
+            dry_run=dry_run,
+            ignore_warnings=ignore_warnings,
+            ignore_vendors=ignore_vendors,
+        )
+    except ApiError as exc:
+        print(f"❌ API error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Faktury sprzedaży: {result.get('sales_invoice_count')}")
+    print(f"Łączna kwota brutto: {result.get('sales_gross_total')}")
+
+    errors = result.get("errors") or []
+    if errors:
+        for err in errors:
+            print(f"❌ {err}", file=sys.stderr)
+        sys.exit(1)
+    sys.exit(0)
+
+
+def _run_local(args: argparse.Namespace) -> None:
     verbose = getattr(args, "verbose", False)
     _configure_logging(verbose=verbose)
     logger = logging.getLogger("zdrovena.close")
+
+    pos_period = getattr(args, "period", None)
+    flag_period = getattr(args, "period_flag", None)
+    period_value = flag_period or pos_period
+    year, month = _parse_month(period_value)
 
     dry_run = getattr(args, "dry_run", False)
     do_zip = getattr(args, "zip", False)

@@ -20,12 +20,12 @@ output "container_app_fqdn" {
 
 output "swa_url" {
   description = "Static Web App public URL (CDN) — the only public-facing endpoint"
-  value       = "https://${azurerm_static_site.ui.default_host_name}"
+  value       = "https://${azurerm_static_web_app.ui.default_host_name}"
 }
 
 output "github_secret_SWA_DEPLOYMENT_TOKEN" {
   description = "Set as SWA_DEPLOYMENT_TOKEN in the frontend repo GitHub Secrets"
-  value       = azurerm_static_site.ui.api_key
+  value       = azurerm_static_web_app.ui.api_key
   sensitive   = true
 }
 

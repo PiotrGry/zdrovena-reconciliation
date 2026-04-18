@@ -56,4 +56,9 @@ variable "swa_location" {
   default     = "westeurope"
 }
 
+variable "terraform_ip_allowlist" {
+  description = "List of IPs allowed to access storage account (needed for Terraform to manage storage containers). Remove after initial apply if desired."
+  type        = list(string)
+  default     = []
+}
 

@@ -66,7 +66,7 @@ resource "azurerm_storage_account" "storage" {
   network_rules {
     default_action             = "Deny"
     bypass                     = ["AzureServices"]
-    ip_rules                   = []
+    ip_rules                   = var.terraform_ip_allowlist
     virtual_network_subnet_ids = []
   }
 }
@@ -152,7 +152,7 @@ resource "azurerm_container_app" "api" {
       # FastAPI reads ALLOWED_ORIGINS and passes it to CORSMiddleware.
       env {
         name  = "ALLOWED_ORIGINS"
-        value = "https://${azurerm_static_site.ui.default_host_name}"
+        value = "https://${azurerm_static_web_app.ui.default_host_name}"
       }
     }
   }
@@ -164,7 +164,7 @@ resource "azurerm_container_app" "api" {
 # the browser never learns the Container App URL.
 # Standard SKU required for linked backend feature.
 
-resource "azurerm_static_site" "ui" {
+resource "azurerm_static_web_app" "ui" {
   name                = "${var.prefix}-ui"
   resource_group_name = azurerm_resource_group.rg.name
   location            = var.swa_location

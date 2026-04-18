@@ -6,11 +6,11 @@ location        = "polandcentral"
 prefix          = "zdrovena"
 
 # GitHub repository details (for OIDC federated credential)
-github_owner = "FILL_IN"                    # your GitHub username or org
+github_owner = "PiotrGry"                    # your GitHub username or org
 github_repo  = "zdrovena-reconciliation"
 
 # Azure AD tenant ID (run: az account show --query tenantId -o tsv)
-azure_tenant_id = "FILL_IN"
+azure_tenant_id = "a2e78da5-20fe-4ebe-b625-02652d87fda6"
 
 # Entra ID app registration client ID for JWT audience validation
 # Create at: https://portal.azure.com → App registrations
