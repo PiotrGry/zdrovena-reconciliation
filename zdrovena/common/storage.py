@@ -53,7 +53,7 @@ except ImportError:
     _AZURE_IDENTITY_AVAILABLE = False
 
 _DEFAULT_ROOT = Path.home() / ".zdrovena" / "storage"
-_DEFAULT_CONTAINER = "month-closing"
+_DEFAULT_CONTAINER = "zdrovena-files"
 
 
 @dataclass
