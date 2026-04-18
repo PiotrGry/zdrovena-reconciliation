@@ -13,17 +13,16 @@ import time
 from pathlib import Path
 from typing import Any
 
-import keyring
 import requests
 
 from zdrovena.common.exceptions import MissingSecretError
+from zdrovena.common.secrets import get_secret
 from zdrovena.common.retry import retry_request
 from zdrovena.month_closing.config import (
     API_RETRY_COUNT,
     API_RETRY_DELAY,
     API_TIMEOUT,
     COMPANY_NIP,
-    KEYCHAIN_ACCOUNT,
     KEYCHAIN_SERVICE_KSEF_CERT,
     KEYCHAIN_SERVICE_KSEF_KEY,
     KEYCHAIN_SERVICE_KSEF_KEY_PASS,
@@ -48,7 +47,6 @@ except ImportError:
     _KSEF_DEPS_AVAILABLE = False
 
 NS_AUTH = "http://ksef.mf.gov.pl/auth/token/2.0"
-NS_DS = "http://www.w3.org/2000/09/xmldsig#"
 
 
 class KSeFClient:
@@ -68,15 +66,12 @@ class KSeFClient:
         self._private_key_pem: bytes | None = None
 
     def _load_credentials(self) -> None:
-        cert_pem = self._read_from_keychain(KEYCHAIN_SERVICE_KSEF_CERT, "certificate")
-        key_pem = self._read_from_keychain(KEYCHAIN_SERVICE_KSEF_KEY, "private key")
+        cert_pem = self._load_secret_bytes(KEYCHAIN_SERVICE_KSEF_CERT, "certificate")
+        key_pem = self._load_secret_bytes(KEYCHAIN_SERVICE_KSEF_KEY, "private key")
         if cert_pem is None or key_pem is None:
-            raise MissingSecretError(
-                KEYCHAIN_SERVICE_KSEF_CERT,
-                KEYCHAIN_ACCOUNT,
-            )
+            raise MissingSecretError(KEYCHAIN_SERVICE_KSEF_CERT)
         key_password: bytes | None = None
-        key_pass_str = keyring.get_password(KEYCHAIN_SERVICE_KSEF_KEY_PASS, KEYCHAIN_ACCOUNT)
+        key_pass_str = get_secret(KEYCHAIN_SERVICE_KSEF_KEY_PASS, required=False)
         if key_pass_str:
             key_password = key_pass_str.encode("utf-8")
         self._cert_pem = cert_pem
@@ -94,11 +89,11 @@ class KSeFClient:
         )
 
     @staticmethod
-    def _read_from_keychain(service: str, label: str) -> bytes | None:
+    def _load_secret_bytes(service: str, label: str) -> bytes | None:
         try:
-            encoded = keyring.get_password(service, KEYCHAIN_ACCOUNT)
+            encoded = get_secret(service, required=False)
         except Exception as exc:
-            logger.warning("Keychain read failed for %s: %s", label, exc)
+            logger.warning("Secret unavailable for %s: %s", label, exc)
             return None
         if not encoded:
             return None
@@ -185,8 +180,8 @@ class KSeFClient:
         return root
 
     def _sign_xades(self, xml_doc: Any) -> bytes:
-        assert self._cert_pem is not None
-        assert self._private_key is not None
+        if self._cert_pem is None or self._private_key is None:
+            raise RuntimeError("_sign_xades called before _load_credentials")
         if isinstance(self._private_key, ec.EllipticCurvePrivateKey):
             sig_algo = "ecdsa-sha256"
         elif isinstance(self._private_key, rsa.RSAPrivateKey):

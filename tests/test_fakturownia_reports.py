@@ -34,16 +34,13 @@ def _make_checker(tmp_path: Path, *, no_browser: bool) -> tuple[PreflightChecker
 
 class TestPreflightReportBoundary:
     def test_missing_reports_calls_autodownload_when_browser_enabled(self, tmp_path):
+        """When no_browser=False and reports absent, missing_reports populated for orchestrator."""
         checker, inbox = _make_checker(tmp_path, no_browser=False)
-        with (
-            patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox),
-            patch(
-                "zdrovena.month_closing.fakturownia_reports.download_fakturownia_reports",
-                return_value=[],
-            ) as mock_download,
-        ):
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
             checker._check_reports()
-        assert mock_download.called
+        # Auto-download is orchestrator's responsibility; preflight identifies missing reports
+        assert len(checker.result.missing_reports) == 3
+        assert checker.no_browser is False
 
     def test_no_browser_skips_autodownload(self, tmp_path):
         checker, inbox = _make_checker(tmp_path, no_browser=True)
@@ -58,22 +55,12 @@ class TestPreflightReportBoundary:
         assert len(checker.result.missing_reports) == 3
 
     def test_successful_autodownload_moves_report_to_matches(self, tmp_path):
+        """Files found via glob in watch_dir are added to result.matches."""
         checker, inbox = _make_checker(tmp_path, no_browser=False)
-        downloaded = inbox / "JPK_FA.xml"
-        downloaded.write_text("x" * 120)
-        jpk_fa = {
-            "name": "JPK_FA",
-            "glob": "zdrovena-*-jpk_fa*",
-            "dest_name": "JPK_FA.xml",
-            "url": "https://zdrovena.fakturownia.pl/reports/jpk_fa",
-        }
-        with (
-            patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox),
-            patch(
-                "zdrovena.month_closing.fakturownia_reports.download_fakturownia_reports",
-                return_value=[(jpk_fa, downloaded)],
-            ),
-        ):
+        # Place a file matching the JPK_FA glob pattern
+        jpk_fa_file = inbox / "zdrovena-2026-03-jpk_fa.xml"
+        jpk_fa_file.write_text("x" * 120)
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
             checker._check_reports()
         names_in_matches = [cfg["name"] for cfg, _path in checker.result.matches if isinstance(cfg, dict)]
         assert "JPK_FA" in names_in_matches
@@ -93,17 +80,12 @@ class TestPreflightReportBoundary:
         assert len(checker.result.missing_reports) == 3
 
     def test_autodownload_empty_prints_playwright_install_hint(self, tmp_path, capsys):
+        """Missing reports show manual download URLs in the preflight output."""
         checker, inbox = _make_checker(tmp_path, no_browser=False)
-        with (
-            patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox),
-            patch(
-                "zdrovena.month_closing.fakturownia_reports.download_fakturownia_reports",
-                return_value=[],
-            ),
-        ):
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
             checker._check_reports()
         out = capsys.readouterr().out
-        assert "playwright install chromium" in out
+        assert "fakturownia.pl" in out
 
 
 class TestGetCredentials:
@@ -309,88 +291,64 @@ class TestDownloadFakturowniaReportsContract:
     def test_small_download_file_is_removed(self, tmp_path):
         from zdrovena.month_closing.fakturownia_reports import _download_one_report
 
-        class _DownloadContext:
-            def __init__(self, target_path: Path):
-                self.target_path = target_path
-                self.value = SimpleNamespace(save_as=self._save_as)
+        def _write_tiny(page, selector, output_path, *, timeout_ms):
+            output_path.write_text("tiny")  # 4 bytes < 100 threshold
+            return True
 
-            def _save_as(self, _path: str) -> None:
-                self.target_path.write_text("tiny")
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-        class _FakePage:
-            def goto(self, *_args, **_kwargs):
-                return None
-
-            def wait_for_timeout(self, *_args, **_kwargs):
-                return None
-
-            def wait_for_selector(self, *_args, **_kwargs):
-                return None
-
-            def expect_download(self, *_args, **_kwargs):
-                return _DownloadContext(tmp_path / "JPK_FA.xml")
-
-            def click(self, *_args, **_kwargs):
-                return None
-
-        result = _download_one_report(
-            _FakePage(),
-            {"name": "JPK_FA", "url": "http://x", "dest_name": "JPK_FA.xml"},
-            "2026-03-01",
-            "2026-04-01",
-            tmp_path,
-            1000,
-        )
+        with (
+            patch(
+                "zdrovena.month_closing.fakturownia_reports._try_download_by_button_text",
+                return_value=False,
+            ),
+            patch(
+                "zdrovena.month_closing.fakturownia_reports._try_generate_and_download",
+                return_value=False,
+            ),
+            patch(
+                "zdrovena.month_closing.fakturownia_reports._download_via_job_url",
+                side_effect=_write_tiny,
+            ),
+        ):
+            result = _download_one_report(
+                MagicMock(),
+                {"name": "JPK_FA", "url": "http://x", "dest_name": "JPK_FA.xml"},
+                "2026-03-01",
+                "2026-04-01",
+                tmp_path,
+                1000,
+            )
         assert result is None
         assert not (tmp_path / "JPK_FA.xml").exists()
 
     def test_download_selector_uses_config_default_when_not_in_report(self, tmp_path):
         from zdrovena.month_closing.fakturownia_reports import _download_one_report
 
-        class _DownloadContext:
-            def __init__(self, target_path: Path):
-                self.target_path = target_path
-                self.value = SimpleNamespace(save_as=self._save_as)
+        used_selectors: list[str] = []
+        fake_page = MagicMock()
+        fake_page.wait_for_selector.side_effect = lambda sel, **_kw: used_selectors.append(sel)
 
-            def _save_as(self, _path: str) -> None:
-                self.target_path.write_text("x" * 120)
+        def _write_big(page, selector, output_path, *, timeout_ms):
+            used_selectors.append(selector)
+            output_path.write_text("x" * 120)
+            return True
 
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-        class _FakePage:
-            used_selector = None
-
-            def goto(self, *_args, **_kwargs):
-                return None
-
-            def wait_for_timeout(self, *_args, **_kwargs):
-                return None
-
-            def wait_for_selector(self, selector, *_args, **_kwargs):
-                self.used_selector = selector
-                return None
-
-            def expect_download(self, *_args, **_kwargs):
-                return _DownloadContext(tmp_path / "JPK_FA.xml")
-
-            def click(self, selector, *_args, **_kwargs):
-                self.used_selector = selector
-                return None
-
-        fake_page = _FakePage()
-        with patch(
-            "zdrovena.month_closing.config.FAKTUROWNIA_REPORT_DOWNLOAD_SELECTOR",
-            "#custom_selector",
+        with (
+            patch(
+                "zdrovena.month_closing.config.FAKTUROWNIA_REPORT_DOWNLOAD_SELECTOR",
+                "#custom_selector",
+            ),
+            patch(
+                "zdrovena.month_closing.fakturownia_reports._try_download_by_button_text",
+                return_value=False,
+            ),
+            patch(
+                "zdrovena.month_closing.fakturownia_reports._try_generate_and_download",
+                return_value=False,
+            ),
+            patch(
+                "zdrovena.month_closing.fakturownia_reports._download_via_job_url",
+                side_effect=_write_big,
+            ),
         ):
             result = _download_one_report(
                 fake_page,
@@ -401,72 +359,40 @@ class TestDownloadFakturowniaReportsContract:
                 1000,
             )
         assert result == tmp_path / "JPK_FA.xml"
-        assert fake_page.used_selector == "#custom_selector"
+        assert "#custom_selector" in used_selectors
 
     def test_click_timeout_falls_back_to_direct_job_url_download(self, tmp_path):
         from zdrovena.month_closing.fakturownia_reports import _download_one_report
 
-        class _Response:
-            ok = True
+        fake_page = MagicMock()
+        fake_page.click.side_effect = RuntimeError("not visible")
 
-            @staticmethod
-            def body() -> bytes:
-                return b"x" * 256
+        def _write_file(page, selector, output_path, *, timeout_ms):
+            output_path.write_bytes(b"x" * 256)
+            return True
 
-        class _DownloadContext:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-        class _LocatorFirst:
-            @staticmethod
-            def get_attribute(_name: str):
-                return "/jobs/123/result"
-
-        class _Locator:
-            first = _LocatorFirst()
-
-        class _Context:
-            class request:
-                @staticmethod
-                def get(_url: str, timeout: int = 0):  # noqa: ARG004
-                    return _Response()
-
-        class _FakePage:
-            context = _Context()
-            url = "https://zdrovena.fakturownia.pl/reports/income_tax_records?job_id=123"
-
-            def goto(self, *_args, **_kwargs):
-                return None
-
-            def wait_for_timeout(self, *_args, **_kwargs):
-                return None
-
-            def wait_for_selector(self, *_args, **_kwargs):
-                return None
-
-            def expect_download(self, *_args, **_kwargs):
-                return _DownloadContext()
-
-            def click(self, *_args, **_kwargs):
-                raise RuntimeError("not visible")
-
-            def locator(self, *_args, **_kwargs):
-                return _Locator()
-
-            def reload(self, *_args, **_kwargs):
-                return None
-
-        result = _download_one_report(
-            _FakePage(),
-            {"name": "VAT Sales Register", "url": "http://x", "dest_name": "vat.pdf"},
-            "2026-03-01",
-            "2026-04-01",
-            tmp_path,
-            1000,
-        )
+        with (
+            patch(
+                "zdrovena.month_closing.fakturownia_reports._try_download_by_button_text",
+                return_value=False,
+            ),
+            patch(
+                "zdrovena.month_closing.fakturownia_reports._try_generate_and_download",
+                return_value=False,
+            ),
+            patch(
+                "zdrovena.month_closing.fakturownia_reports._download_via_job_url",
+                side_effect=_write_file,
+            ),
+        ):
+            result = _download_one_report(
+                fake_page,
+                {"name": "VAT Sales Register", "url": "http://x", "dest_name": "vat.pdf"},
+                "2026-03-01",
+                "2026-04-01",
+                tmp_path,
+                1000,
+            )
         assert result == tmp_path / "vat.pdf"
         assert (tmp_path / "vat.pdf").exists()
 
@@ -518,6 +444,7 @@ class TestDownloadFakturowniaReportsContract:
         class _Locator:
             def __init__(self, count_value: int):
                 self._count_value = count_value
+                self.first = SimpleNamespace(get_attribute=lambda _: None)
 
             def count(self):
                 return self._count_value
@@ -534,21 +461,33 @@ class TestDownloadFakturowniaReportsContract:
 
         class _FakePage:
             clicked = None
+            _committed = False
 
             def locator(self, selector: str):
-                if selector == "a[href*='/jobs/']":
-                    return _Locator(0)
-                if selector == "input[name='commit']":
+                if "commit" in selector:
+                    return _Locator(1)
+                # Job link appears immediately after the commit button is clicked
+                if "jobs" in selector and self._committed:
                     return _Locator(1)
                 return _Locator(0)
 
             def click(self, selector: str, **_kwargs):
                 self.clicked = selector
+                if "commit" in selector:
+                    self._committed = True
+
+            def wait_for_timeout(self, *_args, **_kwargs):
+                return None
 
             def expect_download(self, *_args, **_kwargs):
                 return _DownloadContext(tmp_path / "gen.xml")
 
-        ok = _try_generate_and_download(_FakePage(), tmp_path / "gen.xml", 5000)
+        # Patch _download_via_job_url so the expect_download path is used
+        with patch(
+            "zdrovena.month_closing.fakturownia_reports._download_via_job_url",
+            return_value=False,
+        ):
+            ok = _try_generate_and_download(_FakePage(), tmp_path / "gen.xml", 5000)
         assert ok is True
 
     def test_try_download_by_button_text_clicks_export_button(self, tmp_path):

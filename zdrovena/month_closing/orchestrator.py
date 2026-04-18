@@ -25,11 +25,10 @@ from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-import keyring
-
 from zdrovena.audit.sections import check_numbering
 from zdrovena.common import FakturowniaClient
 from zdrovena.common.exceptions import MissingSecretError
+from zdrovena.common.secrets import get_secret as _get_secret_impl
 from zdrovena.common.formatting import to_decimal
 from zdrovena.month_closing.config import (
     ACCOUNTANT_EMAIL,
@@ -132,12 +131,7 @@ class MonthCloseOrchestrator:
 
     @staticmethod
     def _get_secret(service: str, required: bool = True) -> str | None:
-        # Env var: FAKTUROWNIA_API_TOKEN for service="fakturownia_api_token" etc.
-        env_key = service.upper()
-        value = os.environ.get(env_key) or keyring.get_password(service, KEYCHAIN_ACCOUNT)
-        if not value and required:
-            raise MissingSecretError(service, KEYCHAIN_ACCOUNT)
-        return value
+        return _get_secret_impl(service, required=required)
 
     def _skip_if_done(self, step_name: str) -> bool:
         if self.state.is_done(step_name):

@@ -117,20 +117,20 @@ class TestOrchestratorInit:
 
 class TestGetSecretEnvFallback:
     @patch.dict(os.environ, {"ZOHO_SMTP_PASSWORD": "env_pass"})
-    @patch("zdrovena.month_closing.orchestrator.keyring.get_password", return_value=None)
+    @patch("zdrovena.common.secrets.keyring.get_password", return_value=None)
     def test_env_var_used(self, mock_kr):
         result = MonthCloseOrchestrator._get_secret("zoho_smtp_password")
         assert result == "env_pass"
 
     @patch.dict(os.environ, {}, clear=True)
-    @patch("zdrovena.month_closing.orchestrator.keyring.get_password", return_value="kr_val")
+    @patch("zdrovena.common.secrets.keyring.get_password", return_value="kr_val")
     def test_keyring_fallback(self, mock_kr):
         os.environ.pop("ZOHO_SMTP_PASSWORD", None)
         result = MonthCloseOrchestrator._get_secret("zoho_smtp_password")
         assert result == "kr_val"
 
     @patch.dict(os.environ, {}, clear=True)
-    @patch("zdrovena.month_closing.orchestrator.keyring.get_password", return_value=None)
+    @patch("zdrovena.common.secrets.keyring.get_password", return_value=None)
     def test_neither_raises(self, mock_kr):
         os.environ.pop("ZOHO_SMTP_PASSWORD", None)
         from zdrovena.common.exceptions import MissingSecretError
@@ -138,7 +138,7 @@ class TestGetSecretEnvFallback:
             MonthCloseOrchestrator._get_secret("zoho_smtp_password")
 
     @patch.dict(os.environ, {}, clear=True)
-    @patch("zdrovena.month_closing.orchestrator.keyring.get_password", return_value=None)
+    @patch("zdrovena.common.secrets.keyring.get_password", return_value=None)
     def test_not_required_returns_none(self, mock_kr):
         os.environ.pop("SOME_SERVICE", None)
         result = MonthCloseOrchestrator._get_secret("some_service", required=False)
