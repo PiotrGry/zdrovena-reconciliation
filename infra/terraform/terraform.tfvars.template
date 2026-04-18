@@ -1,0 +1,18 @@
+# infra/terraform/terraform.tfvars.template
+# Copy to terraform.tfvars and fill in — do NOT commit terraform.tfvars
+
+subscription_id = "f8942601-3bfe-437d-b849-86f3b5519fea"
+location        = "polandcentral"
+prefix          = "zdrovena"
+
+# GitHub repository details (for OIDC federated credential)
+github_owner = "FILL_IN"                    # your GitHub username or org
+github_repo  = "zdrovena-reconciliation"
+
+# Azure AD tenant ID (run: az account show --query tenantId -o tsv)
+azure_tenant_id = "FILL_IN"
+
+# Entra ID app registration client ID for JWT audience validation
+# Create at: https://portal.azure.com → App registrations
+# Leave empty to skip JWT audience check during initial setup
+azure_client_id_entra = ""

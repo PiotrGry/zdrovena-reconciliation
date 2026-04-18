@@ -1,0 +1,91 @@
+name: CI/CD — Test → Build → Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:        # allow manual trigger from GitHub UI
+
+# OIDC: required for azure/login with federated credentials (no long-lived secrets)
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ── 1. Tests ───────────────────────────────────────────────────────────────
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,api]"
+
+      - name: Run test suite
+        env:
+          AZURE_AUTH_DISABLED: "true"
+        run: pytest tests/ -q --tb=short
+
+  # ── 2. Build → Push → Deploy ───────────────────────────────────────────────
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    needs: test              # only runs if tests pass
+    environment: production  # optional: add required reviewers in GitHub settings
+
+    env:
+      APP_IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Log in to Azure using OIDC (no client secret stored anywhere)
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Authenticate Docker with ACR using the Azure session above
+      - name: Log in to ACR
+        run: az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
+
+      # Build and push two tags: SHA (immutable) + latest (mutable pointer)
+      - name: Build & push image
+        run: |
+          docker build \
+            --label "git.sha=${{ github.sha }}" \
+            --label "git.ref=${{ github.ref_name }}" \
+            -t "$APP_IMAGE:${{ github.sha }}" \
+            -t "$APP_IMAGE:latest" \
+            .
+          docker push "$APP_IMAGE:${{ github.sha }}"
+          docker push "$APP_IMAGE:latest"
+
+      # Update the Container App to the new immutable SHA tag
+      - name: Deploy to Container App
+        run: |
+          az containerapp update \
+            --name        "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --image       "$APP_IMAGE:${{ github.sha }}"
+
+      # Wait for rollout then hit /health — non-blocking (warn only)
+      - name: Health check
+        run: |
+          sleep 20
+          FQDN=$(az containerapp show \
+            --name        "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --query "properties.configuration.ingress.fqdn" \
+            --output tsv)
+          curl --fail --silent --max-time 10 "https://$FQDN/health" \
+            && echo "✅ /health OK" \
+            || echo "⚠️  /health check failed (non-blocking)"
