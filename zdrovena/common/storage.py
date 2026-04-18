@@ -71,6 +71,7 @@ class StorageService(Protocol):
     def download(self, key: str, local_path: Path) -> None: ...
     def stream(self, key: str, chunk_size: int = 4 * 1024 * 1024) -> Iterator[bytes]: ...
     def list_files(self, prefix: str = "") -> list[BlobFile]: ...
+    def exists(self, key: str) -> bool: ...
     def delete(self, key: str) -> None: ...
 
 
@@ -126,6 +127,9 @@ class LocalStorageService:
     def delete(self, key: str) -> None:
         path = self.root / key
         path.unlink(missing_ok=True)
+
+    def exists(self, key: str) -> bool:
+        return (self.root / key).is_file()
 
 
 # ── Azure Blob implementation ─────────────────────────────────────────────────
@@ -209,6 +213,10 @@ class BlobStorageService:
     def delete(self, key: str) -> None:
         blob = self._client.get_blob_client(container=self._container, blob=key)
         blob.delete_blob(delete_snapshots="include")
+
+    def exists(self, key: str) -> bool:
+        blob = self._client.get_blob_client(container=self._container, blob=key)
+        return blob.exists()
 
 
 # ── Factory ───────────────────────────────────────────────────────────────────
