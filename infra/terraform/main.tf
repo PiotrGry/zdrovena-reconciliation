@@ -97,16 +97,9 @@ resource "azurerm_container_app" "api" {
     identity = "System"
   }
 
-  # Tailscale auth key — stored as Container App secret (encrypted at rest).
-  # Generate at: https://login.tailscale.com/admin/settings/keys
-  # Use an ephemeral + reusable key so each new replica auto-registers.
-  secret {
-    name  = "tailscale-auth-key"
-    value = var.tailscale_auth_key
-  }
-
-  # No public ingress — all traffic comes through the Tailscale sidecar.
-  # The app is reachable only on the tailnet as: zdrovena-api.<tailnet>.ts.net
+  # No public ingress — API is internal only.
+  # Reachable exclusively within the Container Apps Environment
+  # (i.e. from a co-located frontend container or future VNet integration).
   ingress {
     external_enabled = false
     target_port      = 8000
@@ -122,7 +115,6 @@ resource "azurerm_container_app" "api" {
     min_replicas = 0 # scale-to-zero when idle
     max_replicas = 2
 
-    # ── Main API container ───────────────────────────────────────────────────
     container {
       name = "api"
       # Placeholder — GitHub Actions replaces on first deploy
@@ -153,57 +145,6 @@ resource "azurerm_container_app" "api" {
       env {
         name  = "AZURE_CLIENT_ID"
         value = var.azure_client_id_entra
-      }
-    }
-
-    # ── Tailscale sidecar ────────────────────────────────────────────────────
-    # Registers the app on the tailnet and proxies:
-    #   https://zdrovena-api.<tailnet>.ts.net  →  localhost:8000
-    # Containers in the same template share the localhost network namespace.
-    container {
-      name   = "tailscale"
-      image  = "tailscale/tailscale:stable"
-      cpu    = 0.25
-      memory = "0.5Gi"
-
-      env {
-        name        = "TAILSCALE_AUTHKEY"
-        secret_name = "tailscale-auth-key"
-      }
-
-      # Userspace networking — no kernel TUN device needed in containers
-      env {
-        name  = "TS_USERSPACE"
-        value = "true"
-      }
-
-      # Hostname on the tailnet
-      env {
-        name  = "TS_HOSTNAME"
-        value = "${var.prefix}-api"
-      }
-
-      # Remove device from tailnet on shutdown (clean scaling)
-      env {
-        name  = "TS_EXTRA_ARGS"
-        value = "--ephemeral"
-      }
-
-      # Serve config: proxy tailnet HTTPS → localhost:8000
-      # $${TS_CERT_DOMAIN} is a Tailscale runtime variable (escaped for Terraform)
-      env {
-        name = "TS_SERVE_CONFIG"
-        value = jsonencode({
-          Version = "v1alpha1"
-          TCP     = { "443" = { HTTPS = true } }
-          Web = {
-            "$${TS_CERT_DOMAIN}:443" = {
-              Handlers = {
-                "/" = { Proxy = "http+insecure://127.0.0.1:8000" }
-              }
-            }
-          }
-        })
       }
     }
   }

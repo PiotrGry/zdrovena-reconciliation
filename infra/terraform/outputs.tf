@@ -13,14 +13,9 @@ output "container_app_name" {
   value       = azurerm_container_app.api.name
 }
 
-output "container_app_url" {
-  description = "HTTPS URL of the deployed API (public endpoint — disabled; use Tailscale)"
-  value       = "https://${azurerm_container_app.api.latest_revision_fqdn} (internal only)"
-}
-
-output "tailscale_hostname" {
-  description = "API hostname on the Tailscale network (accessible after sidecar registers)"
-  value       = "https://${var.prefix}-api.<tailnet>.ts.net"
+output "container_app_internal_fqdn" {
+  description = "Internal FQDN — accessible only within the Container Apps Environment (no public internet)"
+  value       = azurerm_container_app.api.latest_revision_fqdn
 }
 
 output "storage_account_name" {
