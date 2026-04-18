@@ -8,14 +8,22 @@ Implementations:
   BlobStorageService   — production, Azure Blob Storage
 
 Resolution (get_storage_service factory):
-  AZURE_STORAGE_CONNECTION_STRING set → BlobStorageService
-  otherwise                           → LocalStorageService
+  AZURE_STORAGE_ACCOUNT_URL set        → BlobStorageService via DefaultAzureCredential (managed identity)
+  AZURE_STORAGE_CONNECTION_STRING set  → BlobStorageService via connection string (Azurite emulator)
+  otherwise                            → LocalStorageService
+
+Download model (RBAC, no SAS):
+  • Blob container: private, no public access
+  • Required role on container: ``Storage Blob Data Reader`` assigned to the app’s managed identity
+  • Clients call  GET /files/download/{key}  on FastAPI — never a direct blob URL
+  • FastAPI calls  storage.stream(key)  and returns StreamingResponse authenticated by DefaultAzureCredential
 
 Usage::
 
     storage = get_storage_service()
     storage.upload(Path("invoice.pdf"), "2026/03/invoice.pdf")
-    url = storage.get_download_url("2026/03/invoice.pdf", ttl_minutes=15)
+    for chunk in storage.stream("2026/03/invoice.pdf"):  # RBAC-checked by Azure
+        ...
 """
 
 from __future__ import annotations
@@ -24,24 +32,25 @@ import logging
 import os
 import shutil
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Iterator, Protocol, runtime_checkable
 
 logger = logging.getLogger("zdrovena.common.storage")
 
 try:
-    from azure.storage.blob import (
-        BlobSasPermissions,
-        BlobServiceClient,
-        generate_blob_sas,
-    )
+    from azure.storage.blob import BlobServiceClient
     _AZURE_STORAGE_AVAILABLE = True
 except ImportError:
-    BlobSasPermissions = None  # type: ignore[assignment,misc]
-    BlobServiceClient = None   # type: ignore[assignment,misc]
-    generate_blob_sas = None   # type: ignore[assignment]
+    BlobServiceClient = None  # type: ignore[assignment,misc]
     _AZURE_STORAGE_AVAILABLE = False
+
+try:
+    from azure.identity import DefaultAzureCredential
+    _AZURE_IDENTITY_AVAILABLE = True
+except ImportError:
+    DefaultAzureCredential = None  # type: ignore[assignment,misc]
+    _AZURE_IDENTITY_AVAILABLE = False
 
 _DEFAULT_ROOT = Path.home() / ".zdrovena" / "storage"
 _DEFAULT_CONTAINER = "month-closing"
@@ -60,8 +69,8 @@ class BlobFile:
 class StorageService(Protocol):
     def upload(self, local_path: Path, key: str) -> None: ...
     def download(self, key: str, local_path: Path) -> None: ...
+    def stream(self, key: str, chunk_size: int = 4 * 1024 * 1024) -> Iterator[bytes]: ...
     def list_files(self, prefix: str = "") -> list[BlobFile]: ...
-    def get_download_url(self, key: str, ttl_minutes: int = 15) -> str: ...
     def delete(self, key: str) -> None: ...
 
 
@@ -86,6 +95,18 @@ class LocalStorageService:
         local_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, local_path)
 
+    def stream(self, key: str, chunk_size: int = 4 * 1024 * 1024) -> Iterator[bytes]:
+        """Yield file content in chunks. For local dev/tests only."""
+        path = self.root / key
+        if not path.exists():
+            raise FileNotFoundError(f"Key not found in local storage: {key!r}")
+        with path.open("rb") as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+
     def list_files(self, prefix: str = "") -> list[BlobFile]:
         results: list[BlobFile] = []
         base = self.root / prefix if prefix else self.root
@@ -102,11 +123,6 @@ class LocalStorageService:
                 ))
         return results
 
-    def get_download_url(self, key: str, ttl_minutes: int = 15) -> str:
-        """Return file:// URL — TTL is ignored for local storage."""
-        path = self.root / key
-        return path.as_uri()
-
     def delete(self, key: str) -> None:
         path = self.root / key
         path.unlink(missing_ok=True)
@@ -115,18 +131,46 @@ class LocalStorageService:
 # ── Azure Blob implementation ─────────────────────────────────────────────────
 
 class BlobStorageService:
-    """Azure Blob Storage backed service — requires [cloud] extras."""
+    """Azure Blob Storage backed service — requires [cloud] extras.
 
-    def __init__(self, connection_string: str, container: str = _DEFAULT_CONTAINER) -> None:
+    Authentication:
+    - ``account_url`` → DefaultAzureCredential (managed identity / ``az login``)
+    - ``connection_string`` → raw connection string (Azurite emulator only)
+
+    Download model (RBAC, no SAS):
+    - Container must be private (no public access)
+    - Required role on container: ``Storage Blob Data Reader`` on the app’s managed identity
+    - FastAPI calls ``stream(key)`` and returns StreamingResponse — clients never get a blob URL
+    """
+
+    def __init__(
+        self,
+        *,
+        account_url: str | None = None,
+        connection_string: str | None = None,
+        container: str = _DEFAULT_CONTAINER,
+    ) -> None:
         if not _AZURE_STORAGE_AVAILABLE:
             raise RuntimeError(
                 "Azure Blob dependencies not installed. "
                 "Install with: pip install zdrovena-reconciliation[cloud]"
             )
-        self._connection_string = connection_string
+        if account_url and connection_string:
+            raise ValueError("Provide either account_url or connection_string, not both.")
+        if not account_url and not connection_string:
+            raise ValueError("Provide account_url (managed identity) or connection_string (emulator).")
         self._container = container
-        self._client = BlobServiceClient.from_connection_string(connection_string)
-        logger.debug("BlobStorage: connected to container %r", container)
+        if account_url:
+            if not _AZURE_IDENTITY_AVAILABLE:
+                raise RuntimeError(
+                    "azure-identity not installed. "
+                    "Install with: pip install zdrovena-reconciliation[cloud]"
+                )
+            self._client = BlobServiceClient(account_url, credential=DefaultAzureCredential())
+            logger.debug("BlobStorage: connected via DefaultAzureCredential to %r", account_url)
+        else:
+            self._client = BlobServiceClient.from_connection_string(connection_string)
+            logger.debug("BlobStorage: connected via connection string, container %r", container)
 
     def upload(self, local_path: Path, key: str) -> None:
         blob = self._client.get_blob_client(container=self._container, blob=key)
@@ -152,20 +196,15 @@ class BlobStorageService:
             for b in blobs
         ]
 
-    def get_download_url(self, key: str, ttl_minutes: int = 15) -> str:
-        expiry = datetime.now(tz=timezone.utc) + timedelta(minutes=ttl_minutes)
-        account_name = self._client.account_name
-        account_key = self._client.credential.account_key
+    def stream(self, key: str, chunk_size: int = 4 * 1024 * 1024) -> Iterator[bytes]:
+        """Yield blob content in chunks, authenticated via RBAC.
 
-        sas_token = generate_blob_sas(
-            account_name=account_name,
-            container_name=self._container,
-            blob_name=key,
-            account_key=account_key,
-            permission=BlobSasPermissions(read=True),
-            expiry=expiry,
-        )
-        return f"https://{account_name}.blob.core.windows.net/{self._container}/{key}?{sas_token}"
+        Requires ``Storage Blob Data Reader`` role on the managed identity.
+        Use in FastAPI: ``return StreamingResponse(storage.stream(key), media_type=...)``
+        """
+        blob = self._client.get_blob_client(container=self._container, blob=key)
+        downloader = blob.download_blob()
+        yield from downloader.chunks()
 
     def delete(self, key: str) -> None:
         blob = self._client.get_blob_client(container=self._container, blob=key)
@@ -180,6 +219,11 @@ def get_storage_service(
 ) -> StorageService:
     """Return the appropriate StorageService based on environment.
 
+    Priority:
+    1. ``AZURE_STORAGE_ACCOUNT_URL``       → BlobStorageService via DefaultAzureCredential
+    2. ``AZURE_STORAGE_CONNECTION_STRING`` → BlobStorageService via connection string (Azurite)
+    3. otherwise                           → LocalStorageService
+
     Parameters
     ----------
     root:
@@ -188,12 +232,15 @@ def get_storage_service(
         Override Azure container name (default: ``AZURE_STORAGE_CONTAINER``
         env var or ``"month-closing"``).
     """
+    resolved_container = (
+        container
+        or os.environ.get("AZURE_STORAGE_CONTAINER")
+        or _DEFAULT_CONTAINER
+    )
+    account_url = os.environ.get("AZURE_STORAGE_ACCOUNT_URL")
+    if account_url:
+        return BlobStorageService(account_url=account_url, container=resolved_container)
     conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
     if conn:
-        resolved_container = (
-            container
-            or os.environ.get("AZURE_STORAGE_CONTAINER")
-            or _DEFAULT_CONTAINER
-        )
-        return BlobStorageService(conn, resolved_container)
+        return BlobStorageService(connection_string=conn, container=resolved_container)
     return LocalStorageService(root=root)

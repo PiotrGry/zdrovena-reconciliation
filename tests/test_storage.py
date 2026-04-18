@@ -86,18 +86,20 @@ class TestLocalStorageService:
         svc = LocalStorageService(root=tmp_path / "storage")
         assert svc.list_files("nonexistent/") == []
 
-    def test_get_download_url_returns_file_uri(self, tmp_path):
+    def test_stream_yields_chunks(self, tmp_path):
         root = tmp_path / "storage"
         svc = LocalStorageService(root=root)
-        url = svc.get_download_url("2026/03/file.pdf")
-        assert url.startswith("file://")
-        assert "file.pdf" in url
+        (root / "2026/03").mkdir(parents=True)
+        (root / "2026/03/report.pdf").write_bytes(b"chunk1" + b"chunk2")
 
-    def test_get_download_url_ttl_ignored(self, tmp_path):
+        data = b"".join(svc.stream("2026/03/report.pdf", chunk_size=6))
+
+        assert data == b"chunk1chunk2"
+
+    def test_stream_missing_key_raises(self, tmp_path):
         svc = LocalStorageService(root=tmp_path / "storage")
-        url1 = svc.get_download_url("key.pdf", ttl_minutes=1)
-        url2 = svc.get_download_url("key.pdf", ttl_minutes=60)
-        assert url1 == url2
+        with pytest.raises(FileNotFoundError):
+            list(svc.stream("missing.pdf"))
 
     def test_delete_removes_file(self, tmp_path):
         root = tmp_path / "storage"
@@ -124,29 +126,50 @@ class TestLocalStorageService:
 class TestGetStorageServiceFactory:
     def test_returns_local_without_env(self, tmp_path, monkeypatch):
         monkeypatch.delenv("AZURE_STORAGE_CONNECTION_STRING", raising=False)
+        monkeypatch.delenv("AZURE_STORAGE_ACCOUNT_URL", raising=False)
         svc = get_storage_service(root=tmp_path)
         assert isinstance(svc, LocalStorageService)
 
     def test_local_uses_provided_root(self, tmp_path, monkeypatch):
         monkeypatch.delenv("AZURE_STORAGE_CONNECTION_STRING", raising=False)
+        monkeypatch.delenv("AZURE_STORAGE_ACCOUNT_URL", raising=False)
         svc = get_storage_service(root=tmp_path)
         assert isinstance(svc, LocalStorageService)
         assert svc.root == tmp_path
 
+    def test_returns_blob_with_account_url(self, monkeypatch):
+        monkeypatch.setenv("AZURE_STORAGE_ACCOUNT_URL", "https://myaccount.blob.core.windows.net")
+        monkeypatch.delenv("AZURE_STORAGE_CONNECTION_STRING", raising=False)
+        with patch("zdrovena.common.storage.BlobStorageService.__init__", return_value=None) as mock_init:
+            get_storage_service()
+            _, kwargs = mock_init.call_args
+            assert kwargs.get("account_url") == "https://myaccount.blob.core.windows.net"
+
     def test_returns_blob_with_connection_string(self, monkeypatch):
+        monkeypatch.delenv("AZURE_STORAGE_ACCOUNT_URL", raising=False)
         monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=dGVzdA==;EndpointSuffix=core.windows.net")
         with patch("zdrovena.common.storage.BlobStorageService.__init__", return_value=None) as mock_init:
-            svc = get_storage_service()
-            mock_init.assert_called_once()
+            get_storage_service()
+            _, kwargs = mock_init.call_args
+            assert kwargs.get("connection_string") is not None
+
+    def test_account_url_takes_priority_over_connection_string(self, monkeypatch):
+        monkeypatch.setenv("AZURE_STORAGE_ACCOUNT_URL", "https://myaccount.blob.core.windows.net")
+        monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "conn_str")
+        with patch("zdrovena.common.storage.BlobStorageService.__init__", return_value=None) as mock_init:
+            get_storage_service()
+            _, kwargs = mock_init.call_args
+            assert kwargs.get("account_url") is not None
+            assert kwargs.get("connection_string") is None
 
     def test_blob_uses_env_container(self, monkeypatch):
+        monkeypatch.delenv("AZURE_STORAGE_ACCOUNT_URL", raising=False)
         monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "conn_str")
         monkeypatch.setenv("AZURE_STORAGE_CONTAINER", "my-container")
         with patch("zdrovena.common.storage.BlobStorageService.__init__", return_value=None) as mock_init:
             get_storage_service()
             _, kwargs = mock_init.call_args
-            args = mock_init.call_args[0]
-            assert "my-container" in args or kwargs.get("container") == "my-container"
+            assert kwargs.get("container") == "my-container"
 
 
 # ── BlobStorageService (mocked) ───────────────────────────────────────────────
@@ -210,21 +233,16 @@ class TestBlobStorageServiceMocked:
 
         mock_blob.delete_blob.assert_called_once_with(delete_snapshots="include")
 
-    def test_get_download_url_contains_sas(self):
+    def test_stream_yields_chunks_via_sdk(self):
         svc = self._make_svc()
-        svc._client.account_name = "myaccount"
-        svc._client.credential = MagicMock()
-        svc._client.credential.account_key = "key=="
+        mock_blob = MagicMock()
+        mock_blob.download_blob.return_value.chunks.return_value = iter([b"part1", b"part2"])
+        svc._client.get_blob_client.return_value = mock_blob
 
-        with patch("zdrovena.common.storage.BlobSasPermissions", MagicMock(return_value="read-perm")), \
-             patch("zdrovena.common.storage.generate_blob_sas", return_value="sv=2024&sig=abc") as mock_sas:
-            url = svc.get_download_url("2026/03/file.pdf", ttl_minutes=15)
+        data = b"".join(svc.stream("2026/03/file.pdf"))
 
-        assert "myaccount.blob.core.windows.net" in url
-        assert "month-closing" in url
-        assert "2026/03/file.pdf" in url
-        assert "sv=2024" in url
-        mock_sas.assert_called_once()
+        assert data == b"part1part2"
+        mock_blob.download_blob.return_value.chunks.assert_called_once()
 
     def test_implements_storage_service_protocol(self):
         svc = self._make_svc()
