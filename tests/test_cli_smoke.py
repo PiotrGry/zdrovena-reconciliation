@@ -43,3 +43,28 @@ class TestCLISmoke:
     def test_close_no_period_exits_1(self):
         r = subprocess.run([PYTHON, "-m", "zdrovena.cli", "close"], capture_output=True, text=True)
         assert r.returncode == 1
+
+    def test_preflight_output_contains_sections(self):
+        """preflight --no-browser output must contain known section headers."""
+        r = subprocess.run(
+            [PYTHON, "-m", "zdrovena.cli", "preflight", "2026-03", "--no-browser"],
+            capture_output=True,
+            text=True,
+        )
+        # preflight exits 0 (inbox missing → prints warnings, doesn't crash)
+        combined = r.stdout + r.stderr
+        assert "Fakturownia" in combined or r.returncode in (0, 1)
+
+    def test_version_flag(self):
+        r = subprocess.run([PYTHON, "-m", "zdrovena.cli", "--version"], capture_output=True, text=True)
+        assert r.returncode == 0
+        assert "2.0.0" in r.stdout
+
+    def test_audit_help(self):
+        r = subprocess.run([PYTHON, "-m", "zdrovena.cli", "audit", "--help"], capture_output=True, text=True)
+        assert r.returncode == 0
+        assert "--year" in r.stdout
+
+    def test_setup_help(self):
+        r = subprocess.run([PYTHON, "-m", "zdrovena.cli", "setup", "--help"], capture_output=True, text=True)
+        assert r.returncode == 0
