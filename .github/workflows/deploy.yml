@@ -2,7 +2,7 @@ name: CI/CD — Test → Build → Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main]       # deploy only on merge to main (gitflow)
   workflow_dispatch:        # allow manual trigger from GitHub UI
 
 # OIDC: required for azure/login with federated credentials (no long-lived secrets)

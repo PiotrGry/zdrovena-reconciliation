@@ -1,0 +1,109 @@
+name: CI — Lint · Type · Test · Infra
+
+on:
+  pull_request:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Lint ────────────────────────────────────────────────────────────────────
+  lint:
+    name: Ruff lint & format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Check lint
+        run: ruff check .
+
+      - name: Check format
+        run: ruff format --check .
+
+  # ── Type check ──────────────────────────────────────────────────────────────
+  typecheck:
+    name: Pyright
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,api,cloud]" pyright
+
+      - name: Run Pyright
+        run: pyright
+
+  # ── Tests ───────────────────────────────────────────────────────────────────
+  test:
+    name: "pytest (cov >= 80%)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,api,cloud]"
+
+      - name: Run tests
+        env:
+          AZURE_AUTH_DISABLED: "true"
+        run: pytest tests/ -q --tb=short --cov=zdrovena --cov-fail-under=80
+
+  # ── Infra — only when terraform files changed ────────────────────────────────
+  infra:
+    name: Terraform validate + Checkov
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect changed infra files
+        id: changed
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            infra:
+              - 'infra/terraform/**'
+
+      - name: Setup Terraform
+        if: steps.changed.outputs.infra == 'true'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.5"
+
+      - name: Terraform init (no backend)
+        if: steps.changed.outputs.infra == 'true'
+        run: terraform -chdir=infra/terraform init -backend=false
+
+      - name: Terraform validate
+        if: steps.changed.outputs.infra == 'true'
+        run: terraform -chdir=infra/terraform validate
+
+      - name: Checkov security scan
+        if: steps.changed.outputs.infra == 'true'
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infra/terraform
+          quiet: true
+          soft_fail: false
+
+      - name: No infra changes — skipped
+        if: steps.changed.outputs.infra != 'true'
+        run: echo "No terraform files changed, infra checks skipped."
