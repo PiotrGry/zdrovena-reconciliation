@@ -77,15 +77,18 @@ jobs:
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             --image       "$APP_IMAGE:${{ github.sha }}"
 
-      # Wait for rollout then hit /health — non-blocking (warn only)
-      - name: Health check
+      # Health check via Tailscale — GitHub Actions runner must be on the tailnet.
+      # Add the runner as a Tailscale node: use tailscale/github-action before this step,
+      # or skip the check if runner is not on the tailnet.
+      - name: Health check (Tailscale)
+        env:
+          TAILSCALE_HOSTNAME: ${{ secrets.TAILSCALE_API_HOSTNAME }}
         run: |
+          if [ -z "$TAILSCALE_HOSTNAME" ]; then
+            echo "⚠️  TAILSCALE_API_HOSTNAME not set — skipping health check"
+            exit 0
+          fi
           sleep 20
-          FQDN=$(az containerapp show \
-            --name        "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --query "properties.configuration.ingress.fqdn" \
-            --output tsv)
-          curl --fail --silent --max-time 10 "https://$FQDN/health" \
+          curl --fail --silent --max-time 10 "https://$TAILSCALE_HOSTNAME/health" \
             && echo "✅ /health OK" \
             || echo "⚠️  /health check failed (non-blocking)"

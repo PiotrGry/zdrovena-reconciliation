@@ -49,3 +49,14 @@ variable "container_app_memory" {
   type        = string
   default     = "1Gi"
 }
+
+variable "tailscale_auth_key" {
+  description = <<-EOT
+    Tailscale ephemeral+reusable auth key.
+    Generate at: https://login.tailscale.com/admin/settings/keys
+    Select: Reusable=true, Ephemeral=true, Tags=[tag:server]
+    Pass via TF_VAR_tailscale_auth_key env var or -var flag — never commit.
+  EOT
+  type      = string
+  sensitive = true
+}

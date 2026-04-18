@@ -16,3 +16,10 @@ azure_tenant_id = "FILL_IN"
 # Create at: https://portal.azure.com → App registrations
 # Leave empty to skip JWT audience check during initial setup
 azure_client_id_entra = ""
+
+# Tailscale ephemeral+reusable auth key
+# Generate at: https://login.tailscale.com/admin/settings/keys
+# Options: Reusable=true, Ephemeral=true, Tags=[tag:server]
+# Prefer passing via env var to avoid storing in file:
+#   export TF_VAR_tailscale_auth_key=tskey-auth-...
+# tailscale_auth_key = "tskey-auth-FILL_IN"
