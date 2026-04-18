@@ -17,4 +17,7 @@ azure_tenant_id = "FILL_IN"
 # Leave empty to skip JWT audience check during initial setup
 azure_client_id_entra = ""
 
+# Static Web Apps region (westeurope recommended — polandcentral not supported)
+swa_location = "westeurope"
+
 

@@ -77,10 +77,21 @@ jobs:
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             --image       "$APP_IMAGE:${{ github.sha }}"
 
-      # API has no public ingress — health check is skipped.
-      # To verify the deploy, check Container App logs in Azure Portal
-      # or run: az containerapp logs show --name <app> --resource-group <rg>
-      - name: Deploy complete
+      # Link the Container App as the API backend for the Static Web App.
+      # SWA will proxy  /api/*  →  Container App (browser never sees the CA URL).
+      # Idempotent — safe to run on every deploy.
+      - name: Link SWA backend
         run: |
-          echo "✅ Image deployed: $APP_IMAGE:${{ github.sha }}"
-          echo "ℹ️  API is internal-only (external_enabled=false). No public health check."
+          CONTAINER_APP_ID=$(az containerapp show \
+            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --query id --output tsv)
+
+          az staticwebapp backends link \
+            --name "${{ secrets.AZURE_SWA_NAME }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --backend-resource-id "$CONTAINER_APP_ID" \
+            --backend-region "${{ secrets.AZURE_LOCATION }}"
+
+      - name: Deploy complete
+        run: echo "✅ Image deployed: $APP_IMAGE:${{ github.sha }}"

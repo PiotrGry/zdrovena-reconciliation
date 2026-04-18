@@ -97,11 +97,12 @@ resource "azurerm_container_app" "api" {
     identity = "System"
   }
 
-  # No public ingress — API is internal only.
-  # Reachable exclusively within the Container Apps Environment
-  # (i.e. from a co-located frontend container or future VNet integration).
+  # External ingress required so Static Web Apps linked backend can proxy
+  # /api/* requests to this Container App.
+  # The browser NEVER calls this URL directly — only the SWA edge nodes do.
+  # CORS is restricted to the SWA origin (ALLOWED_ORIGINS env var below).
   ingress {
-    external_enabled = false
+    external_enabled = true
     target_port      = 8000
     transport        = "http"
 
@@ -146,8 +147,30 @@ resource "azurerm_container_app" "api" {
         name  = "AZURE_CLIENT_ID"
         value = var.azure_client_id_entra
       }
+
+      # Restrict CORS to the SWA origin — blocks any other browser origin.
+      # FastAPI reads ALLOWED_ORIGINS and passes it to CORSMiddleware.
+      env {
+        name  = "ALLOWED_ORIGINS"
+        value = "https://${azurerm_static_site.ui.default_host_name}"
+      }
     }
   }
+}
+
+# ── Static Web App (frontend) ──────────────────────────────────────────────────
+# SWA serves the JS/React/Vue bundle from Azure CDN.
+# /api/* routes are proxied by the SWA edge to the Container App above;
+# the browser never learns the Container App URL.
+# Standard SKU required for linked backend feature.
+
+resource "azurerm_static_site" "ui" {
+  name                = "${var.prefix}-ui"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = var.swa_location
+  sku_tier            = "Standard"
+  sku_size            = "Standard"
+  tags                = local.tags
 }
 
 # ── RBAC: Container App → AcrPull ─────────────────────────────────────────────

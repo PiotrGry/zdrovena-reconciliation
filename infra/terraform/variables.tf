@@ -50,4 +50,10 @@ variable "container_app_memory" {
   default     = "1Gi"
 }
 
+variable "swa_location" {
+  description = "Azure region for Static Web Apps (limited availability — westeurope recommended)"
+  type        = string
+  default     = "westeurope"
+}
+
 
