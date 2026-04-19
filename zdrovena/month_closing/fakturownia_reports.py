@@ -680,11 +680,11 @@ def _run_all_wizard_reports(
 
     # One shared response listener for all reports — stores (idx, s3_url) pairs
     pending_s3: list[tuple[int, str, int]] = []  # (report_idx, url, capture_serial)
-    _serial = [0]
+    _serial: list[int] = [0]
 
     # Maps captured S3 URLs to which report index they belong.
     # We track the "active" index set when Go→ is clicked (or sequentially).
-    active_idx = [0]
+    active_idx: list[int] = [0]
 
     def _on_resp(resp) -> None:
         cd = resp.headers.get("content-disposition", "")

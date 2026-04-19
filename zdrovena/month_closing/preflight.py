@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -43,7 +44,7 @@ class PreflightChecker:
         date_to: str,
         cost_date_to: str,
         dry_run: bool,
-        get_secret: object,
+        get_secret: Callable[..., str | None],
         no_browser: bool = False,
     ) -> None:
         self.year = year

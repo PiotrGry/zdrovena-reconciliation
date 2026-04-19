@@ -265,7 +265,8 @@ class MonthCloseOrchestrator:
         invoices = client.fetch_sales_invoices(self.date_from, self.date_to)
         self.report.sales_invoice_count = len(invoices)
         self.report.sales_gross_total = sum(
-            to_decimal(inv.get("price_gross", 0)) for inv in invoices
+            (to_decimal(inv.get("price_gross", 0)) for inv in invoices),
+            Decimal(0),
         )
         self._sales_invoices = invoices
         if not invoices:
@@ -508,7 +509,7 @@ class MonthCloseOrchestrator:
                         search_term=email_pattern,
                         date_from=zf,
                         date_to=zt,
-                        invoice_id_re=vendor_cfg.invoice_id_re,
+                        invoice_id_re=vendor_cfg.invoice_id_re or "",
                     )
                     if not invoice_ids:
                         logger.info("Zoho Mail: no invoice IDs found for %s", vendor_cfg.name)
@@ -669,7 +670,7 @@ class MonthCloseOrchestrator:
             self._mark_step_done("Email (dry-run)")
             return
         smtp_pass = self._get_secret(KEYCHAIN_SERVICE_ZOHO_SMTP)
-        svc = EmailService(smtp_password=smtp_pass)
+        svc = EmailService(smtp_password=smtp_pass or "")
         month_pl = POLISH_MONTHS[self.month].capitalize()
         subject = f"{COMPANY_BRAND} – Dokumenty księgowe – {month_pl} {self.year}"
         body = self._build_email_body()
