@@ -68,3 +68,15 @@ known-first-party = ["zdrovena"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-v --tb=short"
+
+# ─── Semantic versioning (python-semantic-release) ───────────────────────────
+# Conventional commits → automatic version bump on merge to main.
+# feat: → MINOR  |  fix: → PATCH  |  feat!: / BREAKING CHANGE: → MAJOR
+# Commits with ci:, chore:, docs: produce no version bump.
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+branch = "main"
+commit_message = "chore(release): v{version} [skip ci]"
+changelog_file = "CHANGELOG.md"
+build_command = ""  # no PyPI publish — we ship via Docker/Container App
