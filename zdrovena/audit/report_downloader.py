@@ -27,8 +27,8 @@ from pathlib import Path
 
 import keyring
 
-from zdrovena.common.config import KEYCHAIN_ACCOUNT
-from zdrovena.month_closing.config import (
+from zdrovena.common.config import (
+    KEYCHAIN_ACCOUNT,
     KEYCHAIN_SERVICE_FAKTUROWNIA_LOGIN,
     KEYCHAIN_SERVICE_FAKTUROWNIA_PASSWORD,
 )
