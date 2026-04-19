@@ -1,21 +1,27 @@
-name: CI/CD — Test → Build → Deploy
+name: Deploy → Production
 
 on:
   push:
-    branches: [main]       # deploy only on merge to main (gitflow)
-  workflow_dispatch:        # allow manual trigger from GitHub UI
+    branches: [main]
+  workflow_dispatch:
 
-# OIDC: required for azure/login with federated credentials (no long-lived secrets)
+# OIDC — no long-lived Azure credentials stored anywhere
 permissions:
   id-token: write
   contents: read
 
+# Never cancel a running deploy — let it finish or fail cleanly
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
-  # ── 1. Tests ───────────────────────────────────────────────────────────────
+  # ── 1. Sanity tests ────────────────────────────────────────────────────────
+  # Full suite already passed in CI gate on PR; this is a last-chance check
+  # in case something slipped through a direct push to main.
   test:
     name: Tests
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -25,61 +31,73 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -e ".[dev,api]"
+        run: pip install -e ".[dev,api,cloud]"
 
       - name: Run test suite
         env:
           AZURE_AUTH_DISABLED: "true"
-        run: pytest tests/ -q --tb=short
+        run: pytest tests/ -q --tb=short --cov=zdrovena --cov-fail-under=80
 
-  # ── 2. Build → Push → Deploy ───────────────────────────────────────────────
-  deploy:
-    name: Build & Deploy
+  # ── 2. Build & push image ──────────────────────────────────────────────────
+  build:
+    name: Build & push image
     runs-on: ubuntu-latest
-    needs: test              # only runs if tests pass
-    environment: production  # optional: add required reviewers in GitHub settings
-
-    env:
-      APP_IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api
+    needs: test
+    outputs:
+      image: ${{ steps.push.outputs.image }}
 
     steps:
       - uses: actions/checkout@v4
 
-      # Log in to Azure using OIDC (no client secret stored anywhere)
-      - name: Azure login
+      - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # Authenticate Docker with ACR using the Azure session above
       - name: Log in to ACR
         run: az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
 
-      # Build and push two tags: SHA (immutable) + latest (mutable pointer)
-      - name: Build & push image
+      # Two tags: SHA (immutable, for rollback) + latest (mutable pointer)
+      - name: Build & push
+        id: push
+        env:
+          IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api
         run: |
           docker build \
             --label "git.sha=${{ github.sha }}" \
             --label "git.ref=${{ github.ref_name }}" \
-            -t "$APP_IMAGE:${{ github.sha }}" \
-            -t "$APP_IMAGE:latest" \
+            -t "$IMAGE:${{ github.sha }}" \
+            -t "$IMAGE:latest" \
             .
-          docker push "$APP_IMAGE:${{ github.sha }}"
-          docker push "$APP_IMAGE:latest"
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+          echo "image=$IMAGE:${{ github.sha }}" >> $GITHUB_OUTPUT
 
-      # Update the Container App to the new immutable SHA tag
-      - name: Deploy to Container App
+  # ── 3. Deploy to Container App ─────────────────────────────────────────────
+  deploy:
+    name: Deploy to Container App
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production  # add required reviewers here if needed
+
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update Container App image
         run: |
           az containerapp update \
-            --name        "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --image       "$APP_IMAGE:${{ github.sha }}"
+            --name            "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group  "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --image           "${{ needs.build.outputs.image }}"
 
-      # Link the Container App as the API backend for the Static Web App.
-      # SWA will proxy  /api/*  →  Container App (browser never sees the CA URL).
-      # Idempotent — safe to run on every deploy.
+      # Link SWA → Container App backend (idempotent, safe every deploy)
       - name: Link SWA backend
         run: |
           CONTAINER_APP_ID=$(az containerapp show \
@@ -93,5 +111,65 @@ jobs:
             --backend-resource-id "$CONTAINER_APP_ID" \
             --backend-region "${{ secrets.AZURE_LOCATION }}"
 
-      - name: Deploy complete
-        run: echo "✅ Image deployed: $APP_IMAGE:${{ github.sha }}"
+  # ── 4. Smoke test + rollback ───────────────────────────────────────────────
+  smoke:
+    name: Smoke test
+    runs-on: ubuntu-latest
+    needs: deploy
+
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve app FQDN
+        id: url
+        run: |
+          FQDN=$(az containerapp show \
+            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          echo "fqdn=$FQDN" >> $GITHUB_OUTPUT
+          echo "Health endpoint: https://$FQDN/health"
+
+      # 5 attempts × 10s sleep = up to 50s for the container to become ready
+      - name: Health check (with retry)
+        id: health
+        run: |
+          for i in 1 2 3 4 5; do
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+              --max-time 10 "https://${{ steps.url.outputs.fqdn }}/health")
+            echo "Attempt $i: HTTP $HTTP"
+            if [[ "$HTTP" == "200" ]]; then
+              echo "Health check passed."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Health check failed after 5 attempts."
+          exit 1
+
+      # Activate the most recent non-active revision (= the previous deploy)
+      - name: Rollback on health check failure
+        if: failure() && steps.health.outcome == 'failure'
+        run: |
+          echo "Rolling back to previous revision..."
+          PREV=$(az containerapp revision list \
+            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --query "[?properties.active==\`false\`] | sort_by(@, &properties.createdTime) | [-1].name" \
+            --output tsv)
+          if [[ -n "$PREV" ]]; then
+            az containerapp revision activate \
+              --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
+              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              --revision "$PREV"
+            echo "Rolled back to revision: $PREV"
+            exit 1
+          else
+            echo "No previous revision found — manual intervention required."
+            exit 1
+          fi
