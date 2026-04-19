@@ -184,13 +184,30 @@ jobs:
         if: steps.changed.outputs.infra != 'true'
         run: echo "No terraform files changed, infra checks skipped."
 
+  # ── Docker build (no push) ───────────────────────────────────────────────────
+  # Validates Dockerfile on every feature branch push and PR.
+  # The actual push to ACR happens only in deploy.yml (on merge to main).
+  docker-build:
+    name: Docker build (validate)
+    runs-on: ubuntu-latest
+    needs: [test]  # don't build broken code
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image (no push)
+        run: |
+          docker build \
+            --label "git.sha=${{ github.sha }}" \
+            -t zdrovena-api:ci-${{ github.sha }} \
+            .
+
   # ── CI Gate ─────────────────────────────────────────────────────────────────
   # Single required check to reference in branch protection rules.
   # Fails if ANY upstream job failed or was cancelled.
   ci-gate:
     name: CI Gate
     runs-on: ubuntu-latest
-    needs: [lint, typecheck, test, fitness, security, infra]
+    needs: [lint, typecheck, test, fitness, security, infra, docker-build]
     if: always()
     steps:
       - name: Check all jobs passed
