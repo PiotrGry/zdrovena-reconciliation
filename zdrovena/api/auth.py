@@ -88,7 +88,7 @@ def _validate_token(token: str) -> Principal:
 
     try:
         import urllib.request, json as _json
-        with urllib.request.urlopen(_jwks_uri(), timeout=5) as resp:
+        with urllib.request.urlopen(_jwks_uri(), timeout=5) as resp:  # nosec B310 — URL from OIDC config, not user input
             jwks = _json.loads(resp.read())
     except Exception as exc:
         logger.error("Failed to fetch JWKS: %s", exc)

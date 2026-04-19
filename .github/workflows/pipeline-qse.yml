@@ -1,10 +1,7 @@
 name: QSE Gate
 
 on:
-  push:
-    branches: ["**"]
-  pull_request:
-    branches: ["**"]
+  workflow_dispatch:  # disabled — superseded by ci.yml
 
 jobs:
   qse:
