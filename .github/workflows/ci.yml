@@ -24,6 +24,7 @@ concurrency:
 permissions:
   contents: read
   security-events: write  # required for trivy SARIF upload
+  pull-requests: read     # required for dorny/paths-filter on PRs
 
 jobs:
   # ── Lint ────────────────────────────────────────────────────────────────────
@@ -60,7 +61,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -e ".[dev,api,cloud]" pyright
+        run: pip install -e ".[dev,api,cloud,report]" pyright
 
       - name: Run Pyright
         run: pyright

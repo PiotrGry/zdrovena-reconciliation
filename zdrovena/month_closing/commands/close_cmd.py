@@ -200,7 +200,7 @@ def _run_local(args: argparse.Namespace) -> None:
     pos_period = getattr(args, "period", None)
     flag_period = getattr(args, "period_flag", None)
     period_value = flag_period or pos_period
-    year, month = _parse_month(period_value)
+    year, month = _parse_month(period_value or "")
 
     dry_run = getattr(args, "dry_run", False)
     do_zip = getattr(args, "zip", False)

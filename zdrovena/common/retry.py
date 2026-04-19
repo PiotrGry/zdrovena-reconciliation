@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import random
 import time
-from typing import Callable, TypeVar
+from typing import Any, Callable, TypeVar
 
 import requests
 
@@ -47,7 +47,7 @@ def retry_request(
     timeout: int = 30,
     caller: str = "",
     sleep_fn: Callable[[float], None] | None = None,
-    **kwargs: object,
+    **kwargs: Any,
 ) -> requests.Response:
     """
     Execute an HTTP request with exponential-backoff retry.

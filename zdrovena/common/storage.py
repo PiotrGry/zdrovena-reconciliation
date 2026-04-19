@@ -170,9 +170,13 @@ class BlobStorageService:
                     "azure-identity not installed. "
                     "Install with: pip install zdrovena-reconciliation[cloud]"
                 )
+            assert BlobServiceClient is not None  # guarded by _AZURE_STORAGE_AVAILABLE check above
+            assert DefaultAzureCredential is not None
             self._client = BlobServiceClient(account_url, credential=DefaultAzureCredential())
             logger.debug("BlobStorage: connected via DefaultAzureCredential to %r", account_url)
         else:
+            assert BlobServiceClient is not None  # guarded by _AZURE_STORAGE_AVAILABLE check above
+            assert connection_string is not None  # guarded by ValueError check above
             self._client = BlobServiceClient.from_connection_string(connection_string)
             logger.debug("BlobStorage: connected via connection string, container %r", container)
 

@@ -8,6 +8,7 @@ Interactive wizards for storing credentials in macOS Keychain:
     zdrovena setup zoho            # Zoho Mail OAuth flow
     zdrovena setup gads            # Google Ads OAuth flow
 """
+# pyright: reportOptionalMemberAccess=false
 
 from __future__ import annotations
 
