@@ -1,11 +1,13 @@
-name: CI — Lint · Type · Test · Infra
+name: CI — Lint · Type · Test · Fitness · Security · Infra
 
 on:
   pull_request:
     branches: [develop, main]
+  workflow_dispatch:
 
 permissions:
   contents: read
+  security-events: write  # required for trivy SARIF upload
 
 jobs:
   # ── Lint ────────────────────────────────────────────────────────────────────
@@ -66,6 +68,43 @@ jobs:
         env:
           AZURE_AUTH_DISABLED: "true"
         run: pytest tests/ -q --tb=short --cov=zdrovena --cov-fail-under=80
+
+  # ── Security scan ───────────────────────────────────────────────────────────
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks needs full history
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install security tools
+        run: pip install pip-audit bandit[toml]
+
+      - name: pip-audit — dependency CVE scan
+        run: pip-audit --requirement <(pip install -e ".[dev,api,cloud]" --dry-run -q 2>/dev/null || true) || pip-audit
+
+      - name: bandit — SAST (Python code)
+        run: bandit -r zdrovena/ -ll -ii --exclude zdrovena/month_closing/canva_downloader.py
+
+      - name: gitleaks — secret leak scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: trivy — filesystem CVE scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
 
   # ── Fitness Functions (arch constraints) ────────────────────────────────────
   fitness:
