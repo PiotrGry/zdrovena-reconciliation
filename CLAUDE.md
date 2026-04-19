@@ -24,3 +24,21 @@ Key routing rules:
 - Architecture review → invoke plan-eng-review
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
+
+## Zasady jakości kodu — dla agentów AI
+
+### Nigdy nie rób tych rzeczy bez jawnej zgody właściciela:
+- **Nie obniżaj progów jakości** (coverage, lint severity, type strictness) by "naprawić" failing CI. Zamiast tego zgłoś problem i zaproponuj dwie opcje: (a) napisanie brakujących testów, (b) wykluczenie pliku z pomiaru z komentarzem dlaczego.
+- **Nie dodawaj `# type: ignore`, `# noqa`, `# pragma: no cover`** bez wyjaśnienia w commit message dlaczego jest to uzasadnione technicznie (np. third-party library bez typów, conditional import).
+- **Nie skipuj kroków CI** (np. `continue-on-error: true`, `if: false`) żeby run był zielony.
+- **Nie zamieniaj strict checków na warn-only** (np. bandit `-l` zamiast `-ll`, pyright `basic` zamiast `strict`) bez uzgodnienia.
+
+### Zamiast tego:
+- Jeśli coverage jest niska bo moduł jest nieprzetestowalny jednostkowo (integracja zewnętrzna) → zaproponuj `omit` dla tego pliku + uzasadnienie w PR
+- Jeśli Pyright zgłasza błąd w third-party lib bez typów → `# type: ignore[import-untyped]` jest OK, ale musi być z komentarzem
+- Jeśli test jest flakey → napraw przyczynę, nie skipuj testu
+- Jeśli CI jest wolne → zoptymalizuj cache/concurrency, nie pomijaj kroków
+
+### Obecny stan świadomego długu technicznego:
+- `coverage --cov-fail-under=34` — celowo niskie. Moduły integracyjne (zoho_mail 9%, ksef 18%, canva 20%) nie mają unit testów bo wymagają live credentials. **Do rozwiązania: napisać testy z mockami lub dodać `omit` i podnieść próg do 80%.**
+- `ksef.py` / `fakturownia_reports.py` — `# type: ignore` na conditional imports z try/except (lxml, signxml). Uzasadnione: Pyright nie śledzi symboli przez granicę try/except.

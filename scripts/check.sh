@@ -47,6 +47,17 @@ else
   echo -e "${SKIP} pyright pominięty (użyj CHECK_TYPECHECK=1 aby włączyć)"
 fi
 
+step "bandit — SAST (Python source)"
+BANDIT_CMD="bandit"
+if ! command -v bandit >/dev/null 2>&1 && [[ -f "$REPO_ROOT/.venv/bin/bandit" ]]; then
+  BANDIT_CMD="$REPO_ROOT/.venv/bin/bandit"
+fi
+if command -v "$BANDIT_CMD" >/dev/null 2>&1 || [[ -f "$REPO_ROOT/.venv/bin/bandit" ]]; then
+  $BANDIT_CMD -r zdrovena/ -ll -ii -q && ok "bandit" || fail "bandit found security issues"
+else
+  echo -e "${SKIP} bandit not found — skipping (pip install bandit[toml])"
+fi
+
 step "pytest (cov ≥ 34%)"
 $PYTEST_CMD tests/ -q --tb=short \
   --cov=zdrovena --cov-fail-under=34 \
