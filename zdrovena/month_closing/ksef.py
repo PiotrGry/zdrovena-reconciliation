@@ -38,9 +38,9 @@ try:
     from cryptography import x509
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ec, rsa
-    from lxml import etree
+    from lxml import etree  # type: ignore[attr-defined]
     from signxml import methods
-    from signxml.xades import XAdESSigner
+    from signxml.xades import XAdESSigner  # type: ignore[attr-defined]
 
     _KSEF_DEPS_AVAILABLE = True
 except ImportError:
@@ -196,7 +196,7 @@ class KSeFClient:
             digest_algorithm="sha256",
             c14n_algorithm="http://www.w3.org/2006/12/xml-c14n11",
         )
-        signed_root = signer.sign(xml_doc, key=self._private_key, cert=self._cert_pem)
+        signed_root = signer.sign(xml_doc, key=self._private_key, cert=self._cert_pem)  # type: ignore[call-arg]
         signed_xml = etree.tostring(signed_root, xml_declaration=True, encoding="utf-8")
         return signed_xml
 

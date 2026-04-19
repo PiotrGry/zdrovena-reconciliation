@@ -788,7 +788,7 @@ def _run_all_wizard_reports(
 
         # Process captured S3 URLs
         for item in list(pending_s3):
-            idx, s3_url, _serial = item
+            idx, s3_url, _ser = item
             pending_s3.remove(item)
             out_path = output_paths[idx]
             rpt_name = reports[idx]["name"]
