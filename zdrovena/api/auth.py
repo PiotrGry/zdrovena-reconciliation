@@ -41,6 +41,7 @@ _bearer = HTTPBearer(auto_error=False)
 
 # ── Principal ─────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class Principal:
     sub: str
@@ -69,6 +70,7 @@ _DEV_PRINCIPAL = Principal(
 
 # ── JWKS / token validation ───────────────────────────────────────────────────
 
+
 @lru_cache(maxsize=1)
 def _jwks_uri() -> str:
     tenant = os.environ["AZURE_TENANT_ID"]
@@ -82,12 +84,13 @@ def _validate_token(token: str) -> Principal:
         from jose.backends import RSAKey  # noqa: F401 — ensures rsa support present
     except ImportError as exc:
         raise RuntimeError(
-            "python-jose not installed. "
-            "Install with: pip install zdrovena-reconciliation[api]"
+            "python-jose not installed. Install with: pip install zdrovena-reconciliation[api]"
         ) from exc
 
     try:
-        import urllib.request, json as _json
+        import json as _json
+        import urllib.request
+
         with urllib.request.urlopen(_jwks_uri(), timeout=5) as resp:  # nosec B310 — URL from OIDC config, not user input
             jwks = _json.loads(resp.read())
     except Exception as exc:
@@ -123,6 +126,7 @@ def _validate_token(token: str) -> Principal:
 
 # ── FastAPI dependency ────────────────────────────────────────────────────────
 
+
 def get_current_principal(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> Principal:
@@ -144,6 +148,7 @@ def get_current_principal(
 
 
 # ── Role shortcuts ─────────────────────────────────────────────────────────────
+
 
 def require_admin(
     principal: Annotated[Principal, Depends(get_current_principal)],

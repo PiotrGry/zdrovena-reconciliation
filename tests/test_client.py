@@ -11,8 +11,8 @@ import requests
 from zdrovena.common.client import FakturowniaClient
 from zdrovena.common.exceptions import ApiResponseFormatError, MissingSecretError
 
-
 # ── Constructor ───────────────────────────────────────────────────────────────
+
 
 class TestClientInit:
     def test_base_url(self):
@@ -34,6 +34,7 @@ class TestClientInit:
 
 
 # ── from_keyring ──────────────────────────────────────────────────────────────
+
 
 class TestFromKeyring:
     @patch("zdrovena.common.client.keyring.get_password", return_value="my_token")
@@ -71,6 +72,7 @@ class TestFromKeyring:
 
 # ── _request ──────────────────────────────────────────────────────────────────
 
+
 class TestRequest:
     @patch("zdrovena.common.retry.time.sleep")
     def test_adds_api_token(self, _sleep):
@@ -98,6 +100,7 @@ class TestRequest:
 
 
 # ── get_json / get_binary ─────────────────────────────────────────────────────
+
 
 class TestGetHelpers:
     def test_get_json(self):
@@ -167,6 +170,7 @@ class TestGetHelpers:
 
 
 # ── fetch_invoices (pagination) ───────────────────────────────────────────────
+
 
 class TestFetchInvoices:
     def test_single_page(self):

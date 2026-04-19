@@ -16,28 +16,37 @@ import argparse
 import sys
 
 from zdrovena.audit.api import (
-    get_client, fetch_invoices, fetch_wz_documents,
-    fetch_warehouse_actions, fetch_all_warehouse_actions, fetch_products,
-    build_actions_by_doc, build_wz_by_id,
+    build_actions_by_doc,
     build_inv_by_wz,
+    build_wz_by_id,
+    fetch_all_warehouse_actions,
+    fetch_invoices,
+    fetch_products,
+    fetch_warehouse_actions,
+    fetch_wz_documents,
+    get_client,
 )
 from zdrovena.audit.sections import (
-    section_recount,
-    section_type_match,
-    section_orphan_wz,
-    section_no_wz,
-    section_date_comparison,
-    section_cross_month_sell_issue,
-    section_numbering,
-    section_stock_balance,
     section_anomalies,
+    section_cross_month_sell_issue,
+    section_date_comparison,
+    section_no_wz,
+    section_numbering,
+    section_orphan_wz,
+    section_recount,
+    section_stock_balance,
+    section_type_match,
 )
 from zdrovena.common.formatting import (
-    SEP, BOLD, RESET, GREEN, RED,
+    BOLD,
+    GREEN,
+    RED,
+    RESET,
+    SEP,
 )
 
-
 # ── Verdict tracker ──────────────────────────────────────────────────────────
+
 
 class Verdict:
     """Accumulates pass/fail results across sections."""
@@ -58,6 +67,7 @@ class Verdict:
 
 
 # ── Subcommand ────────────────────────────────────────────────────────────────
+
 
 def add_subparser(subparsers: argparse._SubParsersAction, *, parents: list | None = None) -> None:
     p = subparsers.add_parser(
@@ -86,9 +96,11 @@ def run(args: argparse.Namespace) -> None:
     all_actions = fetch_all_warehouse_actions(client)
     products = fetch_products(client)
 
-    print(f"  Pobrano: {len(invoices)} faktur, {len(wz_docs)} WZ, "
-          f"{len(wz_actions)} akcji WZ, {len(all_actions)} akcji łącznie, "
-          f"{len(products)} produktów")
+    print(
+        f"  Pobrano: {len(invoices)} faktur, {len(wz_docs)} WZ, "
+        f"{len(wz_actions)} akcji WZ, {len(all_actions)} akcji łącznie, "
+        f"{len(products)} produktów"
+    )
 
     wz_by_id = build_wz_by_id(wz_docs)
     doc_actions = build_actions_by_doc(wz_actions)

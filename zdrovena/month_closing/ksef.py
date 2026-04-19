@@ -16,8 +16,8 @@ from typing import Any
 import requests
 
 from zdrovena.common.exceptions import MissingSecretError
-from zdrovena.common.secrets import get_secret
 from zdrovena.common.retry import retry_request
+from zdrovena.common.secrets import get_secret
 from zdrovena.month_closing.config import (
     API_RETRY_COUNT,
     API_RETRY_DELAY,
@@ -120,7 +120,9 @@ class KSeFClient:
             timeout=API_TIMEOUT,
         )
         if resp.status_code not in (200, 202):
-            logger.error("KSeF auth/xades-signature returned %d:\n%s", resp.status_code, resp.text[:2000])
+            logger.error(
+                "KSeF auth/xades-signature returned %d:\n%s", resp.status_code, resp.text[:2000]
+            )
             resp.raise_for_status()
         init_data = resp.json()
         ref_number = init_data.get("referenceNumber")

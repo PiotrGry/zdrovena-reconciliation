@@ -20,50 +20,166 @@ logger = logging.getLogger("zdrovena.month_closing.invoice_date_check")
 _OCR_CACHE: dict[str, str] = {}
 
 _PL_MONTHS = {
-    "sty": 1, "stycz": 1, "stycznia": 1, "styczeń": 1,
-    "lut": 2, "luty": 2, "lutego": 2,
-    "mar": 3, "marz": 3, "marca": 3, "marzec": 3,
-    "kwi": 4, "kwiet": 4, "kwietnia": 4, "kwiecień": 4,
-    "maj": 5, "maja": 5,
-    "cze": 6, "czerw": 6, "czerwca": 6, "czerwiec": 6,
-    "lip": 7, "lipca": 7, "lipiec": 7,
-    "sie": 8, "sierp": 8, "sierpnia": 8, "sierpień": 8,
-    "wrz": 9, "wrześ": 9, "września": 9, "wrzesień": 9,
-    "paź": 10, "pazd": 10, "października": 10, "październik": 10,
-    "lis": 11, "listop": 11, "listopada": 11, "listopad": 11,
-    "gru": 12, "grudz": 12, "grudnia": 12, "grudzień": 12,
+    "sty": 1,
+    "stycz": 1,
+    "stycznia": 1,
+    "styczeń": 1,
+    "lut": 2,
+    "luty": 2,
+    "lutego": 2,
+    "mar": 3,
+    "marz": 3,
+    "marca": 3,
+    "marzec": 3,
+    "kwi": 4,
+    "kwiet": 4,
+    "kwietnia": 4,
+    "kwiecień": 4,
+    "maj": 5,
+    "maja": 5,
+    "cze": 6,
+    "czerw": 6,
+    "czerwca": 6,
+    "czerwiec": 6,
+    "lip": 7,
+    "lipca": 7,
+    "lipiec": 7,
+    "sie": 8,
+    "sierp": 8,
+    "sierpnia": 8,
+    "sierpień": 8,
+    "wrz": 9,
+    "wrześ": 9,
+    "września": 9,
+    "wrzesień": 9,
+    "paź": 10,
+    "pazd": 10,
+    "października": 10,
+    "październik": 10,
+    "lis": 11,
+    "listop": 11,
+    "listopada": 11,
+    "listopad": 11,
+    "gru": 12,
+    "grudz": 12,
+    "grudnia": 12,
+    "grudzień": 12,
 }
 
 _EN_MONTHS = {
-    "jan": 1, "january": 1, "feb": 2, "february": 2,
-    "mar": 3, "march": 3, "apr": 4, "april": 4,
-    "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
-    "aug": 8, "august": 8, "sep": 9, "september": 9,
-    "oct": 10, "october": 10, "nov": 11, "november": 11,
-    "dec": 12, "december": 12,
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
 }
 
 _ALL_MONTHS = {**_PL_MONTHS, **_EN_MONTHS}
 
 _NUMERIC_DATE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"Data\s+wystawienia\s*[:\-–]\s*(\d{4}[.\-/]\d{2}[.\-/]\d{2})", re.IGNORECASE), "%Y-%m-%d"),
-    (re.compile(r"Data\s+wystawienia\s*[:\-–]\s*(\d{2}[.\-/]\d{2}[.\-/]\d{4})", re.IGNORECASE), "%d-%m-%Y"),
-    (re.compile(r"(\d{4}[.\-/]\d{2}[.\-/]\d{2})\s*\n\s*(?:\d{4}[.\-/]\d{2}[.\-/]\d{2}\s*\n\s*)*Data\s+wystawienia", re.IGNORECASE), "%Y-%m-%d"),
-    (re.compile(r"data\s+wystawien\w*\s*[:]\s*[A-ZŁŚŻa-złśż\s]+(\d{2}[.\-/]\d{2}[.\-/]\d{4})", re.IGNORECASE), "%d-%m-%Y"),
-    (re.compile(r"Wystawion[ay]\s+w\s+dniu\s*[:\-–]\s*(\d{4}[.\-/]\d{2}[.\-/]\d{2})", re.IGNORECASE), "%Y-%m-%d"),
-    (re.compile(r"Wystawion[ay]\s+w\s+dniu\s*[:\-–]\s*(\d{2}[.\-/]\d{2}[.\-/]\d{4})", re.IGNORECASE), "%d-%m-%Y"),
-    (re.compile(r"Data\s+faktury\s*[:\-–.\s]*(\d{4}[.\-/]\d{2}[.\-/]\d{2})", re.IGNORECASE), "%Y-%m-%d"),
-    (re.compile(r"Data\s+faktury\s*[:\-–.\s]*(\d{2}[.\-/]\d{2}[.\-/]\d{4})", re.IGNORECASE), "%d-%m-%Y"),
-    (re.compile(r"Data\s+wydruku\s*[:\-–]\s*(\d{4}[.\-/]\d{2}[.\-/]\d{2})", re.IGNORECASE), "%Y-%m-%d"),
-    (re.compile(r"Data\s+wydruku\s*[:\-–]\s*(\d{2}[.\-/]\d{2}[.\-/]\d{4})", re.IGNORECASE), "%d-%m-%Y"),
+    (
+        re.compile(r"Data\s+wystawienia\s*[:\-–]\s*(\d{4}[.\-/]\d{2}[.\-/]\d{2})", re.IGNORECASE),
+        "%Y-%m-%d",
+    ),
+    (
+        re.compile(r"Data\s+wystawienia\s*[:\-–]\s*(\d{2}[.\-/]\d{2}[.\-/]\d{4})", re.IGNORECASE),
+        "%d-%m-%Y",
+    ),
+    (
+        re.compile(
+            r"(\d{4}[.\-/]\d{2}[.\-/]\d{2})\s*\n\s*(?:\d{4}[.\-/]\d{2}[.\-/]\d{2}\s*\n\s*)*Data\s+wystawienia",
+            re.IGNORECASE,
+        ),
+        "%Y-%m-%d",
+    ),
+    (
+        re.compile(
+            r"data\s+wystawien\w*\s*[:]\s*[A-ZŁŚŻa-złśż\s]+(\d{2}[.\-/]\d{2}[.\-/]\d{4})",
+            re.IGNORECASE,
+        ),
+        "%d-%m-%Y",
+    ),
+    (
+        re.compile(
+            r"Wystawion[ay]\s+w\s+dniu\s*[:\-–]\s*(\d{4}[.\-/]\d{2}[.\-/]\d{2})", re.IGNORECASE
+        ),
+        "%Y-%m-%d",
+    ),
+    (
+        re.compile(
+            r"Wystawion[ay]\s+w\s+dniu\s*[:\-–]\s*(\d{2}[.\-/]\d{2}[.\-/]\d{4})", re.IGNORECASE
+        ),
+        "%d-%m-%Y",
+    ),
+    (
+        re.compile(r"Data\s+faktury\s*[:\-–.\s]*(\d{4}[.\-/]\d{2}[.\-/]\d{2})", re.IGNORECASE),
+        "%Y-%m-%d",
+    ),
+    (
+        re.compile(r"Data\s+faktury\s*[:\-–.\s]*(\d{2}[.\-/]\d{2}[.\-/]\d{4})", re.IGNORECASE),
+        "%d-%m-%Y",
+    ),
+    (
+        re.compile(r"Data\s+wydruku\s*[:\-–]\s*(\d{4}[.\-/]\d{2}[.\-/]\d{2})", re.IGNORECASE),
+        "%Y-%m-%d",
+    ),
+    (
+        re.compile(r"Data\s+wydruku\s*[:\-–]\s*(\d{2}[.\-/]\d{2}[.\-/]\d{4})", re.IGNORECASE),
+        "%d-%m-%Y",
+    ),
     (re.compile(r"PEKAO[^\n]*\n(\d{4}[.\-/]\d{2}[.\-/]\d{2})", re.IGNORECASE), "%Y-%m-%d"),
-    (re.compile(r"\d{2}\s\d{4}\s\d{4}\s\d{4}\s\d{4}\s\d{4}\s\d{4}\s*\n(\d{4}[.\-/]\d{2}[.\-/]\d{2})"), "%Y-%m-%d"),
-    (re.compile(r"Data\s+sprzeda[żz]y\s*[:\-–]\s*(\d{4}[.\-/]\d{2}[.\-/]\d{2})", re.IGNORECASE), "%Y-%m-%d"),
-    (re.compile(r"Data\s+sprzeda[żz]y\s*[:\-–]\s*(\d{2}[.\-/]\d{2}[.\-/]\d{4})", re.IGNORECASE), "%d-%m-%Y"),
-    (re.compile(r"(?:Issue|Invoice)\s+[Dd]ate\s*[:\-–]\s*(\d{4}[.\-/]\d{2}[.\-/]\d{2})", re.IGNORECASE), "%Y-%m-%d"),
-    (re.compile(r"(?:Issue|Invoice)\s+[Dd]ate\s*[:\-–]\s*(\d{2}[.\-/]\d{2}[.\-/]\d{4})", re.IGNORECASE), "%d-%m-%Y"),
-    (re.compile(r"(\d{2}[.\-/]\d{2}[.\-/]\d{4})\s*\n\s*date\s+of\s+issue", re.IGNORECASE), "%d-%m-%Y"),
-    (re.compile(r"(\d{4}[.\-/]\d{2}[.\-/]\d{2})\s*\n\s*date\s+of\s+issue", re.IGNORECASE), "%Y-%m-%d"),
+    (
+        re.compile(
+            r"\d{2}\s\d{4}\s\d{4}\s\d{4}\s\d{4}\s\d{4}\s\d{4}\s*\n(\d{4}[.\-/]\d{2}[.\-/]\d{2})"
+        ),
+        "%Y-%m-%d",
+    ),
+    (
+        re.compile(r"Data\s+sprzeda[żz]y\s*[:\-–]\s*(\d{4}[.\-/]\d{2}[.\-/]\d{2})", re.IGNORECASE),
+        "%Y-%m-%d",
+    ),
+    (
+        re.compile(r"Data\s+sprzeda[żz]y\s*[:\-–]\s*(\d{2}[.\-/]\d{2}[.\-/]\d{4})", re.IGNORECASE),
+        "%d-%m-%Y",
+    ),
+    (
+        re.compile(
+            r"(?:Issue|Invoice)\s+[Dd]ate\s*[:\-–]\s*(\d{4}[.\-/]\d{2}[.\-/]\d{2})", re.IGNORECASE
+        ),
+        "%Y-%m-%d",
+    ),
+    (
+        re.compile(
+            r"(?:Issue|Invoice)\s+[Dd]ate\s*[:\-–]\s*(\d{2}[.\-/]\d{2}[.\-/]\d{4})", re.IGNORECASE
+        ),
+        "%d-%m-%Y",
+    ),
+    (
+        re.compile(r"(\d{2}[.\-/]\d{2}[.\-/]\d{4})\s*\n\s*date\s+of\s+issue", re.IGNORECASE),
+        "%d-%m-%Y",
+    ),
+    (
+        re.compile(r"(\d{4}[.\-/]\d{2}[.\-/]\d{2})\s*\n\s*date\s+of\s+issue", re.IGNORECASE),
+        "%Y-%m-%d",
+    ),
 ]
 
 _MONTH_NAMES_RE = "|".join(re.escape(m) for m in sorted(_ALL_MONTHS.keys(), key=len, reverse=True))
@@ -108,8 +224,6 @@ def _parse_text_month_date(match: re.Match[str], pattern_idx: int) -> date | Non
 def _ocr_fallback(pdf_path: Path) -> str:
     """Last-resort OCR via Tesseract for scanned PDFs."""
     import shutil
-    import subprocess
-    import tempfile
 
     cache_key = str(pdf_path.resolve())
     if cache_key in _OCR_CACHE:
@@ -121,6 +235,7 @@ def _ocr_fallback(pdf_path: Path) -> str:
     ocr_text = ""
     try:
         from pypdf import PdfReader
+
         reader = PdfReader(pdf_path)
         images_found = False
         for page_idx, page in enumerate(reader.pages):
@@ -143,9 +258,9 @@ def _ocr_fallback(pdf_path: Path) -> str:
 
 
 def _ocr_image(img: Any, pdf_name: str, page_idx: int) -> str:
-    import subprocess
     import tempfile
     from pathlib import Path as _Path
+
     suffix = ".jpg" if hasattr(img, "name") and img.name.lower().endswith(".jpg") else ".png"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(img.data)
@@ -159,6 +274,7 @@ def _ocr_image(img: Any, pdf_name: str, page_idx: int) -> str:
 def _ocr_rendered_pdf(pdf_path: Path) -> str:
     import tempfile
     from pathlib import Path as _Path
+
     try:
         from pdf2image import convert_from_path
     except ImportError:
@@ -181,12 +297,15 @@ def _ocr_rendered_pdf(pdf_path: Path) -> str:
 
 def _run_tesseract(image_path: str, pdf_name: str, page_idx: int) -> str:
     import subprocess
+
     ocr_text = ""
     for psm_mode in [6, 3]:
         try:
             result = subprocess.run(
                 ["tesseract", image_path, "-", "-l", "osd+pol+eng", "--psm", str(psm_mode)],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             if result.returncode == 0 and result.stdout.strip():
                 ocr_text = result.stdout.strip()
@@ -279,16 +398,20 @@ def is_likely_invoice(pdf_path: Path, text: str | None = None) -> bool:
     if not has_strong_invoice_keyword:
         return False
     non_invoice_negators = [
-        "proforma", "oświadczenie", "wyborze formy",
-        "zeznanie", "wykaz sprzedaży", "wyciąg",
+        "proforma",
+        "oświadczenie",
+        "wyborze formy",
+        "zeznanie",
+        "wykaz sprzedaży",
+        "wyciąg",
     ]
-    if any(neg in text_lower for neg in non_invoice_negators):
-        return False
-    return True
+    return not any(neg in text_lower for neg in non_invoice_negators)
 
 
 def validate_invoice_dates(
-    saved_paths: list[Path], month_start: date, month_end: date,
+    saved_paths: list[Path],
+    month_start: date,
+    month_end: date,
 ) -> tuple[list[Path], list[Path], list[Path]]:
     accepted: list[Path] = []
     rejected: list[Path] = []

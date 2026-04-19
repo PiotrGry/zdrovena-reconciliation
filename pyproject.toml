@@ -58,6 +58,11 @@ select = [
 ignore = [
     "E501",   # line too long (handled by formatter)
     "SIM108", # ternary operator suggestions
+    "RUF001", # ambiguous unicode in strings — intentional Polish text
+    "RUF002", # ambiguous unicode in docstrings — intentional Polish text
+    "RUF003", # ambiguous unicode in comments — intentional Polish text
+    "SIM117", # merge-with-statements — readability preference
+    "SIM105", # suppressible-exception — explicit try/except preferred
 ]
 
 [tool.ruff.lint.isort]

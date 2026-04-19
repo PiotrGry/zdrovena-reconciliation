@@ -4,6 +4,7 @@ zdrovena.month_closing.config – Month-close configuration
 Company details, vendor definitions, Zoho / KSeF / Google Ads settings,
 and keychain service names used during the monthly accounting close.
 """
+# ruff: noqa: F401  — re-exported constants are intentionally imported here
 
 from __future__ import annotations
 
@@ -12,28 +13,40 @@ from pathlib import Path
 
 from zdrovena.common.config import (
     DEFAULT_DOMAIN as FAKTUROWNIA_DOMAIN,
-    DEFAULT_RETRY_COUNT as API_RETRY_COUNT,
-    DEFAULT_RETRY_DELAY as API_RETRY_DELAY,
-    DEFAULT_TIMEOUT as API_TIMEOUT,
+)
+from zdrovena.common.config import (
     DEFAULT_PDF_DELAY as PDF_DOWNLOAD_DELAY,
+)
+from zdrovena.common.config import (
+    DEFAULT_RETRY_COUNT as API_RETRY_COUNT,
+)
+from zdrovena.common.config import (
+    DEFAULT_RETRY_DELAY as API_RETRY_DELAY,
+)
+from zdrovena.common.config import (
+    DEFAULT_TIMEOUT as API_TIMEOUT,
+)
+from zdrovena.common.config import (
     KEYCHAIN_ACCOUNT,
     KEYCHAIN_SERVICE_FAKTUROWNIA,
     KEYCHAIN_SERVICE_FAKTUROWNIA_LOGIN,
     KEYCHAIN_SERVICE_FAKTUROWNIA_PASSWORD,
-    KEYCHAIN_SERVICE_ZOHO_SMTP,
-    KEYCHAIN_SERVICE_ZOHO_CLIENT_ID,
-    KEYCHAIN_SERVICE_ZOHO_CLIENT_SECRET,
-    KEYCHAIN_SERVICE_ZOHO_REFRESH_TOKEN,
+    KEYCHAIN_SERVICE_GADS_CLIENT_ID,
+    KEYCHAIN_SERVICE_GADS_CLIENT_SECRET,
+    KEYCHAIN_SERVICE_GADS_DEV_TOKEN,
+    KEYCHAIN_SERVICE_GADS_REFRESH_TOKEN,
     KEYCHAIN_SERVICE_KSEF_CERT,
     KEYCHAIN_SERVICE_KSEF_KEY,
     KEYCHAIN_SERVICE_KSEF_KEY_PASS,
-    KEYCHAIN_SERVICE_GADS_DEV_TOKEN,
-    KEYCHAIN_SERVICE_GADS_CLIENT_ID,
-    KEYCHAIN_SERVICE_GADS_CLIENT_SECRET,
-    KEYCHAIN_SERVICE_GADS_REFRESH_TOKEN,
+    KEYCHAIN_SERVICE_ZOHO_CLIENT_ID,
+    KEYCHAIN_SERVICE_ZOHO_CLIENT_SECRET,
+    KEYCHAIN_SERVICE_ZOHO_REFRESH_TOKEN,
+    KEYCHAIN_SERVICE_ZOHO_SMTP,
 )
 from zdrovena.common.formatting import (
     ENGLISH_MONTHS,
+)
+from zdrovena.common.formatting import (
     MONTHS_FULL as POLISH_MONTHS,
 )
 
@@ -126,27 +139,39 @@ class VendorConfig:
 
 
 EXPECTED_VENDORS: list[VendorConfig] = [
-    VendorConfig(name="Shopify",           pattern="shopify",    email="billing@shopify.com"),
-    VendorConfig(name="BaseLinker",        pattern="baselinker", email="bok@baselinker.com",
-                 link_re=r'https://panel[^"<>\s]+baselinker\.com/payment/printout\.php\?invoice=[^"<>\s]+'),
-    VendorConfig(name="Allegro",           pattern="allegro",    email="allegro"),
-    VendorConfig(name="PayU",              pattern="payu",       email="payu"),
-    VendorConfig(name="InPost",            pattern="inpost",     email="inpost"),
-    VendorConfig(name="Apaczka",           pattern="alsendo",    email="apaczka"),
-    VendorConfig(name="Canva",             pattern="canva",      email="canva",
-                 browser_download=True,
-                 download_glob="invoice-?????-????????.pdf",
-                 fallback_url="https://www.canva.com/invoices",
-                 invoice_id_re=r"invoices(?:/|%2[Ff]|%252[Ff])(\d{5}-\d{8})",
-                 invoice_file_tpl="invoice-{id}.pdf"),
-    VendorConfig(name="Google Ads",        pattern="google",     email="payments-noreply",
-                 manual=True,
-                 download_glob="[0-9]?????????.pdf",
-                 fallback_url="https://ads.google.com/aw/billing/documents?ocid=3849995102",
-                 invoice_id_re=r"(?:Invoice|Faktura)[^0-9]*?(\d{10,})",
-                 invoice_file_tpl="{id}.pdf"),
-    VendorConfig(name="PulsePure",         pattern="pulsepure",  email="pulsepure"),
-    VendorConfig(name="Accounting/Bożena", pattern="ogorzalek",  email="ogorzalek"),
+    VendorConfig(name="Shopify", pattern="shopify", email="billing@shopify.com"),
+    VendorConfig(
+        name="BaseLinker",
+        pattern="baselinker",
+        email="bok@baselinker.com",
+        link_re=r'https://panel[^"<>\s]+baselinker\.com/payment/printout\.php\?invoice=[^"<>\s]+',
+    ),
+    VendorConfig(name="Allegro", pattern="allegro", email="allegro"),
+    VendorConfig(name="PayU", pattern="payu", email="payu"),
+    VendorConfig(name="InPost", pattern="inpost", email="inpost"),
+    VendorConfig(name="Apaczka", pattern="alsendo", email="apaczka"),
+    VendorConfig(
+        name="Canva",
+        pattern="canva",
+        email="canva",
+        browser_download=True,
+        download_glob="invoice-?????-????????.pdf",
+        fallback_url="https://www.canva.com/invoices",
+        invoice_id_re=r"invoices(?:/|%2[Ff]|%252[Ff])(\d{5}-\d{8})",
+        invoice_file_tpl="invoice-{id}.pdf",
+    ),
+    VendorConfig(
+        name="Google Ads",
+        pattern="google",
+        email="payments-noreply",
+        manual=True,
+        download_glob="[0-9]?????????.pdf",
+        fallback_url="https://ads.google.com/aw/billing/documents?ocid=3849995102",
+        invoice_id_re=r"(?:Invoice|Faktura)[^0-9]*?(\d{10,})",
+        invoice_file_tpl="{id}.pdf",
+    ),
+    VendorConfig(name="PulsePure", pattern="pulsepure", email="pulsepure"),
+    VendorConfig(name="Accounting/Bożena", pattern="ogorzalek", email="ogorzalek"),
 ]
 
 # ─── Google Ads ───────────────────────────────────────────────────────────────

@@ -7,9 +7,7 @@ at module boundaries (e.g., passing date objects where strings are expected).
 
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 
 class TestPreflightIntegration:
@@ -23,6 +21,7 @@ class TestPreflightIntegration:
         If _run() passes wrong types to PreflightChecker, it blows up here.
         """
         import argparse
+
         from zdrovena.month_closing.commands.preflight_cmd import _run
 
         # Point inbox to an empty tmp dir so no real files are needed
@@ -43,6 +42,7 @@ class TestPreflightIntegration:
     def test_december_boundary_real_checker(self, mock_secret, tmp_path):
         """December → January year rollover with real PreflightChecker."""
         import argparse
+
         from zdrovena.month_closing.commands.preflight_cmd import _run
 
         with patch("zdrovena.month_closing.config.DOWNLOAD_WATCH_DIR", tmp_path):

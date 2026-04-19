@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from zdrovena.audit.bottles import (
     BOTTLE_ALIASES,
     BOTTLE_PRODUCTS,
@@ -14,8 +12,8 @@ from zdrovena.audit.bottles import (
     wz_bottles,
 )
 
-
 # ── bottles_per_unit ──────────────────────────────────────────────────────────
+
 
 class TestBottlesPerUnit:
     def test_butelek_pattern(self):
@@ -43,6 +41,7 @@ class TestBottlesPerUnit:
 
 # ── is_glass ──────────────────────────────────────────────────────────────────
 
+
 class TestIsGlass:
     def test_szklo_detected(self):
         assert is_glass("Woda Humio szkło 500ml") is True
@@ -56,6 +55,7 @@ class TestIsGlass:
 
 
 # ── extract_bottles ───────────────────────────────────────────────────────────
+
 
 class TestExtractBottles:
     def test_plastic(self):
@@ -82,6 +82,7 @@ class TestExtractBottles:
 
 # ── invoice_bottles ───────────────────────────────────────────────────────────
 
+
 class TestInvoiceBottles:
     def test_sums_positions(self, sample_invoice):
         plastic, glass = invoice_bottles(sample_invoice)
@@ -106,6 +107,7 @@ class TestInvoiceBottles:
 
 # ── wz_bottles ────────────────────────────────────────────────────────────────
 
+
 class TestWzBottles:
     def test_counts_bottles(self, sample_wz_actions):
         p, g = wz_bottles(201, sample_wz_actions)
@@ -122,6 +124,7 @@ class TestWzBottles:
 
 
 # ── BOTTLE_PRODUCTS ───────────────────────────────────────────────────────────
+
 
 class TestBottleProducts:
     def test_is_frozenset(self):

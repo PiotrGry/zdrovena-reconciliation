@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import zipfile
 
-import pytest
-
 from zdrovena.month_closing.zip_service import create_month_archive
 
 

@@ -265,7 +265,9 @@ class PreflightChecker:
         else:
             gen_year, gen_month = self.year, self.month + 1
         print(f"  └─ ⚠️  No PKO BP bank statement for {self.year}-{self.month:02d}")
-        print(f"     Download from iPKO → filename: Wyciag_na_zadanie_*_{gen_year}{gen_month:02d}*.pdf")
+        print(
+            f"     Download from iPKO → filename: Wyciag_na_zadanie_*_{gen_year}{gen_month:02d}*.pdf"
+        )
 
     def _check_reports(self) -> None:
         watch_dir = DOWNLOAD_WATCH_DIR

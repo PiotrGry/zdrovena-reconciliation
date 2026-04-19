@@ -68,7 +68,8 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
     dl_parser = files_sub.add_parser("download", help="Pobierz plik")
     dl_parser.add_argument("key", metavar="KEY", help="Klucz pliku w Storage")
     dl_parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         default=None,
         metavar="PATH",
         help="Ścieżka docelowa (domyślnie: stdout)",

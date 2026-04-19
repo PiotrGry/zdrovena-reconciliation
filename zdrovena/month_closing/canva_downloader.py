@@ -102,7 +102,7 @@ def setup_canva_login() -> None:
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     _clean_singleton_locks()
 
-    print(f"Opening Canva in a browser. Please log in manually.")
+    print("Opening Canva in a browser. Please log in manually.")
     print(f"Profile will be saved to: {PROFILE_DIR}")
 
     with Stealth().use_sync(sync_playwright()) as pw:
@@ -128,9 +128,7 @@ def _try_download(pw, invoice_url: str, output_path: Path, headless: bool) -> bo
         context.close()
 
 
-def download_canva_invoice(
-    invoice_id: str, output_path: Path, headless: bool = True
-) -> Path:
+def download_canva_invoice(invoice_id: str, output_path: Path, headless: bool = True) -> Path:
     """
     Downloads a single Canva invoice PDF by navigating to its page.
     The invoice page auto-triggers a PDF download on load.
@@ -164,9 +162,7 @@ def download_canva_invoice(
         if _try_download(pw, invoice_url, output_path, headless=headless):
             size = output_path.stat().st_size
             if size >= 100:
-                logger.info(
-                    "Canva invoice %s saved (%d bytes)", invoice_id, size
-                )
+                logger.info("Canva invoice %s saved (%d bytes)", invoice_id, size)
                 return output_path
 
         # Download failed → session likely expired, open browser for re-login
@@ -181,9 +177,7 @@ def download_canva_invoice(
 
         size = output_path.stat().st_size
         if size < 100:
-            raise RuntimeError(
-                f"Downloaded file too small ({size} bytes), likely not a valid PDF."
-            )
+            raise RuntimeError(f"Downloaded file too small ({size} bytes), likely not a valid PDF.")
         logger.info("Canva invoice %s saved (%d bytes)", invoice_id, size)
 
     return output_path

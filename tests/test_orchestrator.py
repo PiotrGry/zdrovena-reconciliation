@@ -10,8 +10,8 @@ import pytest
 
 from zdrovena.month_closing.orchestrator import CloseReport, MonthCloseOrchestrator
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _make_orchestrator(
     *,
@@ -32,6 +32,7 @@ def _make_orchestrator(
 
 
 # ── Warnings Gate ─────────────────────────────────────────────────────────────
+
 
 class TestWarningsGate:
     def test_strict_mode_raises(self):
@@ -68,6 +69,7 @@ class TestWarningsGate:
 
 # ── Non-interactive mode ──────────────────────────────────────────────────────
 
+
 class TestNonInteractive:
     def test_flag_stored(self):
         orch = _make_orchestrator(non_interactive=True)
@@ -96,6 +98,7 @@ class TestNonInteractive:
 
 # ── Constructor validation ────────────────────────────────────────────────────
 
+
 class TestOrchestratorInit:
     def test_invalid_month(self):
         with pytest.raises(ValueError, match="Invalid month"):
@@ -114,6 +117,7 @@ class TestOrchestratorInit:
 
 
 # ── _get_secret env fallback ─────────────────────────────────────────────────
+
 
 class TestGetSecretEnvFallback:
     @patch.dict(os.environ, {"ZOHO_SMTP_PASSWORD": "env_pass"})
@@ -134,6 +138,7 @@ class TestGetSecretEnvFallback:
     def test_neither_raises(self, mock_kr):
         os.environ.pop("ZOHO_SMTP_PASSWORD", None)
         from zdrovena.common.exceptions import MissingSecretError
+
         with pytest.raises(MissingSecretError):
             MonthCloseOrchestrator._get_secret("zoho_smtp_password")
 
@@ -146,6 +151,7 @@ class TestGetSecretEnvFallback:
 
 
 # ── CloseReport ───────────────────────────────────────────────────────────────
+
 
 class TestCloseReport:
     def test_defaults(self):

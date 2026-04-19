@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from zdrovena.audit.api import (
     build_actions_by_doc,
     build_inv_by_wz,
@@ -16,8 +14,8 @@ from zdrovena.audit.api import (
     sell_date_of,
 )
 
-
 # ── date_range ────────────────────────────────────────────────────────────────
+
 
 class TestDateRange:
     def test_full_year(self):
@@ -44,6 +42,7 @@ class TestDateRange:
 
 # ── month_of ──────────────────────────────────────────────────────────────────
 
+
 class TestMonthOf:
     def test_normal(self):
         assert month_of("2025-06-15") == 6
@@ -59,6 +58,7 @@ class TestMonthOf:
 
 
 # ── sell_date_of ──────────────────────────────────────────────────────────────
+
 
 class TestSellDateOf:
     def test_has_sell_date(self):
@@ -80,6 +80,7 @@ class TestSellDateOf:
 
 # ── is_receipt / doc_type_label ───────────────────────────────────────────────
 
+
 class TestDocType:
     def test_is_receipt_true(self):
         assert is_receipt({"kind": "receipt"}) is True
@@ -95,6 +96,7 @@ class TestDocType:
 
 
 # ── inv_sort_key ──────────────────────────────────────────────────────────────
+
 
 class TestInvSortKey:
     def test_normal_number(self):
@@ -112,11 +114,14 @@ class TestInvSortKey:
         ]
         sorted_invs = sorted(invoices, key=inv_sort_key)
         assert [i["number"] for i in sorted_invs] == [
-            "1/02/2025", "3/02/2025", "10/02/2025",
+            "1/02/2025",
+            "3/02/2025",
+            "10/02/2025",
         ]
 
 
 # ── build_wz_by_id ───────────────────────────────────────────────────────────
+
 
 class TestBuildWzById:
     def test_maps_by_id(self):
@@ -129,6 +134,7 @@ class TestBuildWzById:
 
 
 # ── build_actions_by_doc ──────────────────────────────────────────────────────
+
 
 class TestBuildActionsByDoc:
     def test_groups_by_doc_id(self):
@@ -146,6 +152,7 @@ class TestBuildActionsByDoc:
 
 
 # ── build_inv_by_wz ──────────────────────────────────────────────────────────
+
 
 class TestBuildInvByWz:
     def test_links_invoices_to_wz(self):

@@ -86,7 +86,8 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
         help="Reset stanu pipeline — wszystkie kroki zostaną ponownie wykonane",
     )
     sp.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         default=False,
         help="Szczegółowe logowanie (DEBUG)",
@@ -140,11 +141,17 @@ def _run(args: argparse.Namespace) -> None:
     pos_period = getattr(args, "period", None)
     flag_period = getattr(args, "period_flag", None)
     if pos_period and flag_period and pos_period != flag_period:
-        print(f"❌ Podano dwa różne okresy: '{pos_period}' (pozycyjny) i '{flag_period}' (--period). Użyj jednego.", file=sys.stderr)
+        print(
+            f"❌ Podano dwa różne okresy: '{pos_period}' (pozycyjny) i '{flag_period}' (--period). Użyj jednego.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     period_value = flag_period or pos_period
     if not period_value:
-        print("❌ Musisz podać miesiąc w formacie YYYY-MM jako argument pozycyjny lub --period YYYY-MM", file=sys.stderr)
+        print(
+            "❌ Musisz podać miesiąc w formacie YYYY-MM jako argument pozycyjny lub --period YYYY-MM",
+            file=sys.stderr,
+        )
         sys.exit(1)
     try:
         year, month = _parse_month(period_value)
@@ -161,6 +168,7 @@ def _run(args: argparse.Namespace) -> None:
 
 def _run_api(args: argparse.Namespace, year: int, month: int, api_url: str) -> None:
     import os
+
     from zdrovena.api.client import ApiClient, ApiError
 
     token = os.environ.get("ZDROVENA_API_TOKEN") or None

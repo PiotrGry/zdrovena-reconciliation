@@ -31,15 +31,17 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger("zdrovena.common.storage")
 
 try:
     from azure.storage.blob import BlobServiceClient
+
     _AZURE_STORAGE_AVAILABLE = True
 except ImportError:
     BlobServiceClient = None  # type: ignore[assignment,misc]
@@ -47,6 +49,7 @@ except ImportError:
 
 try:
     from azure.identity import DefaultAzureCredential
+
     _AZURE_IDENTITY_AVAILABLE = True
 except ImportError:
     DefaultAzureCredential = None  # type: ignore[assignment,misc]
@@ -65,6 +68,7 @@ class BlobFile:
 
 # ── Protocol ──────────────────────────────────────────────────────────────────
 
+
 @runtime_checkable
 class StorageService(Protocol):
     def upload(self, local_path: Path, key: str) -> None: ...
@@ -76,6 +80,7 @@ class StorageService(Protocol):
 
 
 # ── Local implementation ──────────────────────────────────────────────────────
+
 
 class LocalStorageService:
     """File-system backed storage for local dev and tests."""
@@ -117,11 +122,13 @@ class LocalStorageService:
             if path.is_file():
                 stat = path.stat()
                 key = path.relative_to(self.root).as_posix()
-                results.append(BlobFile(
-                    key=key,
-                    size=stat.st_size,
-                    last_modified=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
-                ))
+                results.append(
+                    BlobFile(
+                        key=key,
+                        size=stat.st_size,
+                        last_modified=datetime.fromtimestamp(stat.st_mtime, tz=UTC),
+                    )
+                )
         return results
 
     def delete(self, key: str) -> None:
@@ -133,6 +140,7 @@ class LocalStorageService:
 
 
 # ── Azure Blob implementation ─────────────────────────────────────────────────
+
 
 class BlobStorageService:
     """Azure Blob Storage backed service — requires [cloud] extras.
@@ -162,7 +170,9 @@ class BlobStorageService:
         if account_url and connection_string:
             raise ValueError("Provide either account_url or connection_string, not both.")
         if not account_url and not connection_string:
-            raise ValueError("Provide account_url (managed identity) or connection_string (emulator).")
+            raise ValueError(
+                "Provide account_url (managed identity) or connection_string (emulator)."
+            )
         self._container = container
         if account_url:
             if not _AZURE_IDENTITY_AVAILABLE:
@@ -199,7 +209,7 @@ class BlobStorageService:
             BlobFile(
                 key=b.name,
                 size=b.size or 0,
-                last_modified=b.last_modified or datetime.now(tz=timezone.utc),
+                last_modified=b.last_modified or datetime.now(tz=UTC),
             )
             for b in blobs
         ]
@@ -225,6 +235,7 @@ class BlobStorageService:
 
 # ── Factory ───────────────────────────────────────────────────────────────────
 
+
 def get_storage_service(
     root: Path | None = None,
     container: str | None = None,
@@ -245,9 +256,7 @@ def get_storage_service(
         env var or ``"month-closing"``).
     """
     resolved_container = (
-        container
-        or os.environ.get("AZURE_STORAGE_CONTAINER")
-        or _DEFAULT_CONTAINER
+        container or os.environ.get("AZURE_STORAGE_CONTAINER") or _DEFAULT_CONTAINER
     )
     account_url = os.environ.get("AZURE_STORAGE_ACCOUNT_URL")
     if account_url:

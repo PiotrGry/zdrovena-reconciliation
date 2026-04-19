@@ -237,8 +237,7 @@ def _download_one_report(
     use_wizard_navigation = bool(rpt.get("use_wizard_navigation", False))
 
     params = (
-        f"?date_from={date_from}&date_to={date_to}"
-        f"&submitted=true&currency_convert_to_main=false"
+        f"?date_from={date_from}&date_to={date_to}&submitted=true&currency_convert_to_main=false"
     )
     target_url = _build_report_url(url, params, append_date_params=append_date_params)
     logger.info("Loading report page: %s %s", name, target_url)
@@ -261,6 +260,7 @@ def _download_one_report(
     # Playwright's expect_download does NOT fire for blob: downloads.
     # page.route() with route.fetch() captures the body before Chrome discards it.
     import re as _re
+
     non_wizard_captured: list[bytes] = []
 
     def _intercept_xml_nw(route, req) -> None:
@@ -270,8 +270,7 @@ def _download_one_report(
             cd = response.headers.get("content-disposition", "")
             body = response.body()
             if len(body) > 500 and (
-                "xml" in ct.lower()
-                or ("octet-stream" in ct.lower() and "xml" in cd.lower())
+                "xml" in ct.lower() or ("octet-stream" in ct.lower() and "xml" in cd.lower())
             ):
                 print(f"  📡  [nw route captured XML] {req.url[:70]!r} ({len(body)} bytes)")
                 non_wizard_captured.append(body)
@@ -289,7 +288,11 @@ def _download_one_report(
         # The route may have captured the real body before expect_download saved HTML.
         if non_wizard_captured:
             output_path.write_bytes(non_wizard_captured[-1])
-            logger.info("%s: overwritten with route-captured body (%d bytes)", name, len(non_wizard_captured[-1]))
+            logger.info(
+                "%s: overwritten with route-captured body (%d bytes)",
+                name,
+                len(non_wizard_captured[-1]),
+            )
         size = output_path.stat().st_size
         if size < 100:
             logger.warning("%s: generated file too small (%d bytes), removing", name, size)
@@ -302,7 +305,11 @@ def _download_one_report(
     if _try_generate_and_download(page, output_path, timeout, button_texts=button_texts):
         if non_wizard_captured:
             output_path.write_bytes(non_wizard_captured[-1])
-            logger.info("%s: overwritten with route-captured body (%d bytes)", name, len(non_wizard_captured[-1]))
+            logger.info(
+                "%s: overwritten with route-captured body (%d bytes)",
+                name,
+                len(non_wizard_captured[-1]),
+            )
         size = output_path.stat().st_size
         if size < 100:
             logger.warning("%s: generated file too small (%d bytes), removing", name, size)
@@ -416,7 +423,7 @@ def _build_multi_sidebar_js(reports_data: list[tuple[str, str, str]]) -> str:
     rows_js = ""
     for i, (name, url, dest_name) in enumerate(reports_data):
         safe_name = name.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "")
-        safe_url  = url.replace("\\", "\\\\").replace("'", "\\'")
+        safe_url = url.replace("\\", "\\\\").replace("'", "\\'")
         safe_dest = dest_name.replace("\\", "\\\\").replace("\n", "")
         rows_js += f"""
     (function() {{
@@ -651,7 +658,6 @@ def _run_all_wizard_reports(
 
     Returns list of (report_config, path) for successfully downloaded reports.
     """
-    from zdrovena.month_closing.config import FAKTUROWNIA_REPORT_TIMEOUT_MS
 
     # Build per-report metadata
     reports_data = []
@@ -721,7 +727,7 @@ def _run_all_wizard_reports(
         f"     Use Go → to navigate, Skip ⏭ to skip a report.\n"
     )
 
-    done: dict[int, Path] = {}   # idx → path
+    done: dict[int, Path] = {}  # idx → path
     skipped: set[int] = set()
     poll_n = 0
     current_idx = 0
@@ -739,7 +745,9 @@ def _run_all_wizard_reports(
 
         # Read active index from cookie (user may have clicked Go→)
         try:
-            val = page.evaluate("(function(){var m=document.cookie.match(/(?:^|; )__zdv_active=([^;]*)/);return m?decodeURIComponent(m[1]):null;})()")
+            val = page.evaluate(
+                "(function(){var m=document.cookie.match(/(?:^|; )__zdv_active=([^;]*)/);return m?decodeURIComponent(m[1]):null;})()"
+            )
             if val is not None:
                 active_idx[0] = int(val)
         except Exception:
@@ -774,11 +782,13 @@ def _run_all_wizard_reports(
 
         if poll_n % 10 == 0:
             remaining = [reports[i]["name"] for i in range(n) if i not in done and i not in skipped]
-            print(f"  ⏳  ({poll_n // 2}s) done={len(done)}/{n}  pending_s3={len(pending_s3)}  remaining={remaining}")
+            print(
+                f"  ⏳  ({poll_n // 2}s) done={len(done)}/{n}  pending_s3={len(pending_s3)}  remaining={remaining}"
+            )
 
         # Process captured S3 URLs
         for item in list(pending_s3):
-            idx, s3_url, serial = item
+            idx, s3_url, _serial = item
             pending_s3.remove(item)
             out_path = output_paths[idx]
             rpt_name = reports[idx]["name"]
@@ -811,14 +821,18 @@ def _run_all_wizard_reports(
                 except Exception:
                     pass
                 print(f"  ✅  [{reports[i]['name']}] complete")
-                logger.info("%s: download complete (%d bytes)", reports[i]["name"], p.stat().st_size)
+                logger.info(
+                    "%s: download complete (%d bytes)", reports[i]["name"], p.stat().st_size
+                )
 
         # Check skipped via cookie
         for i in range(n):
             if i in done or i in skipped:
                 continue
             try:
-                if page.evaluate(f"(function(){{var m=document.cookie.match(/(?:^|; )__zdv_skipped_{i}=([^;]*)/);return m?decodeURIComponent(m[1])==='true':false;}})()"):
+                if page.evaluate(
+                    f"(function(){{var m=document.cookie.match(/(?:^|; )__zdv_skipped_{i}=([^;]*)/);return m?decodeURIComponent(m[1])==='true':false;}})()"
+                ):
                     skipped.add(i)
                     print(f"  ⏭  [{reports[i]['name']}] skipped by user")
                     logger.info("%s: skipped by user", reports[i]["name"])
@@ -843,7 +857,9 @@ def _run_all_wizard_reports(
 
         # User clicked the green Done button (or browser closed)
         try:
-            if page.evaluate("(function(){var m=document.cookie.match(/(?:^|; )__zdv_all_done=([^;]*)/);return m?decodeURIComponent(m[1])==='true':false;})()"):
+            if page.evaluate(
+                "(function(){var m=document.cookie.match(/(?:^|; )__zdv_all_done=([^;]*)/);return m?decodeURIComponent(m[1])==='true':false;})()"
+            ):
                 print("  ✅  Done button pressed — closing session")
                 break
         except Exception:
@@ -951,7 +967,9 @@ def _run_manual_browser_session(
         poll_n += 1
         _inject_sb()  # restore sidebar after any navigation
         if poll_n % 10 == 0:  # print every 5s so user knows we're alive
-            print(f"  ⏳  Waiting... ({poll_n // 2}s elapsed, captured_urls={len(captured_xml_urls)})")
+            print(
+                f"  ⏳  Waiting... ({poll_n // 2}s elapsed, captured_urls={len(captured_xml_urls)})"
+            )
 
         # Re-fetch any S3 pre-signed URLs captured by the response listener.
         # Called from the main poll loop (NOT inside an event callback) so
@@ -966,7 +984,9 @@ def _run_manual_browser_session(
                     if len(body) > 500:
                         output_path.write_bytes(body)
                         print(f"  📥  Saved via S3 re-fetch ({len(body)} bytes) → {output_path}")
-                        logger.info("%s: S3 re-fetch saved to %s (%d bytes)", name, output_path, len(body))
+                        logger.info(
+                            "%s: S3 re-fetch saved to %s (%d bytes)", name, output_path, len(body)
+                        )
                     else:
                         print(f"  ⚠️  S3 re-fetch body too small ({len(body)} bytes), skipping")
                 else:
@@ -986,7 +1006,9 @@ def _run_manual_browser_session(
             break
 
         try:
-            skipped = page.evaluate("(function(){var m=document.cookie.match(/(?:^|; )__zdv_skipped_0=([^;]*)/);return m?decodeURIComponent(m[1])==='true':false;})()")
+            skipped = page.evaluate(
+                "(function(){var m=document.cookie.match(/(?:^|; )__zdv_skipped_0=([^;]*)/);return m?decodeURIComponent(m[1])==='true':false;})()"
+            )
         except Exception:
             skipped = False
         if skipped:
@@ -1125,8 +1147,7 @@ def _try_generate_and_download(
         #      appears in the page body once the backend job completes.
         # We poll for both simultaneously so neither blocks the other.
         combined_job_sel = (
-            "#job_download_link a[href*='/jobs/'], "
-            "a[href*='/jobs/'][href$='/result']"
+            "#job_download_link a[href*='/jobs/'], a[href*='/jobs/'][href$='/result']"
         )
         deadline = time.monotonic() + timeout_ms / 1000.0
         while time.monotonic() < deadline:
