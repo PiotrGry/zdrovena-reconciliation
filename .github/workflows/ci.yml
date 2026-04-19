@@ -13,8 +13,12 @@ on:
   workflow_dispatch:
 
 # Cancel outdated runs for the same branch/PR — saves minutes and noise
+# github.head_ref is set for pull_request events (= source branch name)
+# github.ref_name is set for push events (= branch name)
+# Using head_ref||ref_name puts push+PR from the same branch in one group,
+# so the newer run cancels the older one — no double billing.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 permissions:
