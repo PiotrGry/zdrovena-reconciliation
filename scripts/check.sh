@@ -47,7 +47,7 @@ else
   echo -e "${SKIP} pyright pominięty (użyj CHECK_TYPECHECK=1 aby włączyć)"
 fi
 
-step "pytest (cov ≥ 80%)"
+step "pytest (cov ≥ 34%)"
 $PYTEST_CMD tests/ -q --tb=short \
   --cov=zdrovena --cov-fail-under=34 \
   --cov-report=term-missing \

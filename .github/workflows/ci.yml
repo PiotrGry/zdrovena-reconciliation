@@ -68,7 +68,7 @@ jobs:
 
   # ── Tests ───────────────────────────────────────────────────────────────────
   test:
-    name: "pytest (cov >= 80%)"
+    name: "pytest (cov >= 34%)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
