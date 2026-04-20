@@ -183,9 +183,10 @@ jobs:
         if: steps.changed.outputs.infra != 'true'
         run: echo "No terraform files changed, infra checks skipped."
 
-  # ── Docker build (no push) ───────────────────────────────────────────────────
-  # Validates Dockerfile on every feature branch push and PR.
-  # The actual push to ACR happens only in deploy.yml (on merge to main).
+  # ── Docker build (validate only) ────────────────────────────────────────────
+  # PR→develop: waliduje Dockerfile, brak push — szybka pętla feedbacku.
+  # PR→main: staging-smoke poniżej buduje i pushuje obraz staging-<sha> do ACR.
+  # deploy.yml promuje staging-<sha> → <sha>+latest bez ponownego buildu.
   docker-build:
     name: Docker build (validate)
     runs-on: ubuntu-latest
@@ -238,12 +239,25 @@ jobs:
             .
           docker push "$IMAGE:staging-${{ github.sha }}"
 
-      - name: Deploy to staging Container App
+      # ── Serwisy backendowe ────────────────────────────────────────────────
+      - name: Deploy API to staging
         run: |
           az containerapp update \
             --name            "${{ secrets.AZURE_STAGING_CONTAINER_APP_NAME }}" \
             --resource-group  "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             --image           "${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:staging-${{ github.sha }}"
+
+      # Gdy dojdą kolejne serwisy — dodaj tu kolejne az containerapp update:
+      # - name: Deploy serwis-X to staging
+      #   run: az containerapp update --name staging-serwis-x ...
+
+      # ── Frontend ─────────────────────────────────────────────────────────
+      # - name: Deploy SWA (frontend) to staging
+      #   run: az staticwebapp deploy --name staging-swa ...
+
+      # ── Monitoring & alerty ──────────────────────────────────────────────
+      # - name: Apply staging alert rules
+      #   run: az monitor metrics alert update ...
 
       - name: Resolve staging FQDN
         id: url
@@ -253,22 +267,30 @@ jobs:
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             --query properties.configuration.ingress.fqdn -o tsv)
           echo "fqdn=$FQDN" >> $GITHUB_OUTPUT
-          echo "Staging health endpoint: https://$FQDN/health"
 
-      - name: Health check (with retry)
+      # ── Smoke tests ──────────────────────────────────────────────────────
+      - name: API smoke test
         run: |
           for i in 1 2 3 4 5; do
             HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
               --max-time 10 "https://${{ steps.url.outputs.fqdn }}/health")
             echo "Attempt $i: HTTP $HTTP"
             if [[ "$HTTP" == "200" ]]; then
-              echo "Staging smoke test passed."
+              echo "API smoke test passed."
               exit 0
             fi
             sleep 10
           done
-          echo "Staging smoke test failed."
-          exit 1
+          echo "API smoke test failed." && exit 1
+
+      # ── Testy integracyjne ───────────────────────────────────────────────
+      # Gdy dojdą kolejne serwisy — odkomentuj i rozbuduj:
+      # - name: Integration tests
+      #   run: pytest tests/integration/ -q --base-url="https://${{ steps.url.outputs.fqdn }}"
+      # - name: Frontend E2E (Playwright)
+      #   run: npx playwright test --project=chromium
+      # - name: Alert rule smoke test
+      #   run: python scripts/verify_alerts.py --env staging
 
   # ── CI Gate ─────────────────────────────────────────────────────────────────
   # Single required check to reference in branch protection rules.

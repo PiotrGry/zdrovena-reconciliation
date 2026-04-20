@@ -17,39 +17,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ── 1. Sanity tests ────────────────────────────────────────────────────────
-  # Full suite already passed in CI gate on PR; this is a last-chance check
-  # in case something slipped through a direct push to main.
-  test:
-    name: Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install dependencies
-        run: pip install -e ".[dev,api,cloud]"
-
-      - name: Run test suite
-        env:
-          AZURE_AUTH_DISABLED: "true"
-        run: pytest tests/ -q --tb=short --cov=zdrovena --cov-fail-under=80
-
-  # ── 2. Build & push image ──────────────────────────────────────────────────
+  # ── 1. Promote staging image → production tags ─────────────────────────────
+  # CI gate na PR develop→main zbudowało obraz jako staging-<sha> i przetestowało
+  # całe środowisko stagingowe. Tutaj tylko retag — ten sam digest, zero kompilacji.
+  # Zasada: build once, promote. Na prod trafia dokładnie ten sam obraz co był
+  # testowany, nie nowy build z tego samego kodu.
   build:
-    name: Build & push image
+    name: Promote image to production
     runs-on: ubuntu-latest
-    needs: test
     outputs:
-      image: ${{ steps.push.outputs.image }}
+      image: ${{ steps.promote.outputs.image }}
 
     steps:
-      - uses: actions/checkout@v4
-
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
@@ -60,18 +39,16 @@ jobs:
       - name: Log in to ACR
         run: az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
 
-      # Two tags: SHA (immutable, for rollback) + latest (mutable pointer)
-      - name: Build & push
-        id: push
+      # Retag: staging-<sha> → <sha> (immutable, do rollbacku) + latest (mutable pointer)
+      # Ten sam obraz co testowany na stagingu — brak docker build
+      - name: Promote staging image
+        id: promote
         env:
           IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api
         run: |
-          docker build \
-            --label "git.sha=${{ github.sha }}" \
-            --label "git.ref=${{ github.ref_name }}" \
-            -t "$IMAGE:${{ github.sha }}" \
-            -t "$IMAGE:latest" \
-            .
+          docker pull "$IMAGE:staging-${{ github.sha }}"
+          docker tag  "$IMAGE:staging-${{ github.sha }}" "$IMAGE:${{ github.sha }}"
+          docker tag  "$IMAGE:staging-${{ github.sha }}" "$IMAGE:latest"
           docker push "$IMAGE:${{ github.sha }}"
           docker push "$IMAGE:latest"
           echo "image=$IMAGE:${{ github.sha }}" >> $GITHUB_OUTPUT
@@ -168,6 +145,11 @@ jobs:
               --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
               --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
               --revision "$PREV"
+            # Przełącz 100% ruchu na poprzednią rewizję
+            az containerapp ingress traffic set \
+              --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
+              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              --revision-weight "$PREV=100"
             echo "Rolled back to revision: $PREV"
             exit 1
           else
