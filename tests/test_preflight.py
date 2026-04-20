@@ -76,6 +76,7 @@ class TestBuildBlockers:
 
     def test_missing_vendor(self, tmp_path):
         from zdrovena.month_closing.config import VendorConfig
+
         checker = _make_checker(tmp_path)
         checker.result.bank_statement_found = True
         vendor = VendorConfig(name="TestVendor", pattern="testvendor")
@@ -85,9 +86,12 @@ class TestBuildBlockers:
 
     def test_missing_vendor_with_url(self, tmp_path):
         from zdrovena.month_closing.config import VendorConfig
+
         checker = _make_checker(tmp_path)
         checker.result.bank_statement_found = True
-        vendor = VendorConfig(name="TestVendor", pattern="testvendor", fallback_url="https://example.com")
+        vendor = VendorConfig(
+            name="TestVendor", pattern="testvendor", fallback_url="https://example.com"
+        )
         checker.result.missing_vendors.append(vendor)
         blockers = checker.build_blockers()
         assert any("https://example.com" in b for b in blockers)
@@ -99,6 +103,7 @@ class TestBuildBlockers:
 class TestCopyToFolders:
     def test_copy_cost_vendor(self, tmp_path):
         from zdrovena.month_closing.config import VendorConfig
+
         checker = _make_checker(tmp_path)
         checker.dry_run = False  # actually copy
 
@@ -119,6 +124,7 @@ class TestCopyToFolders:
 
     def test_copy_dry_run_does_not_copy(self, tmp_path):
         from zdrovena.month_closing.config import VendorConfig
+
         checker = _make_checker(tmp_path)
         checker.dry_run = True
 
@@ -138,6 +144,7 @@ class TestCopyToFolders:
 
     def test_skip_existing_file(self, tmp_path):
         from zdrovena.month_closing.config import VendorConfig
+
         checker = _make_checker(tmp_path)
         checker.dry_run = False
 
@@ -196,6 +203,7 @@ class TestCheckBankStatement:
 class TestCheckVendors:
     def test_watch_dir_missing_marks_all_vendors_missing(self, tmp_path):
         from zdrovena.month_closing.config import VendorConfig
+
         checker = _make_checker(tmp_path)
 
         vendor = VendorConfig(name="TestVendor", pattern="testvendor", download_glob="*.pdf")
@@ -209,12 +217,15 @@ class TestCheckVendors:
 
     def test_glob_match_marks_vendor_found(self, tmp_path):
         from zdrovena.month_closing.config import VendorConfig
+
         checker = _make_checker(tmp_path)
         inbox = tmp_path / "inbox"
         inbox.mkdir()
         (inbox / "vendor_invoice.pdf").write_bytes(b"%PDF")
 
-        vendor = VendorConfig(name="TestVendor", pattern="testvendor", download_glob="vendor_invoice.pdf")
+        vendor = VendorConfig(
+            name="TestVendor", pattern="testvendor", download_glob="vendor_invoice.pdf"
+        )
         with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
             checker._check_vendors([vendor])
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # ── Local Verdict stub (mirrors audit_cmd.Verdict, keeps tests self-contained) ─
 
+
 class _Verdict:
     def __init__(self) -> None:
         self._issues: list[str] = []
@@ -69,15 +70,18 @@ def _actions(plastic: int = 0, glass: int = 0) -> list[dict]:
 
 # ── check_numbering ──────────────────────────────────────────────────────────
 
+
 class TestCheckNumbering:
     from zdrovena.audit.sections import check_numbering  # static import for type
 
     def test_empty_list(self):
         from zdrovena.audit.sections import check_numbering
+
         assert check_numbering([]) == []
 
     def test_single_invoice_ok(self):
         from zdrovena.audit.sections import check_numbering
+
         invs = [{"number": "1/01/2025"}]
         results = check_numbering(invs)
         assert len(results) == 1
@@ -90,6 +94,7 @@ class TestCheckNumbering:
 
     def test_continuous_series(self):
         from zdrovena.audit.sections import check_numbering
+
         invs = [{"number": f"{i}/01/2025"} for i in range(1, 6)]
         results = check_numbering(invs)
         assert len(results) == 1
@@ -101,6 +106,7 @@ class TestCheckNumbering:
 
     def test_gap_detected(self):
         from zdrovena.audit.sections import check_numbering
+
         invs = [{"number": "1/01/2025"}, {"number": "3/01/2025"}]
         results = check_numbering(invs)
         assert len(results) == 1
@@ -110,6 +116,7 @@ class TestCheckNumbering:
 
     def test_duplicate_detected(self):
         from zdrovena.audit.sections import check_numbering
+
         invs = [
             {"number": "1/01/2025"},
             {"number": "2/01/2025"},
@@ -122,11 +129,13 @@ class TestCheckNumbering:
 
     def test_non_standard_number_ignored(self):
         from zdrovena.audit.sections import check_numbering
+
         invs = [{"number": "ABC/2025"}, {"number": "NOFORMAT"}]
         assert check_numbering(invs) == []
 
     def test_multiple_series(self):
         from zdrovena.audit.sections import check_numbering
+
         invs = [
             {"number": "1/01/2025"},
             {"number": "2/01/2025"},
@@ -141,9 +150,11 @@ class TestCheckNumbering:
 
 # ── section_numbering ────────────────────────────────────────────────────────
 
+
 class TestSectionNumbering:
     def test_clean_numbering_passes(self, capsys):
         from zdrovena.audit.sections import section_numbering
+
         v = _Verdict()
         invs = [{"number": f"{i}/01/2025"} for i in range(1, 4)]
         section_numbering(invs, v)
@@ -151,6 +162,7 @@ class TestSectionNumbering:
 
     def test_gap_fails_verdict(self, capsys):
         from zdrovena.audit.sections import section_numbering
+
         v = _Verdict()
         invs = [{"number": "1/01/2025"}, {"number": "3/01/2025"}]
         section_numbering(invs, v)
@@ -159,6 +171,7 @@ class TestSectionNumbering:
 
     def test_empty_invoices(self, capsys):
         from zdrovena.audit.sections import section_numbering
+
         v = _Verdict()
         section_numbering([], v)
         assert v.passed
@@ -166,9 +179,11 @@ class TestSectionNumbering:
 
 # ── section_recount ──────────────────────────────────────────────────────────
 
+
 class TestSectionRecount:
     def test_balanced_passes(self, capsys):
         from zdrovena.audit.sections import section_recount
+
         v = _Verdict()
         inv = _inv(id=1, sell_date="2025-01-10", issue_date="2025-01-10", plastic=12)
         inv_by_wz = {201: inv}
@@ -178,6 +193,7 @@ class TestSectionRecount:
 
     def test_mismatch_fails_verdict(self, capsys):
         from zdrovena.audit.sections import section_recount
+
         v = _Verdict()
         inv = _inv(id=1, sell_date="2025-01-10", issue_date="2025-01-10", plastic=12)
         inv_by_wz = {201: inv}
@@ -188,6 +204,7 @@ class TestSectionRecount:
 
     def test_returns_correct_totals(self, capsys):
         from zdrovena.audit.sections import section_recount
+
         v = _Verdict()
         inv = _inv(plastic=6, glass=3, sell_date="2025-02-05", issue_date="2025-02-05")
         inv_by_wz = {201: inv}
@@ -198,6 +215,7 @@ class TestSectionRecount:
 
     def test_empty_inv_by_wz(self, capsys):
         from zdrovena.audit.sections import section_recount
+
         v = _Verdict()
         fv, wz, _, _ = section_recount({}, {}, v)
         assert fv == 0
@@ -206,6 +224,7 @@ class TestSectionRecount:
 
     def test_month_filter_applies(self, capsys):
         from zdrovena.audit.sections import section_recount
+
         v = _Verdict()
         inv1 = _inv(id=1, sell_date="2025-01-10", issue_date="2025-01-10", plastic=12)
         inv2 = _inv(id=2, sell_date="2025-02-10", issue_date="2025-02-10", plastic=6)
@@ -219,9 +238,11 @@ class TestSectionRecount:
 
 # ── section_type_match ───────────────────────────────────────────────────────
 
+
 class TestSectionTypeMatch:
     def test_types_match_passes(self, capsys):
         from zdrovena.audit.sections import section_type_match
+
         v = _Verdict()
         inv = _inv(plastic=6, glass=2, sell_date="2025-01-10", issue_date="2025-01-10")
         inv_by_wz = {201: inv}
@@ -232,6 +253,7 @@ class TestSectionTypeMatch:
 
     def test_plastic_mismatch_fails(self, capsys):
         from zdrovena.audit.sections import section_type_match
+
         v = _Verdict()
         inv = _inv(plastic=6, sell_date="2025-01-10", issue_date="2025-01-10")
         inv_by_wz = {201: inv}
@@ -242,6 +264,7 @@ class TestSectionTypeMatch:
 
     def test_empty_passes(self, capsys):
         from zdrovena.audit.sections import section_type_match
+
         v = _Verdict()
         result = section_type_match({}, {}, v)
         assert result == []
@@ -250,9 +273,11 @@ class TestSectionTypeMatch:
 
 # ── section_orphan_wz ────────────────────────────────────────────────────────
 
+
 class TestSectionOrphanWz:
     def test_all_linked_passes(self, capsys):
         from zdrovena.audit.sections import section_orphan_wz
+
         v = _Verdict()
         wz_doc = _wz(id=201)
         inv = _inv(id=1, plastic=6)
@@ -264,6 +289,7 @@ class TestSectionOrphanWz:
 
     def test_orphan_fails_verdict(self, capsys):
         from zdrovena.audit.sections import section_orphan_wz
+
         v = _Verdict()
         wz_doc = _wz(id=201)
         inv_by_wz: dict = {}  # WZ 201 has no invoice
@@ -275,6 +301,7 @@ class TestSectionOrphanWz:
 
     def test_empty_wz_list_passes(self, capsys):
         from zdrovena.audit.sections import section_orphan_wz
+
         v = _Verdict()
         result = section_orphan_wz([], {}, {}, v)
         assert result == []
@@ -283,9 +310,11 @@ class TestSectionOrphanWz:
 
 # ── section_no_wz ────────────────────────────────────────────────────────────
 
+
 class TestSectionNoWz:
     def test_all_linked_passes(self, capsys):
         from zdrovena.audit.sections import section_no_wz
+
         v = _Verdict()
         inv = _inv(id=1, plastic=12)
         inv_by_wz = {201: inv}
@@ -295,6 +324,7 @@ class TestSectionNoWz:
 
     def test_bottle_inv_without_wz_fails(self, capsys):
         from zdrovena.audit.sections import section_no_wz
+
         v = _Verdict()
         inv = _inv(id=1, plastic=12)
         inv_by_wz: dict = {}  # invoice not linked to any WZ
@@ -304,6 +334,7 @@ class TestSectionNoWz:
 
     def test_invoice_without_bottles_ignored(self, capsys):
         from zdrovena.audit.sections import section_no_wz
+
         v = _Verdict()
         inv = _inv(id=1)  # no plastic, no glass
         result = section_no_wz([inv], {}, v)
@@ -313,9 +344,11 @@ class TestSectionNoWz:
 
 # ── section_date_comparison ──────────────────────────────────────────────────
 
+
 class TestSectionDateComparison:
     def test_same_month_passes(self, capsys):
         from zdrovena.audit.sections import section_date_comparison
+
         v = _Verdict()
         inv = _inv(sell_date="2025-01-10", issue_date="2025-01-10", plastic=6)
         wz_doc = _wz(id=201, issue_date="2025-01-12")
@@ -327,6 +360,7 @@ class TestSectionDateComparison:
 
     def test_cross_month_fails(self, capsys):
         from zdrovena.audit.sections import section_date_comparison
+
         v = _Verdict()
         inv = _inv(sell_date="2025-01-31", issue_date="2025-01-31", plastic=6)
         wz_doc = _wz(id=201, issue_date="2025-02-01")
@@ -339,9 +373,11 @@ class TestSectionDateComparison:
 
 # ── section_cross_month_sell_issue ───────────────────────────────────────────
 
+
 class TestSectionCrossMonthSellIssue:
     def test_same_month_ok(self, capsys):
         from zdrovena.audit.sections import section_cross_month_sell_issue
+
         v = _Verdict()
         inv = _inv(sell_date="2025-01-10", issue_date="2025-01-15", plastic=6)
         result = section_cross_month_sell_issue([inv], v)
@@ -349,6 +385,7 @@ class TestSectionCrossMonthSellIssue:
 
     def test_cross_month_detected(self, capsys):
         from zdrovena.audit.sections import section_cross_month_sell_issue
+
         v = _Verdict()
         inv = _inv(sell_date="2025-01-31", issue_date="2025-02-01", plastic=6)
         result = section_cross_month_sell_issue([inv], v)
@@ -356,6 +393,7 @@ class TestSectionCrossMonthSellIssue:
 
     def test_invoice_without_bottles_ignored(self, capsys):
         from zdrovena.audit.sections import section_cross_month_sell_issue
+
         v = _Verdict()
         inv = _inv(sell_date="2025-01-31", issue_date="2025-02-01")  # no bottles
         result = section_cross_month_sell_issue([inv], v)
@@ -363,6 +401,7 @@ class TestSectionCrossMonthSellIssue:
 
     def test_missing_dates_ignored(self, capsys):
         from zdrovena.audit.sections import section_cross_month_sell_issue
+
         v = _Verdict()
         inv = {"id": 1, "sell_date": "", "issue_date": "", "positions": []}
         result = section_cross_month_sell_issue([inv], v)
@@ -371,19 +410,30 @@ class TestSectionCrossMonthSellIssue:
 
 # ── section_stock_balance ────────────────────────────────────────────────────
 
+
 class TestSectionStockBalance:
     def test_no_actions_prints_nothing_fails_not(self, capsys):
         from zdrovena.audit.sections import section_stock_balance
+
         v = _Verdict()
         section_stock_balance([], [], year=2025, month=1, verdict=v)
         assert v.passed
 
     def test_bottle_actions_printed(self, capsys):
         from zdrovena.audit.sections import section_stock_balance
+
         v = _Verdict()
         actions = [
-            {"wd_issue_date": "2025-01-10", "product_name": "Woda Humio butelka plastik", "quantity": 100.0},
-            {"wd_issue_date": "2025-01-15", "product_name": "Woda Humio butelka plastik", "quantity": -50.0},
+            {
+                "wd_issue_date": "2025-01-10",
+                "product_name": "Woda Humio butelka plastik",
+                "quantity": 100.0,
+            },
+            {
+                "wd_issue_date": "2025-01-15",
+                "product_name": "Woda Humio butelka plastik",
+                "quantity": -50.0,
+            },
         ]
         section_stock_balance(actions, [], year=2025, month=1, verdict=v)
         out = capsys.readouterr().out
@@ -391,6 +441,7 @@ class TestSectionStockBalance:
 
     def test_non_bottle_actions_ignored(self, capsys):
         from zdrovena.audit.sections import section_stock_balance
+
         v = _Verdict()
         actions = [
             {"wd_issue_date": "2025-01-10", "product_name": "Koszulka firmowa", "quantity": 10.0},
@@ -402,6 +453,7 @@ class TestSectionStockBalance:
 
     def test_warehouse_products_displayed(self, capsys):
         from zdrovena.audit.sections import section_stock_balance
+
         v = _Verdict()
         products = [
             {"name": "Woda Humio butelka plastik", "warehouse_quantity": 500},
@@ -414,9 +466,14 @@ class TestSectionStockBalance:
 
     def test_month_none_uses_year_prefix(self, capsys):
         from zdrovena.audit.sections import section_stock_balance
+
         v = _Verdict()
         actions = [
-            {"wd_issue_date": "2025-03-10", "product_name": "Woda Humio butelka plastik", "quantity": 60.0},
+            {
+                "wd_issue_date": "2025-03-10",
+                "product_name": "Woda Humio butelka plastik",
+                "quantity": 60.0,
+            },
         ]
         section_stock_balance(actions, [], year=2025, month=None, verdict=v)
         out = capsys.readouterr().out
@@ -424,10 +481,15 @@ class TestSectionStockBalance:
 
     def test_alias_product_counted(self, capsys):
         from zdrovena.audit.sections import section_stock_balance
+
         v = _Verdict()
         actions = [
             # Legacy alias → maps to plastik
-            {"wd_issue_date": "2025-01-05", "product_name": "Woda Humio butelka", "quantity": -30.0},
+            {
+                "wd_issue_date": "2025-01-05",
+                "product_name": "Woda Humio butelka",
+                "quantity": -30.0,
+            },
         ]
         section_stock_balance(actions, [], year=2025, month=1, verdict=v)
         out = capsys.readouterr().out
@@ -436,9 +498,11 @@ class TestSectionStockBalance:
 
 # ── section_anomalies ────────────────────────────────────────────────────────
 
+
 class TestSectionAnomalies:
     def test_no_anomalies(self, capsys):
         from zdrovena.audit.sections import section_anomalies
+
         inv = _inv(id=1, plastic=12, sell_date="2025-01-10", issue_date="2025-01-10")
         inv_by_wz = {201: inv}
         wz_doc = _wz(id=201)
@@ -449,6 +513,7 @@ class TestSectionAnomalies:
 
     def test_large_invoice_flagged(self, capsys):
         from zdrovena.audit.sections import section_anomalies
+
         inv = _inv(id=1, plastic=80, sell_date="2025-01-10", issue_date="2025-01-10")
         inv_by_wz = {201: inv}
         wz_doc = _wz(id=201)
@@ -459,6 +524,7 @@ class TestSectionAnomalies:
 
     def test_multi_linked_wz_flagged(self, capsys):
         from zdrovena.audit.sections import section_anomalies
+
         wz_doc = _wz(id=201)
         wz_by_id = {201: wz_doc}
         inv1 = _inv(id=1, plastic=6, sell_date="2025-01-10", issue_date="2025-01-10", wz_id=201)

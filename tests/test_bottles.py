@@ -122,9 +122,9 @@ class TestInvoiceBottleDetails:
     def test_multiple_positions(self):
         inv = {
             "positions": [
-                {"name": "Zgrzewka wody Humio", "quantity": "3"},       # 3×12=36 plastic
-                {"name": "Woda szkło 6 butelek", "quantity": "2"},      # 2×6=12 glass
-                {"name": "Dostawa DPD", "quantity": "1"},               # skip
+                {"name": "Zgrzewka wody Humio", "quantity": "3"},  # 3×12=36 plastic
+                {"name": "Woda szkło 6 butelek", "quantity": "2"},  # 2×6=12 glass
+                {"name": "Dostawa DPD", "quantity": "1"},  # skip
             ]
         }
         total, details = invoice_bottle_details(inv)

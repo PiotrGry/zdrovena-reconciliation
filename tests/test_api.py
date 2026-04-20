@@ -203,7 +203,7 @@ class TestPaginate:
         client = MagicMock()
         client.get_json.side_effect = [
             [{"id": 1}, {"id": 2}],  # page 1 — full
-            [{"id": 3}],             # page 2 — partial → stop
+            [{"id": 3}],  # page 2 — partial → stop
         ]
         result = _paginate(client, "products.json", per_page=2)
         assert len(result) == 3

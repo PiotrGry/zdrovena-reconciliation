@@ -104,6 +104,7 @@ class TestConfigureLogging:
     def test_runs_without_error(self, tmp_path, monkeypatch):
         """_configure_logging should not raise."""
         import logging
+
         monkeypatch.chdir(tmp_path)
         root = logging.getLogger()
         original_handlers = root.handlers[:]
@@ -116,6 +117,7 @@ class TestConfigureLogging:
 
     def test_verbose_sets_debug(self, tmp_path, monkeypatch):
         import logging
+
         monkeypatch.chdir(tmp_path)
         root = logging.getLogger()
         original_handlers = root.handlers[:]
@@ -151,6 +153,7 @@ class TestRunLocal:
             ignore_vendors=[],
         )
         from zdrovena.month_closing.commands.close_cmd import _run_local
+
         with pytest.raises(SystemExit) as exc:
             _run_local(args)
         assert exc.value.code == 0
@@ -176,6 +179,7 @@ class TestRunLocal:
             ignore_vendors=[],
         )
         from zdrovena.month_closing.commands.close_cmd import _run_local
+
         with pytest.raises(SystemExit) as exc:
             _run_local(args)
         assert exc.value.code == 0
@@ -201,6 +205,7 @@ class TestRunLocal:
             ignore_vendors=[],
         )
         from zdrovena.month_closing.commands.close_cmd import _run_local
+
         with pytest.raises(SystemExit) as exc:
             _run_local(args)
         assert exc.value.code == 1
@@ -225,12 +230,14 @@ class TestRunLocal:
             ignore_vendors=[],
         )
         from zdrovena.month_closing.commands.close_cmd import _run_local
+
         with pytest.raises(SystemExit):
             _run_local(args)
         mock_orch.state.reset.assert_called_once()
 
 
 # ── _run (period conflict check) ─────────────────────────────────────────────
+
 
 class TestRun:
     def test_conflicting_periods_exits_1(self, tmp_path, monkeypatch, capsys):
@@ -240,6 +247,7 @@ class TestRun:
             period_flag="2025-07",  # different!
         )
         from zdrovena.month_closing.commands.close_cmd import _run
+
         with pytest.raises(SystemExit) as exc:
             _run(args)
         assert exc.value.code == 1
@@ -248,6 +256,7 @@ class TestRun:
         monkeypatch.chdir(tmp_path)
         args = SimpleNamespace(period=None, period_flag=None)
         from zdrovena.month_closing.commands.close_cmd import _run
+
         with pytest.raises(SystemExit) as exc:
             _run(args)
         assert exc.value.code == 1
@@ -261,5 +270,6 @@ class TestRun:
             period_flag=None,
         )
         from zdrovena.month_closing.commands.close_cmd import _run
+
         _run(args)
         mock_local.assert_called_once_with(args)

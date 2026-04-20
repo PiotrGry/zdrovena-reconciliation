@@ -168,6 +168,7 @@ class TestCloseReport:
 
 # ── _mark_step_done & _skip_if_done ─────────────────────────────────────────
 
+
 class TestStepTracking:
     def test_mark_step_done_dry_run_does_not_persist(self):
         """dry_run=True should not call state.mark_done."""
@@ -193,6 +194,7 @@ class TestStepTracking:
 
 # ── _build_email_body ────────────────────────────────────────────────────────
 
+
 class TestBuildEmailBody:
     def test_contains_month_name(self):
         orch = _make_orchestrator()
@@ -210,6 +212,7 @@ class TestBuildEmailBody:
 
 
 # ── _print_summary ───────────────────────────────────────────────────────────
+
 
 class TestPrintSummary:
     def test_summary_called_without_error(self):
@@ -235,6 +238,7 @@ class TestPrintSummary:
 
 
 # ── _step_5_bank_statement ───────────────────────────────────────────────────
+
 
 class TestStep5BankStatement:
     def test_pko_file_found(self, tmp_path):
@@ -268,6 +272,7 @@ class TestStep5BankStatement:
 
 # ── _step_6_zip_archive ──────────────────────────────────────────────────────
 
+
 class TestStep6ZipArchive:
     def test_dry_run_does_not_create_zip(self):
         orch = _make_orchestrator()  # dry_run=True
@@ -288,6 +293,7 @@ class TestStep6ZipArchive:
 
 
 # ── _step_7_email ────────────────────────────────────────────────────────────
+
 
 class TestStep7Email:
     def test_dry_run_does_not_send(self):
@@ -317,6 +323,7 @@ class TestStep7Email:
 
 # ── _step_1_create_folders ───────────────────────────────────────────────────
 
+
 class TestStep1CreateFolders:
     def test_creates_directories(self, tmp_path):
         orch = _make_orchestrator()
@@ -340,6 +347,7 @@ class TestStep1CreateFolders:
 
 
 # ── _step_0_preflight — blockers path ───────────────────────────────────────
+
 
 class TestStep0PreflightBlockers:
     @patch("zdrovena.month_closing.orchestrator.PreflightChecker")
@@ -372,6 +380,7 @@ class TestStep0PreflightBlockers:
 
 
 # ── _step_2_sales_invoices ───────────────────────────────────────────────────
+
 
 class TestStep2SalesInvoices:
     @patch("zdrovena.month_closing.orchestrator.FakturowniaClient")
@@ -417,6 +426,7 @@ class TestStep2SalesInvoices:
 
 # ── _step_3_jpk_reports ──────────────────────────────────────────────────────
 
+
 class TestStep3JpkReports:
     @patch("zdrovena.month_closing.orchestrator.FAKTUROWNIA_REPORTS", [])
     def test_no_reports_required_passes(self):
@@ -449,6 +459,7 @@ class TestStep3JpkReports:
 
 
 # ── execute modes ─────────────────────────────────────────────────────────────
+
 
 class TestExecuteModes:
     def _mock_all_steps(self, orch: MonthCloseOrchestrator) -> None:
