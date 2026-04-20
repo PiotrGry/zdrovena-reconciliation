@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import calendar
 import logging
-import os
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -27,9 +26,9 @@ from pathlib import Path
 
 from zdrovena.audit.sections import check_numbering
 from zdrovena.common import FakturowniaClient
-from zdrovena.common.exceptions import MissingSecretError
-from zdrovena.common.secrets import get_secret as _get_secret_impl
 from zdrovena.common.formatting import to_decimal
+from zdrovena.common.secrets import get_secret as _get_secret_impl
+from zdrovena.month_closing.canva_downloader import download_canva_invoice
 from zdrovena.month_closing.config import (
     ACCOUNTANT_EMAIL,
     BASE_DIR,
@@ -37,9 +36,7 @@ from zdrovena.month_closing.config import (
     COST_INVOICE_OVERLAP_DAYS,
     ENGLISH_MONTHS,
     EXPECTED_VENDORS,
-    POLISH_MONTHS,
     FAKTUROWNIA_REPORTS,
-    KEYCHAIN_ACCOUNT,
     KEYCHAIN_SERVICE_ZOHO_CLIENT_ID,
     KEYCHAIN_SERVICE_ZOHO_CLIENT_SECRET,
     KEYCHAIN_SERVICE_ZOHO_REFRESH_TOKEN,
@@ -50,18 +47,17 @@ from zdrovena.month_closing.config import (
 )
 from zdrovena.month_closing.console import ConsoleReporter
 from zdrovena.month_closing.email_service import EmailService
+from zdrovena.month_closing.fakturownia_reports import download_fakturownia_reports
 from zdrovena.month_closing.invoice_date_check import (
     delete_rejected,
     move_unverified,
     validate_invoice_dates,
 )
-from zdrovena.month_closing.fakturownia_reports import download_fakturownia_reports
 from zdrovena.month_closing.ksef import KSeFClient
 from zdrovena.month_closing.preflight import PreflightChecker
 from zdrovena.month_closing.state import PipelineState
 from zdrovena.month_closing.zip_service import create_month_archive
 from zdrovena.month_closing.zoho_mail import ZohoMailClient
-from zdrovena.month_closing.canva_downloader import download_canva_invoice
 
 logger = logging.getLogger("zdrovena.month_closing.orchestrator")
 
@@ -269,7 +265,8 @@ class MonthCloseOrchestrator:
         invoices = client.fetch_sales_invoices(self.date_from, self.date_to)
         self.report.sales_invoice_count = len(invoices)
         self.report.sales_gross_total = sum(
-            to_decimal(inv.get("price_gross", 0)) for inv in invoices
+            (to_decimal(inv.get("price_gross", 0)) for inv in invoices),
+            Decimal(0),
         )
         self._sales_invoices = invoices
         if not invoices:
@@ -286,8 +283,10 @@ class MonthCloseOrchestrator:
         for sr in check_numbering(invoices):
             if sr.gaps:
                 numbering_ok = False
-                msg = (f"Numeracja /{sr.series}: jest {sr.count}, "
-                       f"oczekiwano {sr.expected} — brakuje: {sr.gaps}")
+                msg = (
+                    f"Numeracja /{sr.series}: jest {sr.count}, "
+                    f"oczekiwano {sr.expected} — brakuje: {sr.gaps}"
+                )
                 self.out.warn(msg)
                 self.report.warnings.append(msg)
             elif sr.duplicates:
@@ -311,17 +310,14 @@ class MonthCloseOrchestrator:
         self.out.step(3, "Verifying JPK and VAT reports")
 
         missing = [
-            rpt for rpt in FAKTUROWNIA_REPORTS
-            if not (self.month_dir / rpt["dest_name"]).exists()
+            rpt for rpt in FAKTUROWNIA_REPORTS if not (self.month_dir / rpt["dest_name"]).exists()
         ]
         for rpt in FAKTUROWNIA_REPORTS:
             if rpt not in missing:
                 self.out.ok(f"{rpt['name']}: {rpt['dest_name']}")
 
         if missing and not self.non_interactive and not self.dry_run:
-            self.out.info(
-                f"🌐 {len(missing)} report(s) missing — launching browser session..."
-            )
+            self.out.info(f"🌐 {len(missing)} report(s) missing — launching browser session...")
             try:
                 downloaded = download_fakturownia_reports(
                     missing,
@@ -402,8 +398,11 @@ class MonthCloseOrchestrator:
 
         # Narrow fakt_invoices to the actual month (fetch was wide to catch early-next-month invoices)
         fakt_invoices = [
-            inv for inv in fakt_invoices
-            if self.date_from <= (inv.get("sell_date") or inv.get("issue_date") or "") <= self.date_to
+            inv
+            for inv in fakt_invoices
+            if self.date_from
+            <= (inv.get("sell_date") or inv.get("issue_date") or "")
+            <= self.date_to
         ]
 
         for vendor_cfg in EXPECTED_VENDORS:
@@ -469,9 +468,7 @@ class MonthCloseOrchestrator:
         need_zoho = bool(still_missing or browser_pending)
         if need_zoho:
             total_zoho = len(still_missing) + len(browser_pending)
-            self.out.section_mid(
-                f"Phase 3: Zoho Mail (searching {total_zoho} missing vendor(s))"
-            )
+            self.out.section_mid(f"Phase 3: Zoho Mail (searching {total_zoho} missing vendor(s))")
             client_id = self._get_secret(KEYCHAIN_SERVICE_ZOHO_CLIENT_ID, required=False)
             client_secret = self._get_secret(KEYCHAIN_SERVICE_ZOHO_CLIENT_SECRET, required=False)
             refresh_token = self._get_secret(KEYCHAIN_SERVICE_ZOHO_REFRESH_TOKEN, required=False)
@@ -512,12 +509,10 @@ class MonthCloseOrchestrator:
                         search_term=email_pattern,
                         date_from=zf,
                         date_to=zt,
-                        invoice_id_re=vendor_cfg.invoice_id_re,
+                        invoice_id_re=vendor_cfg.invoice_id_re or "",
                     )
                     if not invoice_ids:
-                        logger.info(
-                            "Zoho Mail: no invoice IDs found for %s", vendor_cfg.name
-                        )
+                        logger.info("Zoho Mail: no invoice IDs found for %s", vendor_cfg.name)
                         continue
 
                     self.out.item(
@@ -530,9 +525,7 @@ class MonthCloseOrchestrator:
                         filename = tpl.format(id=inv_id)
                         dest = self.costs_dir / filename
                         if dest.exists():
-                            logger.info(
-                                "Skipping %s — already exists", dest.name
-                            )
+                            logger.info("Skipping %s — already exists", dest.name)
                             saved_count += 1
                             continue
                         if self.dry_run:
@@ -546,14 +539,14 @@ class MonthCloseOrchestrator:
                         except Exception as exc:
                             logger.error(
                                 "Failed to download %s invoice %s: %s",
-                                vendor_cfg.name, inv_id, exc,
+                                vendor_cfg.name,
+                                inv_id,
+                                exc,
                             )
                     if saved_count:
                         found_vendors[vendor_cfg.name] = "Zoho Mail + Browser"
                         total_cost_files += saved_count
-                        self.out.item(
-                            f"✅ {vendor_cfg.name}: {saved_count} PDF(s) downloaded"
-                        )
+                        self.out.item(f"✅ {vendor_cfg.name}: {saved_count} PDF(s) downloaded")
                 # Candidate gate: validate issue dates
                 if zoho_all_paths and not self.dry_run:
                     self.out.section_mid("Candidate gate: verifying invoice issue dates…")
@@ -677,12 +670,9 @@ class MonthCloseOrchestrator:
             self._mark_step_done("Email (dry-run)")
             return
         smtp_pass = self._get_secret(KEYCHAIN_SERVICE_ZOHO_SMTP)
-        svc = EmailService(smtp_password=smtp_pass)
+        svc = EmailService(smtp_password=smtp_pass or "")
         month_pl = POLISH_MONTHS[self.month].capitalize()
-        subject = (
-            f"{COMPANY_BRAND} – Dokumenty księgowe – "
-            f"{month_pl} {self.year}"
-        )
+        subject = f"{COMPANY_BRAND} – Dokumenty księgowe – {month_pl} {self.year}"
         body = self._build_email_body()
         attachments = [self.report.zip_path] if self.report.zip_path else []
         svc.send_report(

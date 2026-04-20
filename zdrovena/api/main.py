@@ -1,6 +1,7 @@
 """
 zdrovena.api.main – FastAPI application entry-point
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,7 +31,9 @@ app = FastAPI(
 )
 
 # CORS — restrict to known origins in production via ALLOWED_ORIGINS env var
-_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")]
+_origins = [
+    o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,

@@ -19,13 +19,12 @@ import json
 import sys
 from pathlib import Path
 
-
 ANALYZER_THRESHOLDS = {
-    "pylint_score":    (">=", 7.0),
-    "radon_cc_avg":    ("<=", 10.0),
-    "radon_mi_avg":    (">=", 50.0),
-    "coverage_line":   (">=", 70.0),
-    "bandit_high":     ("==", 0),
+    "pylint_score": (">=", 7.0),
+    "radon_cc_avg": ("<=", 10.0),
+    "radon_mi_avg": (">=", 50.0),
+    "coverage_line": (">=", 70.0),
+    "bandit_high": ("==", 0),
     "ruff_violations": ("<=", 20),
 }
 
@@ -48,18 +47,23 @@ def _load_list(path: str) -> list:
 def _qse_section(path: str) -> dict:
     data = _load(path)
     if not data:
-        return {"gate": "ERROR", "qse4": 0.0, "threshold": 0.80,
-                "failures": ["QSE report missing"], "defects": {}}
+        return {
+            "gate": "ERROR",
+            "qse4": 0.0,
+            "threshold": 0.80,
+            "failures": ["QSE report missing"],
+            "defects": {},
+        }
     rep = data.get("report", {})
     return {
-        "gate":      data.get("gate", "ERROR"),
-        "qse4":      data.get("qse4", 0.0),
-        "qse_test":  rep.get("qse_test", 0.0),
+        "gate": data.get("gate", "ERROR"),
+        "qse4": data.get("qse4", 0.0),
+        "qse_test": rep.get("qse_test", 0.0),
         "qse_combined": rep.get("qse_combined", 0.0),
         "threshold": data.get("threshold", 0.80),
-        "failures":  data.get("failures", []),
-        "defects":   rep.get("defects", {}),
-        "metrics":   rep.get("metrics", {}),
+        "failures": data.get("failures", []),
+        "defects": rep.get("defects", {}),
+        "metrics": rep.get("metrics", {}),
     }
 
 
@@ -85,27 +89,31 @@ def _radon_mi_avg(data: dict) -> float:
 
 def _check(name: str, value: float) -> bool:
     op, threshold = ANALYZER_THRESHOLDS[name]
-    if op == ">=":   return value >= threshold
-    if op == "<=":   return value <= threshold
-    if op == "==":   return value == threshold
+    if op == ">=":
+        return value >= threshold
+    if op == "<=":
+        return value <= threshold
+    if op == "==":
+        return value == threshold
     return False
 
 
 def _analyzers_section(args) -> dict:
-    ruff_data    = _load_list(args.ruff)
-    radon_cc     = _load(args.radon_cc)
-    radon_mi     = _load(args.radon_mi)
-    pylint_data  = _load_list(args.pylint)
-    coverage     = _load(args.coverage)
-    bandit       = _load(args.bandit)
+    ruff_data = _load_list(args.ruff)
+    radon_cc = _load(args.radon_cc)
+    radon_mi = _load(args.radon_mi)
+    pylint_data = _load_list(args.pylint)
+    coverage = _load(args.coverage)
+    bandit = _load(args.bandit)
 
     metrics = {
-        "pylint_score":    _pylint_score(pylint_data),
-        "radon_cc_avg":    _radon_cc_avg(radon_cc),
-        "radon_mi_avg":    _radon_mi_avg(radon_mi),
-        "coverage_line":   round(coverage.get("totals", {}).get("percent_covered", 0.0), 2),
-        "bandit_high":     sum(1 for r in bandit.get("results", [])
-                               if r.get("issue_severity") == "HIGH"),
+        "pylint_score": _pylint_score(pylint_data),
+        "radon_cc_avg": _radon_cc_avg(radon_cc),
+        "radon_mi_avg": _radon_mi_avg(radon_mi),
+        "coverage_line": round(coverage.get("totals", {}).get("percent_covered", 0.0), 2),
+        "bandit_high": sum(
+            1 for r in bandit.get("results", []) if r.get("issue_severity") == "HIGH"
+        ),
         "ruff_violations": len(ruff_data),
     }
 
@@ -124,17 +132,21 @@ def _analyzers_section(args) -> dict:
 
 def _tests_section(args) -> dict:
     pytest_data = _load(args.pytest)
-    coverage    = _load(args.coverage)
+    coverage = _load(args.coverage)
 
     summary = pytest_data.get("summary", {})
-    passed  = summary.get("passed", 0)
-    failed  = summary.get("failed", 0)
-    errors  = summary.get("errors", 0)
-    total   = summary.get("total", 0)
+    passed = summary.get("passed", 0)
+    failed = summary.get("failed", 0)
+    errors = summary.get("errors", 0)
+    total = summary.get("total", 0)
 
     cov_line = round(coverage.get("totals", {}).get("percent_covered", 0.0), 2)
-    cov_branch = round(coverage.get("totals", {}).get("percent_covered_display",
-                  coverage.get("totals", {}).get("percent_covered", 0.0)), 2)
+    cov_branch = round(
+        coverage.get("totals", {}).get(
+            "percent_covered_display", coverage.get("totals", {}).get("percent_covered", 0.0)
+        ),
+        2,
+    )
 
     failures = []
     if failed > 0 or errors > 0:
@@ -143,12 +155,12 @@ def _tests_section(args) -> dict:
         failures.append(f"coverage={cov_line}% below 70%")
 
     return {
-        "gate":          "PASS" if not failures else "FAIL",
-        "failures":      failures,
-        "tests_passed":  passed,
-        "tests_failed":  failed,
-        "tests_errors":  errors,
-        "tests_total":   total,
+        "gate": "PASS" if not failures else "FAIL",
+        "failures": failures,
+        "tests_passed": passed,
+        "tests_failed": failed,
+        "tests_errors": errors,
+        "tests_total": total,
         "coverage_line": cov_line,
         "coverage_branch": cov_branch,
     }
@@ -156,37 +168,37 @@ def _tests_section(args) -> dict:
 
 def main():
     p = argparse.ArgumentParser(description="Aggregate full quality report")
-    p.add_argument("--qse",       required=True)
-    p.add_argument("--ruff",      required=True)
-    p.add_argument("--radon-cc",  required=True)
-    p.add_argument("--radon-mi",  required=True)
-    p.add_argument("--pylint",    required=True)
-    p.add_argument("--coverage",  required=True)
-    p.add_argument("--bandit",    required=True)
-    p.add_argument("--pytest",    required=True)
-    p.add_argument("--commit",    default="unknown")
-    p.add_argument("--ref",       default="unknown")
-    p.add_argument("--output",    required=True)
+    p.add_argument("--qse", required=True)
+    p.add_argument("--ruff", required=True)
+    p.add_argument("--radon-cc", required=True)
+    p.add_argument("--radon-mi", required=True)
+    p.add_argument("--pylint", required=True)
+    p.add_argument("--coverage", required=True)
+    p.add_argument("--bandit", required=True)
+    p.add_argument("--pytest", required=True)
+    p.add_argument("--commit", default="unknown")
+    p.add_argument("--ref", default="unknown")
+    p.add_argument("--output", required=True)
     args = p.parse_args()
 
-    qse       = _qse_section(args.qse)
+    qse = _qse_section(args.qse)
     analyzers = _analyzers_section(args)
-    tests     = _tests_section(args)
+    tests = _tests_section(args)
 
     all_failures = (
-        [f"[QSE] {f}"       for f in qse["failures"]] +
-        [f"[analyzers] {f}" for f in analyzers["failures"]] +
-        [f"[tests] {f}"     for f in tests["failures"]]
+        [f"[QSE] {f}" for f in qse["failures"]]
+        + [f"[analyzers] {f}" for f in analyzers["failures"]]
+        + [f"[tests] {f}" for f in tests["failures"]]
     )
 
     result = {
-        "commit":    args.commit,
-        "ref":       args.ref,
-        "gate":      "PASS" if not all_failures else "FAIL",
-        "failures":  all_failures,
-        "qse":       qse,
+        "commit": args.commit,
+        "ref": args.ref,
+        "gate": "PASS" if not all_failures else "FAIL",
+        "failures": all_failures,
+        "qse": qse,
         "analyzers": analyzers,
-        "tests":     tests,
+        "tests": tests,
     }
 
     Path(args.output).write_text(json.dumps(result, indent=2))

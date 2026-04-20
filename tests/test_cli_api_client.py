@@ -58,8 +58,16 @@ _CLOSE_ERRORS = {
 }
 
 _FILES = [
-    {"key": "invoices/sales/2025/06/inv001.pdf", "size": 12345, "last_modified": "2025-06-01T10:00:00"},
-    {"key": "invoices/sales/2025/06/inv002.pdf", "size": 9876,  "last_modified": "2025-06-02T11:00:00"},
+    {
+        "key": "invoices/sales/2025/06/inv001.pdf",
+        "size": 12345,
+        "last_modified": "2025-06-01T10:00:00",
+    },
+    {
+        "key": "invoices/sales/2025/06/inv002.pdf",
+        "size": 9876,
+        "last_modified": "2025-06-02T11:00:00",
+    },
 ]
 
 _HEALTH = {"status": "ok", "version": "2.0.0"}
@@ -84,6 +92,7 @@ def _close_args(**overrides) -> Namespace:
 # ─────────────────────────────────────────────────────────────────────────────
 # TestApiClient  (RED until zdrovena/api/client.py exists)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestApiClient:
     """ApiClient sends correct HTTP requests and parses responses."""
@@ -181,6 +190,7 @@ class TestApiClient:
 
     def test_close_raises_api_error_on_http_status_error(self):
         import httpx
+
         from zdrovena.api.client import ApiClient, ApiError
 
         mock_http, resp = self._mock_http(status=500)
@@ -194,6 +204,7 @@ class TestApiClient:
 
     def test_close_raises_api_error_on_connection_failure(self):
         import httpx
+
         from zdrovena.api.client import ApiClient, ApiError
 
         mock_http, _ = self._mock_http()
@@ -248,9 +259,9 @@ class TestApiClient:
         mock_http, _ = self._mock_http(iter_bytes=[b"chunk1", b"chunk2"])
         with patch("httpx.Client") as MockClient:
             MockClient.return_value.__enter__.return_value = mock_http
-            chunks = list(ApiClient("http://api.example.com").stream_file(
-                "invoices/sales/2025/06/inv001.pdf"
-            ))
+            chunks = list(
+                ApiClient("http://api.example.com").stream_file("invoices/sales/2025/06/inv001.pdf")
+            )
 
         url = mock_http.get.call_args[0][0]
         assert url == "/files/invoices/sales/2025/06/inv001.pdf"
@@ -258,6 +269,7 @@ class TestApiClient:
 
     def test_stream_file_raises_api_error_when_not_found(self):
         import httpx
+
         from zdrovena.api.client import ApiClient, ApiError
 
         mock_http, resp = self._mock_http(status=404)
@@ -288,12 +300,12 @@ class TestApiClient:
 # TestCloseCommandApiMode  (RED until close_cmd.py is modified)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCloseCommandApiMode:
     """close_cmd._run() delegates to ApiClient when ZDROVENA_API_URL is set."""
 
     def _patched_api(self, response=None, side_effect=None):
         """Context manager: patch ApiClient, return (MockClass, mock_instance)."""
-        import unittest.mock as m
         MockClass = MagicMock()
         mock_inst = MagicMock()
         MockClass.return_value = mock_inst
@@ -402,8 +414,8 @@ class TestCloseCommandApiMode:
         assert exc.value.code == 1
 
     def test_exits_1_on_api_error(self):
-        from zdrovena.month_closing.commands import close_cmd
         from zdrovena.api.client import ApiError
+        from zdrovena.month_closing.commands import close_cmd
 
         MockClass, _ = self._patched_api(side_effect=ApiError("Connection refused"))
         with patch.dict(os.environ, {"ZDROVENA_API_URL": "http://api.example.com"}):
@@ -425,7 +437,7 @@ class TestCloseCommandApiMode:
                     close_cmd._run(_close_args())
 
         init_pos = MockClass.call_args[0]
-        init_kw  = MockClass.call_args[1]
+        init_kw = MockClass.call_args[1]
         url = init_pos[0] if init_pos else init_kw.get("base_url", "")
         assert url == "http://custom-host:9000"
 
@@ -437,10 +449,9 @@ class TestCloseCommandApiMode:
             "ZDROVENA_API_URL": "http://api.example.com",
             "ZDROVENA_API_TOKEN": "my-jwt-token",
         }
-        with patch.dict(os.environ, env):
-            with patch("zdrovena.api.client.ApiClient", MockClass):
-                with pytest.raises(SystemExit):
-                    close_cmd._run(_close_args())
+        with patch.dict(os.environ, env), patch("zdrovena.api.client.ApiClient", MockClass):
+            with pytest.raises(SystemExit):
+                close_cmd._run(_close_args())
 
         init_kw = MockClass.call_args[1]
         assert init_kw.get("token") == "my-jwt-token"
@@ -479,6 +490,7 @@ class TestCloseCommandApiMode:
 # TestFilesCommand  (RED until zdrovena/api/commands/files_cmd.py exists)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestFilesCommand:
     """`zdrovena files list` and `zdrovena files download` subcommands."""
 
@@ -490,7 +502,8 @@ class TestFilesCommand:
 
         r = subprocess.run(
             [sys.executable, "-m", "zdrovena.cli", "--help"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert "files" in r.stdout
 
@@ -500,7 +513,8 @@ class TestFilesCommand:
 
         r = subprocess.run(
             [sys.executable, "-m", "zdrovena.cli", "files", "list", "--help"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
         assert "--prefix" in r.stdout
@@ -511,7 +525,8 @@ class TestFilesCommand:
 
         r = subprocess.run(
             [sys.executable, "-m", "zdrovena.cli", "files", "download", "--help"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
         assert "key" in r.stdout.lower() or "KEY" in r.stdout
@@ -582,9 +597,8 @@ class TestFilesCommand:
         from zdrovena.api.commands.files_cmd import _run_list
 
         env = {k: v for k, v in os.environ.items() if k != "ZDROVENA_API_URL"}
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(SystemExit) as exc:
-                _run_list(Namespace(prefix=""))
+        with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit) as exc:
+            _run_list(Namespace(prefix=""))
         assert exc.value.code == 1
 
     # ── download ─────────────────────────────────────────────────────────────
@@ -600,10 +614,12 @@ class TestFilesCommand:
 
         with patch.dict(os.environ, {"ZDROVENA_API_URL": "http://api.example.com"}):
             with patch("zdrovena.api.client.ApiClient", MockClass):
-                _run_download(Namespace(
-                    key="invoices/sales/2025/06/inv001.pdf",
-                    output=str(out_file),
-                ))
+                _run_download(
+                    Namespace(
+                        key="invoices/sales/2025/06/inv001.pdf",
+                        output=str(out_file),
+                    )
+                )
 
         assert out_file.read_bytes() == b"PDFcontent"
 
@@ -618,12 +634,14 @@ class TestFilesCommand:
         with patch.dict(os.environ, {"ZDROVENA_API_URL": "http://api.example.com"}):
             with patch("zdrovena.api.client.ApiClient", MockClass):
                 # output=None → write to stdout; supply a dummy binary buffer
-                with patch("sys.stdout", new_callable=lambda: (lambda: io.RawIOBase())):
+                with patch("sys.stdout", new_callable=lambda: lambda: io.RawIOBase()):
                     try:
-                        _run_download(Namespace(
-                            key="invoices/sales/2025/06/inv001.pdf",
-                            output=None,
-                        ))
+                        _run_download(
+                            Namespace(
+                                key="invoices/sales/2025/06/inv001.pdf",
+                                output=None,
+                            )
+                        )
                     except Exception:
                         pass  # output plumbing may vary; what matters is stream_file call
 
@@ -633,15 +651,15 @@ class TestFilesCommand:
         from zdrovena.api.commands.files_cmd import _run_download
 
         env = {k: v for k, v in os.environ.items() if k != "ZDROVENA_API_URL"}
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(SystemExit) as exc:
-                _run_download(Namespace(key="some/file.pdf", output=None))
+        with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit) as exc:
+            _run_download(Namespace(key="some/file.pdf", output=None))
         assert exc.value.code == 1
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TestHealthCommand  (RED until zdrovena/api/commands/health_cmd.py exists)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestHealthCommand:
     """`zdrovena health` pings the API and prints status."""
@@ -654,7 +672,8 @@ class TestHealthCommand:
 
         r = subprocess.run(
             [sys.executable, "-m", "zdrovena.cli", "--help"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert "health" in r.stdout
 
@@ -694,8 +713,8 @@ class TestHealthCommand:
         assert "2.0.0" in out
 
     def test_health_exits_1_on_api_error(self):
-        from zdrovena.api.commands.health_cmd import _run
         from zdrovena.api.client import ApiError
+        from zdrovena.api.commands.health_cmd import _run
 
         MockClass = MagicMock()
         mock_inst = MagicMock()
@@ -713,14 +732,13 @@ class TestHealthCommand:
         from zdrovena.api.commands.health_cmd import _run
 
         env = {k: v for k, v in os.environ.items() if k != "ZDROVENA_API_URL"}
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(SystemExit) as exc:
-                _run(Namespace())
+        with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit) as exc:
+            _run(Namespace())
         assert exc.value.code == 1
 
     def test_health_prints_error_on_failure(self, capsys):
-        from zdrovena.api.commands.health_cmd import _run
         from zdrovena.api.client import ApiError
+        from zdrovena.api.commands.health_cmd import _run
 
         MockClass = MagicMock()
         mock_inst = MagicMock()
@@ -740,6 +758,7 @@ class TestHealthCommand:
 # TestApiCliParity  (GREEN — regression guard, no new code needed)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestApiCliParity:
     """CloseReport (local dataclass) and CloseResponse (Pydantic) share same fields.
 
@@ -749,23 +768,27 @@ class TestApiCliParity:
 
     def test_close_report_fields_subset_of_close_response(self):
         from dataclasses import fields as dc_fields
-        from zdrovena.month_closing.orchestrator import CloseReport
+
         from zdrovena.api.models import CloseResponse
+        from zdrovena.month_closing.orchestrator import CloseReport
 
         local_fields = {f.name for f in dc_fields(CloseReport)}
-        api_fields   = set(CloseResponse.model_fields.keys())
+        api_fields = set(CloseResponse.model_fields.keys())
 
         # Every local dataclass field must appear in the API response
         missing_in_api = local_fields - api_fields
-        assert not missing_in_api, f"Fields in CloseReport missing from CloseResponse: {missing_in_api}"
+        assert not missing_in_api, (
+            f"Fields in CloseReport missing from CloseResponse: {missing_in_api}"
+        )
 
     def test_close_response_only_adds_has_critical_errors(self):
         from dataclasses import fields as dc_fields
-        from zdrovena.month_closing.orchestrator import CloseReport
+
         from zdrovena.api.models import CloseResponse
+        from zdrovena.month_closing.orchestrator import CloseReport
 
         local_fields = {f.name for f in dc_fields(CloseReport)}
-        api_fields   = set(CloseResponse.model_fields.keys())
+        api_fields = set(CloseResponse.model_fields.keys())
 
         extra_in_api = api_fields - local_fields
         # The only extra field allowed is has_critical_errors (promoted from property)

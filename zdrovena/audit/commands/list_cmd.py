@@ -6,10 +6,16 @@ from __future__ import annotations
 
 import argparse
 
-from zdrovena.audit.api import get_client, fetch_invoices, doc_type_label, sell_date_of
+from zdrovena.audit.api import doc_type_label, fetch_invoices, get_client, sell_date_of
 from zdrovena.audit.bottles import extract_bottles
 from zdrovena.common.formatting import (
-    RESET, BOLD, DIM, CYAN, GREEN, YELLOW, MAGENTA,
+    BOLD,
+    CYAN,
+    DIM,
+    GREEN,
+    MAGENTA,
+    RESET,
+    YELLOW,
 )
 
 
@@ -40,16 +46,18 @@ def _print_table(invoices: list[dict], *, show_positions: bool = False) -> None:
         grand_plastic += inv_plastic
         grand_glass += inv_glass
 
-        rows.append({
-            "number": inv.get("number", "?"),
-            "kind": doc_type_label(inv),
-            "date": sell_date_of(inv) or "?",
-            "buyer": (inv.get("buyer_name") or "—")[:30],
-            "positions": bottle_positions,
-            "plastic": inv_plastic,
-            "glass": inv_glass,
-            "total": inv_plastic + inv_glass,
-        })
+        rows.append(
+            {
+                "number": inv.get("number", "?"),
+                "kind": doc_type_label(inv),
+                "date": sell_date_of(inv) or "?",
+                "buyer": (inv.get("buyer_name") or "—")[:30],
+                "positions": bottle_positions,
+                "plastic": inv_plastic,
+                "glass": inv_glass,
+                "total": inv_plastic + inv_glass,
+            }
+        )
 
     if not rows:
         print(f"{YELLOW}Brak pozycji butelkowych w fakturach.{RESET}")
@@ -102,7 +110,7 @@ def _print_table(invoices: list[dict], *, show_positions: bool = False) -> None:
 
     print(sep)
     grand_total = grand_plastic + grand_glass
-    par_count = sum(1 for r in rows if r['kind'] == 'PAR')
+    par_count = sum(1 for r in rows if r["kind"] == "PAR")
     print(
         f"| {BOLD}{'RAZEM':<{w_num}}{RESET} "
         f"| {'':>{w_typ}} "
@@ -143,6 +151,7 @@ def add_subparser(subparsers: argparse._SubParsersAction, *, parents: list | Non
 
 def run(args: argparse.Namespace) -> None:
     from zdrovena.audit.api import date_range
+
     d_from, d_to = date_range(args.year, args.month, args.day)
 
     print(f"\n{BOLD}📄 Pobieranie dokumentów sprzedażowych z Fakturowni{RESET}")
@@ -150,7 +159,10 @@ def run(args: argparse.Namespace) -> None:
 
     client = get_client()
     invoices = fetch_invoices(
-        client, args.year, args.month, args.day,
+        client,
+        args.year,
+        args.month,
+        args.day,
         include_proforma=args.proforma,
     )
 

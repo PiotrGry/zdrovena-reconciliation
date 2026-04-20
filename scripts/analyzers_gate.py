@@ -8,13 +8,12 @@ import json
 import sys
 from pathlib import Path
 
-
 THRESHOLDS = {
-    "pylint_score":    (">=", 7.0),
-    "radon_cc_avg":    ("<=", 10.0),
-    "radon_mi_avg":    (">=", 50.0),
-    "coverage_line":   (">=", 70.0),
-    "bandit_high":     ("==", 0),
+    "pylint_score": (">=", 7.0),
+    "radon_cc_avg": ("<=", 10.0),
+    "radon_mi_avg": (">=", 50.0),
+    "coverage_line": (">=", 70.0),
+    "bandit_high": ("==", 0),
     "ruff_violations": ("<=", 20),
 }
 
@@ -88,21 +87,21 @@ def _check(name: str, value: float) -> bool:
 
 def main():
     p = argparse.ArgumentParser(description="Analyzers gate decision")
-    p.add_argument("--ruff",      required=True)
-    p.add_argument("--radon-cc",  required=True)
-    p.add_argument("--radon-mi",  required=True)
-    p.add_argument("--pylint",    required=True)
-    p.add_argument("--coverage",  required=True)
-    p.add_argument("--bandit",    required=True)
-    p.add_argument("--output",    required=True)
+    p.add_argument("--ruff", required=True)
+    p.add_argument("--radon-cc", required=True)
+    p.add_argument("--radon-mi", required=True)
+    p.add_argument("--pylint", required=True)
+    p.add_argument("--coverage", required=True)
+    p.add_argument("--bandit", required=True)
+    p.add_argument("--output", required=True)
     args = p.parse_args()
 
     metrics = {
-        "pylint_score":    _pylint_score(args.pylint),
-        "radon_cc_avg":    _radon_cc_avg(args.radon_cc),
-        "radon_mi_avg":    _radon_mi_avg(args.radon_mi),
-        "coverage_line":   _coverage_line(args.coverage),
-        "bandit_high":     _bandit_high(args.bandit),
+        "pylint_score": _pylint_score(args.pylint),
+        "radon_cc_avg": _radon_cc_avg(args.radon_cc),
+        "radon_mi_avg": _radon_mi_avg(args.radon_mi),
+        "coverage_line": _coverage_line(args.coverage),
+        "bandit_high": _bandit_high(args.bandit),
         "ruff_violations": _ruff_violations(args.ruff),
     }
 

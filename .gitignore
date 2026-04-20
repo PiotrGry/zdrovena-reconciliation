@@ -37,3 +37,7 @@ infra/terraform/*.tfstate.backup
 infra/terraform/terraform.tfvars
 infra/terraform/backend.hcl
 infra/terraform/.terraform.lock.hcl
+
+# Coverage
+.coverage
+htmlcov/

@@ -54,7 +54,7 @@ class TestConsoleReporter:
     def test_plain(self, reporter):
         out, buf = reporter
         out.plain("raw line")
-        assert "raw line\n" == buf.getvalue()
+        assert buf.getvalue() == "raw line\n"
 
     def test_plain_empty(self, reporter):
         out, buf = reporter

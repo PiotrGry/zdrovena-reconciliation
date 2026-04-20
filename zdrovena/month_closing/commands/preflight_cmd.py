@@ -62,7 +62,8 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
         help="Miesiąc w formacie YYYY-MM. Alternatywa dla pozycyjnego argumentu.",
     )
     sp.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Szczegółowe logowanie (DEBUG)",
     )
@@ -78,7 +79,10 @@ def _run(args: argparse.Namespace) -> None:
     pos_period = getattr(args, "period", None)
     flag_period = getattr(args, "period_flag", None)
     if pos_period and flag_period and pos_period != flag_period:
-        print(f"❌ Podano dwa różne okresy: '{pos_period}' i '{flag_period}'. Użyj jednego.", file=sys.stderr)
+        print(
+            f"❌ Podano dwa różne okresy: '{pos_period}' i '{flag_period}'. Użyj jednego.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     period_value = flag_period or pos_period
     if not period_value:
@@ -160,6 +164,7 @@ def _run(args: argparse.Namespace) -> None:
 def _get_secret(service: str, required: bool = True) -> str | None:
     """Resolve secret from env var, then .env, then keyring."""
     import os
+
     env_key = service.upper().replace(".", "_").replace("-", "_")
     val = os.environ.get(env_key)
     if val:
@@ -167,6 +172,7 @@ def _get_secret(service: str, required: bool = True) -> str | None:
     # Try .env file
     try:
         from pathlib import Path
+
         env_file = Path(__file__).resolve().parents[3] / ".env"
         if env_file.is_file():
             for line in env_file.read_text().splitlines():
@@ -181,6 +187,7 @@ def _get_secret(service: str, required: bool = True) -> str | None:
     # Keyring fallback
     try:
         import keyring
+
         val = keyring.get_password(service, "humio")
         if val:
             return val
@@ -189,5 +196,3 @@ def _get_secret(service: str, required: bool = True) -> str | None:
     if required:
         raise RuntimeError(f"Missing secret: {service} (set env var {env_key})")
     return None
-
-

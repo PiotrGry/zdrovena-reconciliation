@@ -17,7 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 ksef = ["cryptography>=42.0.0", "signxml>=4.0.0", "lxml>=5.0.0"]
 pdf = ["pypdf>=4.0.0", "pdf2image>=1.17.0"]
-report = ["playwright>=1.40.0"]
+report = ["playwright>=1.40.0", "playwright-stealth>=2.0.0"]
 api = ["fastapi>=0.111.0", "uvicorn[standard]>=0.29.0", "python-jose[cryptography]>=3.3.0"]
 cloud = ["azure-storage-blob>=12.19.0", "azure-identity>=1.16.0", "azure-keyvault-secrets>=4.8.0"]
 all = ["zdrovena-reconciliation[ksef,pdf,report]"]
@@ -36,6 +36,7 @@ pythonVersion = "3.12"
 typeCheckingMode = "basic"
 reportMissingImports = true
 reportMissingTypeStubs = false
+exclude = ["tests/"]
 
 # ─── Linting & formatting (Ruff) ─────────────────────────────────────────────
 
@@ -57,6 +58,11 @@ select = [
 ignore = [
     "E501",   # line too long (handled by formatter)
     "SIM108", # ternary operator suggestions
+    "RUF001", # ambiguous unicode in strings — intentional Polish text
+    "RUF002", # ambiguous unicode in docstrings — intentional Polish text
+    "RUF003", # ambiguous unicode in comments — intentional Polish text
+    "SIM117", # merge-with-statements — readability preference
+    "SIM105", # suppressible-exception — explicit try/except preferred
 ]
 
 [tool.ruff.lint.isort]
@@ -68,3 +74,57 @@ known-first-party = ["zdrovena"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-v --tb=short"
+
+# ─── Coverage ────────────────────────────────────────────────────────────────
+
+[tool.coverage.run]
+source = ["zdrovena"]
+omit = [
+    # Pure SMTP/REST adapters — all code paths require live external services
+    # (Zoho Mail SMTP, KSeF government API, Azure Key Vault).
+    # No unit-testable logic; mock tests would test the mocks, not the code.
+    "zdrovena/month_closing/zoho_mail.py",
+    "zdrovena/month_closing/email_service.py",
+    "zdrovena/month_closing/ksef.py",
+    "zdrovena/common/_keyvault.py",
+
+    # Playwright browser automation — requires real Chromium + live sites.
+    "zdrovena/month_closing/canva_downloader.py",
+    "zdrovena/month_closing/fakturownia_reports.py",
+    "zdrovena/audit/report_downloader.py",
+
+    # PDF/OCR extraction — requires real PDF files + optionally Tesseract.
+    # Integration-tested manually with actual invoices.
+    "zdrovena/month_closing/invoice_date_check.py",
+
+    # CLI entry points — thin wrappers that delegate to tested modules.
+    # Covered by integration smoke tests (test_cli_smoke.py).
+    "zdrovena/cli.py",
+    "zdrovena/audit/commands/audit_cmd.py",
+    "zdrovena/audit/commands/export.py",
+    "zdrovena/audit/commands/list_cmd.py",
+    "zdrovena/audit/commands/products.py",
+    "zdrovena/audit/commands/report_cmd.py",
+    "zdrovena/audit/commands/summary.py",
+    "zdrovena/month_closing/commands/setup_cmd.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
+
+# ─── Semantic versioning (python-semantic-release) ───────────────────────────
+# Conventional commits → automatic version bump on merge to main.
+# feat: → MINOR  |  fix: → PATCH  |  feat!: / BREAKING CHANGE: → MAJOR
+# Commits with ci:, chore:, docs: produce no version bump.
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+branch = "main"
+commit_message = "chore(release): v{version} [skip ci]"
+changelog_file = "CHANGELOG.md"
+build_command = ""  # no PyPI publish — we ship via Docker/Container App

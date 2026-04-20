@@ -53,13 +53,13 @@ LOGIN_URL = f"{BASE_URL}/login"
 # ── Available report kinds ───────────────────────────────────────────────────
 
 REPORT_KINDS: dict[str, str] = {
-    "vat-sales":        "income_tax_records",
-    "income":           "invoice_list",
-    "expenses":         "expense_invoice_list",
-    "unpaid":           "unpaid_invoice_list",
-    "products-sales":   "products_income",
+    "vat-sales": "income_tax_records",
+    "income": "invoice_list",
+    "expenses": "expense_invoice_list",
+    "unpaid": "unpaid_invoice_list",
+    "products-sales": "products_income",
     "products-expense": "products_expense",
-    "products-margin":  "products_margin",
+    "products-margin": "products_margin",
 }
 
 
@@ -106,17 +106,16 @@ def download_report(
     try:
         from playwright.sync_api import sync_playwright
         from playwright_stealth import Stealth
-    except ImportError:
+    except ImportError as exc:
         raise RuntimeError(
             "Playwright and playwright-stealth are required for report downloads.\n"
             "Install with:  pip install playwright playwright-stealth && playwright install chromium"
-        )
+        ) from exc
 
     report_kind = REPORT_KINDS.get(kind)
     if not report_kind:
         raise ValueError(
-            f"Unknown report kind: {kind!r}. "
-            f"Available: {', '.join(REPORT_KINDS.keys())}"
+            f"Unknown report kind: {kind!r}. Available: {', '.join(REPORT_KINDS.keys())}"
         )
 
     login, password = _get_credentials()
@@ -154,20 +153,26 @@ def download_report(
         except Exception as e:
             page_content = page.content()
             if "Nie masz uprawnień do tego konta!" in page_content:
-                raise RuntimeError(f"Fakturownia login failed: The account '{login}' does not have access to {BASE_URL}") from e
+                raise RuntimeError(
+                    f"Fakturownia login failed: The account '{login}' does not have access to {BASE_URL}"
+                ) from e
             if "Login/Hasło nie są poprawne" in page_content:
-                raise RuntimeError(f"Fakturownia login failed: Invalid email or password for '{login}'") from e
-                
+                raise RuntimeError(
+                    f"Fakturownia login failed: Invalid email or password for '{login}'"
+                ) from e
+
             # Check for error messages on the page
             errors = page.query_selector_all(".alert, .error, .notice, .flash")
             error_texts = [err.inner_text().strip() for err in errors if err.inner_text().strip()]
             if error_texts:
                 raise RuntimeError(f"Fakturownia login failed: {', '.join(error_texts)}") from e
-            
+
             # Check if we got redirected to the main page without access
             if "#no_account=app" in page.url:
-                raise RuntimeError(f"Fakturownia login failed: The account '{login}' does not have access to {BASE_URL}") from e
-                
+                raise RuntimeError(
+                    f"Fakturownia login failed: The account '{login}' does not have access to {BASE_URL}"
+                ) from e
+
             raise RuntimeError(f"Fakturownia login timed out. Current URL: {page.url}") from e
         logger.info("Login OK → %s", page.url)
 
@@ -186,8 +191,7 @@ def download_report(
         # the report table is rendered and action links appear.
         # For empty reports (no invoices in period) the job finishes
         # but the table has only headers and no data rows.
-        logger.info("Waiting for report job to finish (timeout=%ds)...",
-                     timeout // 1000)
+        logger.info("Waiting for report job to finish (timeout=%ds)...", timeout // 1000)
 
         dl_link_sel = "#job_download_link a[href*='/jobs/']"
         try:
@@ -200,9 +204,7 @@ def download_report(
         data_rows = page.query_selector_all("table tr td")
         if not data_rows:
             browser.close()
-            raise EmptyReportError(
-                f"Raport pusty — brak danych za okres {date_from} → {date_to}."
-            )
+            raise EmptyReportError(f"Raport pusty — brak danych za okres {date_from} → {date_to}.")
 
         logger.info("Report job finished (%d data cells found).", len(data_rows))
 
@@ -234,8 +236,7 @@ def download_report(
             format="A4",
             landscape=True,
             print_background=True,
-            margin={"top": "10mm", "right": "10mm",
-                    "bottom": "10mm", "left": "10mm"},
+            margin={"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
         )
 
         size = output_path.stat().st_size
