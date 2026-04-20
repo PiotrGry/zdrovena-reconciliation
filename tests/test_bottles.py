@@ -80,6 +80,66 @@ class TestExtractBottles:
         assert extract_bottles("kaucja szklana", 1) == (0, 0)
 
 
+# ── invoice_bottle_details ────────────────────────────────────────────────────
+
+
+from zdrovena.audit.bottles import invoice_bottle_details
+
+
+class TestInvoiceBottleDetails:
+    def test_returns_details(self):
+        inv = {
+            "positions": [
+                {"name": "Woda Humio 500ml x 12", "quantity": "2"},
+            ]
+        }
+        total, details = invoice_bottle_details(inv)
+        assert total == 24
+        assert len(details) == 1
+        name, qty, bpu, cnt = details[0]
+        assert name == "Woda Humio 500ml x 12"
+        assert qty == 2
+        assert bpu == 12
+        assert cnt == 24
+
+    def test_skips_skip_pattern(self):
+        inv = {
+            "positions": [
+                {"name": "Dostawa kurierska", "quantity": "1"},
+            ]
+        }
+        total, details = invoice_bottle_details(inv)
+        assert total == 0
+        assert details == []
+
+    def test_skips_positions_without_bottles(self):
+        inv = {
+            "positions": [
+                {"name": "Koszulka firmowa", "quantity": "5"},
+            ]
+        }
+        total, details = invoice_bottle_details(inv)
+        assert total == 0
+
+    def test_multiple_positions(self):
+        inv = {
+            "positions": [
+                {"name": "Zgrzewka wody Humio", "quantity": "3"},       # 3×12=36 plastic
+                {"name": "Woda szkło 6 butelek", "quantity": "2"},      # 2×6=12 glass
+                {"name": "Dostawa DPD", "quantity": "1"},               # skip
+            ]
+        }
+        total, details = invoice_bottle_details(inv)
+        # invoice_bottle_details counts all bpu regardless of glass/plastic
+        assert total == 36 + 12
+        assert len(details) == 2
+
+    def test_empty_positions(self):
+        total, details = invoice_bottle_details({"positions": []})
+        assert total == 0
+        assert details == []
+
+
 # ── invoice_bottles ───────────────────────────────────────────────────────────
 
 

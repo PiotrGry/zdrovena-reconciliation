@@ -172,3 +172,135 @@ class TestBuildInvByWz:
         invoices = [{"id": 10, "warehouse_document_id": 999}]
         wz_by_id = {100: {"id": 100}}
         assert build_inv_by_wz(invoices, wz_by_id) == {}
+
+
+# ── _paginate / fetch helpers ─────────────────────────────────────────────────
+
+
+from unittest.mock import MagicMock, patch
+
+from zdrovena.audit.api import (
+    _paginate,
+    fetch_invoices,
+    fetch_wz_documents,
+    fetch_warehouse_actions,
+    fetch_all_warehouse_actions,
+    fetch_products,
+)
+
+
+def _make_client(pages: list[list[dict]]) -> MagicMock:
+    client = MagicMock()
+    client.get_json.side_effect = pages
+    client.fetch_invoices = MagicMock(return_value=pages[0] if pages else [])
+    return client
+
+
+class TestPaginate:
+    def test_single_page(self):
+        client = MagicMock()
+        client.get_json.side_effect = [[{"id": 1}, {"id": 2}], []]
+        result = _paginate(client, "products.json", per_page=100)
+        assert len(result) == 2
+
+    def test_multi_page(self):
+        client = MagicMock()
+        client.get_json.side_effect = [
+            [{"id": 1}, {"id": 2}],  # page 1 — full
+            [{"id": 3}],             # page 2 — partial → stop
+        ]
+        result = _paginate(client, "products.json", per_page=2)
+        assert len(result) == 3
+
+    def test_empty_first_response(self):
+        client = MagicMock()
+        client.get_json.return_value = []
+        result = _paginate(client, "products.json")
+        assert result == []
+
+
+class TestFetchInvoicesAuditApi:
+    def test_filters_by_sell_date(self):
+        client = MagicMock()
+        # One invoice in June, one out-of-range
+        client.fetch_invoices.return_value = [
+            {"sell_date": "2025-06-15", "kind": "vat"},
+            {"sell_date": "2025-05-30", "kind": "vat"},  # outside June
+        ]
+        result = fetch_invoices(client, 2025, 6)
+        assert len(result) == 1
+        assert result[0]["sell_date"] == "2025-06-15"
+
+    def test_excludes_proforma_by_default(self):
+        client = MagicMock()
+        client.fetch_invoices.return_value = [
+            {"sell_date": "2025-06-15", "kind": "proforma"},
+            {"sell_date": "2025-06-15", "kind": "vat"},
+        ]
+        result = fetch_invoices(client, 2025, 6)
+        assert all(i["kind"] != "proforma" for i in result)
+
+    def test_include_proforma(self):
+        client = MagicMock()
+        client.fetch_invoices.return_value = [
+            {"sell_date": "2025-06-15", "kind": "proforma"},
+        ]
+        result = fetch_invoices(client, 2025, 6, include_proforma=True)
+        assert len(result) == 1
+
+    def test_full_year_no_filter(self):
+        client = MagicMock()
+        client.fetch_invoices.return_value = [
+            {"sell_date": "2025-03-01", "kind": "vat"},
+            {"sell_date": "2025-09-01", "kind": "vat"},
+        ]
+        result = fetch_invoices(client, 2025, by_sell_date=False)
+        assert len(result) == 2
+
+
+class TestFetchWzDocuments:
+    def test_filters_by_year_month(self):
+        client = MagicMock()
+        client.get_json.side_effect = [
+            [
+                {"id": 1, "issue_date": "2025-06-10"},
+                {"id": 2, "issue_date": "2025-05-01"},  # different month
+                {"id": 3, "issue_date": "2025-06-30"},
+            ]
+        ]
+        result = fetch_wz_documents(client, 2025, 6)
+        assert len(result) == 2
+        assert all(d["issue_date"].startswith("2025-06") for d in result)
+
+    def test_full_year(self):
+        client = MagicMock()
+        client.get_json.side_effect = [
+            [
+                {"id": 1, "issue_date": "2025-01-01"},
+                {"id": 2, "issue_date": "2024-12-01"},
+            ]
+        ]
+        result = fetch_wz_documents(client, 2025)
+        assert len(result) == 1
+
+
+class TestFetchWarehouseActions:
+    def test_returns_actions(self):
+        client = MagicMock()
+        client.get_json.side_effect = [[{"id": 1, "kind": "wz"}], []]
+        result = fetch_warehouse_actions(client)
+        assert len(result) == 1
+
+    def test_fetch_all_passes_no_kind_filter(self):
+        client = MagicMock()
+        client.get_json.side_effect = [[{"id": 1}, {"id": 2}], []]
+        result = fetch_all_warehouse_actions(client)
+        assert len(result) == 2
+
+
+class TestFetchProducts:
+    def test_returns_products(self):
+        client = MagicMock()
+        client.get_json.side_effect = [[{"id": 1, "name": "Woda Humio"}], []]
+        result = fetch_products(client)
+        assert len(result) == 1

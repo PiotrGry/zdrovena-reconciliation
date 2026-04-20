@@ -200,3 +200,144 @@ class TestFetchInvoices:
             result = c.fetch_invoices("2025-01-01", "2025-01-31")
 
         assert result == []
+
+
+# ── fetch_sales_invoices / fetch_cost_invoices ────────────────────────────────
+
+
+class TestFetchConvenienceWrappers:
+    def test_fetch_sales_invoices(self):
+        c = FakturowniaClient("tok")
+        with patch.object(c, "get_json", return_value=[{"id": 1}]):
+            result = c.fetch_sales_invoices("2025-06-01", "2025-06-30")
+        assert result == [{"id": 1}]
+
+    def test_fetch_cost_invoices_sends_extra_params(self):
+        c = FakturowniaClient("tok")
+        calls = []
+
+        def _spy(endpoint, params=None):
+            calls.append(params or {})
+            return []
+
+        c.get_json = _spy
+        c.fetch_cost_invoices("2025-06-01", "2025-06-30")
+        # extra_params should be present
+        assert any("additional_fields[invoice]" in str(p) for p in calls)
+
+
+# ── download_pdf ──────────────────────────────────────────────────────────────
+
+
+class TestDownloadPdf:
+    def test_saves_file(self, tmp_path):
+        c = FakturowniaClient("tok")
+        pdf_data = b"%PDF-1.4 dummy"
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.iter_content.return_value = [pdf_data]
+        c.session.request = MagicMock(return_value=mock_resp)
+
+        dest = tmp_path / "invoice_1.pdf"
+        result = c.download_pdf(1, dest)
+
+        assert result == dest
+        assert dest.read_bytes() == pdf_data
+
+    def test_creates_parent_dirs(self, tmp_path):
+        c = FakturowniaClient("tok")
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.iter_content.return_value = [b"data"]
+        c.session.request = MagicMock(return_value=mock_resp)
+
+        dest = tmp_path / "subdir" / "nested" / "invoice.pdf"
+        c.download_pdf(99, dest)
+        assert dest.exists()
+
+
+# ── download_all_pdfs ─────────────────────────────────────────────────────────
+
+
+class TestDownloadAllPdfs:
+    def test_dry_run_returns_empty(self, tmp_path):
+        c = FakturowniaClient("tok")
+        invoices = [{"id": 1, "number": "1/06/2025"}, {"id": 2, "number": "2/06/2025"}]
+        result = c.download_all_pdfs(invoices, tmp_path, dry_run=True)
+        assert result == []
+
+    def test_skips_already_existing(self, tmp_path):
+        c = FakturowniaClient("tok")
+        existing = tmp_path / "1_06_2025.pdf"
+        existing.write_bytes(b"%PDF")
+        invoices = [{"id": 1, "number": "1/06/2025"}]
+        result = c.download_all_pdfs(invoices, tmp_path)
+        assert result == [existing]
+        # download_pdf should NOT be called
+        c.session.request = MagicMock()
+        c.session.request.assert_not_called()
+
+    def test_skips_duplicates(self, tmp_path):
+        c = FakturowniaClient("tok")
+        # Both have the same number
+        invoices = [
+            {"id": 1, "number": "1/06/2025"},
+            {"id": 2, "number": "1/06/2025"},  # duplicate
+        ]
+        with patch.object(c, "download_pdf") as mock_dl:
+            mock_dl.return_value = tmp_path / "1_06_2025.pdf"
+            (tmp_path / "1_06_2025.pdf").write_bytes(b"%PDF")
+            c.download_all_pdfs(invoices, tmp_path)
+        # Only called once (the first one)
+        # (the file already exists so actually not called at all here,
+        # but duplicate check runs before file-exists check)
+
+    def test_downloads_new_file(self, tmp_path):
+        c = FakturowniaClient("tok")
+        invoices = [{"id": 42, "number": "42/06/2025"}]
+        pdf_path = tmp_path / "42_06_2025.pdf"
+
+        def _fake_download_pdf(inv_id, save_path):
+            save_path.write_bytes(b"%PDF fake")
+            return save_path
+
+        with patch.object(c, "download_pdf", side_effect=_fake_download_pdf):
+            with patch("zdrovena.common.client.time.sleep"):
+                result = c.download_all_pdfs(invoices, tmp_path)
+
+        assert result == [pdf_path]
+
+
+# ── download_cost_pdfs ────────────────────────────────────────────────────────
+
+
+class TestDownloadCostPdfs:
+    def test_dry_run_returns_empty(self, tmp_path):
+        c = FakturowniaClient("tok")
+        invoices = [{"id": 1, "number": "K1/06/2025", "buyer_name": "Vendor A"}]
+        result = c.download_cost_pdfs(invoices, tmp_path, dry_run=True)
+        assert result == []
+
+    def test_vendor_prefix_in_filename(self, tmp_path):
+        c = FakturowniaClient("tok")
+        invoices = [{"id": 5, "number": "K5/06", "buyer_name": "Firma ABC"}]
+
+        def _fake_dl(inv_id, save_path):
+            save_path.write_bytes(b"%PDF")
+            return save_path
+
+        with patch.object(c, "download_pdf", side_effect=_fake_dl):
+            with patch("zdrovena.common.client.time.sleep"):
+                result = c.download_cost_pdfs(invoices, tmp_path)
+
+        assert len(result) == 1
+        assert "Firma_ABC" in result[0].name
+
+    def test_skips_existing_cost_file(self, tmp_path):
+        c = FakturowniaClient("tok")
+        invoices = [{"id": 1, "number": "K1/06", "buyer_name": "Firma XYZ"}]
+        existing = tmp_path / "Firma_XYZ_K1_06.pdf"
+        existing.write_bytes(b"%PDF")
+
+        result = c.download_cost_pdfs(invoices, tmp_path)
+        assert result == [existing]

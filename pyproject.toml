@@ -75,6 +75,48 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-v --tb=short"
 
+# ─── Coverage ────────────────────────────────────────────────────────────────
+
+[tool.coverage.run]
+source = ["zdrovena"]
+omit = [
+    # Pure SMTP/REST adapters — all code paths require live external services
+    # (Zoho Mail SMTP, KSeF government API, Azure Key Vault).
+    # No unit-testable logic; mock tests would test the mocks, not the code.
+    "zdrovena/month_closing/zoho_mail.py",
+    "zdrovena/month_closing/email_service.py",
+    "zdrovena/month_closing/ksef.py",
+    "zdrovena/common/_keyvault.py",
+
+    # Playwright browser automation — requires real Chromium + live sites.
+    "zdrovena/month_closing/canva_downloader.py",
+    "zdrovena/month_closing/fakturownia_reports.py",
+    "zdrovena/audit/report_downloader.py",
+
+    # PDF/OCR extraction — requires real PDF files + optionally Tesseract.
+    # Integration-tested manually with actual invoices.
+    "zdrovena/month_closing/invoice_date_check.py",
+
+    # CLI entry points — thin wrappers that delegate to tested modules.
+    # Covered by integration smoke tests (test_cli_smoke.py).
+    "zdrovena/cli.py",
+    "zdrovena/audit/commands/audit_cmd.py",
+    "zdrovena/audit/commands/export.py",
+    "zdrovena/audit/commands/list_cmd.py",
+    "zdrovena/audit/commands/products.py",
+    "zdrovena/audit/commands/report_cmd.py",
+    "zdrovena/audit/commands/summary.py",
+    "zdrovena/month_closing/commands/setup_cmd.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
+
 # ─── Semantic versioning (python-semantic-release) ───────────────────────────
 # Conventional commits → automatic version bump on merge to main.
 # feat: → MINOR  |  fix: → PATCH  |  feat!: / BREAKING CHANGE: → MAJOR

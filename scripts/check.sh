@@ -60,7 +60,7 @@ fi
 
 step "pytest (cov ≥ 34%)"
 $PYTEST_CMD tests/ -q --tb=short \
-  --cov=zdrovena --cov-fail-under=34 \
+  --cov=zdrovena --cov-fail-under=80 \
   --cov-report=term-missing \
   && ok "tests passed" || fail "tests failed"
 

@@ -48,5 +48,5 @@ Key routing rules:
 - Jeśli CI jest wolne → zoptymalizuj cache/concurrency, nie pomijaj kroków
 
 ### Obecny stan świadomego długu technicznego:
-- `coverage --cov-fail-under=34` — celowo niskie. Moduły integracyjne (zoho_mail 9%, ksef 18%, canva 20%) nie mają unit testów bo wymagają live credentials. **Do rozwiązania: napisać testy z mockami lub dodać `omit` i podnieść próg do 80%.**
+- `coverage --cov-fail-under=80` — próg ustawiony po sesji poprawy pokrycia. Moduły integracyjne (zoho_mail, ksef, canva, fakturownia_reports, report_downloader, invoice_date_check) są w `omit` bo wymagają live credentials/Playwright. Pokrycie mierzalne kodu biznesowego: 82%.
 - `ksef.py` / `fakturownia_reports.py` — `# type: ignore` na conditional imports z try/except (lxml, signxml). Uzasadnione: Pyright nie śledzi symboli przez granicę try/except.
