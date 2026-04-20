@@ -238,6 +238,8 @@ jobs:
             -t "$IMAGE:staging-${{ github.sha }}" \
             .
           docker push "$IMAGE:staging-${{ github.sha }}"
+          docker tag  "$IMAGE:staging-${{ github.sha }}" "$IMAGE:staging-latest"
+          docker push "$IMAGE:staging-latest"
 
       # ── Serwisy backendowe ────────────────────────────────────────────────
       - name: Wait for staging Container App to be ready

@@ -46,9 +46,9 @@ jobs:
         env:
           IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api
         run: |
-          docker pull "$IMAGE:staging-${{ github.sha }}"
-          docker tag  "$IMAGE:staging-${{ github.sha }}" "$IMAGE:${{ github.sha }}"
-          docker tag  "$IMAGE:staging-${{ github.sha }}" "$IMAGE:latest"
+          docker pull "$IMAGE:staging-latest"
+          docker tag  "$IMAGE:staging-latest" "$IMAGE:${{ github.sha }}"
+          docker tag  "$IMAGE:staging-latest" "$IMAGE:latest"
           docker push "$IMAGE:${{ github.sha }}"
           docker push "$IMAGE:latest"
           echo "image=$IMAGE:${{ github.sha }}" >> $GITHUB_OUTPUT
