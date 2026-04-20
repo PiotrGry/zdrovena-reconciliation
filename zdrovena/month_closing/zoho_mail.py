@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import re
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -160,7 +161,9 @@ class ZohoMailClient:
             try:
                 if is_link_vendor:
                     saved, _dups = self._download_from_link(
-                        msg, save_dir, hashes,
+                        msg,
+                        save_dir,
+                        hashes,
                         vendor_prefix=vendor_name,
                         link_pattern=link_re,
                         seen_urls=seen_urls,
@@ -186,7 +189,9 @@ class ZohoMailClient:
         self, search_term: str, date_from: str, date_to: str, invoice_id_re: str
     ) -> list[dict[str, str]]:
         try:
-            messages = self._search_vendor(date_from, date_to, search_term, require_attachment=False)
+            messages = self._search_vendor(
+                date_from, date_to, search_term, require_attachment=False
+            )
         except Exception:
             return []
         if not messages:
@@ -238,12 +243,12 @@ class ZohoMailClient:
         max_pages: int = 5,
         require_attachment: bool = True,
     ) -> list[dict]:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         try:
-            dt_from = datetime.strptime(date_from, "%Y/%m/%d").replace(tzinfo=timezone.utc)
+            dt_from = datetime.strptime(date_from, "%Y/%m/%d").replace(tzinfo=UTC)
             dt_to = datetime.strptime(date_to, "%Y/%m/%d").replace(
-                hour=23, minute=59, second=59, tzinfo=timezone.utc
+                hour=23, minute=59, second=59, tzinfo=UTC
             )
             ts_from = int(dt_from.timestamp() * 1000)
             ts_to = int(dt_to.timestamp() * 1000)
@@ -410,7 +415,7 @@ class ZohoMailClient:
                 filename = self._filename_from_link(url, content, vendor_prefix)
                 inv_id = Path(filename).stem
                 if inv_id.startswith(vendor_prefix + "_"):
-                    inv_id = inv_id[len(vendor_prefix) + 1:]
+                    inv_id = inv_id[len(vendor_prefix) + 1 :]
 
                 if seen_invoice_ids is not None and inv_id in seen_invoice_ids:
                     duplicates += 1
@@ -456,12 +461,12 @@ class ZohoMailClient:
 
     @staticmethod
     def _filename_from_link(url: str, html_content: str, vendor_prefix: str) -> str:
-        url_inv = re.search(r'[?&]invoice=(\d+)', url)
+        url_inv = re.search(r"[?&]invoice=(\d+)", url)
         if url_inv:
             return f"{vendor_prefix}_{url_inv.group(1)}.pdf"
-        plain = re.sub(r'<[^>]+>', ' ', html_content)
-        plain = re.sub(r'&[a-z]+;', ' ', plain)
-        plain = re.sub(r'\s+', ' ', plain)
+        plain = re.sub(r"<[^>]+>", " ", html_content)
+        plain = re.sub(r"&[a-z]+;", " ", plain)
+        plain = re.sub(r"\s+", " ", plain)
         inv_match = re.search(
             r"(?:Numer faktury|Nr faktury|Invoice)\s*[:#]?\s*(\S+)", plain, re.IGNORECASE
         )

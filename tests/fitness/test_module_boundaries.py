@@ -28,11 +28,11 @@ ROOT = pathlib.Path(__file__).parent.parent.parent / "zdrovena"
 
 FORBIDDEN: list[tuple[str, str, str]] = [
     # (plik glob pattern, zakazany import, powód)
-    ("audit/**/*.py",         "zdrovena.month_closing", "audit nie może importować month_closing — cykl"),
-    ("audit/**/*.py",         "zdrovena.api",           "audit nie może importować api"),
-    ("common/**/*.py",        "zdrovena.audit",         "common jest liściem — brak zależności w górę"),
-    ("common/**/*.py",        "zdrovena.month_closing", "common jest liściem — brak zależności w górę"),
-    ("common/**/*.py",        "zdrovena.api",           "common jest liściem — brak zależności w górę"),
+    ("audit/**/*.py", "zdrovena.month_closing", "audit nie może importować month_closing — cykl"),
+    ("audit/**/*.py", "zdrovena.api", "audit nie może importować api"),
+    ("common/**/*.py", "zdrovena.audit", "common jest liściem — brak zależności w górę"),
+    ("common/**/*.py", "zdrovena.month_closing", "common jest liściem — brak zależności w górę"),
+    ("common/**/*.py", "zdrovena.api", "common jest liściem — brak zależności w górę"),
 ]
 
 # Świadome wyjątki — lazy imports zaakceptowane architektonicznie
@@ -52,12 +52,11 @@ def _get_imports(filepath: pathlib.Path) -> list[str]:
 
     imports = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            if node.module.startswith("zdrovena."):
-                parts = node.module.split(".")
-                # Normalizuj do zdrovena.X (top-level module)
-                target = ".".join(parts[:2])
-                imports.append(target)
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("zdrovena."):
+            parts = node.module.split(".")
+            # Normalizuj do zdrovena.X (top-level module)
+            target = ".".join(parts[:2])
+            imports.append(target)
     return imports
 
 
@@ -79,9 +78,7 @@ class TestModuleBoundaries:
                     continue
                 imports = _get_imports(filepath)
                 if forbidden_import in imports:
-                    violations.append(
-                        f"  {rel} → {forbidden_import}\n    Powód: {reason}"
-                    )
+                    violations.append(f"  {rel} → {forbidden_import}\n    Powód: {reason}")
 
         assert not violations, (
             f"\n\nNaruszenia granic modułów ({len(violations)}):\n"
@@ -99,8 +96,7 @@ class TestModuleBoundaries:
                 violations.append(f"  {_relative(filepath)} → {bad}")
 
         assert not violations, (
-            f"\n\ncommon/ nie może importować innych modułów zdrovena:\n"
-            + "\n".join(violations)
+            "\n\ncommon/ nie może importować innych modułów zdrovena:\n" + "\n".join(violations)
         )
 
     def test_audit_does_not_import_month_closing(self) -> None:

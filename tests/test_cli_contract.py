@@ -13,19 +13,20 @@ from __future__ import annotations
 from dataclasses import fields
 from decimal import Decimal
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from zdrovena.month_closing.orchestrator import CloseReport, MonthCloseOrchestrator
 
-
 # ── CloseReport field contract ────────────────────────────────────────────────
+
 
 class TestCloseReportContract:
     """Lock down the public fields of CloseReport."""
 
-    EXPECTED_FIELDS = {
+    EXPECTED_FIELDS: ClassVar[dict] = {
         "sales_invoice_count": int,
         "sales_gross_total": Decimal,
         "sales_pdfs_downloaded": int,
@@ -91,16 +92,18 @@ _STEP_PATCHES = [
 
 def _run_dry(year: int = 2025, month: int = 6) -> CloseReport:
     """Run execute() with all pipeline steps mocked — returns CloseReport."""
-    with patch.multiple("zdrovena.month_closing.orchestrator.MonthCloseOrchestrator",
-                        _step_0_preflight=MagicMock(),
-                        _step_1_create_folders=MagicMock(),
-                        _step_2_sales_invoices=MagicMock(),
-                        _step_3_jpk_reports=MagicMock(),
-                        _step_4_cost_invoices=MagicMock(),
-                        _step_5_bank_statement=MagicMock(),
-                        _step_6_zip_archive=MagicMock(),
-                        _step_7_email=MagicMock(),
-                        _check_warnings_gate=MagicMock()):
+    with patch.multiple(
+        "zdrovena.month_closing.orchestrator.MonthCloseOrchestrator",
+        _step_0_preflight=MagicMock(),
+        _step_1_create_folders=MagicMock(),
+        _step_2_sales_invoices=MagicMock(),
+        _step_3_jpk_reports=MagicMock(),
+        _step_4_cost_invoices=MagicMock(),
+        _step_5_bank_statement=MagicMock(),
+        _step_6_zip_archive=MagicMock(),
+        _step_7_email=MagicMock(),
+        _check_warnings_gate=MagicMock(),
+    ):
         orch = MonthCloseOrchestrator(year=year, month=month, dry_run=True)
         orch.out = MagicMock()
         return orch.execute()
@@ -116,6 +119,7 @@ class TestExecuteDryRunContract:
     def test_report_is_serialisable_to_dict(self):
         """Fields can be iterated — prerequisite for JSON API response in Faza C."""
         from dataclasses import asdict
+
         result = _run_dry()
         d = asdict(result)
         assert "sales_invoice_count" in d
@@ -123,16 +127,18 @@ class TestExecuteDryRunContract:
         assert "errors" in d
 
     def test_dry_run_flag_propagates(self):
-        with patch.multiple("zdrovena.month_closing.orchestrator.MonthCloseOrchestrator",
-                            _step_0_preflight=MagicMock(),
-                            _step_1_create_folders=MagicMock(),
-                            _step_2_sales_invoices=MagicMock(),
-                            _step_3_jpk_reports=MagicMock(),
-                            _step_4_cost_invoices=MagicMock(),
-                            _step_5_bank_statement=MagicMock(),
-                            _step_6_zip_archive=MagicMock(),
-                            _step_7_email=MagicMock(),
-                            _check_warnings_gate=MagicMock()):
+        with patch.multiple(
+            "zdrovena.month_closing.orchestrator.MonthCloseOrchestrator",
+            _step_0_preflight=MagicMock(),
+            _step_1_create_folders=MagicMock(),
+            _step_2_sales_invoices=MagicMock(),
+            _step_3_jpk_reports=MagicMock(),
+            _step_4_cost_invoices=MagicMock(),
+            _step_5_bank_statement=MagicMock(),
+            _step_6_zip_archive=MagicMock(),
+            _step_7_email=MagicMock(),
+            _check_warnings_gate=MagicMock(),
+        ):
             orch = MonthCloseOrchestrator(year=2025, month=6, dry_run=True)
             orch.out = MagicMock()
             orch.execute()

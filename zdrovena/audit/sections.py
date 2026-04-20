@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 
 # ── §1 Recount ────────────────────────────────────────────────────────────────
 
+
 def section_recount(
     inv_by_wz: dict[int, dict],
     doc_actions: dict[int, list[dict]],
@@ -47,19 +48,23 @@ def section_recount(
     month_invoices: dict[int, list[dict]] = defaultdict(list)
     month_wz: dict[int, int] = defaultdict(int)
 
-    for wz_id, inv in sorted(inv_by_wz.items(), key=lambda x: sell_date_of(x[1])):
+    for _wz_id, inv in sorted(inv_by_wz.items(), key=lambda x: sell_date_of(x[1])):
         sell = sell_date_of(inv)
         m = month_of(sell)
         p, g = invoice_bottles(inv)
         total = p + g
         if total > 0:
-            month_invoices[m].append({
-                "number": inv.get("number", "?"),
-                "kind": inv.get("kind", "?"),
-                "sell_date": sell,
-                "issue_date": inv.get("issue_date", ""),
-                "plastic": p, "glass": g, "total": total,
-            })
+            month_invoices[m].append(
+                {
+                    "number": inv.get("number", "?"),
+                    "kind": inv.get("kind", "?"),
+                    "sell_date": sell,
+                    "issue_date": inv.get("issue_date", ""),
+                    "plastic": p,
+                    "glass": g,
+                    "total": total,
+                }
+            )
 
     for wz_id, inv in inv_by_wz.items():
         m = month_of(sell_date_of(inv))
@@ -78,14 +83,18 @@ def section_recount(
 
         print(f"\n  {MONTHS_PL.get(m, '?')} — {len(items)} dok., FV={mt}, WZ={wt} {mark}")
         print(f"  {'─' * 88}")
-        print(f"  {'#':>4}  {'Numer':>18}  {'Typ':^5}  {'Data sprz.':^10}  {'Data wyst.':^10}  "
-              f"{'Plastik':>7}  {'Szkło':>5}  {'Razem':>5}")
+        print(
+            f"  {'#':>4}  {'Numer':>18}  {'Typ':^5}  {'Data sprz.':^10}  {'Data wyst.':^10}  "
+            f"{'Plastik':>7}  {'Szkło':>5}  {'Razem':>5}"
+        )
         print(f"  {'─' * 88}")
         for i, item in enumerate(items, 1):
             kind_tag = "PAR" if item["kind"] == "receipt" else "VAT"
-            print(f"  {i:4d}  {item['number']:>18s}  {kind_tag:^5}  "
-                  f"{item['sell_date']:^10}  {item['issue_date']:^10}  "
-                  f"{item['plastic']:7d}  {item['glass']:5d}  {item['total']:5d}")
+            print(
+                f"  {i:4d}  {item['number']:>18s}  {kind_tag:^5}  "
+                f"{item['sell_date']:^10}  {item['issue_date']:^10}  "
+                f"{item['plastic']:7d}  {item['glass']:5d}  {item['total']:5d}"
+            )
         print(f"  {'─' * 88}")
 
     print(f"\n  {'─' * 80}")
@@ -101,6 +110,7 @@ def section_recount(
 
 # ── §2 Type-level match ──────────────────────────────────────────────────────
 
+
 def section_type_match(
     inv_by_wz: dict[int, dict],
     doc_actions: dict[int, list[dict]],
@@ -113,21 +123,27 @@ def section_type_match(
         fv_p, fv_g = invoice_bottles(inv)
         wz_p, wz_g = wz_bottles(wz_id, doc_actions)
         if (fv_p, fv_g) != (wz_p, wz_g) and (fv_p + fv_g > 0 or wz_p + wz_g > 0):
-            mismatches.append({
-                "number": inv.get("number", "?"),
-                "sell_date": sell_date_of(inv),
-                "fv_plastic": fv_p, "fv_glass": fv_g,
-                "wz_plastic": wz_p, "wz_glass": wz_g,
-            })
+            mismatches.append(
+                {
+                    "number": inv.get("number", "?"),
+                    "sell_date": sell_date_of(inv),
+                    "fv_plastic": fv_p,
+                    "fv_glass": fv_g,
+                    "wz_plastic": wz_p,
+                    "wz_glass": wz_g,
+                }
+            )
 
     if mismatches:
         for r in mismatches:
             dp = r["fv_plastic"] - r["wz_plastic"]
             dg = r["fv_glass"] - r["wz_glass"]
-            print(f"  {r['number']:>18s}  sell={r['sell_date']}  "
-                  f"FV(P={r['fv_plastic']},G={r['fv_glass']}) "
-                  f"WZ(P={r['wz_plastic']},G={r['wz_glass']}) "
-                  f"ΔP={dp:+d} ΔG={dg:+d}")
+            print(
+                f"  {r['number']:>18s}  sell={r['sell_date']}  "
+                f"FV(P={r['fv_plastic']},G={r['fv_glass']}) "
+                f"WZ(P={r['wz_plastic']},G={r['wz_glass']}) "
+                f"ΔP={dp:+d} ΔG={dg:+d}"
+            )
         verdict.fail(f"Type-level mismatch: {len(mismatches)} documents")
     else:
         print("  ✅ Typy plastik/szkło: FV = WZ")
@@ -136,6 +152,7 @@ def section_type_match(
 
 
 # ── §3 Orphan WZ ─────────────────────────────────────────────────────────────
+
 
 def section_orphan_wz(
     wz_docs: list[dict],
@@ -153,9 +170,11 @@ def section_orphan_wz(
     if orphans:
         for o in orphans:
             wz = o["wz"]
-            print(f"  WZ #{wz['id']}  nr={wz.get('number', '?'):>10s}  "
-                  f"issue={wz['issue_date']}  butelki={o['total']} "
-                  f"(P={o['plastic']}, G={o['glass']})")
+            print(
+                f"  WZ #{wz['id']}  nr={wz.get('number', '?'):>10s}  "
+                f"issue={wz['issue_date']}  butelki={o['total']} "
+                f"(P={o['plastic']}, G={o['glass']})"
+            )
         total_btl = sum(o["total"] for o in orphans)
         print(f"\n  Łącznie orphan WZ: {len(orphans)}, butelki: {total_btl}")
         verdict.fail(f"Orphan WZ: {len(orphans)} documents, {total_btl} bottles")
@@ -166,6 +185,7 @@ def section_orphan_wz(
 
 
 # ── §4 Invoices without WZ ───────────────────────────────────────────────────
+
 
 def section_no_wz(
     invoices: list[dict],
@@ -186,9 +206,11 @@ def section_no_wz(
     if no_wz:
         for item in no_wz:
             inv = item["inv"]
-            print(f"  {doc_type_label(inv)} {inv.get('number', '?'):>18s}  "
-                  f"sell={sell_date_of(inv)}  butelki={item['total']} "
-                  f"(P={item['plastic']}, G={item['glass']})")
+            print(
+                f"  {doc_type_label(inv)} {inv.get('number', '?'):>18s}  "
+                f"sell={sell_date_of(inv)}  butelki={item['total']} "
+                f"(P={item['plastic']}, G={item['glass']})"
+            )
         print(f"\n  Łącznie: {len(no_wz)}, butelki: {sum(i['total'] for i in no_wz)}")
         verdict.fail(f"Invoices without WZ: {len(no_wz)}")
     else:
@@ -198,6 +220,7 @@ def section_no_wz(
 
 
 # ── §5 Date comparison ───────────────────────────────────────────────────────
+
 
 def section_date_comparison(
     inv_by_wz: dict[int, dict],
@@ -222,19 +245,26 @@ def section_date_comparison(
 
         total_pairs += 1
         if sell_m != wz_m:
-            month_mismatch.append({
-                "inv_number": inv.get("number", "?"),
-                "sell_date": sell, "wz_date": wz_date,
-                "sell_month": sell_m, "wz_month": wz_m,
-                "diff_days": diff_days, "bottles": p + g,
-            })
+            month_mismatch.append(
+                {
+                    "inv_number": inv.get("number", "?"),
+                    "sell_date": sell,
+                    "wz_date": wz_date,
+                    "sell_month": sell_m,
+                    "wz_month": wz_m,
+                    "diff_days": diff_days,
+                    "bottles": p + g,
+                }
+            )
 
     if month_mismatch:
         print(f"  ❌ Daty FV↔WZ: {len(month_mismatch)}/{total_pairs} par niezgodnych")
         for r in sorted(month_mismatch, key=lambda x: x["sell_date"]):
-            print(f"    {r['inv_number']:>18s}  sell={r['sell_date']}  wz={r['wz_date']}  "
-                  f"FV:{MONTHS_PL.get(r['sell_month'], '?')} "
-                  f"WZ:{MONTHS_PL.get(r['wz_month'], '?')}  btl={r['bottles']}")
+            print(
+                f"    {r['inv_number']:>18s}  sell={r['sell_date']}  wz={r['wz_date']}  "
+                f"FV:{MONTHS_PL.get(r['sell_month'], '?')} "
+                f"WZ:{MONTHS_PL.get(r['wz_month'], '?')}  btl={r['bottles']}"
+            )
         verdict.fail(f"Cross-month FV↔WZ: {len(month_mismatch)} pairs")
     else:
         print(f"  ✅ Daty FV↔WZ: {total_pairs} par, zgodne")
@@ -243,6 +273,7 @@ def section_date_comparison(
 
 
 # ── §6 Cross-month sell/issue ─────────────────────────────────────────────────
+
 
 def section_cross_month_sell_issue(
     invoices: list[dict],
@@ -266,9 +297,11 @@ def section_cross_month_sell_issue(
         print(f"  ⚠️  sell/issue cross-month: {len(mismatched)} faktur")
         for inv in sorted(mismatched, key=lambda x: x.get("sell_date", "")):
             p, g = invoice_bottles(inv)
-            print(f"    {doc_type_label(inv)} {inv.get('number', '?'):>18s}  "
-                  f"sell={inv.get('sell_date', '')}  issue={inv.get('issue_date', '')}  "
-                  f"btl={p + g}")
+            print(
+                f"    {doc_type_label(inv)} {inv.get('number', '?'):>18s}  "
+                f"sell={inv.get('sell_date', '')}  issue={inv.get('issue_date', '')}  "
+                f"btl={p + g}"
+            )
     else:
         print("  ✅ sell/issue_date w tym samym miesiącu")
 
@@ -277,9 +310,11 @@ def section_cross_month_sell_issue(
 
 # ── §7 Numbering continuity ──────────────────────────────────────────────────
 
+
 @dataclass
 class SeriesResult:
     """Numbering analysis for a single invoice series."""
+
     series: str
     count: int
     first: int
@@ -327,15 +362,17 @@ def check_numbering(invoices: list[dict]) -> list[SeriesResult]:
                     gaps.append(expected)
 
         expected_count = (seqs[-1] - seqs[0] + 1) if seqs else 0
-        results.append(SeriesResult(
-            series=series,
-            count=len(seqs),
-            first=seqs[0] if seqs else 0,
-            last=seqs[-1] if seqs else 0,
-            expected=expected_count,
-            gaps=gaps,
-            duplicates=duplicates,
-        ))
+        results.append(
+            SeriesResult(
+                series=series,
+                count=len(seqs),
+                first=seqs[0] if seqs else 0,
+                last=seqs[-1] if seqs else 0,
+                expected=expected_count,
+                gaps=gaps,
+                duplicates=duplicates,
+            )
+        )
     return results
 
 
@@ -349,8 +386,10 @@ def section_numbering(
     for sr in results:
         if not sr.ok:
             issues_found = True
-            print(f"\n  Seria /{sr.series}:  zakres {sr.first}–{sr.last}, "
-                  f"{sr.count} dokumentów (oczekiwano {sr.expected})")
+            print(
+                f"\n  Seria /{sr.series}:  zakres {sr.first}–{sr.last}, "
+                f"{sr.count} dokumentów (oczekiwano {sr.expected})"
+            )
             if sr.duplicates:
                 print(f"    ❌ Duplikaty: {sr.duplicates}")
             if sr.gaps:
@@ -363,6 +402,7 @@ def section_numbering(
 
 
 # ── §8 Stock balance ─────────────────────────────────────────────────────────
+
 
 def section_stock_balance(
     all_actions: list[dict],
@@ -414,7 +454,6 @@ def section_stock_balance(
             print(f"  {label:3s}  {'  '.join(parts)}")
 
     # ── Year totals ───────────────────────────────────────────────────────
-    issues_found = False
     print(f"  {'─' * 50}")
     for prod in sorted(BOTTLE_PRODUCTS):
         short = "plastik" if "plastik" in prod else "szkło"
@@ -434,6 +473,7 @@ def section_stock_balance(
 
 # ── §9 Anomalies ─────────────────────────────────────────────────────────────
 
+
 def section_anomalies(
     inv_by_wz: dict[int, dict],
     wz_by_id: dict[int, dict],
@@ -441,7 +481,7 @@ def section_anomalies(
 ) -> None:
     """§4 — Large invoices, duplicate WZ links."""
     big = []
-    for wz_id, inv in inv_by_wz.items():
+    for _wz_id, inv in inv_by_wz.items():
         p, g = invoice_bottles(inv)
         total = p + g
         if total > 72:
@@ -462,8 +502,10 @@ def section_anomalies(
     if big:
         print("  >72 butelek:")
         for inv, total in big:
-            print(f"    {doc_type_label(inv)} {inv.get('number', '?'):>18s}  "
-                  f"sell={sell_date_of(inv)}  btl={total}")
+            print(
+                f"    {doc_type_label(inv)} {inv.get('number', '?'):>18s}  "
+                f"sell={sell_date_of(inv)}  btl={total}"
+            )
     if multi:
         print("  Wiele faktur → ten sam WZ:")
         for wz_id, invs in multi.items():

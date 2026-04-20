@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import types
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-import types
 
 import pytest
 
@@ -62,7 +62,9 @@ class TestPreflightReportBoundary:
         jpk_fa_file.write_text("x" * 120)
         with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
             checker._check_reports()
-        names_in_matches = [cfg["name"] for cfg, _path in checker.result.matches if isinstance(cfg, dict)]
+        names_in_matches = [
+            cfg["name"] for cfg, _path in checker.result.matches if isinstance(cfg, dict)
+        ]
         assert "JPK_FA" in names_in_matches
         missing_names = [r["name"] for r in checker.result.missing_reports]
         assert "JPK_FA" not in missing_names
@@ -118,9 +120,9 @@ class TestDownloadFakturowniaReportsContract:
         from zdrovena.month_closing.fakturownia_reports import _build_report_url
 
         params = "?date_from=2026-03-01&date_to=2026-03-31"
-        assert _build_report_url("https://x/reports/jpk_fa", params, append_date_params=True).endswith(
-            "jpk_fa?date_from=2026-03-01&date_to=2026-03-31"
-        )
+        assert _build_report_url(
+            "https://x/reports/jpk_fa", params, append_date_params=True
+        ).endswith("jpk_fa?date_from=2026-03-01&date_to=2026-03-31")
         assert (
             _build_report_url(
                 "https://x/accounting/app/reports/jpk_vat/18277?form_variant=3",
@@ -417,7 +419,7 @@ class TestDownloadFakturowniaReportsContract:
         class _Context:
             class request:
                 @staticmethod
-                def get(_url: str, timeout: int = 0):  # noqa: ARG004
+                def get(_url: str, timeout: int = 0):
                     return _Response()
 
         class _FakePage:
@@ -434,7 +436,9 @@ class TestDownloadFakturowniaReportsContract:
                 return None
 
         out = tmp_path / "jpk.xml"
-        ok = _download_via_job_url(_FakePage(), "#job_download_link a[href*='/jobs/']", out, timeout_ms=5000)
+        ok = _download_via_job_url(
+            _FakePage(), "#job_download_link a[href*='/jobs/']", out, timeout_ms=5000
+        )
         assert ok is True
         assert out.exists()
 
@@ -515,7 +519,7 @@ class TestDownloadFakturowniaReportsContract:
                 return False
 
         class _FakePage:
-            def get_by_text(self, label: str, exact: bool = False):  # noqa: ARG002
+            def get_by_text(self, label: str, exact: bool = False):
                 if "XML" in label:
                     return _Locator(1)
                 return _Locator(0)
@@ -592,7 +596,7 @@ class TestDownloadFakturowniaReportsContract:
                 return False
 
         class _FakePage:
-            def get_by_role(self, role: str, name=None):  # noqa: ARG002
+            def get_by_role(self, role: str, name=None):
                 if role == "button":
                     return _Locator(1)
                 return _Locator(0)
@@ -655,7 +659,7 @@ class TestDownloadFakturowniaReportsContract:
             def __init__(self):
                 self.cb = _CheckboxLocator()
 
-            def get_by_role(self, role: str, name=None):  # noqa: ARG002
+            def get_by_role(self, role: str, name=None):
                 if role in {"link", "button"}:
                     return _RoleLocator(1)
                 return _RoleLocator(0)

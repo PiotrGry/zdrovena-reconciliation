@@ -1,13 +1,12 @@
 """
 zdrovena.api.models – Pydantic request/response models
 """
+
 from __future__ import annotations
 
-from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, model_validator
 
 
 class CloseRequest(BaseModel):
@@ -18,7 +17,7 @@ class CloseRequest(BaseModel):
     ignore_vendors: list[str] = []
 
     @model_validator(mode="after")
-    def validate_date(self) -> "CloseRequest":
+    def validate_date(self) -> CloseRequest:
         if not (1 <= self.month <= 12):
             raise ValueError(f"Invalid month: {self.month}")
         if self.year < 2020:
@@ -28,14 +27,14 @@ class CloseRequest(BaseModel):
 
 class CloseResponse(BaseModel):
     sales_invoice_count: int
-    sales_gross_total: str          # Decimal serialised as string — safe across JSON
+    sales_gross_total: str  # Decimal serialised as string — safe across JSON
     sales_pdfs_downloaded: int
     cost_invoice_count: int
     cost_found_vendors: dict[str, str]
     cost_missing_vendors: list[str]
     ksef_count: int
     bank_statement_found: bool
-    zip_path: str | None            # Path → str
+    zip_path: str | None  # Path → str
     email_sent: bool
     warnings: list[str]
     errors: list[str]
@@ -43,7 +42,7 @@ class CloseResponse(BaseModel):
     has_critical_errors: bool
 
     @classmethod
-    def from_close_report(cls, report: Any) -> "CloseResponse":
+    def from_close_report(cls, report: Any) -> CloseResponse:
         """Convert a CloseReport dataclass to CloseResponse."""
         return cls(
             sales_invoice_count=report.sales_invoice_count,

@@ -27,8 +27,7 @@ class MissingSecretError(ZdrovenaError):
         self.account = account
         hint = f" (account={account!r})" if account else ""
         super().__init__(
-            f"Missing secret in Keychain: service={service!r}{hint}. "
-            "Run: zdrovena setup"
+            f"Missing secret in Keychain: service={service!r}{hint}. Run: zdrovena setup"
         )
 
 
@@ -49,9 +48,7 @@ class ApiResponseFormatError(ZdrovenaError):
     def __init__(self, status_code: int, body_preview: str) -> None:
         self.status_code = status_code
         self.body_preview = body_preview
-        super().__init__(
-            f"Expected JSON but got status={status_code}: {body_preview}"
-        )
+        super().__init__(f"Expected JSON but got status={status_code}: {body_preview}")
 
 
 class PipelineAbortError(ZdrovenaError):

@@ -1,4 +1,5 @@
 """GET /files/{key} — RBAC-authenticated blob streaming."""
+
 from __future__ import annotations
 
 import mimetypes

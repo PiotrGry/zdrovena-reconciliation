@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
-
 from zdrovena.common.formatting import (
     ENGLISH_MONTHS,
     MONTHS_FULL,
@@ -16,8 +14,8 @@ from zdrovena.common.formatting import (
     to_decimal,
 )
 
-
 # ── Month dictionaries ───────────────────────────────────────────────────────
+
 
 class TestMonthDicts:
     def test_months_pl_has_all_12(self):
@@ -46,6 +44,7 @@ class TestMonthDicts:
 
 # ── Separators ────────────────────────────────────────────────────────────────
 
+
 class TestSeparators:
     def test_sep_length(self):
         assert len(SEP) == 110
@@ -59,6 +58,7 @@ class TestSeparators:
 
 
 # ── status_icon ───────────────────────────────────────────────────────────────
+
 
 class TestStatusIcon:
     def test_zero_is_ok(self):
@@ -76,6 +76,7 @@ class TestStatusIcon:
 
 
 # ── to_decimal ────────────────────────────────────────────────────────────────
+
 
 class TestToDecimal:
     def test_integer(self):

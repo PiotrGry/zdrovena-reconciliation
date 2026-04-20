@@ -1,4 +1,5 @@
 """POST /close — trigger monthly close pipeline."""
+
 from __future__ import annotations
 
 import logging

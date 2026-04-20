@@ -32,13 +32,15 @@ def add_subparser(subparsers: argparse._SubParsersAction, *, parents: list | Non
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
-        "--kind", "-k",
+        "--kind",
+        "-k",
         choices=list(REPORT_KINDS.keys()),
         default="vat-sales",
         help="Rodzaj raportu (domyślnie: vat-sales = Wykaz sprzedaży VAT)",
     )
     p.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         type=str,
         default=None,
         help="Ścieżka do pliku wyjściowego (domyślnie: report_<kind>_<rok>-<mc>.pdf)",

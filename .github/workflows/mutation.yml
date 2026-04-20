@@ -1,0 +1,138 @@
+name: Mutation Testing
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'   # co poniedziałek o 2:00 UTC
+  workflow_dispatch:        # uruchom ręcznie z zakładki Actions
+
+permissions:
+  contents: read
+  issues: write   # potrzebne do auto-tworzenia issue gdy score spada
+
+jobs:
+  mutation:
+    name: mutmut – business logic
+    runs-on: ubuntu-latest
+    continue-on-error: true   # przeżyte mutanty = feedback, nie fail buildu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]" mutmut
+
+      - name: Run mutation tests
+        id: mutmut
+        run: |
+          mutmut run \
+            --paths-to-mutate zdrovena/audit/sections.py,zdrovena/common/client.py \
+            --runner "python -m pytest tests/test_sections.py tests/test_client.py -x -q"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Collect results
+        id: results
+        if: always()
+        run: |
+          KILLED=$(mutmut results 2>/dev/null | grep -c "🎉" || true)
+          SURVIVED=$(mutmut results 2>/dev/null | grep -c "🙁" || true)
+          TOTAL=$((KILLED + SURVIVED))
+          if [ "$TOTAL" -gt 0 ]; then
+            SCORE=$(python3 -c "print(round($KILLED / $TOTAL * 100, 1))")
+          else
+            SCORE="N/A"
+            TOTAL=0
+            KILLED=0
+            SURVIVED=0
+          fi
+          echo "killed=$KILLED"     >> "$GITHUB_OUTPUT"
+          echo "survived=$SURVIVED" >> "$GITHUB_OUTPUT"
+          echo "total=$TOTAL"       >> "$GITHUB_OUTPUT"
+          echo "score=$SCORE"       >> "$GITHUB_OUTPUT"
+
+      - name: Write GitHub Job Summary
+        if: always()
+        run: |
+          SCORE="${{ steps.results.outputs.score }}"
+          KILLED="${{ steps.results.outputs.killed }}"
+          SURVIVED="${{ steps.results.outputs.survived }}"
+          TOTAL="${{ steps.results.outputs.total }}"
+
+          if [ "$SCORE" != "N/A" ] && python3 -c "exit(0 if float('$SCORE') >= 70 else 1)" 2>/dev/null; then
+            STATUS="✅ PASS"
+          else
+            STATUS="⚠️ NEEDS ATTENTION"
+          fi
+
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## 🧬 Mutation Testing Report
+
+          | | |
+          |---|---|
+          | **Status** | $STATUS |
+          | **Mutation score** | **${SCORE}%** |
+          | **Killed** | ${KILLED} |
+          | **Survived** | ${SURVIVED} |
+          | **Total mutants** | ${TOTAL} |
+          | **Scope** | \`audit/sections.py\`, \`common/client.py\` |
+          | **Run date** | $(date -u '+%Y-%m-%d %H:%M UTC') |
+
+          ### Survived mutants (need stronger tests)
+          \`\`\`
+          $(mutmut results 2>/dev/null | grep "🙁" | head -20 || echo "none")
+          \`\`\`
+
+          > **Goal:** score ≥ 70%. Add assertions that verify *what* was returned, not just *that* something was returned.
+          EOF
+
+      - name: Upload mutmut cache (full report)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutmut-report-${{ github.run_id }}
+          path: .mutmut-cache
+          retention-days: 30
+
+      - name: Open issue if score drops below 70%
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SCORE="${{ steps.results.outputs.score }}"
+          SURVIVED="${{ steps.results.outputs.survived }}"
+
+          # Pomijaj jeśli brak wyników
+          if [ "$SCORE" = "N/A" ]; then exit 0; fi
+
+          # Pomijaj jeśli score jest OK
+          python3 -c "exit(0 if float('$SCORE') >= 70 else 1)" 2>/dev/null && exit 0
+
+          # Sprawdź czy issue już istnieje
+          EXISTING=$(gh issue list --label "mutation-testing" --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+
+          BODY="## Mutation score below threshold
+
+          **Score: ${SCORE}%** (${SURVIVED} mutants survived)
+
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          ### What to do
+          1. Check the Job Summary in the run above for survived mutants
+          2. Download artifact \`mutmut-report-${{ github.run_id }}\` for full details
+          3. Add missing assertions to \`tests/test_sections.py\` or \`tests/test_client.py\`
+
+          Close this issue when score returns to ≥ 70%."
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            gh issue create \
+              --title "⚠️ Mutation score dropped: ${SCORE}% (target ≥ 70%)" \
+              --body "$BODY" \
+              --label "mutation-testing,test-quality"
+          fi

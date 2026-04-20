@@ -34,10 +34,12 @@ FIXED_COUNTS: dict[str, int] = {
 }
 
 # WZ warehouse action product names that represent bottles
-BOTTLE_PRODUCTS = frozenset({
-    "Woda Humio butelka plastik",
-    "Woda Humio butelka szkło",
-})
+BOTTLE_PRODUCTS = frozenset(
+    {
+        "Woda Humio butelka plastik",
+        "Woda Humio butelka szkło",
+    }
+)
 
 # Legacy product names → current canonical name.
 # Old WZ documents used "Woda Humio butelka" before the plastik/szkło split.
@@ -47,6 +49,7 @@ BOTTLE_ALIASES: dict[str, str] = {
 
 
 # ── Core extraction ──────────────────────────────────────────────────────────
+
 
 def bottles_per_unit(name: str) -> int:
     """Return how many bottles a single unit of this product represents."""
