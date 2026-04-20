@@ -61,6 +61,9 @@ resource "azurerm_container_app_environment" "env" {
 resource "azurerm_storage_account" "storage" {
   # Storage account name: alphanumeric only, max 24 chars
   # checkov:skip=CKV_AZURE_43: Name is dynamically computed via replace(var.prefix,"-","") — valid alphanumeric, length enforced by variable validation
+  # checkov:skip=CKV_AZURE_33: No Azure Queue service used — this is blob-only storage
+  # checkov:skip=CKV_AZURE_206: LRS replication intentional — single-region deployment, non-critical files, cost optimised
+  # checkov:skip=CKV2_AZURE_41: No SAS tokens issued — all access via managed identity (RBAC)
   name                            = "${replace(var.prefix, "-", "")}files"
   resource_group_name             = azurerm_resource_group.rg.name
   location                        = azurerm_resource_group.rg.location
@@ -68,6 +71,7 @@ resource "azurerm_storage_account" "storage" {
   account_replication_type        = "LRS"
   allow_nested_items_to_be_public = false
   public_network_access_enabled   = false # CKV_AZURE_59 — enforce at resource level, network_rules default_action=Deny also blocks access
+  shared_access_key_enabled       = false # CKV2_AZURE_40 — disable Shared Key auth; all access via managed identity
   min_tls_version                 = "TLS1_2"
   tags                            = local.tags
 
@@ -79,6 +83,13 @@ resource "azurerm_storage_account" "storage" {
     bypass                     = ["AzureServices"]
     ip_rules                   = var.terraform_ip_allowlist
     virtual_network_subnet_ids = []
+  }
+
+  blob_properties {
+    # CKV2_AZURE_38 — soft-delete protects blobs from accidental deletion for 7 days
+    delete_retention_policy {
+      days = 7
+    }
   }
 }
 
@@ -181,6 +192,10 @@ resource "azurerm_container_app" "api" {
 data "azurerm_client_config" "current" {}
 
 resource "azurerm_key_vault" "kv" {
+  # checkov:skip=CKV_AZURE_42: soft_delete_retention_days=7 enables recovery; purge_protection=false is intentional — terraform destroy would block for 90 days with purge protection enabled
+  # checkov:skip=CKV_AZURE_110: purge_protection disabled intentionally (see above)
+  # checkov:skip=CKV_AZURE_189: public network access required — no VNet/private endpoint in this architecture; access restricted via network_acls bypass=AzureServices
+  # checkov:skip=CKV2_AZURE_32: private endpoint requires VNet not present in this architecture; Container App reaches KV via AzureServices bypass over Azure backbone
   name                       = "${replace(var.prefix, "-", "")}kv"
   resource_group_name        = azurerm_resource_group.rg.name
   location                   = azurerm_resource_group.rg.location
@@ -189,6 +204,14 @@ resource "azurerm_key_vault" "kv" {
   soft_delete_retention_days = 7
   purge_protection_enabled   = false
   tags                       = local.tags
+
+  # CKV_AZURE_109 — restrict access to AzureServices only (Container App managed identity)
+  # Terraform operator gets access via ip_rules (allowlist from variables)
+  network_acls {
+    default_action = "Deny"
+    bypass         = ["AzureServices"]
+    ip_rules       = var.terraform_ip_allowlist
+  }
 
   # Allow Terraform operator (current CLI identity) to manage secrets
   access_policy {
