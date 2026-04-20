@@ -1,0 +1,89 @@
+name: Rollback Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: "Git SHA obrazu do którego wracamy (np. abc1234). Zostaw puste = poprzednia rewizja."
+        required: false
+        type: string
+      reason:
+        description: "Powód rollbacku (widoczny w audit logu)"
+        required: true
+        type: string
+
+# OIDC — brak długożyjących credentials
+permissions:
+  id-token: write
+  contents: read
+
+# Nigdy nie anuluj rollbacku — niech się skończy
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: Rollback
+    runs-on: ubuntu-latest
+    environment: production  # wymagane zatwierdzenie jeśli skonfigurowano
+
+    steps:
+      - name: Log rollback intent
+        run: |
+          echo "======================================"
+          echo "ROLLBACK INITIATED"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "Reason: ${{ inputs.reason }}"
+          echo "Target SHA: ${{ inputs.image_sha || '(poprzednia rewizja)' }}"
+          echo "======================================"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # ── Rollback do konkretnego obrazu (SHA podany ręcznie) ──────────────
+      - name: Rollback to specific image
+        if: inputs.image_sha != ''
+        env:
+          IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api
+        run: |
+          TARGET_IMAGE="$IMAGE:${{ inputs.image_sha }}"
+          echo "Deploying image: $TARGET_IMAGE"
+          az containerapp update \
+            --name           "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --image          "$TARGET_IMAGE"
+          echo "Done. Container App now running: $TARGET_IMAGE"
+
+      # ── Rollback do poprzedniej rewizji (bez podanego SHA) ────────────────
+      - name: Rollback to previous revision
+        if: inputs.image_sha == ''
+        run: |
+          PREV=$(az containerapp revision list \
+            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --query "[?properties.active==\`false\`] | sort_by(@, &properties.createdTime) | [-1].name" \
+            --output tsv)
+
+          if [[ -z "$PREV" ]]; then
+            echo "Brak poprzedniej rewizji — manual intervention required."
+            exit 1
+          fi
+
+          echo "Activating previous revision: $PREV"
+          az containerapp revision activate \
+            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --revision "$PREV"
+
+          echo "Switching 100% traffic to: $PREV"
+          az containerapp ingress traffic set \
+            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --revision-weight "$PREV=100"
+
+          echo "Rollback complete. Active revision: $PREV"
