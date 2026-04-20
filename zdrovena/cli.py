@@ -25,33 +25,43 @@ _env_file = Path(__file__).resolve().parent.parent / ".env"
 if _env_file.is_file():
     load_dotenv(_env_file)
 
-from zdrovena.audit.commands import audit_cmd, list_cmd, export, summary, products, report_cmd
-from zdrovena.month_closing.commands import close_cmd, preflight_cmd, setup_cmd
-from zdrovena.api.commands import files_cmd, health_cmd
-
+from zdrovena.api.commands import files_cmd, health_cmd  # noqa: E402
+from zdrovena.audit.commands import (  # noqa: E402
+    audit_cmd,
+    export,
+    list_cmd,
+    products,
+    report_cmd,
+    summary,
+)
+from zdrovena.month_closing.commands import close_cmd, preflight_cmd, setup_cmd  # noqa: E402
 
 # ── Shared argument groups ────────────────────────────────────────────────────
+
 
 def _period_parser() -> argparse.ArgumentParser:
     """Parent parser with -y / -m / -d flags (shared by audit subcommands)."""
     p = argparse.ArgumentParser(add_help=False)
     g = p.add_argument_group("okres")
     g.add_argument(
-        "--year", "-y",
+        "--year",
+        "-y",
         type=int,
         default=date.today().year,
         metavar="YYYY",
         help="Rok (domyślnie: %(default)s)",
     )
     g.add_argument(
-        "--month", "-m",
+        "--month",
+        "-m",
         type=int,
         default=None,
         metavar="MM",
         help="Miesiąc 01–12 (domyślnie: cały rok)",
     )
     g.add_argument(
-        "--day", "-d",
+        "--day",
+        "-d",
         type=int,
         default=None,
         metavar="DD",
@@ -88,7 +98,8 @@ def main() -> None:
     )
 
     parser.add_argument(
-        "--version", "-V",
+        "--version",
+        "-V",
         action="version",
         version="%(prog)s 2.0.0",
     )

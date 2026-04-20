@@ -8,13 +8,19 @@ import argparse
 from collections import defaultdict
 
 from zdrovena.audit.api import (
-    get_client, fetch_invoices, fetch_wz_documents,
-    fetch_warehouse_actions, build_actions_by_doc, build_wz_by_id,
-    build_inv_by_wz, month_of, sell_date_of,
+    build_actions_by_doc,
+    build_inv_by_wz,
+    build_wz_by_id,
+    fetch_invoices,
+    fetch_warehouse_actions,
+    fetch_wz_documents,
+    get_client,
+    month_of,
+    sell_date_of,
 )
-from zdrovena.audit.bottles import extract_bottles, BOTTLE_ALIASES, BOTTLE_PRODUCTS
+from zdrovena.audit.bottles import BOTTLE_ALIASES, BOTTLE_PRODUCTS, extract_bottles
 from zdrovena.audit.sections import check_numbering
-from zdrovena.common.formatting import MONTHS_PL, BOLD, RESET, GREEN, YELLOW, RED
+from zdrovena.common.formatting import BOLD, MONTHS_PL, RED, RESET
 
 
 def add_subparser(subparsers: argparse._SubParsersAction, *, parents: list | None = None) -> None:
@@ -77,8 +83,10 @@ def run(args: argparse.Namespace) -> None:
 
     # Render table
     print()
-    print(f"{'':>4}  {'WZ_p':>6} {'WZ_g':>6} {'WZ':>7}  │  "
-          f"{'FV_p':>6} {'FV_g':>6} {'FV':>7}  │  {'Δ':>4}")
+    print(
+        f"{'':>4}  {'WZ_p':>6} {'WZ_g':>6} {'WZ':>7}  │  "
+        f"{'FV_p':>6} {'FV_g':>6} {'FV':>7}  │  {'Δ':>4}"
+    )
     print("─" * 65)
 
     tw = [0, 0]
@@ -92,8 +100,10 @@ def run(args: argparse.Namespace) -> None:
         d = wt - ft
         flag = "✅" if d == 0 else "❌"
 
-        print(f"{MONTHS_PL[m]:>4}  {wp:>6} {wg:>6} {wt:>7}  │  "
-              f"{fp:>6} {fg:>6} {ft:>7}  │  {d:>+4} {flag}")
+        print(
+            f"{MONTHS_PL[m]:>4}  {wp:>6} {wg:>6} {wt:>7}  │  "
+            f"{fp:>6} {fg:>6} {ft:>7}  │  {d:>+4} {flag}"
+        )
 
         tw[0] += wp
         tw[1] += wg
@@ -103,8 +113,10 @@ def run(args: argparse.Namespace) -> None:
     print("─" * 65)
     wt = tw[0] + tw[1]
     ft = tf[0] + tf[1]
-    print(f"{'ROK':>4}  {tw[0]:>6} {tw[1]:>6} {wt:>7}  │  "
-          f"{tf[0]:>6} {tf[1]:>6} {ft:>7}  │  {wt - ft:>+4}")
+    print(
+        f"{'ROK':>4}  {tw[0]:>6} {tw[1]:>6} {wt:>7}  │  "
+        f"{tf[0]:>6} {tf[1]:>6} {ft:>7}  │  {wt - ft:>+4}"
+    )
 
     # Numbering check
     print()
@@ -114,8 +126,9 @@ def run(args: argparse.Namespace) -> None:
         if sr.ok:
             print(f"  /{sr.series}:  {sr.first}–{sr.last} ({sr.count} dok.) ✅")
         else:
-            print(f"  /{sr.series}:  {sr.first}–{sr.last}, "
-                  f"jest {sr.count}, oczekiwano {sr.expected}")
+            print(
+                f"  /{sr.series}:  {sr.first}–{sr.last}, jest {sr.count}, oczekiwano {sr.expected}"
+            )
             if sr.gaps:
                 print(f"    {RED}❌ Brakuje: {sr.gaps}{RESET}")
             if sr.duplicates:

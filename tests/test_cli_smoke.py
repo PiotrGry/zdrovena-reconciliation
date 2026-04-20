@@ -9,8 +9,6 @@ from __future__ import annotations
 import subprocess
 import sys
 
-import pytest
-
 PYTHON = sys.executable
 
 
@@ -23,21 +21,31 @@ class TestCLISmoke:
         assert "close" in r.stdout
 
     def test_preflight_help(self):
-        r = subprocess.run([PYTHON, "-m", "zdrovena.cli", "preflight", "--help"], capture_output=True, text=True)
+        r = subprocess.run(
+            [PYTHON, "-m", "zdrovena.cli", "preflight", "--help"], capture_output=True, text=True
+        )
         assert r.returncode == 0
         assert "inbox" in r.stdout
 
     def test_close_help(self):
-        r = subprocess.run([PYTHON, "-m", "zdrovena.cli", "close", "--help"], capture_output=True, text=True)
+        r = subprocess.run(
+            [PYTHON, "-m", "zdrovena.cli", "close", "--help"], capture_output=True, text=True
+        )
         assert r.returncode == 0
         assert "--period" in r.stdout
 
     def test_preflight_missing_period_exits_1(self):
-        r = subprocess.run([PYTHON, "-m", "zdrovena.cli", "preflight"], capture_output=True, text=True)
+        r = subprocess.run(
+            [PYTHON, "-m", "zdrovena.cli", "preflight"], capture_output=True, text=True
+        )
         assert r.returncode == 1
 
     def test_preflight_bad_format_exits_1(self):
-        r = subprocess.run([PYTHON, "-m", "zdrovena.cli", "preflight", "not-a-date"], capture_output=True, text=True)
+        r = subprocess.run(
+            [PYTHON, "-m", "zdrovena.cli", "preflight", "not-a-date"],
+            capture_output=True,
+            text=True,
+        )
         assert r.returncode == 1
 
     def test_close_no_period_exits_1(self):
@@ -56,15 +64,21 @@ class TestCLISmoke:
         assert "Fakturownia" in combined or r.returncode in (0, 1)
 
     def test_version_flag(self):
-        r = subprocess.run([PYTHON, "-m", "zdrovena.cli", "--version"], capture_output=True, text=True)
+        r = subprocess.run(
+            [PYTHON, "-m", "zdrovena.cli", "--version"], capture_output=True, text=True
+        )
         assert r.returncode == 0
         assert "2.0.0" in r.stdout
 
     def test_audit_help(self):
-        r = subprocess.run([PYTHON, "-m", "zdrovena.cli", "audit", "--help"], capture_output=True, text=True)
+        r = subprocess.run(
+            [PYTHON, "-m", "zdrovena.cli", "audit", "--help"], capture_output=True, text=True
+        )
         assert r.returncode == 0
         assert "--year" in r.stdout
 
     def test_setup_help(self):
-        r = subprocess.run([PYTHON, "-m", "zdrovena.cli", "setup", "--help"], capture_output=True, text=True)
+        r = subprocess.run(
+            [PYTHON, "-m", "zdrovena.cli", "setup", "--help"], capture_output=True, text=True
+        )
         assert r.returncode == 0

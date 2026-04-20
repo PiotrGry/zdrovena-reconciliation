@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import argparse
 
-from zdrovena.audit.api import get_client, fetch_products
-from zdrovena.common.formatting import BOLD, RESET, GREEN, DIM, RED
+from zdrovena.audit.api import fetch_products, get_client
+from zdrovena.common.formatting import BOLD, DIM, GREEN, RED, RESET
 
 
 def add_subparser(subparsers: argparse._SubParsersAction) -> None:

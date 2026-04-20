@@ -18,6 +18,7 @@ def get_client() -> FakturowniaClient:
 
 # ── Date helpers ──────────────────────────────────────────────────────────────
 
+
 def date_range(year: int, month: int | None = None, day: int | None = None) -> tuple[str, str]:
     """
     Return ``(date_from, date_to)`` ISO strings for the requested period.
@@ -77,6 +78,7 @@ def inv_sort_key(inv: dict) -> tuple[int, str]:
 
 # ── Paginated fetch ──────────────────────────────────────────────────────────
 
+
 def _paginate(
     client: FakturowniaClient,
     endpoint: str,
@@ -107,6 +109,7 @@ def _paginate(
 
 # ── Fetch helpers ─────────────────────────────────────────────────────────────
 
+
 def fetch_invoices(
     client: FakturowniaClient,
     year: int,
@@ -133,10 +136,7 @@ def fetch_invoices(
         q_to = (last + timedelta(days=62)).isoformat()
         invoices = client.fetch_invoices(q_from, q_to, income="yes", label="sales invoices")
         # Filter by sell_date within requested range
-        invoices = [
-            i for i in invoices
-            if d_from <= sell_date_of(i) <= d_to
-        ]
+        invoices = [i for i in invoices if d_from <= sell_date_of(i) <= d_to]
     else:
         invoices = client.fetch_invoices(d_from, d_to, income="yes", label="sales invoices")
 
@@ -145,7 +145,9 @@ def fetch_invoices(
     return invoices
 
 
-def fetch_wz_documents(client: FakturowniaClient, year: int, month: int | None = None) -> list[dict]:
+def fetch_wz_documents(
+    client: FakturowniaClient, year: int, month: int | None = None
+) -> list[dict]:
     """Fetch WZ (warehouse issue) documents for *year* (optionally filtered to *month*)."""
     prefix = f"{year}-{month:02d}" if month else str(year)
     docs = _paginate(client, "warehouse_documents.json", {"kind": "wz"})
@@ -168,6 +170,7 @@ def fetch_products(client: FakturowniaClient) -> list[dict]:
 
 
 # ── Lookup builders ───────────────────────────────────────────────────────────
+
 
 def build_actions_by_doc(actions: list[dict]) -> dict[int, list[dict]]:
     """Group warehouse actions by ``warehouse_document_id``."""

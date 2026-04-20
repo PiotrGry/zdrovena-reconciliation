@@ -10,10 +10,15 @@ import os
 from collections import defaultdict
 
 from zdrovena.audit.api import (
-    get_client, fetch_invoices, month_of, sell_date_of, doc_type_label, inv_sort_key,
+    doc_type_label,
+    fetch_invoices,
+    get_client,
+    inv_sort_key,
+    month_of,
+    sell_date_of,
 )
 from zdrovena.audit.bottles import invoice_bottle_details
-from zdrovena.common.formatting import MONTHS_FULL, MONTHS_PL, BOLD, RESET, GREEN, DIM
+from zdrovena.common.formatting import BOLD, DIM, GREEN, MONTHS_FULL, MONTHS_PL, RESET
 
 
 def add_subparser(subparsers: argparse._SubParsersAction, *, parents: list | None = None) -> None:
@@ -30,20 +35,31 @@ def add_subparser(subparsers: argparse._SubParsersAction, *, parents: list | Non
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
-        "--output-dir", "-o",
-        type=str, default="csv",
+        "--output-dir",
+        "-o",
+        type=str,
+        default="csv",
         help="Katalog docelowy na pliki CSV (domyślnie: csv/)",
     )
     p.add_argument(
-        "--from-month", type=int, default=2, metavar="M",
+        "--from-month",
+        type=int,
+        default=2,
+        metavar="M",
         help="Miesiąc początkowy (domyślnie: 2)",
     )
     p.add_argument(
-        "--to-month", type=int, default=12, metavar="M",
+        "--to-month",
+        type=int,
+        default=12,
+        metavar="M",
         help="Miesiąc końcowy (domyślnie: 12)",
     )
     p.add_argument(
-        "--single-month", type=int, default=None, metavar="M",
+        "--single-month",
+        type=int,
+        default=None,
+        metavar="M",
         help="Eksportuj tylko ten miesiąc (nadpisuje --from/--to)",
     )
     p.set_defaults(func=run)
@@ -100,7 +116,9 @@ def run(args: argparse.Namespace) -> None:
             w.writerow(["", "", "", "", "", "Suma butelek:", total_btl])
 
         label = MONTHS_PL.get(month, f"{month:02d}")
-        print(f"  {GREEN}✓{RESET} {label}: {total_btl:>5} butelek, "
-              f"{len(invs)} faktur → {BOLD}{fname}{RESET}")
+        print(
+            f"  {GREEN}✓{RESET} {label}: {total_btl:>5} butelek, "
+            f"{len(invs)} faktur → {BOLD}{fname}{RESET}"
+        )
 
     print(f"\n{DIM}Pliki CSV zapisano w katalogu: {outdir}/{RESET}")

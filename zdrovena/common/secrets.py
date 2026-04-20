@@ -18,6 +18,7 @@ import os
 
 try:
     import keyring
+
     _KEYRING_AVAILABLE = True
 except ImportError:
     _KEYRING_AVAILABLE = False
@@ -59,6 +60,7 @@ def get_secret(service: str, required: bool = True) -> str | None:
     keyvault_url = os.environ.get("AZURE_KEYVAULT_URL")
     if keyvault_url:
         from zdrovena.common._keyvault import get_keyvault_secret
+
         value = get_keyvault_secret(keyvault_url, service)
         if value:
             return value

@@ -11,4 +11,4 @@ Usage::
 
 from zdrovena.month_closing.orchestrator import CloseReport, MonthCloseOrchestrator
 
-__all__ = ["MonthCloseOrchestrator", "CloseReport"]
+__all__ = ["CloseReport", "MonthCloseOrchestrator"]

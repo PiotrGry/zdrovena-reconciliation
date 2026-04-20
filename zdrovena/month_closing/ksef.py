@@ -16,8 +16,8 @@ from typing import Any
 import requests
 
 from zdrovena.common.exceptions import MissingSecretError
-from zdrovena.common.secrets import get_secret
 from zdrovena.common.retry import retry_request
+from zdrovena.common.secrets import get_secret
 from zdrovena.month_closing.config import (
     API_RETRY_COUNT,
     API_RETRY_DELAY,
@@ -38,9 +38,9 @@ try:
     from cryptography import x509
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ec, rsa
-    from lxml import etree
+    from lxml import etree  # type: ignore[attr-defined]
     from signxml import methods
-    from signxml.xades import XAdESSigner
+    from signxml.xades import XAdESSigner  # type: ignore[attr-defined]
 
     _KSEF_DEPS_AVAILABLE = True
 except ImportError:
@@ -120,7 +120,9 @@ class KSeFClient:
             timeout=API_TIMEOUT,
         )
         if resp.status_code not in (200, 202):
-            logger.error("KSeF auth/xades-signature returned %d:\n%s", resp.status_code, resp.text[:2000])
+            logger.error(
+                "KSeF auth/xades-signature returned %d:\n%s", resp.status_code, resp.text[:2000]
+            )
             resp.raise_for_status()
         init_data = resp.json()
         ref_number = init_data.get("referenceNumber")
@@ -194,7 +196,7 @@ class KSeFClient:
             digest_algorithm="sha256",
             c14n_algorithm="http://www.w3.org/2006/12/xml-c14n11",
         )
-        signed_root = signer.sign(xml_doc, key=self._private_key, cert=self._cert_pem)
+        signed_root = signer.sign(xml_doc, key=self._private_key, cert=self._cert_pem)  # type: ignore[call-arg]
         signed_xml = etree.tostring(signed_root, xml_declaration=True, encoding="utf-8")
         return signed_xml
 

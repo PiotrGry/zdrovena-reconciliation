@@ -18,6 +18,7 @@ def _mock_result(missing=None, bank_found=True):
 
 def _make_args(period=None, period_flag=None, verbose=False, no_browser=False):
     import argparse
+
     return argparse.Namespace(
         period=period,
         period_flag=period_flag,
@@ -36,15 +37,19 @@ class TestPreflightCheckerContract:
         mock_checker_cls.return_value.run.return_value = _mock_result()
 
         from zdrovena.month_closing.commands.preflight_cmd import _run
+
         _run(_make_args(period="2025-03"))
 
         call_kwargs = mock_checker_cls.call_args.kwargs
-        assert isinstance(call_kwargs["date_from"], str), \
+        assert isinstance(call_kwargs["date_from"], str), (
             f"date_from must be str, got {type(call_kwargs['date_from'])}"
-        assert isinstance(call_kwargs["date_to"], str), \
+        )
+        assert isinstance(call_kwargs["date_to"], str), (
             f"date_to must be str, got {type(call_kwargs['date_to'])}"
-        assert isinstance(call_kwargs["cost_date_to"], str), \
+        )
+        assert isinstance(call_kwargs["cost_date_to"], str), (
             f"cost_date_to must be str, got {type(call_kwargs['cost_date_to'])}"
+        )
         assert call_kwargs["date_from"] == "2025-03-01"
         assert call_kwargs["date_to"] == "2025-03-31"
         assert call_kwargs["cost_date_to"] == "2025-04-01"
@@ -56,6 +61,7 @@ class TestPreflightCheckerContract:
         mock_checker_cls.return_value.run.return_value = _mock_result()
 
         from zdrovena.month_closing.commands.preflight_cmd import _run
+
         _run(_make_args(period="2025-12"))
 
         call_kwargs = mock_checker_cls.call_args.kwargs
@@ -72,6 +78,7 @@ class TestPreflightCheckerContract:
         mock_checker_cls.return_value.run.return_value = _mock_result(missing=[vendor])
 
         from zdrovena.month_closing.commands.preflight_cmd import _run
+
         with pytest.raises(SystemExit) as exc_info:
             _run(_make_args(period="2025-03"))
         assert exc_info.value.code == 1
@@ -85,6 +92,7 @@ class TestPreflightCheckerContract:
         mock_checker_cls.return_value.run.return_value = result
 
         from zdrovena.month_closing.commands.preflight_cmd import _run
+
         with pytest.raises(SystemExit) as exc_info:
             _run(_make_args(period="2025-03"))
         assert exc_info.value.code == 1
@@ -108,6 +116,7 @@ class TestPreflightPeriodParsing:
     def test_conflict_detection(self):
         """Different positional and --period values should exit with error."""
         from zdrovena.month_closing.commands.preflight_cmd import _run
+
         with pytest.raises(SystemExit) as exc_info:
             _run(_make_args(period="2025-03", period_flag="2025-04"))
         assert exc_info.value.code == 1
@@ -115,6 +124,7 @@ class TestPreflightPeriodParsing:
     def test_no_period_exits(self):
         """Missing period should exit with error."""
         from zdrovena.month_closing.commands.preflight_cmd import _run
+
         with pytest.raises(SystemExit) as exc_info:
             _run(_make_args())
         assert exc_info.value.code == 1

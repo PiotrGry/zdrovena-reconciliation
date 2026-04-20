@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -43,7 +44,7 @@ class PreflightChecker:
         date_to: str,
         cost_date_to: str,
         dry_run: bool,
-        get_secret: object,
+        get_secret: Callable[..., str | None],
         no_browser: bool = False,
     ) -> None:
         self.year = year
@@ -265,7 +266,9 @@ class PreflightChecker:
         else:
             gen_year, gen_month = self.year, self.month + 1
         print(f"  └─ ⚠️  No PKO BP bank statement for {self.year}-{self.month:02d}")
-        print(f"     Download from iPKO → filename: Wyciag_na_zadanie_*_{gen_year}{gen_month:02d}*.pdf")
+        print(
+            f"     Download from iPKO → filename: Wyciag_na_zadanie_*_{gen_year}{gen_month:02d}*.pdf"
+        )
 
     def _check_reports(self) -> None:
         watch_dir = DOWNLOAD_WATCH_DIR

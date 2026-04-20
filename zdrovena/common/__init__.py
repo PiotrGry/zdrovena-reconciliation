@@ -24,13 +24,13 @@ from zdrovena.common.exceptions import (
 )
 
 __all__ = [
-    "FakturowniaClient",
     "DEFAULT_DOMAIN",
     "KEYCHAIN_ACCOUNT",
     "KEYCHAIN_SERVICE",
-    "ZdrovenaError",
-    "MissingSecretError",
     "APIError",
     "ApiResponseFormatError",
+    "FakturowniaClient",
+    "MissingSecretError",
     "PipelineAbortError",
+    "ZdrovenaError",
 ]
