@@ -209,7 +209,7 @@ resource "azurerm_key_vault" "kv" {
   # Terraform operator gets access via ip_rules (allowlist from variables)
   network_acls {
     default_action = "Deny"
-    bypass         = ["AzureServices"]
+    bypass         = "AzureServices"
     ip_rules       = var.terraform_ip_allowlist
   }
 
