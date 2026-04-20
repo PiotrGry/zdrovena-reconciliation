@@ -89,76 +89,9 @@ jobs:
             --backend-resource-id "$CONTAINER_APP_ID" \
             --backend-region "${{ secrets.AZURE_LOCATION }}"
 
-  # ── 4. Smoke test + rollback ───────────────────────────────────────────────
-  smoke:
-    name: Smoke test
-    runs-on: ubuntu-latest
-    needs: deploy
-
-    steps:
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Resolve app FQDN
-        id: url
-        run: |
-          FQDN=$(az containerapp show \
-            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --query properties.configuration.ingress.fqdn -o tsv)
-          echo "fqdn=$FQDN" >> $GITHUB_OUTPUT
-          echo "Health endpoint: https://$FQDN/health"
-
-      # 5 attempts × 10s sleep = up to 50s for the container to become ready
-      - name: Health check (with retry)
-        id: health
-        run: |
-          for i in 1 2 3 4 5; do
-            HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
-              --max-time 10 "https://${{ steps.url.outputs.fqdn }}/health")
-            echo "Attempt $i: HTTP $HTTP"
-            if [[ "$HTTP" == "200" ]]; then
-              echo "Health check passed."
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "Health check failed after 5 attempts."
-          exit 1
-
-      # Activate the most recent non-active revision (= the previous deploy)
-      - name: Rollback on health check failure
-        if: failure() && steps.health.outcome == 'failure'
-        run: |
-          echo "Rolling back to previous revision..."
-          PREV=$(az containerapp revision list \
-            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --query "[?properties.active==\`false\`] | sort_by(@, &properties.createdTime) | [-1].name" \
-            --output tsv)
-          if [[ -n "$PREV" ]]; then
-            az containerapp revision activate \
-              --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
-              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-              --revision "$PREV"
-            # Przełącz 100% ruchu na poprzednią rewizję
-            az containerapp ingress traffic set \
-              --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
-              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-              --revision-weight "$PREV=100"
-            echo "Rolled back to revision: $PREV"
-            exit 1
-          else
-            echo "No previous revision found — manual intervention required."
-            exit 1
-          fi
-
-  # ── 5. Semantic versioning: tag + GitHub Release ───────────────────────────
-  # Runs only when smoke test passes.
+  # ── 4. Semantic versioning: tag + GitHub Release ──────────────────────────
+  # Wszystkie testy przeszły na stagingu przed merge → prod jest już zwalidowany.
+  # Rollback jest osobnym workflowem (rollback.yml) wywoływanym ręcznie.
   # Analyzes conventional commits since the last tag, determines next version:
   #   feat:          → MINOR bump  (2.0.0 → 2.1.0)
   #   fix:           → PATCH bump  (2.0.0 → 2.0.1)
@@ -168,7 +101,7 @@ jobs:
   release:
     name: Semantic release
     runs-on: ubuntu-latest
-    needs: [smoke]
+    needs: [deploy]
     permissions:
       contents: write  # push version bump commit, create tag + GitHub Release
       id-token: write  # inherited: not needed here, harmless
