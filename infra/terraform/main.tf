@@ -24,6 +24,15 @@ resource "azurerm_container_registry" "acr" {
   sku                 = "Basic"
   admin_enabled       = false # pull via managed identity, no passwords
   tags                = local.tags
+
+  # checkov:skip=CKV_AZURE_139: Basic SKU — private endpoint not supported; Container Apps pull via managed identity over Azure backbone
+  # checkov:skip=CKV_AZURE_163: Defender for Containers (vulnerability scanning) is a paid add-on not included in this budget tier
+  # checkov:skip=CKV_AZURE_164: Content Trust (signed images) requires Premium SKU
+  # checkov:skip=CKV_AZURE_165: Geo-replication requires Premium SKU; single-region deployment
+  # checkov:skip=CKV_AZURE_166: Quarantine policy requires Premium SKU
+  # checkov:skip=CKV_AZURE_167: Retention policy for untagged manifests requires Premium SKU
+  # checkov:skip=CKV_AZURE_233: Zone redundancy requires Premium SKU
+  # checkov:skip=CKV_AZURE_237: Dedicated data endpoints require Premium SKU
 }
 
 # ── Log Analytics Workspace (required by Container Apps Environment) ───────────
@@ -51,12 +60,14 @@ resource "azurerm_container_app_environment" "env" {
 
 resource "azurerm_storage_account" "storage" {
   # Storage account name: alphanumeric only, max 24 chars
+  # checkov:skip=CKV_AZURE_43: Name is dynamically computed via replace(var.prefix,"-","") — valid alphanumeric, length enforced by variable validation
   name                            = "${replace(var.prefix, "-", "")}files"
   resource_group_name             = azurerm_resource_group.rg.name
   location                        = azurerm_resource_group.rg.location
   account_tier                    = "Standard"
   account_replication_type        = "LRS"
   allow_nested_items_to_be_public = false
+  public_network_access_enabled   = false # CKV_AZURE_59 — enforce at resource level, network_rules default_action=Deny also blocks access
   min_tls_version                 = "TLS1_2"
   tags                            = local.tags
 
