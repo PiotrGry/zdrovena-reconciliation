@@ -303,17 +303,28 @@ jobs:
 
       - name: API smoke test
         run: |
+          BASE="https://${{ steps.url.outputs.fqdn }}"
           for i in $(seq 1 18); do
-            HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
-              --max-time 15 "https://${{ steps.url.outputs.fqdn }}/health")
-            echo "Attempt $i: HTTP $HTTP"
-            if [[ "$HTTP" == "200" ]]; then
-              echo "API smoke test passed."
-              exit 0
-            fi
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$BASE/health")
+            echo "Attempt $i: /health → HTTP $HTTP"
+            [[ "$HTTP" == "200" ]] && break
             sleep 10
           done
-          echo "API smoke test failed (18 attempts, ~3 min)." && exit 1
+          [[ "$HTTP" == "200" ]] || { echo "/health failed after 18 attempts"; exit 1; }
+
+          # /docs (OpenAPI schema) — weryfikuje że routing + middleware załadowały się ok
+          # nie wymaga auth, zwraca 200 z HTML
+          HTTP_DOCS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$BASE/docs")
+          echo "/docs → HTTP $HTTP_DOCS"
+          [[ "$HTTP_DOCS" == "200" ]] || { echo "/docs failed (got $HTTP_DOCS)"; exit 1; }
+
+          # /files bez tokenu powinno zwrócić 401/403, nie 500 — weryfikuje auth middleware
+          HTTP_AUTH=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$BASE/files")
+          echo "/files (no token) → HTTP $HTTP_AUTH"
+          [[ "$HTTP_AUTH" == "401" || "$HTTP_AUTH" == "403" ]] \
+            || { echo "/files bez tokenu zwróciło $HTTP_AUTH (oczekiwano 401/403)"; exit 1; }
+
+          echo "All smoke tests passed."
 
   # ── CI Gate ──────────────────────────────────────────────────────────────────
   # Jeden wymagany check do branch protection rules.
