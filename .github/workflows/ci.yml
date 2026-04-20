@@ -1,15 +1,9 @@
 name: CI — Lint · Type · Test · Fitness · Security · Infra
 
 on:
-  # Fast feedback on every push to feature/fix/hotfix branches
-  push:
-    branches:
-      - 'feature/**'
-      - 'fix/**'
-      - 'hotfix/**'
-  # Quality gates for PRs targeting develop or main
+  # Run only on PRs targeting develop or main
   pull_request:
-    branches: [develop, main]
+    branches: [develop, main, master]
   workflow_dispatch:
 
 # Cancel outdated runs for the same branch/PR — saves minutes and noise
