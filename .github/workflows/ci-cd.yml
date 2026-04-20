@@ -347,6 +347,21 @@ jobs:
 
           echo "All smoke tests passed."
 
+      # Staging jest efemeryczny — po testach skalujemy do 0 replicas (= brak kosztów).
+      # Krok działa zawsze (if: always()), żeby staging nie zostawał "zawieszony"
+      # nawet gdy testy się wysypią. Przy kolejnym PR deploy step z --min-replicas 1
+      # automatycznie go budzi.
+      - name: Teardown staging (scale to zero)
+        if: always()
+        run: |
+          az containerapp update \
+            --name            "$STAGING_APP" \
+            --resource-group  "$RG" \
+            --min-replicas    0 \
+            --max-replicas    0 \
+            --output none
+          echo "Staging scaled to 0 — no idle costs between PR runs."
+
   # ── CI Gate ──────────────────────────────────────────────────────────────────
   # Jeden wymagany check do branch protection rules.
   # staging-smoke jest skipped dla PRów do develop — to nie jest błąd.
