@@ -38,7 +38,7 @@ KEYCHAIN_SERVICE_GADS_REFRESH_TOKEN: str = "gads_refresh_token"
 # ─── HTTP / Retry defaults ───────────────────────────────────────────────────
 
 DEFAULT_RETRY_COUNT: int = 3
-DEFAULT_RETRY_DELAY: float = 2.0   # seconds; doubles on each retry
-DEFAULT_TIMEOUT: int = 30          # seconds
+DEFAULT_RETRY_DELAY: float = 2.0  # seconds; doubles on each retry
+DEFAULT_TIMEOUT: int = 30  # seconds
 DEFAULT_PER_PAGE: int = 100
-DEFAULT_PDF_DELAY: float = 0.5     # delay between consecutive PDF downloads
+DEFAULT_PDF_DELAY: float = 0.5  # delay between consecutive PDF downloads

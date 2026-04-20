@@ -12,8 +12,8 @@ from zdrovena.common.exceptions import (
     ZdrovenaError,
 )
 
-
 # ── Hierarchy ─────────────────────────────────────────────────────────────────
+
 
 class TestHierarchy:
     def test_all_inherit_from_zdrovena_error(self):
@@ -31,6 +31,7 @@ class TestHierarchy:
 
 
 # ── MissingSecretError ────────────────────────────────────────────────────────
+
 
 class TestMissingSecretError:
     def test_message_with_account(self):
@@ -52,6 +53,7 @@ class TestMissingSecretError:
 
 # ── APIError ──────────────────────────────────────────────────────────────────
 
+
 class TestAPIError:
     def test_message_without_detail(self):
         exc = APIError("Fakturownia")
@@ -60,10 +62,11 @@ class TestAPIError:
 
     def test_message_with_detail(self):
         exc = APIError("KSeF", "timeout after 30s")
-        assert "KSeF API error: timeout after 30s" == str(exc)
+        assert str(exc) == "KSeF API error: timeout after 30s"
 
 
 # ── PipelineAbortError ────────────────────────────────────────────────────────
+
 
 class TestPipelineAbortError:
     def test_reason(self):
@@ -78,6 +81,7 @@ class TestPipelineAbortError:
 
 
 # ── ApiResponseFormatError ────────────────────────────────────────────────────
+
 
 class TestApiResponseFormatError:
     def test_message(self):

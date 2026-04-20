@@ -8,6 +8,7 @@ Interactive wizards for storing credentials in macOS Keychain:
     zdrovena setup zoho            # Zoho Mail OAuth flow
     zdrovena setup gads            # Google Ads OAuth flow
 """
+# pyright: reportOptionalMemberAccess=false
 
 from __future__ import annotations
 
@@ -230,7 +231,9 @@ def setup_interactive() -> None:
     print("\n─── Google Ads API (OAuth) ───")
     if GOOGLE_ADS_ENABLED:
         print("    💡 Tip: run  zdrovena setup gads  for guided setup.")
-        setup_gads = input("    Store Google Ads credentials manually here? [y/N]: ").strip().lower()
+        setup_gads = (
+            input("    Store Google Ads credentials manually here? [y/N]: ").strip().lower()
+        )
         if setup_gads == "y":
             for secret in GOOGLE_ADS_SECRETS:
                 _store_secret(**secret)
@@ -338,8 +341,10 @@ def setup_zoho() -> None:
     print('  2. "Add Client" → "Self Client"')
     print("  3. Copy Client ID and Client Secret")
     print('  4. "Generate Code" tab → enter scope:')
-    print("     ZohoMail.messages.READ,ZohoMail.attachments.READ,"
-          "ZohoMail.accounts.READ,ZohoMail.folders.READ")
+    print(
+        "     ZohoMail.messages.READ,ZohoMail.attachments.READ,"
+        "ZohoMail.accounts.READ,ZohoMail.folders.READ"
+    )
     print("  5. Time duration: 10 minutes → Create")
     print("  6. Copy the generated code")
     print()
@@ -466,14 +471,16 @@ def setup_gads() -> None:
     print("─── Step 3: Authorization ───")
     print("  Opening browser for Google OAuth consent …\n")
 
-    auth_params = urlencode({
-        "client_id": client_id,
-        "redirect_uri": GADS_REDIRECT_URI,
-        "scope": GADS_SCOPES,
-        "response_type": "code",
-        "access_type": "offline",
-        "prompt": "consent",
-    })
+    auth_params = urlencode(
+        {
+            "client_id": client_id,
+            "redirect_uri": GADS_REDIRECT_URI,
+            "scope": GADS_SCOPES,
+            "response_type": "code",
+            "access_type": "offline",
+            "prompt": "consent",
+        }
+    )
     auth_url = f"{GOOGLE_AUTH_URL}?{auth_params}"
 
     print(f"  If browser doesn't open, visit this URL manually:\n  {auth_url}\n")
@@ -522,7 +529,7 @@ def setup_gads() -> None:
     print("  Example: 123-456-7890 (dashes are optional)")
     cid = input("  Customer ID: ").strip()
     if cid:
-        print(f"\n  ⚠️  Update zdrovena/month_closing/config.py with your Customer ID:")
+        print("\n  ⚠️  Update zdrovena/month_closing/config.py with your Customer ID:")
         print(f'     GOOGLE_ADS_CUSTOMER_ID = "{cid.replace("-", "")}"')
         print()
         mcc = input("  Do you use a Manager (MCC) account? [y/N]: ").strip().lower()
@@ -579,6 +586,7 @@ def _run(args: argparse.Namespace) -> None:
         setup_gads()
     elif args.target == "canva-login":
         from zdrovena.month_closing.canva_downloader import setup_canva_login
+
         setup_canva_login()
     else:
         setup_interactive()

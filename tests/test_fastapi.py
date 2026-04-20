@@ -4,6 +4,7 @@ Tests for zdrovena.api (FastAPI layer) — health, auth, /close, /files endpoint
 All tests run with AZURE_AUTH_DISABLED=true (dev principal injected automatically).
 Auth enforcement tests temporarily re-enable auth via monkeypatch.
 """
+
 from __future__ import annotations
 
 import os
@@ -18,12 +19,12 @@ from fastapi.testclient import TestClient
 # Ensure auth is disabled globally for the test module
 os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 
-from zdrovena.api.main import app
 from zdrovena.api.auth import Principal, get_current_principal
+from zdrovena.api.main import app
 from zdrovena.common.storage import LocalStorageService
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _make_client(storage):
     """Return a TestClient with the given storage injected."""
@@ -56,6 +57,7 @@ def _make_report(**overrides):
         errors: list = field(default_factory=list)
         steps_completed: list = field(default_factory=list)
         has_critical_errors: bool = False
+
     r = R()
     for k, v in overrides.items():
         setattr(r, k, v)
@@ -63,6 +65,7 @@ def _make_report(**overrides):
 
 
 # ── /health ───────────────────────────────────────────────────────────────────
+
 
 class TestHealth:
     def test_health_returns_ok(self, api):
@@ -77,6 +80,7 @@ class TestHealth:
 
 
 # ── /files — download ─────────────────────────────────────────────────────────
+
 
 class TestFilesDownload:
     def test_download_existing_file(self, api):
@@ -113,6 +117,7 @@ class TestFilesDownload:
 
 # ── /files — list ─────────────────────────────────────────────────────────────
 
+
 class TestFilesList:
     def test_list_empty(self, api):
         c, _ = api
@@ -145,6 +150,7 @@ class TestFilesList:
 
 # ── /files — auth enforcement ─────────────────────────────────────────────────
 
+
 class TestFilesAuth:
     def test_no_token_returns_401_when_auth_enabled(self, tmp_path, monkeypatch):
         monkeypatch.setenv("AZURE_AUTH_DISABLED", "false")
@@ -170,6 +176,7 @@ class TestFilesAuth:
 
 
 # ── /close ────────────────────────────────────────────────────────────────────
+
 
 class TestCloseEndpoint:
     def test_dry_run_returns_200(self, api):
@@ -245,6 +252,7 @@ class TestCloseEndpoint:
 
 # ── Principal unit tests ───────────────────────────────────────────────────────
 
+
 class TestPrincipal:
     def test_has_role_match(self):
         p = Principal(sub="x", email="x@x.com", roles=["zdrovena-admin"])
@@ -256,6 +264,7 @@ class TestPrincipal:
 
     def test_require_role_raises_403(self):
         from fastapi import HTTPException
+
         p = Principal(sub="x", email="x@x.com", roles=["zdrovena-viewer"])
         with pytest.raises(HTTPException) as exc_info:
             p.require_role("zdrovena-admin")

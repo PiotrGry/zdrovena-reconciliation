@@ -29,7 +29,9 @@ class TestRetryRequestSuccess:
         session.request.return_value = mock_resp
 
         retry_request(
-            session, "POST", "https://example.com/api",
+            session,
+            "POST",
+            "https://example.com/api",
             json={"key": "value"},
             headers={"X-Custom": "yes"},
             timeout=10,
@@ -47,8 +49,11 @@ class TestRetryRequestFailure:
 
         with pytest.raises(RuntimeError, match="HTTP request failed after 3 attempts"):
             retry_request(
-                session, "GET", "https://example.com/api",
-                max_retries=3, initial_delay=0.1,
+                session,
+                "GET",
+                "https://example.com/api",
+                max_retries=3,
+                initial_delay=0.1,
                 sleep_fn=lambda _: None,
             )
 
@@ -63,8 +68,11 @@ class TestRetryRequestFailure:
 
         with pytest.raises(RuntimeError):
             retry_request(
-                session, "GET", "https://example.com/api",
-                max_retries=2, initial_delay=0.01,
+                session,
+                "GET",
+                "https://example.com/api",
+                max_retries=2,
+                initial_delay=0.01,
                 sleep_fn=lambda _: None,
             )
 
@@ -78,16 +86,19 @@ class TestRetryRequestFailure:
 
         with pytest.raises(RuntimeError):
             retry_request(
-                session, "GET", "https://example.com/api",
-                max_retries=4, initial_delay=1.0,
+                session,
+                "GET",
+                "https://example.com/api",
+                max_retries=4,
+                initial_delay=1.0,
                 sleep_fn=sleeps.append,
             )
 
         # Should sleep between attempts: ~1.0, ~2.0, ~4.0 (not after last)
         assert len(sleeps) == 3
-        assert 0.8 <= sleeps[0] <= 1.2   # 1.0 ± 20%
-        assert 1.6 <= sleeps[1] <= 2.4   # 2.0 ± 20%
-        assert 3.2 <= sleeps[2] <= 4.8   # 4.0 ± 20%
+        assert 0.8 <= sleeps[0] <= 1.2  # 1.0 ± 20%
+        assert 1.6 <= sleeps[1] <= 2.4  # 2.0 ± 20%
+        assert 3.2 <= sleeps[2] <= 4.8  # 4.0 ± 20%
 
     def test_succeeds_after_retries(self):
         session = MagicMock(spec=requests.Session)
@@ -103,8 +114,11 @@ class TestRetryRequestFailure:
         ]
 
         result = retry_request(
-            session, "GET", "https://example.com/api",
-            max_retries=3, initial_delay=0.01,
+            session,
+            "GET",
+            "https://example.com/api",
+            max_retries=3,
+            initial_delay=0.01,
             sleep_fn=lambda _: None,
         )
 
@@ -119,18 +133,24 @@ class TestRetryRequestCaller:
 
         with pytest.raises(RuntimeError, match="Fakturownia"):
             retry_request(
-                session, "GET", "https://example.com/api",
-                max_retries=1, caller="Fakturownia",
+                session,
+                "GET",
+                "https://example.com/api",
+                max_retries=1,
+                caller="Fakturownia",
             )
 
     def test_no_caller_in_error_message(self):
         session = MagicMock(spec=requests.Session)
         session.request.side_effect = requests.ConnectionError("refused")
 
-        with pytest.raises(RuntimeError, match="^HTTP request failed"):
+        with pytest.raises(RuntimeError, match=r"^HTTP request failed"):
             retry_request(
-                session, "GET", "https://example.com/api",
-                max_retries=1, caller="",
+                session,
+                "GET",
+                "https://example.com/api",
+                max_retries=1,
+                caller="",
             )
 
 
@@ -149,8 +169,11 @@ class TestRetryAfterHeader:
 
         with pytest.raises(RuntimeError):
             retry_request(
-                session, "GET", "https://example.com/api",
-                max_retries=2, initial_delay=1.0,
+                session,
+                "GET",
+                "https://example.com/api",
+                max_retries=2,
+                initial_delay=1.0,
                 sleep_fn=sleeps.append,
             )
 
@@ -172,8 +195,11 @@ class TestRetryAfterHeader:
 
         with pytest.raises(RuntimeError):
             retry_request(
-                session, "GET", "https://example.com/api",
-                max_retries=2, initial_delay=1.0,
+                session,
+                "GET",
+                "https://example.com/api",
+                max_retries=2,
+                initial_delay=1.0,
                 sleep_fn=sleeps.append,
             )
 
@@ -194,8 +220,11 @@ class TestRetryAfterHeader:
 
         with pytest.raises(RuntimeError):
             retry_request(
-                session, "GET", "https://example.com/api",
-                max_retries=2, initial_delay=2.0,
+                session,
+                "GET",
+                "https://example.com/api",
+                max_retries=2,
+                initial_delay=2.0,
                 sleep_fn=sleeps.append,
             )
 
@@ -212,8 +241,11 @@ class TestSleepFnInjection:
 
         with pytest.raises(RuntimeError):
             retry_request(
-                session, "GET", "https://example.com/api",
-                max_retries=2, initial_delay=1.0,
+                session,
+                "GET",
+                "https://example.com/api",
+                max_retries=2,
+                initial_delay=1.0,
                 sleep_fn=calls.append,
             )
 

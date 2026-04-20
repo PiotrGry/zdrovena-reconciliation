@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-import pytest
-
 from zdrovena.audit.bottles import (
     BOTTLE_ALIASES,
     BOTTLE_PRODUCTS,
     bottles_per_unit,
     extract_bottles,
+    invoice_bottle_details,
     invoice_bottles,
     is_glass,
     wz_bottles,
 )
 
-
 # ── bottles_per_unit ──────────────────────────────────────────────────────────
+
 
 class TestBottlesPerUnit:
     def test_butelek_pattern(self):
@@ -43,6 +42,7 @@ class TestBottlesPerUnit:
 
 # ── is_glass ──────────────────────────────────────────────────────────────────
 
+
 class TestIsGlass:
     def test_szklo_detected(self):
         assert is_glass("Woda Humio szkło 500ml") is True
@@ -56,6 +56,7 @@ class TestIsGlass:
 
 
 # ── extract_bottles ───────────────────────────────────────────────────────────
+
 
 class TestExtractBottles:
     def test_plastic(self):
@@ -80,7 +81,65 @@ class TestExtractBottles:
         assert extract_bottles("kaucja szklana", 1) == (0, 0)
 
 
+# ── invoice_bottle_details ────────────────────────────────────────────────────
+
+
+class TestInvoiceBottleDetails:
+    def test_returns_details(self):
+        inv = {
+            "positions": [
+                {"name": "Woda Humio 500ml x 12", "quantity": "2"},
+            ]
+        }
+        total, details = invoice_bottle_details(inv)
+        assert total == 24
+        assert len(details) == 1
+        name, qty, bpu, cnt = details[0]
+        assert name == "Woda Humio 500ml x 12"
+        assert qty == 2
+        assert bpu == 12
+        assert cnt == 24
+
+    def test_skips_skip_pattern(self):
+        inv = {
+            "positions": [
+                {"name": "Dostawa kurierska", "quantity": "1"},
+            ]
+        }
+        total, _details = invoice_bottle_details(inv)
+        assert total == 0
+        assert _details == []
+
+    def test_skips_positions_without_bottles(self):
+        inv = {
+            "positions": [
+                {"name": "Koszulka firmowa", "quantity": "5"},
+            ]
+        }
+        total, _details = invoice_bottle_details(inv)
+        assert total == 0
+
+    def test_multiple_positions(self):
+        inv = {
+            "positions": [
+                {"name": "Zgrzewka wody Humio", "quantity": "3"},  # 3×12=36 plastic
+                {"name": "Woda szkło 6 butelek", "quantity": "2"},  # 2×6=12 glass
+                {"name": "Dostawa DPD", "quantity": "1"},  # skip
+            ]
+        }
+        total, details = invoice_bottle_details(inv)
+        # invoice_bottle_details counts all bpu regardless of glass/plastic
+        assert total == 36 + 12
+        assert len(details) == 2
+
+    def test_empty_positions(self):
+        total, details = invoice_bottle_details({"positions": []})
+        assert total == 0
+        assert details == []
+
+
 # ── invoice_bottles ───────────────────────────────────────────────────────────
+
 
 class TestInvoiceBottles:
     def test_sums_positions(self, sample_invoice):
@@ -106,6 +165,7 @@ class TestInvoiceBottles:
 
 # ── wz_bottles ────────────────────────────────────────────────────────────────
 
+
 class TestWzBottles:
     def test_counts_bottles(self, sample_wz_actions):
         p, g = wz_bottles(201, sample_wz_actions)
@@ -122,6 +182,7 @@ class TestWzBottles:
 
 
 # ── BOTTLE_PRODUCTS ───────────────────────────────────────────────────────────
+
 
 class TestBottleProducts:
     def test_is_frozenset(self):
