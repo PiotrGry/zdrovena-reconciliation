@@ -240,6 +240,19 @@ jobs:
           docker push "$IMAGE:staging-${{ github.sha }}"
 
       # ── Serwisy backendowe ────────────────────────────────────────────────
+      - name: Wait for staging Container App to be ready
+        run: |
+          for i in $(seq 1 18); do
+            STATE=$(az containerapp show \
+              --name "${{ secrets.AZURE_STAGING_CONTAINER_APP_NAME }}" \
+              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Provisioning state: $STATE (attempt $i/18)"
+            [[ "$STATE" == "Succeeded" ]] && break
+            sleep 10
+          done
+          [[ "$STATE" == "Succeeded" ]] || { echo "Timeout waiting for Container App"; exit 1; }
+
       - name: Deploy API to staging
         run: |
           az containerapp update \
