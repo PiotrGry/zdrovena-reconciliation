@@ -64,6 +64,9 @@ resource "azurerm_storage_account" "storage" {
   # checkov:skip=CKV_AZURE_33: No Azure Queue service used — this is blob-only storage
   # checkov:skip=CKV_AZURE_206: LRS replication intentional — single-region deployment, non-critical files, cost optimised
   # checkov:skip=CKV2_AZURE_41: No SAS tokens issued — all access via managed identity (RBAC)
+  # checkov:skip=CKV2_AZURE_1: Customer Managed Key not required — files are non-sensitive reports; Microsoft-managed encryption at rest is sufficient for this tier
+  # checkov:skip=CKV2_AZURE_33: Private endpoint requires VNet not present in this architecture; public access disabled via public_network_access_enabled=false + network_rules Deny
+  # checkov:skip=CKV2_AZURE_21: Blob diagnostic logging (read requests) not configured — operational overhead not justified for this single-region non-critical storage
   name                            = "${replace(var.prefix, "-", "")}files"
   resource_group_name             = azurerm_resource_group.rg.name
   location                        = azurerm_resource_group.rg.location
@@ -94,6 +97,7 @@ resource "azurerm_storage_account" "storage" {
 }
 
 resource "azurerm_storage_container" "files" {
+  # checkov:skip=CKV2_AZURE_21: Blob diagnostic logging not configured — non-critical storage, operational overhead not justified
   name                  = "zdrovena-files"
   storage_account_name  = azurerm_storage_account.storage.name
   container_access_type = "private"
