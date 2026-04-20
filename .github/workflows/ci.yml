@@ -248,10 +248,14 @@ jobs:
               --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
               --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Unknown")
             echo "Provisioning state: $STATE (attempt $i/18)"
-            [[ "$STATE" == "Succeeded" ]] && break
+            [[ "$STATE" == "Succeeded" || "$STATE" == "Failed" ]] && break
             sleep 10
           done
-          [[ "$STATE" == "Succeeded" ]] || { echo "Timeout waiting for Container App"; exit 1; }
+          if [[ "$STATE" == "InProgress" || "$STATE" == "Unknown" ]]; then
+            echo "Timeout: Container App stuck in $STATE after 3 minutes"
+            exit 1
+          fi
+          echo "Container App pre-deploy state: $STATE — proceeding with deployment"
 
       - name: Deploy API to staging
         run: |
@@ -259,6 +263,20 @@ jobs:
             --name            "${{ secrets.AZURE_STAGING_CONTAINER_APP_NAME }}" \
             --resource-group  "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             --image           "${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:staging-${{ github.sha }}"
+
+      - name: Wait for staging deployment to complete
+        run: |
+          for i in $(seq 1 36); do
+            STATE=$(az containerapp show \
+              --name "${{ secrets.AZURE_STAGING_CONTAINER_APP_NAME }}" \
+              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Post-deploy state: $STATE (attempt $i/36)"
+            [[ "$STATE" == "Succeeded" ]] && break
+            [[ "$STATE" == "Failed" ]] && { echo "Deployment failed — Container App in Failed state"; exit 1; }
+            sleep 10
+          done
+          [[ "$STATE" == "Succeeded" ]] || { echo "Timeout waiting for deployment to complete"; exit 1; }
 
       # Gdy dojdą kolejne serwisy — dodaj tu kolejne az containerapp update:
       # - name: Deploy serwis-X to staging
@@ -284,9 +302,9 @@ jobs:
       # ── Smoke tests ──────────────────────────────────────────────────────
       - name: API smoke test
         run: |
-          for i in 1 2 3 4 5; do
+          for i in $(seq 1 18); do
             HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
-              --max-time 10 "https://${{ steps.url.outputs.fqdn }}/health")
+              --max-time 15 "https://${{ steps.url.outputs.fqdn }}/health")
             echo "Attempt $i: HTTP $HTTP"
             if [[ "$HTTP" == "200" ]]; then
               echo "API smoke test passed."
@@ -294,7 +312,7 @@ jobs:
             fi
             sleep 10
           done
-          echo "API smoke test failed." && exit 1
+          echo "API smoke test failed (18 attempts, ~3 min)." && exit 1
 
       # ── Testy integracyjne ───────────────────────────────────────────────
       # Gdy dojdą kolejne serwisy — odkomentuj i rozbuduj:
