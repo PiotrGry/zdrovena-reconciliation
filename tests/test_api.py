@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 from zdrovena.audit.api import (
+    _paginate,
     build_actions_by_doc,
     build_inv_by_wz,
     build_wz_by_id,
     date_range,
     doc_type_label,
+    fetch_all_warehouse_actions,
+    fetch_invoices,
+    fetch_products,
+    fetch_warehouse_actions,
+    fetch_wz_documents,
     inv_sort_key,
     is_receipt,
     month_of,
@@ -175,18 +183,6 @@ class TestBuildInvByWz:
 
 
 # ── _paginate / fetch helpers ─────────────────────────────────────────────────
-
-
-from unittest.mock import MagicMock, patch
-
-from zdrovena.audit.api import (
-    _paginate,
-    fetch_invoices,
-    fetch_wz_documents,
-    fetch_warehouse_actions,
-    fetch_all_warehouse_actions,
-    fetch_products,
-)
 
 
 def _make_client(pages: list[list[dict]]) -> MagicMock:

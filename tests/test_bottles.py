@@ -7,6 +7,7 @@ from zdrovena.audit.bottles import (
     BOTTLE_PRODUCTS,
     bottles_per_unit,
     extract_bottles,
+    invoice_bottle_details,
     invoice_bottles,
     is_glass,
     wz_bottles,
@@ -83,9 +84,6 @@ class TestExtractBottles:
 # ── invoice_bottle_details ────────────────────────────────────────────────────
 
 
-from zdrovena.audit.bottles import invoice_bottle_details
-
-
 class TestInvoiceBottleDetails:
     def test_returns_details(self):
         inv = {
@@ -108,9 +106,9 @@ class TestInvoiceBottleDetails:
                 {"name": "Dostawa kurierska", "quantity": "1"},
             ]
         }
-        total, details = invoice_bottle_details(inv)
+        total, _details = invoice_bottle_details(inv)
         assert total == 0
-        assert details == []
+        assert _details == []
 
     def test_skips_positions_without_bottles(self):
         inv = {
@@ -118,7 +116,7 @@ class TestInvoiceBottleDetails:
                 {"name": "Koszulka firmowa", "quantity": "5"},
             ]
         }
-        total, details = invoice_bottle_details(inv)
+        total, _details = invoice_bottle_details(inv)
         assert total == 0
 
     def test_multiple_positions(self):

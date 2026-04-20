@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -14,7 +13,6 @@ from zdrovena.month_closing.commands.close_cmd import (
     _parse_month,
     add_subparser,
 )
-
 
 # ── _parse_month ──────────────────────────────────────────────────────────────
 
@@ -106,7 +104,6 @@ class TestConfigureLogging:
     def test_runs_without_error(self, tmp_path, monkeypatch):
         """_configure_logging should not raise."""
         import logging
-        import os
         monkeypatch.chdir(tmp_path)
         root = logging.getLogger()
         original_handlers = root.handlers[:]

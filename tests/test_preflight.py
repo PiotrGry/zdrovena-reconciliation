@@ -5,14 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from zdrovena.month_closing.preflight import (
     PreflightChecker,
     PreflightResult,
     pko_matches_month,
 )
-
 
 # ── pko_matches_month ─────────────────────────────────────────────────────────
 

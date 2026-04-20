@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 # ── Local Verdict stub (mirrors audit_cmd.Verdict, keeps tests self-contained) ─
 
 class _Verdict:
@@ -213,7 +212,7 @@ class TestSectionRecount:
         inv_by_wz = {201: inv1, 202: inv2}
         doc_actions = {201: _actions(plastic=12), 202: _actions(plastic=6)}
         # Pass month=1 to get only January data
-        fv, wz, month_invs, _ = section_recount(inv_by_wz, doc_actions, v, month=1)
+        fv, _wz, month_invs, _ = section_recount(inv_by_wz, doc_actions, v, month=1)
         assert 1 in month_invs
         assert fv == 18  # recount sums all months regardless of filter param
 
