@@ -1,29 +1,42 @@
-name: CI — Lint · Type · Test · Fitness · Security · Infra
+name: CI / CD
+
+# Jeden pipeline — branch/event determinuje co się wykonuje:
+#   PR → develop          : quality gate (lint, type, test, security, fitness, infra, docker)
+#   PR → main             : quality gate + staging deploy & smoke
+#   push main / dispatch  : promote staging image → prod + deploy + semantic release
 
 on:
-  # Run only on PRs targeting develop or main
   pull_request:
     branches: [develop, main]
+  push:
+    branches: [main]
   workflow_dispatch:
 
-# Cancel outdated runs for the same branch/PR — saves minutes and noise
-# github.head_ref is set for pull_request events (= source branch name)
-# github.ref_name is set for push events (= branch name)
-# Using head_ref||ref_name puts push+PR from the same branch in one group,
-# so the newer run cancels the older one — no double billing.
-concurrency:
-  group: ci-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
-
 permissions:
+  id-token: write
   contents: read
-  security-events: write  # required for trivy SARIF upload
-  pull-requests: read     # required for dorny/paths-filter on PRs
+  security-events: write  # trivy SARIF upload
+  pull-requests: read     # dorny/paths-filter
+
+# PRy: cancel outdated runs dla tego samego brancha
+# Prod deploy: nigdy nie przerywaj — jedna współbieżna grupa
+concurrency:
+  group: >-
+    ${{
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && 'deploy-production'
+      || format('ci-{0}', github.head_ref || github.ref_name)
+    }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# QUALITY GATE — tylko na PRach (develop i main)
+# ══════════════════════════════════════════════════════════════════════════════
 
 jobs:
-  # ── Lint ────────────────────────────────────────────────────────────────────
   lint:
     name: Ruff lint & format
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,9 +55,9 @@ jobs:
       - name: Check format
         run: ruff format --check .
 
-  # ── Type check ──────────────────────────────────────────────────────────────
   typecheck:
     name: Pyright
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,9 +73,9 @@ jobs:
       - name: Run Pyright
         run: pyright
 
-  # ── Tests ───────────────────────────────────────────────────────────────────
   test:
     name: "pytest + coverage"
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -83,10 +96,9 @@ jobs:
             --cov=zdrovena --cov-fail-under=80 \
             --cov-report=term-missing
 
-  # ── Security scan ───────────────────────────────────────────────────────────
-  # Runs AFTER tests — don't waste scan time if logic is already broken
   security:
     name: Security scan
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     needs: [test]
     steps:
@@ -124,9 +136,9 @@ jobs:
           exit-code: 1
           ignore-unfixed: true
 
-  # ── Fitness Functions (arch constraints) ────────────────────────────────────
   fitness:
     name: Fitness Functions (arch)
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -142,9 +154,9 @@ jobs:
       - name: Run module boundary tests
         run: pytest tests/fitness/ -v
 
-  # ── Infra — only when terraform files changed ────────────────────────────────
   infra:
     name: Terraform validate + Checkov
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -183,14 +195,13 @@ jobs:
         if: steps.changed.outputs.infra != 'true'
         run: echo "No terraform files changed, infra checks skipped."
 
-  # ── Docker build (validate only) ────────────────────────────────────────────
   # PR→develop: waliduje Dockerfile, brak push — szybka pętla feedbacku.
-  # PR→main: staging-smoke poniżej buduje i pushuje obraz staging-<sha> do ACR.
-  # deploy.yml promuje staging-<sha> → <sha>+latest bez ponownego buildu.
+  # PR→main: ten job działa równolegle z staging-smoke (staging-smoke buduje osobno).
   docker-build:
     name: Docker build (validate)
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    needs: [test]  # don't build broken code
+    needs: [test]
     steps:
       - uses: actions/checkout@v4
 
@@ -201,16 +212,17 @@ jobs:
             -t zdrovena-api:ci-${{ github.sha }} \
             .
 
-  # ── Staging deploy & smoke (tylko dla PR → main) ───────────────────────────
-  # Buduje i pushuje obraz, deployuje na staging Container App, odpala /health.
-  # Brama przed merge do main i deployem produkcyjnym.
-  # Gdy dojdą kolejne serwisy — ten job stawi całe środowisko i przetestuje
-  # integrację zanim cokolwiek trafi na produkcję.
+  # ══════════════════════════════════════════════════════════════════════════════
+  # STAGING — tylko PR → main
+  # Buduje obraz, deployuje na staging, odpala smoke test.
+  # Brama przed merge do main i deployem prod.
+  # ══════════════════════════════════════════════════════════════════════════════
+
   staging-smoke:
     name: Staging deploy & smoke
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
     runs-on: ubuntu-latest
     needs: [test, docker-build]
-    if: github.base_ref == 'main'
     environment: staging
     permissions:
       id-token: write
@@ -241,7 +253,6 @@ jobs:
           docker tag  "$IMAGE:staging-${{ github.sha }}" "$IMAGE:staging-latest"
           docker push "$IMAGE:staging-latest"
 
-      # ── Serwisy backendowe ────────────────────────────────────────────────
       - name: Wait for staging Container App to be ready
         run: |
           for i in $(seq 1 18); do
@@ -281,18 +292,6 @@ jobs:
           done
           [[ "$STATE" == "Succeeded" ]] || { echo "Timeout waiting for deployment to complete"; exit 1; }
 
-      # Gdy dojdą kolejne serwisy — dodaj tu kolejne az containerapp update:
-      # - name: Deploy serwis-X to staging
-      #   run: az containerapp update --name staging-serwis-x ...
-
-      # ── Frontend ─────────────────────────────────────────────────────────
-      # - name: Deploy SWA (frontend) to staging
-      #   run: az staticwebapp deploy --name staging-swa ...
-
-      # ── Monitoring & alerty ──────────────────────────────────────────────
-      # - name: Apply staging alert rules
-      #   run: az monitor metrics alert update ...
-
       - name: Resolve staging FQDN
         id: url
         run: |
@@ -302,7 +301,6 @@ jobs:
             --query properties.configuration.ingress.fqdn -o tsv)
           echo "fqdn=$FQDN" >> $GITHUB_OUTPUT
 
-      # ── Smoke tests ──────────────────────────────────────────────────────
       - name: API smoke test
         run: |
           for i in $(seq 1 18); do
@@ -317,24 +315,14 @@ jobs:
           done
           echo "API smoke test failed (18 attempts, ~3 min)." && exit 1
 
-      # ── Testy integracyjne ───────────────────────────────────────────────
-      # Gdy dojdą kolejne serwisy — odkomentuj i rozbuduj:
-      # - name: Integration tests
-      #   run: pytest tests/integration/ -q --base-url="https://${{ steps.url.outputs.fqdn }}"
-      # - name: Frontend E2E (Playwright)
-      #   run: npx playwright test --project=chromium
-      # - name: Alert rule smoke test
-      #   run: python scripts/verify_alerts.py --env staging
-
-  # ── CI Gate ─────────────────────────────────────────────────────────────────
-  # Single required check to reference in branch protection rules.
-  # Fails if ANY upstream job failed or was cancelled.
+  # ── CI Gate ──────────────────────────────────────────────────────────────────
+  # Jeden wymagany check do branch protection rules.
   # staging-smoke jest skipped dla PRów do develop — to nie jest błąd.
   ci-gate:
     name: CI Gate
+    if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     needs: [lint, typecheck, test, fitness, security, infra, docker-build, staging-smoke]
-    if: always()
     steps:
       - name: Check all jobs passed
         run: |
@@ -345,3 +333,102 @@ jobs:
             exit 1
           fi
           echo "All CI jobs passed."
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # PRODUCTION — push do main (po merge) lub workflow_dispatch
+  # Zasada build-once/promote: ten sam obraz co był testowany na stagingu.
+  # ══════════════════════════════════════════════════════════════════════════════
+
+  promote:
+    name: Promote image to production
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.promote.outputs.image }}
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to ACR
+        run: az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
+
+      # Retag: staging-latest → <sha> (immutable, do rollbacku) + latest (mutable pointer)
+      - name: Promote staging image
+        id: promote
+        env:
+          IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api
+        run: |
+          docker pull "$IMAGE:staging-latest"
+          docker tag  "$IMAGE:staging-latest" "$IMAGE:${{ github.sha }}"
+          docker tag  "$IMAGE:staging-latest" "$IMAGE:latest"
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+          echo "image=$IMAGE:${{ github.sha }}" >> $GITHUB_OUTPUT
+
+  deploy-prod:
+    name: Deploy to production
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: promote
+    environment: production
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update Container App image
+        run: |
+          az containerapp update \
+            --name            "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group  "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --image           "${{ needs.promote.outputs.image }}" \
+            --min-replicas    1
+
+      # Link SWA → Container App backend (idempotent, safe every deploy)
+      - name: Link SWA backend
+        run: |
+          CONTAINER_APP_ID=$(az containerapp show \
+            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --query id --output tsv)
+
+          az staticwebapp backends link \
+            --name "${{ secrets.AZURE_SWA_NAME }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --backend-resource-id "$CONTAINER_APP_ID" \
+            --backend-region "${{ secrets.AZURE_LOCATION }}"
+
+  # Semantic versioning: tag + GitHub Release
+  #   feat:          → MINOR bump  (2.0.0 → 2.1.0)
+  #   fix:           → PATCH bump  (2.0.0 → 2.0.1)
+  #   feat!/BREAKING → MAJOR bump  (2.0.0 → 3.0.0)
+  #   ci:/chore:/docs: → no bump
+  release:
+    name: Semantic release
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: [deploy-prod]
+    permissions:
+      contents: write  # push version bump commit, create tag + GitHub Release
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history needed for commit analysis
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run python-semantic-release
+        uses: python-semantic-release/python-semantic-release@v9
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
