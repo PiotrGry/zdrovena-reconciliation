@@ -1,5 +1,13 @@
 # CLAUDE.md
 
+## Generalna zasada — obowiązuje wszystkich agentów AI
+
+> **Jakość i bezpieczeństwo nad tempo.**
+>
+> Lepiej zgłosić problem i poczekać na decyzję właściciela, niż szybko "naprawić" CI
+> przez obniżenie standardów. Zielony pipeline z obniżonymi progami to fałszywe poczucie
+> bezpieczeństwa — gorsze niż czerwony pipeline z uczciwą informacją o problemie.
+
 ## gstack
 
 - Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude-in-chrome__*` tools.
