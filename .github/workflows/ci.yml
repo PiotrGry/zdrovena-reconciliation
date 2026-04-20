@@ -262,7 +262,8 @@ jobs:
           az containerapp update \
             --name            "${{ secrets.AZURE_STAGING_CONTAINER_APP_NAME }}" \
             --resource-group  "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --image           "${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:staging-${{ github.sha }}"
+            --image           "${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:staging-${{ github.sha }}" \
+            --min-replicas    1
 
       - name: Wait for staging deployment to complete
         run: |
