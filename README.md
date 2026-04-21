@@ -1,6 +1,253 @@
 # zdrovena-reconciliation
 
-Unified CLI for **Zdrovena / Humio** — invoice audit, bottle tracking & month-close pipeline.
+Wewnętrzny system back-office dla **Zdrovena / HUMIO** — fakturowanie, audyt butelek, zamknięcie miesiąca.
+
+Składa się z trzech warstw:
+- **REST API** (FastAPI) — serwowane przez Azure Container Apps, chronione JWT (Entra ID)
+- **Frontend** (vanilla HTML + MSAL.js) — Azure Static Web Apps, proxy `/api/*` → Container App
+- **CLI** — lokalne narzędzia dla właściciela firmy
+
+---
+
+## REST API
+
+### Endpoints
+
+| Method | Path | Rola | Opis |
+|--------|------|------|------|
+| `GET` | `/health` | — | Liveness check + wersja API |
+| `GET` | `/docs` | — | Swagger UI (interaktywna dokumentacja) |
+| `GET` | `/files` | viewer+ | Lista plików w storage (opcjonalny `?prefix=`) |
+| `GET` | `/files/{key}` | viewer+ | Pobranie pliku (streaming) |
+| `PUT` | `/files/{key}` | accountant+ | Wgranie pliku |
+| `POST` | `/close` | accountant+ | Uruchomienie pipeline zamknięcia miesiąca |
+
+### Autentykacja
+
+Wszystkie endpointy (poza `/health` i `/docs`) wymagają `Authorization: Bearer <token>`.
+
+Token pochodzi z Azure Entra ID — aplikacja `zdrovena-api` (App Registration).
+
+```bash
+# pobranie tokenu przez Azure CLI
+TOKEN=$(az account get-access-token \
+  --resource "api://<AZURE_API_CLIENT_ID>" \
+  --query accessToken -o tsv)
+
+curl -H "Authorization: Bearer $TOKEN" https://<API_URL>/files
+```
+
+### Role (Entra ID App Roles)
+
+| Rola | Wartość | Uprawnienia |
+|------|---------|-------------|
+| Admin | `zdrovena-admin` | Pełny dostęp |
+| Accountant | `zdrovena-accountant` | Pliki (odczyt + zapis) + zamknięcie miesiąca |
+| Viewer | `zdrovena-viewer` | Tylko odczyt plików |
+
+Role przypisuje się w: `Azure Portal → Enterprise applications → zdrovena-api → Users and groups`.
+
+### Przykłady
+
+```bash
+BASE=https://<API_URL>
+
+# lista plików
+curl -H "Authorization: Bearer $TOKEN" "$BASE/files"
+
+# lista z prefixem
+curl -H "Authorization: Bearer $TOKEN" "$BASE/files?prefix=invoices/2026/"
+
+# pobranie pliku
+curl -H "Authorization: Bearer $TOKEN" "$BASE/files/invoices/2026/04/faktura-001.pdf" -o faktura.pdf
+
+# wgranie pliku (wymaga roli accountant+)
+curl -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/pdf" \
+  --data-binary @faktura.pdf \
+  "$BASE/files/invoices/2026/04/faktura-001.pdf"
+
+# zamknięcie miesiąca (wymaga roli accountant+)
+curl -X POST -H "Authorization: Bearer $TOKEN" "$BASE/close"
+
+# health check
+curl "$BASE/health"
+# → {"status": "ok", "version": "2.0.0"}
+```
+
+### Uruchomienie lokalne
+
+```bash
+pip install -e '.[all,dev]'
+
+# bez Azure (dev/testy)
+AZURE_AUTH_DISABLED=true uvicorn zdrovena.api.main:app --reload
+
+# z lokalnym storage (Azurite)
+AZURE_STORAGE_CONNECTION_STRING="UseDevelopmentStorage=true" \
+AZURE_AUTH_DISABLED=true \
+uvicorn zdrovena.api.main:app --reload
+```
+
+Swagger UI dostępne pod `http://localhost:8000/docs`.
+
+---
+
+## Frontend
+
+Vanilla HTML + MSAL.js — logowanie przez Microsoft (Entra ID), brak frameworka, brak bundlera.
+
+### Uruchomienie lokalne
+
+```bash
+# opcja A — sam frontend (bez API proxy)
+cd frontend && python3 -m http.server 3000
+
+# opcja B — SWA CLI z pełnym proxy do API
+npm install -g @azure/static-web-apps-cli
+AZURE_AUTH_DISABLED=true uvicorn zdrovena.api.main:app --port 8000 &
+swa start frontend --api-location http://localhost:8000
+# → http://localhost:4280
+```
+
+### Wersjonowanie
+
+Przy każdym deploy frontend pobiera `/version.json` i `/api/health`, porównuje major version. Niezgodność = żółty banner informacyjny.
+
+---
+
+## CLI
+
+```bash
+pip install -e '.[all]'
+playwright install chromium
+
+zdrovena --version                        # 2.0.0
+zdrovena -y 2025 audit                    # pełny audyt FV vs WZ
+zdrovena -y 2025 -m 6 list               # faktury z czerwca
+zdrovena -y 2025 export                   # CSV per miesiąc
+zdrovena -y 2025 summary                  # WZ vs FV (plastik/szkło)
+zdrovena products --active-only           # aktywne produkty
+
+zdrovena -y 2025 -m 2 report              # Wykaz sprzedaży VAT → PDF
+zdrovena -y 2025 -m 2 report -k expenses  # raport kosztów
+
+zdrovena close 2025-06                    # zamknięcie miesiąca
+zdrovena close 2025-06 --dry-run          # symulacja
+zdrovena close 2025-06 --zip --send       # ZIP + wysyłka
+
+zdrovena setup                            # wizard credentiali
+zdrovena setup --check                    # sprawdź co skonfigurowane
+```
+
+### Komendy
+
+| Komenda | Opis |
+|---------|------|
+| `audit` | Pełna rekoncyliacja WZ ↔ FV z kontrolami §2/§7/§8/§10 |
+| `list` | Lista faktur sprzedaży z liczbą butelek |
+| `export` | Export pozycji butelek do CSV per miesiąc |
+| `summary` | Tabela: WZ wysłane vs FV zafakturowane (plastik/szkło) |
+| `products` | Lista produktów Fakturownia (`--active-only`) |
+| `report` | Pobranie raportów Fakturownia jako PDF (Playwright) |
+| `close` | Pipeline zamknięcia miesiąca — preflight → faktury → KSeF → ZIP → e-mail |
+| `setup` | Wizard credentiali i OAuth (`--check`, `zoho`, `gads`) |
+
+### Pipeline zamknięcia miesiąca (`zdrovena close`)
+
+| # | Krok | Źródło |
+|---|------|--------|
+| 0 | Pre-flight — weryfikacja vendorów, wyciągu, raportów | Zoho Mail, lokalny fs |
+| 1 | Tworzenie struktury folderów | — |
+| 2 | Pobieranie faktur sprzedaży | Fakturownia API |
+| 3 | Pobieranie JPK / raportów VAT | Fakturownia API |
+| 4 | Pobieranie faktur kosztowych | KSeF → Fakturownia → Zoho Mail |
+| 5 | Weryfikacja wyciągu bankowego | lokalny fs |
+| 6 | Budowanie archiwum ZIP | — |
+| 7 | Wysyłka e-mail do księgowej | Zoho SMTP |
+
+---
+
+## Infrastruktura
+
+| Komponent | Serwis Azure |
+|-----------|-------------|
+| REST API | Container Apps (`zdrovena-api`, `zdrovena-api-staging`) |
+| Frontend | Static Web Apps (`zdrovena-ui`) |
+| Pliki | Blob Storage (prywatny kontener, RBAC) |
+| Sekrety | Key Vault |
+| Obrazy | Container Registry |
+| Tożsamość | Entra ID (App Registration `zdrovena-api`, Managed Identity) |
+
+### GitHub Secrets (wymagane)
+
+| Secret | Opis |
+|--------|------|
+| `AZURE_OIDC_SP_CLIENT_ID` | Client ID SP `zdrovena-github-actions` (OIDC login) |
+| `AZURE_TENANT_ID` | ID tenanta Entra ID |
+| `AZURE_SUBSCRIPTION_ID` | ID subskrypcji Azure |
+| `AZURE_API_CLIENT_ID` | Client ID App Registration `zdrovena-api` (JWT audience) |
+| `ACR_LOGIN_SERVER` | URL Container Registry |
+| `SWA_DEPLOYMENT_TOKEN` | Token deploymentu Static Web Apps |
+
+### Terraform
+
+```bash
+cd infra/terraform
+cp terraform.tfvars.template terraform.tfvars
+# uzupełnij terraform.tfvars
+terraform init -backend-config=backend.hcl
+terraform plan
+terraform apply
+```
+
+---
+
+## Sekrety CLI (Keychain)
+
+Wszystkie sekrety CLI przechowywane przez `keyring` (macOS Keychain). Konto: `humio`.
+
+| Keychain | Co | Jak uzyskać |
+|----------|----|------------|
+| `fakturownia_api_token` | Token API Fakturownia | zdrovena.fakturownia.pl → Ustawienia → API |
+| `fakturownia_login` | Login webowy Fakturownia | e-mail loginu do Fakturownia UI |
+| `fakturownia_password` | Hasło webowe Fakturownia | hasło do Fakturownia UI |
+| `zoho_smtp_password` | Hasło SMTP Zoho | hasło konta Zoho |
+| `zoho_client_id` | Zoho OAuth Client ID | api-console.zoho.eu → Self Client |
+| `zoho_client_secret` | Zoho OAuth Client Secret | api-console.zoho.eu → Self Client |
+| `zoho_refresh_token` | Zoho OAuth Refresh Token | `zdrovena setup zoho` |
+
+---
+
+## Testy
+
+```bash
+pip install -e '.[all,dev]'
+pytest                          # wszystkie testy
+pytest --cov=zdrovena           # z pokryciem
+pytest tests/fitness/           # granice modułów
+```
+
+Pokrycie mierzalnego kodu biznesowego: ≥80%.
+
+---
+
+## Zależności opcjonalne
+
+| Extra | Pakiety | Używane przez |
+|-------|---------|---------------|
+| `ksef` | cryptography, signxml, lxml | KSeF 2.0 e-invoicing |
+| `pdf` | pypdf, pdf2image | Ekstrakcja dat z PDF |
+| `report` | playwright, playwright-stealth | Pobieranie raportów i Canva |
+| `all` | ksef + pdf + report | wszystko |
+| `dev` | pytest, pytest-cov, responses | testy |
+
+---
+
+## Licencja
+
+Narzędzie wewnętrzne — Zdrovena / HUMIO sp. z o.o.
+
 
 ```bash
 pip install -e '.[all]'
