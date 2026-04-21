@@ -36,8 +36,8 @@ output "storage_account_name" {
 # ── GitHub Secrets — copy these values after `terraform apply` ──────────────
 # Add them at: https://github.com/<owner>/<repo>/settings/secrets/actions
 
-output "github_secret_AZURE_CLIENT_ID" {
-  description = "OIDC identity client ID — set as GitHub Secret AZURE_CLIENT_ID"
+output "github_secret_AZURE_OIDC_SP_CLIENT_ID" {
+  description = "OIDC identity client ID (zdrovena-github-actions SP) — set as GitHub Secret AZURE_OIDC_SP_CLIENT_ID"
   value       = azurerm_user_assigned_identity.github_actions.client_id
 }
 

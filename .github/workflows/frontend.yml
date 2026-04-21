@@ -1,0 +1,56 @@
+name: Frontend — SWA Deploy
+
+# Deploy frontend do Azure Static Web Apps:
+#   PR → develop : preview deployment (osobny URL)
+#   push develop : deploy na środowisko dev/staging
+#   push main    : deploy na produkcję
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "frontend/**"
+  push:
+    branches: [develop, main]
+    paths:
+      - "frontend/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write  # SWA CLI dodaje komentarz z preview URL
+
+jobs:
+  deploy:
+    name: Deploy to SWA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Deploy to Azure Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.SWA_DEPLOYMENT_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: "upload"
+          app_location: "frontend"
+          output_location: ""          # brak build step — czyste HTML/JS
+          skip_api_build: true
+        env:
+          # Podstawiane do index.html jako window.__VAR__ przez SWA env substitution
+          # Ustaw w SWA → Configuration → Application settings w Azure Portal
+          AZURE_API_CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+  close-pr-preview:
+    name: Close PR preview
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    steps:
+      - name: Close staging environment
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.SWA_DEPLOYMENT_TOKEN }}
+          action: "close"

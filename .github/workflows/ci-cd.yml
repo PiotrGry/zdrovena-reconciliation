@@ -13,10 +13,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
   security-events: write  # trivy SARIF upload
   pull-requests: read     # dorny/paths-filter
+  # id-token: scoped to individual jobs that need OIDC (staging-smoke, promote, deploy-prod, release)
 
 # PRy: cancel outdated runs dla tego samego brancha
 # Prod deploy: nigdy nie przerywaj — jedna współbieżna grupa
@@ -195,11 +195,11 @@ jobs:
         if: steps.changed.outputs.infra != 'true'
         run: echo "No terraform files changed, infra checks skipped."
 
-  # PR→develop: waliduje Dockerfile, brak push — szybka pętla feedbacku.
-  # PR→main: ten job działa równolegle z staging-smoke (staging-smoke buduje osobno).
+  # PR→develop: waliduje Dockerfile lokalnie, brak push — szybka pętla feedbacku.
+  # PR→main: ten job jest pomijany — staging-smoke buduje i pushuje do ACR (build-once).
   docker-build:
     name: Docker build (validate)
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.base_ref == 'develop'
     runs-on: ubuntu-latest
     needs: [test]
     steps:
@@ -222,7 +222,7 @@ jobs:
     name: Staging deploy & smoke
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
     runs-on: ubuntu-latest
-    needs: [test, docker-build]
+    needs: [test]
     environment: staging
     permissions:
       id-token: write
@@ -238,7 +238,7 @@ jobs:
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          client-id: ${{ secrets.AZURE_OIDC_SP_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
@@ -305,7 +305,7 @@ jobs:
 
       - name: API smoke test
         env:
-          CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
         run: |
           BASE="https://${{ steps.url.outputs.fqdn }}"
 
@@ -330,20 +330,17 @@ jobs:
             || { echo "/files bez tokenu zwróciło $HTTP_ANON (oczekiwano 401/403)"; exit 1; }
 
           # 4. /files z tokenem CI (OIDC managed identity) → 200 z listą plików
-          # az account get-access-token pobiera token dla naszego App Registration
-          # Ten sam principal co GitHub Actions OIDC — musi mieć rolę zdrovena-viewer w Entra
+          # GitHub Actions SP musi mieć rolę zdrovena-viewer w Entra App Registration
+          # (przypisaną w Azure Portal: App registrations → zdrovena-api → App roles → Assignments)
           TOKEN=$(az account get-access-token \
             --resource "api://$CLIENT_ID" \
-            --query accessToken -o tsv 2>/dev/null || echo "")
-          if [[ -n "$TOKEN" ]]; then
-            HTTP_AUTH=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-              -H "Authorization: Bearer $TOKEN" "$BASE/files")
-            echo "/files (with token) → HTTP $HTTP_AUTH"
-            [[ "$HTTP_AUTH" == "200" ]] \
-              || { echo "/files z tokenem zwróciło $HTTP_AUTH (oczekiwano 200)"; exit 1; }
-          else
-            echo "/files (with token) — pominięto: brak uprawnień do api://$CLIENT_ID scope (dodaj rolę zdrovena-viewer do GitHub Actions SP)"
-          fi
+            --query accessToken -o tsv)
+          [[ -n "$TOKEN" ]] || { echo "Nie udało się pobrać tokenu dla api://$CLIENT_ID — sprawdź rolę zdrovena-viewer na GitHub Actions SP"; exit 1; }
+          HTTP_AUTH=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+            -H "Authorization: Bearer $TOKEN" "$BASE/files")
+          echo "/files (with token) → HTTP $HTTP_AUTH"
+          [[ "$HTTP_AUTH" == "200" ]] \
+            || { echo "/files z tokenem zwróciło $HTTP_AUTH (oczekiwano 200)"; exit 1; }
 
           echo "All smoke tests passed."
 
@@ -392,11 +389,14 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.promote.outputs.image }}
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          client-id: ${{ secrets.AZURE_OIDC_SP_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
@@ -422,11 +422,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: promote
     environment: production
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          client-id: ${{ secrets.AZURE_OIDC_SP_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
@@ -440,6 +443,41 @@ jobs:
             --resource-group  "$RG" \
             --image           "${{ needs.promote.outputs.image }}" \
             --min-replicas    1
+
+      - name: Wait for production deployment to complete
+        env:
+          PROD_APP: zdrovena-api
+          RG: zdrovena-rg
+        run: |
+          for i in $(seq 1 36); do
+            STATE=$(az containerapp show \
+              --name "$PROD_APP" --resource-group "$RG" \
+              --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Post-deploy state: $STATE (attempt $i/36)"
+            [[ "$STATE" == "Succeeded" ]] && break
+            [[ "$STATE" == "Failed" ]] && { echo "Production deployment failed — Container App in Failed state"; exit 1; }
+            sleep 10
+          done
+          [[ "$STATE" == "Succeeded" ]] || { echo "Timeout waiting for production deployment to complete"; exit 1; }
+
+      - name: Production health check
+        env:
+          PROD_APP: zdrovena-api
+          RG: zdrovena-rg
+        run: |
+          FQDN=$(az containerapp show \
+            --name "$PROD_APP" --resource-group "$RG" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          BASE="https://$FQDN"
+
+          for i in $(seq 1 18); do
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$BASE/health")
+            echo "Attempt $i: /health → HTTP $HTTP"
+            [[ "$HTTP" == "200" ]] && break
+            sleep 10
+          done
+          [[ "$HTTP" == "200" ]] || { echo "Production /health failed after 18 attempts — deploy may be broken"; exit 1; }
+          echo "Production health check passed."
 
       # Link SWA → Container App backend (idempotent, safe every deploy)
       - name: Link SWA backend
