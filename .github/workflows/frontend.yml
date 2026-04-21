@@ -29,6 +29,21 @@ jobs:
         with:
           submodules: true
 
+      - name: Generate version.json
+        run: |
+          API_VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/version = "//;s/"//')
+          MAJOR=$(echo "$API_VERSION" | cut -d. -f1)
+          cat > frontend/version.json <<EOF
+          {
+            "frontend_version": "$API_VERSION",
+            "api_version": "$API_VERSION",
+            "min_api_major": $MAJOR,
+            "git_sha": "${{ github.sha }}",
+            "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          echo "Generated version.json for API v$API_VERSION"
+
       - name: Deploy to Azure Static Web Apps
         uses: Azure/static-web-apps-deploy@v1
         with:
