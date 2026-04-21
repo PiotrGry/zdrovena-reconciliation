@@ -26,6 +26,19 @@ def _run_list(args: argparse.Namespace) -> None:
         print(f["key"])
 
 
+def _run_upload(args: argparse.Namespace) -> None:
+    import mimetypes
+
+    client = _get_client()
+    path = args.file
+    key = args.key
+    content_type = args.content_type or mimetypes.guess_type(path)[0] or "application/octet-stream"
+    with open(path, "rb") as fh:
+        data = fh.read()
+    client.upload_file(key, data, content_type)
+    print(f"✓ Wgrano: {key} ({len(data)} bajtów, {content_type})")
+
+
 def _run_download(args: argparse.Namespace) -> None:
     client = _get_client()
     key = args.key
@@ -75,6 +88,18 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
         help="Ścieżka docelowa (domyślnie: stdout)",
     )
     dl_parser.set_defaults(func=_run_download)
+
+    # upload
+    up_parser = files_sub.add_parser("upload", help="Wgraj plik do Storage")
+    up_parser.add_argument("key", metavar="KEY", help="Docelowy klucz w Storage")
+    up_parser.add_argument(
+        "--file", "-f", required=True, metavar="PATH", help="Ścieżka do pliku do wgrania",
+    )
+    up_parser.add_argument(
+        "--content-type", default=None, metavar="TYPE",
+        help="Content-Type (domyślnie: wykrywany z rozszerzenia)",
+    )
+    up_parser.set_defaults(func=_run_upload)
 
     def _files_default(args: argparse.Namespace) -> None:
         files_parser.print_help()

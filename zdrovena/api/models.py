@@ -65,3 +65,7 @@ class CloseResponse(BaseModel):
 class ErrorResponse(BaseModel):
     detail: str
     code: str | None = None
+
+
+class CloseStateResponse(BaseModel):
+    completed_steps: list[str]
