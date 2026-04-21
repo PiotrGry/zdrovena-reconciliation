@@ -74,7 +74,9 @@ class BlobFile:
 @runtime_checkable
 class StorageService(Protocol):
     def upload(self, local_path: Path, key: str) -> None: ...
-    def upload_stream(self, data: BinaryIO, key: str, content_type: str = "application/octet-stream") -> None: ...
+    def upload_stream(
+        self, data: BinaryIO, key: str, content_type: str = "application/octet-stream"
+    ) -> None: ...
     def download(self, key: str, local_path: Path) -> None: ...
     def stream(self, key: str, chunk_size: int = 4 * 1024 * 1024) -> Iterator[bytes]: ...
     def list_files(self, prefix: str = "") -> list[BlobFile]: ...
@@ -97,7 +99,9 @@ class LocalStorageService:
         shutil.copy2(local_path, dest)
         logger.debug("LocalStorage: uploaded %s → %s", local_path, dest)
 
-    def upload_stream(self, data: BinaryIO, key: str, content_type: str = "application/octet-stream") -> None:
+    def upload_stream(
+        self, data: BinaryIO, key: str, content_type: str = "application/octet-stream"
+    ) -> None:
         dest = self.root / key
         dest.parent.mkdir(parents=True, exist_ok=True)
         with dest.open("wb") as f:
@@ -206,9 +210,13 @@ class BlobStorageService:
             blob.upload_blob(f, overwrite=True)
         logger.debug("BlobStorage: uploaded %s → %s/%s", local_path, self._container, key)
 
-    def upload_stream(self, data: BinaryIO, key: str, content_type: str = "application/octet-stream") -> None:
+    def upload_stream(
+        self, data: BinaryIO, key: str, content_type: str = "application/octet-stream"
+    ) -> None:
         blob = self._client.get_blob_client(container=self._container, blob=key)
-        blob.upload_blob(data, overwrite=True, content_settings=ContentSettings(content_type=content_type))
+        blob.upload_blob(
+            data, overwrite=True, content_settings=ContentSettings(content_type=content_type)
+        )
         logger.debug("BlobStorage: upload_stream → %s/%s", self._container, key)
 
     def download(self, key: str, local_path: Path) -> None:

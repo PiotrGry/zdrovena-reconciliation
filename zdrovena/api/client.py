@@ -68,10 +68,14 @@ class ApiClient:
         except httpx.ConnectError as exc:
             raise ApiError(str(exc)) from exc
 
-    def upload_file(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> None:
+    def upload_file(
+        self, key: str, data: bytes, content_type: str = "application/octet-stream"
+    ) -> None:
         try:
             with httpx.Client(base_url=self._base_url, headers=self._headers) as client:
-                resp = client.put(f"/files/{key}", content=data, headers={"content-type": content_type})
+                resp = client.put(
+                    f"/files/{key}", content=data, headers={"content-type": content_type}
+                )
                 resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
             raise ApiError(str(exc)) from exc

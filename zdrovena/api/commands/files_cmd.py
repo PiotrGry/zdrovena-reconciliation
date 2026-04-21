@@ -93,10 +93,16 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
     up_parser = files_sub.add_parser("upload", help="Wgraj plik do Storage")
     up_parser.add_argument("key", metavar="KEY", help="Docelowy klucz w Storage")
     up_parser.add_argument(
-        "--file", "-f", required=True, metavar="PATH", help="Ścieżka do pliku do wgrania",
+        "--file",
+        "-f",
+        required=True,
+        metavar="PATH",
+        help="Ścieżka do pliku do wgrania",
     )
     up_parser.add_argument(
-        "--content-type", default=None, metavar="TYPE",
+        "--content-type",
+        default=None,
+        metavar="TYPE",
         help="Content-Type (domyślnie: wykrywany z rozszerzenia)",
     )
     up_parser.set_defaults(func=_run_upload)
