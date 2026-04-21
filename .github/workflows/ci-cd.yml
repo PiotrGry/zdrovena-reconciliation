@@ -1,25 +1,46 @@
 name: CI / CD
 
-# Jeden pipeline — branch/event determinuje co się wykonuje:
-#   PR → develop          : quality gate (lint, type, test, security, fitness, infra, docker)
-#   PR → main             : quality gate + staging deploy & smoke
-#   push main / dispatch  : promote staging image → prod + deploy + semantic release
+# Orkiestrator — deleguje do reusable workflows:
+#   PR → develop          : quality-gate
+#   PR → main             : quality-gate + staging-smoke
+#   push main / dispatch  : deploy (promote → prod → release)
+#
+# Reusable workflows (prefiks _):
+#   _quality-gate.yml   : lint, typecheck, test, security, fitness, infra, docker-build
+#   _staging-smoke.yml  : staging deploy + smoke test
+#   _deploy.yml         : promote image → prod deploy → semantic release
 
 on:
   pull_request:
     branches: [develop, main]
+    paths:
+      - "zdrovena/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "Dockerfile"
+      - ".github/workflows/ci-cd.yml"
+      - ".github/workflows/_quality-gate.yml"
+      - ".github/workflows/_staging-smoke.yml"
+      - ".github/workflows/_deploy.yml"
   push:
     branches: [main]
+    paths:
+      - "zdrovena/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "Dockerfile"
+      - ".github/workflows/ci-cd.yml"
+      - ".github/workflows/_deploy.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
-  security-events: write  # trivy SARIF upload
-  pull-requests: read     # dorny/paths-filter
-  # id-token: scoped to individual jobs that need OIDC (staging-smoke, promote, deploy-prod, release)
+  security-events: write
+  pull-requests: read
+  id-token: write
 
-# PRy: cancel outdated runs dla tego samego brancha
-# Prod deploy: nigdy nie przerywaj — jedna współbieżna grupa
 concurrency:
   group: >-
     ${{
@@ -29,344 +50,28 @@ concurrency:
     }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# ══════════════════════════════════════════════════════════════════════════════
-# QUALITY GATE — tylko na PRach (develop i main)
-# ══════════════════════════════════════════════════════════════════════════════
-
 jobs:
-  lint:
-    name: Ruff lint & format
+  # ── Quality gate — każdy PR ────────────────────────────────────────────────
+  quality-gate:
+    name: Quality gate
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    uses: ./.github/workflows/_quality-gate.yml
+    secrets: inherit
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install ruff
-        run: pip install ruff
-
-      - name: Check lint
-        run: ruff check .
-
-      - name: Check format
-        run: ruff format --check .
-
-  typecheck:
-    name: Pyright
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install dependencies
-        run: pip install -e ".[dev,api,cloud,report,ksef,pdf]" pyright
-
-      - name: Run Pyright
-        run: pyright
-
-  test:
-    name: "pytest + coverage"
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install dependencies
-        run: pip install -e ".[dev,api,cloud]"
-
-      - name: Run tests with coverage
-        env:
-          AZURE_AUTH_DISABLED: "true"
-        run: |
-          pytest tests/ -q --tb=short \
-            --cov=zdrovena --cov-fail-under=80 \
-            --cov-report=term-missing
-
-  security:
-    name: Security scan
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    needs: [test]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # gitleaks needs full history
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install project + security tools
-        run: |
-          pip install -e ".[dev,api,cloud]"
-          pip install pip-audit bandit[toml]
-
-      - name: pip-audit — dependency CVE scan
-        run: pip-audit
-
-      - name: bandit — SAST (Python source)
-        run: bandit -r zdrovena/ -ll -ii
-
-      - name: gitleaks — secret leak scan
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: trivy — filesystem CVE scan
-        uses: aquasecurity/trivy-action@v0.35.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          severity: HIGH,CRITICAL
-          exit-code: 1
-          ignore-unfixed: true
-
-  fitness:
-    name: Fitness Functions (arch)
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-
-      - name: Run module boundary tests
-        run: pytest tests/fitness/ -v
-
-  infra:
-    name: Terraform validate + Checkov
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Detect changed infra files
-        id: changed
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            infra:
-              - 'infra/terraform/**'
-
-      - name: Setup Terraform
-        if: steps.changed.outputs.infra == 'true'
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "~1.5"
-
-      - name: Terraform init (no backend)
-        if: steps.changed.outputs.infra == 'true'
-        run: terraform -chdir=infra/terraform init -backend=false
-
-      - name: Terraform validate
-        if: steps.changed.outputs.infra == 'true'
-        run: terraform -chdir=infra/terraform validate
-
-      - name: Checkov IaC security scan
-        if: steps.changed.outputs.infra == 'true'
-        uses: bridgecrewio/checkov-action@v12
-        with:
-          directory: infra/terraform
-          quiet: true
-          soft_fail: false
-
-      - name: No infra changes — skipped
-        if: steps.changed.outputs.infra != 'true'
-        run: echo "No terraform files changed, infra checks skipped."
-
-  # PR→develop: waliduje Dockerfile lokalnie, brak push — szybka pętla feedbacku.
-  # PR→main: ten job jest pomijany — staging-smoke buduje i pushuje do ACR (build-once).
-  docker-build:
-    name: Docker build (validate)
-    if: github.event_name == 'pull_request' && github.base_ref == 'develop'
-    runs-on: ubuntu-latest
-    needs: [test]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build image (no push)
-        run: |
-          docker build \
-            --label "git.sha=${{ github.sha }}" \
-            -t zdrovena-api:ci-${{ github.sha }} \
-            .
-
-  # ══════════════════════════════════════════════════════════════════════════════
-  # STAGING — tylko PR → main
-  # Buduje obraz, deployuje na staging, odpala smoke test.
-  # Brama przed merge do main i deployem prod.
-  # ══════════════════════════════════════════════════════════════════════════════
-
-  staging-smoke:
-    name: Staging deploy & smoke
+  # ── Staging smoke — tylko PR → main ───────────────────────────────────────
+  staging:
+    name: Staging smoke
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
-    runs-on: ubuntu-latest
-    needs: [test]
-    environment: staging
-    permissions:
-      id-token: write
-      contents: read
-    env:
-      # Nazwy kontenerów to konfiguracja, nie sekrety — hardkodowane tu, nie w Vault
-      STAGING_APP: zdrovena-api-staging
-      PROD_APP: zdrovena-api
-      RG: zdrovena-rg
-    steps:
-      - uses: actions/checkout@v4
+    needs: quality-gate
+    uses: ./.github/workflows/_staging-smoke.yml
+    secrets: inherit
 
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_OIDC_SP_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Log in to ACR
-        run: az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
-
-      - name: Build & push staging image
-        env:
-          IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api
-        run: |
-          docker build \
-            --label "git.sha=${{ github.sha }}" \
-            --label "git.ref=${{ github.head_ref }}" \
-            -t "$IMAGE:staging-${{ github.sha }}" \
-            .
-          docker push "$IMAGE:staging-${{ github.sha }}"
-          docker tag  "$IMAGE:staging-${{ github.sha }}" "$IMAGE:staging-latest"
-          docker push "$IMAGE:staging-latest"
-
-      - name: Wait for staging Container App to be ready
-        run: |
-          for i in $(seq 1 18); do
-            STATE=$(az containerapp show \
-              --name "$STAGING_APP" --resource-group "$RG" \
-              --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Unknown")
-            echo "Provisioning state: $STATE (attempt $i/18)"
-            [[ "$STATE" == "Succeeded" || "$STATE" == "Failed" ]] && break
-            sleep 10
-          done
-          if [[ "$STATE" == "InProgress" || "$STATE" == "Unknown" ]]; then
-            echo "Timeout: Container App stuck in $STATE after 3 minutes"
-            exit 1
-          fi
-          echo "Container App pre-deploy state: $STATE — proceeding with deployment"
-
-      - name: Deploy API to staging
-        run: |
-          az containerapp update \
-            --name            "$STAGING_APP" \
-            --resource-group  "$RG" \
-            --image           "${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:staging-${{ github.sha }}" \
-            --min-replicas    1
-
-      - name: Wait for staging deployment to complete
-        run: |
-          for i in $(seq 1 36); do
-            STATE=$(az containerapp show \
-              --name "$STAGING_APP" --resource-group "$RG" \
-              --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Unknown")
-            echo "Post-deploy state: $STATE (attempt $i/36)"
-            [[ "$STATE" == "Succeeded" ]] && break
-            [[ "$STATE" == "Failed" ]] && { echo "Deployment failed — Container App in Failed state"; exit 1; }
-            sleep 10
-          done
-          [[ "$STATE" == "Succeeded" ]] || { echo "Timeout waiting for deployment to complete"; exit 1; }
-
-      - name: Resolve staging FQDN
-        id: url
-        run: |
-          FQDN=$(az containerapp show \
-            --name "$STAGING_APP" --resource-group "$RG" \
-            --query properties.configuration.ingress.fqdn -o tsv)
-          echo "fqdn=$FQDN" >> $GITHUB_OUTPUT
-
-      - name: API smoke test
-        env:
-          CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
-        run: |
-          BASE="https://${{ steps.url.outputs.fqdn }}"
-
-          # 1. /health — liveness (z retries na cold start)
-          for i in $(seq 1 18); do
-            HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$BASE/health")
-            echo "Attempt $i: /health → HTTP $HTTP"
-            [[ "$HTTP" == "200" ]] && break
-            sleep 10
-          done
-          [[ "$HTTP" == "200" ]] || { echo "/health failed after 18 attempts"; exit 1; }
-
-          # 2. /docs — weryfikuje że routing + FastAPI middleware załadowały się bez crash
-          HTTP_DOCS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$BASE/docs")
-          echo "/docs → HTTP $HTTP_DOCS"
-          [[ "$HTTP_DOCS" == "200" ]] || { echo "/docs failed (got $HTTP_DOCS)"; exit 1; }
-
-          # 3. /files bez tokenu → 401/403, nie 500 — weryfikuje że auth middleware działa
-          HTTP_ANON=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$BASE/files")
-          echo "/files (no token) → HTTP $HTTP_ANON"
-          [[ "$HTTP_ANON" == "401" || "$HTTP_ANON" == "403" ]] \
-            || { echo "/files bez tokenu zwróciło $HTTP_ANON (oczekiwano 401/403)"; exit 1; }
-
-          # 4. /files z tokenem CI (OIDC managed identity) → 200 z listą plików
-          # GitHub Actions SP musi mieć rolę zdrovena-viewer w Entra App Registration
-          # (przypisaną w Azure Portal: App registrations → zdrovena-api → App roles → Assignments)
-          TOKEN=$(az account get-access-token \
-            --resource "api://$CLIENT_ID" \
-            --query accessToken -o tsv)
-          [[ -n "$TOKEN" ]] || { echo "Nie udało się pobrać tokenu dla api://$CLIENT_ID — sprawdź rolę zdrovena-viewer na GitHub Actions SP"; exit 1; }
-          HTTP_AUTH=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-            -H "Authorization: Bearer $TOKEN" "$BASE/files")
-          echo "/files (with token) → HTTP $HTTP_AUTH"
-          [[ "$HTTP_AUTH" == "200" ]] \
-            || { echo "/files z tokenem zwróciło $HTTP_AUTH (oczekiwano 200)"; exit 1; }
-
-          echo "All smoke tests passed."
-
-      # Staging jest efemeryczny — po testach skalujemy do 0 replicas (= brak kosztów).
-      # Krok działa zawsze (if: always()), żeby staging nie zostawał "zawieszony"
-      # nawet gdy testy się wysypią. Przy kolejnym PR deploy step z --min-replicas 1
-      # automatycznie go budzi.
-      - name: Teardown staging (scale to zero)
-        if: always()
-        run: |
-          az containerapp update \
-            --name            "$STAGING_APP" \
-            --resource-group  "$RG" \
-            --min-replicas    0 \
-            --max-replicas    0 \
-            --output none
-          echo "Staging scaled to 0 — no idle costs between PR runs."
-
-  # ── CI Gate ──────────────────────────────────────────────────────────────────
-  # Jeden wymagany check do branch protection rules.
-  # staging-smoke jest skipped dla PRów do develop — to nie jest błąd.
+  # ── CI Gate — jeden wymagany check do branch protection rules ─────────────
   ci-gate:
     name: CI Gate
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    needs: [lint, typecheck, test, fitness, security, infra, docker-build, staging-smoke]
+    needs: [quality-gate, staging]
     steps:
       - name: Check all jobs passed
         run: |
@@ -378,147 +83,9 @@ jobs:
           fi
           echo "All CI jobs passed."
 
-  # ══════════════════════════════════════════════════════════════════════════════
-  # PRODUCTION — push do main (po merge) lub workflow_dispatch
-  # Zasada build-once/promote: ten sam obraz co był testowany na stagingu.
-  # ══════════════════════════════════════════════════════════════════════════════
-
-  promote:
-    name: Promote image to production
+  # ── Production deploy — push main lub workflow_dispatch ───────────────────
+  deploy:
+    name: Deploy production
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.promote.outputs.image }}
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_OIDC_SP_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Log in to ACR
-        run: az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
-
-      # Retag: staging-latest → <sha> (immutable, do rollbacku) + latest (mutable pointer)
-      - name: Promote staging image
-        id: promote
-        env:
-          IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api
-        run: |
-          docker pull "$IMAGE:staging-latest"
-          docker tag  "$IMAGE:staging-latest" "$IMAGE:${{ github.sha }}"
-          docker tag  "$IMAGE:staging-latest" "$IMAGE:latest"
-          docker push "$IMAGE:${{ github.sha }}"
-          docker push "$IMAGE:latest"
-          echo "image=$IMAGE:${{ github.sha }}" >> $GITHUB_OUTPUT
-
-  deploy-prod:
-    name: Deploy to production
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    needs: promote
-    environment: production
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_OIDC_SP_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Update Container App image
-        env:
-          PROD_APP: zdrovena-api
-          RG: zdrovena-rg
-        run: |
-          az containerapp update \
-            --name            "$PROD_APP" \
-            --resource-group  "$RG" \
-            --image           "${{ needs.promote.outputs.image }}" \
-            --min-replicas    1
-
-      - name: Wait for production deployment to complete
-        env:
-          PROD_APP: zdrovena-api
-          RG: zdrovena-rg
-        run: |
-          for i in $(seq 1 36); do
-            STATE=$(az containerapp show \
-              --name "$PROD_APP" --resource-group "$RG" \
-              --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Unknown")
-            echo "Post-deploy state: $STATE (attempt $i/36)"
-            [[ "$STATE" == "Succeeded" ]] && break
-            [[ "$STATE" == "Failed" ]] && { echo "Production deployment failed — Container App in Failed state"; exit 1; }
-            sleep 10
-          done
-          [[ "$STATE" == "Succeeded" ]] || { echo "Timeout waiting for production deployment to complete"; exit 1; }
-
-      - name: Production health check
-        env:
-          PROD_APP: zdrovena-api
-          RG: zdrovena-rg
-        run: |
-          FQDN=$(az containerapp show \
-            --name "$PROD_APP" --resource-group "$RG" \
-            --query properties.configuration.ingress.fqdn -o tsv)
-          BASE="https://$FQDN"
-
-          for i in $(seq 1 18); do
-            HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$BASE/health")
-            echo "Attempt $i: /health → HTTP $HTTP"
-            [[ "$HTTP" == "200" ]] && break
-            sleep 10
-          done
-          [[ "$HTTP" == "200" ]] || { echo "Production /health failed after 18 attempts — deploy may be broken"; exit 1; }
-          echo "Production health check passed."
-
-      # Link SWA → Container App backend (idempotent, safe every deploy)
-      - name: Link SWA backend
-        env:
-          PROD_APP: zdrovena-api
-          RG: zdrovena-rg
-        run: |
-          CONTAINER_APP_ID=$(az containerapp show \
-            --name "$PROD_APP" --resource-group "$RG" \
-            --query id --output tsv)
-
-          az staticwebapp backends link \
-            --name "${{ secrets.AZURE_SWA_NAME }}" \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --backend-resource-id "$CONTAINER_APP_ID" \
-            --backend-region "${{ secrets.AZURE_LOCATION }}"
-
-  # Semantic versioning: tag + GitHub Release
-  #   feat:          → MINOR bump  (2.0.0 → 2.1.0)
-  #   fix:           → PATCH bump  (2.0.0 → 2.0.1)
-  #   feat!/BREAKING → MAJOR bump  (2.0.0 → 3.0.0)
-  #   ci:/chore:/docs: → no bump
-  release:
-    name: Semantic release
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    needs: [deploy-prod]
-    permissions:
-      contents: write  # push version bump commit, create tag + GitHub Release
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # full history needed for commit analysis
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Run python-semantic-release
-        uses: python-semantic-release/python-semantic-release@v9
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+    uses: ./.github/workflows/_deploy.yml
+    secrets: inherit
