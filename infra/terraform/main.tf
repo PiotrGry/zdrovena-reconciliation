@@ -259,11 +259,12 @@ resource "azurerm_role_assignment" "app_acr_pull" {
   depends_on           = [azurerm_container_app.api]
 }
 
-# ── RBAC: Container App → Storage Blob Data Reader (on the container only) ────
+# ── RBAC: Container App → Storage Blob Data Contributor (on the container only) ──
+# Reader + Writer: API może odczytywać i zapisywać pliki w blob container.
 
-resource "azurerm_role_assignment" "app_storage_reader" {
+resource "azurerm_role_assignment" "app_storage_contributor" {
   scope                = azurerm_storage_container.files.resource_manager_id
-  role_definition_name = "Storage Blob Data Reader"
+  role_definition_name = "Storage Blob Data Contributor"
   principal_id         = azurerm_container_app.api.identity[0].principal_id
   depends_on           = [azurerm_container_app.api]
 }
