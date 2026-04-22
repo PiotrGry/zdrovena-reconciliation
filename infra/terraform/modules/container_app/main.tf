@@ -5,6 +5,22 @@ resource "azurerm_container_app" "this" {
   revision_mode                = "Single"
   tags                         = var.tags
 
+  # image is managed by GitHub Actions (az containerapp update --image)
+  # Terraform only provisions the resource — it must not reset the image on plan.
+  lifecycle {
+    ignore_changes = [
+      template[0].container[0].image,
+    ]
+  }
+
+  # image is managed by GitHub Actions (az containerapp update --image)
+  # Terraform only provisions the resource — it must not reset the image on plan.
+  lifecycle {
+    ignore_changes = [
+      template[0].container[0].image,
+    ]
+  }
+
   # System-assigned managed identity — used for ACR pull + blob read + KV access
   identity {
     type = "SystemAssigned"

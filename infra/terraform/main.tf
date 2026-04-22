@@ -159,10 +159,8 @@ module "api_staging" {
   max_replicas                          = 1
   cpu                                   = var.container_app_cpu
   memory                                = var.container_app_memory
-  tags                                  = local.tags
+  tags                                  = merge(local.tags, { environment = "staging" })
 }
-
-# ── Key Vault ──────────────────────────────────────────────────────────────────
 # Stores all application secrets (Fakturownia, Zoho, KSeF, Google Ads).
 # Container App reads them via managed identity — no secrets in env vars or code.
 
