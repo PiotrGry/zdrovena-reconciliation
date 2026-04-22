@@ -65,7 +65,7 @@ resource "azurerm_storage_account" "storage" {
   # checkov:skip=CKV_AZURE_206: LRS replication intentional — single-region deployment, non-critical files, cost optimised
   # checkov:skip=CKV2_AZURE_41: No SAS tokens issued — all access via managed identity (RBAC)
   # checkov:skip=CKV2_AZURE_1: Customer Managed Key not required — files are non-sensitive reports; Microsoft-managed encryption at rest is sufficient for this tier
-  # checkov:skip=CKV2_AZURE_33: Private endpoint requires VNet not present in this architecture; public access disabled via public_network_access_enabled=false + network_rules Deny
+  # checkov:skip=CKV2_AZURE_33: Private endpoint requires VNet not present in this architecture; access restricted via network_rules default_action=Deny + ip_rules allowlist + AzureServices bypass
   # checkov:skip=CKV2_AZURE_21: Blob diagnostic logging (read requests) not configured — operational overhead not justified for this single-region non-critical storage
   name                            = "${replace(var.prefix, "-", "")}files"
   resource_group_name             = azurerm_resource_group.rg.name
@@ -73,7 +73,6 @@ resource "azurerm_storage_account" "storage" {
   account_tier                    = "Standard"
   account_replication_type        = "LRS"
   allow_nested_items_to_be_public = false
-  public_network_access_enabled   = false # CKV_AZURE_59 — enforce at resource level, network_rules default_action=Deny also blocks access
   shared_access_key_enabled       = false # CKV2_AZURE_40 — disable Shared Key auth; all access via managed identity
   min_tls_version                 = "TLS1_2"
   tags                            = local.tags
