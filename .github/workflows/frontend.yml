@@ -58,7 +58,7 @@ jobs:
         run: |
           API_VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/version = "//;s/"//')
           MAJOR=$(echo "$API_VERSION" | cut -d. -f1)
-          cat > frontend/version.json <<EOF
+          cat > frontend/public/version.json <<EOF
           {
             "frontend_version": "$API_VERSION",
             "api_version": "$API_VERSION",
@@ -76,7 +76,7 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: "upload"
           app_location: "frontend"
-          output_location: ""          # brak build step — czyste HTML/JS
+          output_location: "dist"       # Vite build output
           skip_api_build: true
         env:
           # Podstawiane do index.html jako window.__VAR__ przez SWA env substitution
