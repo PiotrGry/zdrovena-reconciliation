@@ -42,12 +42,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: >-
-    ${{
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      && 'deploy-production'
-      || format('ci-{0}', github.head_ref || github.ref_name)
-    }}
+  group: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 'deploy-production' || format('ci-{0}', github.head_ref || github.ref_name) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
