@@ -10,12 +10,12 @@ output "acr_login_server" {
 
 output "container_app_name" {
   description = "Set as AZURE_CONTAINER_APP_NAME in GitHub Secrets"
-  value       = azurerm_container_app.api.name
+  value       = module.api.name
 }
 
 output "container_app_fqdn" {
   description = "Container App FQDN — only accessible via SWA proxy, not publicly documented"
-  value       = azurerm_container_app.api.latest_revision_fqdn
+  value       = module.api.fqdn
 }
 
 output "swa_url" {
