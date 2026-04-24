@@ -1,38 +1,413 @@
 # CHANGELOG
 
+
 ## v1.1.0 (2026-04-24)
-
-### Features
-
-- **API + Frontend:** Sales and cost invoice views now live — `/invoices/sales` and
-  `/invoices/products` endpoints serve paginated Fakturownia data to the React dashboard.
-  Sales view is searchable and filterable by month/year. Products view shows the full catalog.
-
-- **CI/CD overhaul:** Single `ci-cd.yml` orchestrator delegates to reusable workflows
-  (`_quality-gate.yml`, `_staging-smoke.yml`, `_deploy.yml`). Staging teardown after
-  smoke tests eliminates idle Container App cost. Frontend gets its own `frontend.yml`
-  pipeline with SWA deploy.
 
 ### Bug Fixes
 
-- **Infra:** `lifecycle` `ignore_changes` for Container App image prevents Terraform
-  from reverting CI-deployed images on next `terraform apply`. OIDC secrets renamed
-  to match new workflow structure.
+- **ci**: Rename AZURE_OIDC_SP_CLIENT_ID to AZURE_CLIENT_ID
+  ([#11](https://github.com/PiotrGry/zdrovena-reconciliation/pull/11),
+  [`29ec948`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/29ec9481a256a5120c936f0332019258e1364810))
 
-- **Deploy:** Use `staging-latest` tag to bridge SHA mismatch when promoting
-  develop → main (CI tags as `staging-<develop-sha>` but merge commit has a different SHA).
+* ci: staging-smoke gate, build-once promote, rollback fix, remove master (#3)
 
-- **CI resilience:** Fail-fast on `Failed` Container App state, extended smoke test
-  retries (5×10s → 18×10s) for cold-start latency. Min-replicas set to 1 on staging
-  deploy to eliminate cold-start timeout.
+* ci: remove master, add staging-smoke gate for PRs to main
 
-- **Security:** Azure tenant and client IDs moved from `dev.sh` to `.env.template`;
-  `dev.sh` now reads from `.env.local` instead of hardcoding values.
+* ci: build-once promote, expand staging gate, fix rollback traffic weights
 
-### Documentation
+* ci: remove prod smoke, add manual rollback.yml with audit log
 
-- `CONTRIBUTING.md` added: branching strategy (`develop → main`), commit conventions,
-  quality gate commands, RBAC roles, KSeF safety note.
+---------
+
+Co-authored-by: Piotr Gryzlo <Piotr.Gryzlo_EPAM@kantar.com>
+
+* fix(ci): wait for staging container app ready before update
+
+* fix(ci): fail-fast on Failed state, add post-deploy wait, extend smoke retries Pre-update wait
+  loop now breaks immediately on Failed (instead of looping all 18 attempts). After az containerapp
+  update, a separate wait step ensures the new revision is fully provisioned before the smoke test
+  starts. Smoke test retries increased from 5×10s to 18×10s (~3 min) to handle cold-start latency
+  with min-replicas=0.
+
+* fix(ci): set min-replicas=1 on staging deploy to eliminate cold-start timeout
+
+* fix(deploy): use staging-latest tag to bridge SHA mismatch on promote CI tags image as
+  staging-<develop-sha>. When merged to main, the deploy workflow runs with a different SHA (the
+  merge commit). Using staging-latest as intermediate tag avoids image-not-found on docker pull in
+  promote step.
+
+* chore: trigger CI for PR #6
+
+* ci: merge ci.yml + deploy.yml → single ci-cd.yml pipeline
+
+Branch/event determines what runs: - PR → develop: quality gate only (lint, type, test, security,
+  fitness, infra, docker) - PR → main: quality gate + staging deploy & smoke - push main: promote
+  staging-latest → prod + deploy (--min-replicas 1) + semantic release - workflow_dispatch: same as
+  push main
+
+Eliminates SHA mismatch class of bugs (staging-latest bridge), --min-replicas 1 in one place for
+  both envs, one file to maintain.
+
+* ci(smoke): add /docs and /files 401 checks to staging smoke test
+
+/health 200 alone only proves the process is alive. /docs 200 verifies routing + middleware loaded
+  without crash. /files 401/403 (no token) verifies auth middleware is active and not 500-ing.
+
+* ci: hardcode container app names, add authenticated smoke test
+
+- AZURE_CONTAINER_APP_NAME + AZURE_STAGING_CONTAINER_APP_NAME removed from secrets — names are
+  config, not secrets. Hardcoded as env vars in jobs. - Smoke test step 4: /files with OIDC token →
+  200 (verifies full auth stack). Uses az account get-access-token with api://<CLIENT_ID> scope. If
+  SP lacks zdrovena-viewer role the step warns but does not fail — allows gradual rollout without
+  breaking CI immediately.
+
+For integration tests between services: staging-smoke job deploys all svc containers to one env and
+  asserts their interactions before allowing merge.
+
+* ci(staging): teardown staging after smoke tests (scale to zero)
+
+Staging jest efemeryczny — po testach skaluje sie do 0 replik = brak kosztow idle miedzy runami PR.
+  Krok if: always() wiec dziala nawet gdy testy sie wysypia. Deploy step z --min-replicas 1
+  automatycznie budzi staging przy kolejnym PR.
+
+* feat(api+frontend): invoices/products endpoints + live views (#8)
+
+* feat(frontend): add SWA UI with MSAL auth + rename OIDC secrets
+
+- frontend/index.html: vanilla HTML + MSAL.js v3, lists files and triggers close - roles claim
+  check: close button only for admin/accountant - /api/* routed to Container App via SWA linked
+  backend - frontend/staticwebapp.config.json: security headers, CSP, no SWA built-in auth -
+  .github/workflows/frontend.yml: SWA deploy on frontend/** changes -
+  ci-cd.yml/rollback.yml/deploy.yml: rename AZURE_CLIENT_ID → AZURE_OIDC_SP_CLIENT_ID - smoke test
+  uses AZURE_API_CLIENT_ID (zdrovena-api audience) - OIDC login uses AZURE_OIDC_SP_CLIENT_ID
+  (zdrovena-github-actions SP) - infra/terraform/outputs.tf: output renamed to match new secret name
+  - infra/terraform/variables.tf: improved description for azure_client_id_entra
+
+GitHub Secrets to add: AZURE_OIDC_SP_CLIENT_ID — rename from AZURE_CLIENT_ID (same value)
+  AZURE_API_CLIENT_ID — client ID of zdrovena-api App Registration SWA_DEPLOYMENT_TOKEN — from
+  terraform output github_secret_SWA_DEPLOYMENT_TOKEN
+
+* feat(infra): upgrade Container App storage role to Blob Data Contributor
+
+Reader → Contributor: managed identity może teraz zapisywać pliki do blob container. storage.py ma
+  już metodę upload() — nie wymaga zmian w kodzie. Wymaga: terraform apply
+
+* feat(frontend): add API/frontend version compatibility check
+
+- workflow generuje frontend/version.json z pyproject.toml przy deploy (frontend_version,
+  api_version, min_api_major, git_sha, deployed_at) - index.html przy starcie fetchuje /version.json
+  + /api/health - porównuje major version — mismatch = żółty banner z ostrzeżeniem - brak blokowania
+  UX gdy /version.json niedostępny (local dev)
+
+* docs(readme): full rewrite — REST API, frontend, CLI, infra, secrets
+
+* feat(backend): migrate pipeline checkpoint to Blob, add PUT /files upload
+
+- PipelineState: primary storage on Azure Blob (.state.json), fallback to local; reset() deletes
+  both on email send - Orchestrator: uploads ZIP to faktury/{year}/{month}/ on Blob, calls
+  state.reset() after successful email - GET /close/state: reads checkpoint from Blob via
+  PipelineState - PUT /files/{key}: upload endpoint (accountant/admin role) -
+  ApiClient.upload_file() + CLI 'files upload' command - CORS: add PUT to allowed methods -
+  BlobStorageService.exists() + storage refactor
+
+* feat(frontend): Vite + React SPA with ESLint quality gate
+
+- React 18 + Vite 5 SPA (moved from index.html monolith to src/) - ESLint 9 flat config: react,
+  react-hooks plugins, no-console warn, no-unused-vars error — 0 warnings, 0 errors -
+  staticwebapp.config.json: SPA routing + /api proxy config - package.json: lint script (eslint
+  --max-warnings 0) - dev.sh: one-command local dev (backend + frontend concurrently) -
+  PIPELINE_STEPS: 7 steps (removed bank statement), no source field - node_modules/ + frontend/dist/
+  added to .gitignore
+
+* ci: split workflows into reusable modules + extract scripts/ci/
+
+- ci-cd.yml: slim orchestrator (91 lines) with paths: filter for backend-only triggers; calls
+  _quality-gate, _staging-smoke, _deploy - _quality-gate.yml: lint, typecheck, test, security,
+  fitness, infra, docker-build (reusable, workflow_call) - _staging-smoke.yml: deploy to staging +
+  smoke test + teardown - _deploy.yml: promote staging→prod image, deploy, health check, link SWA
+  backend - frontend.yml: quality-gate job (ESLint + npm audit --audit-level=high) before deploy -
+  scripts/ci/: 5 reusable shell scripts (set -euo pipefail) wait-containerapp.sh, smoke-test.sh,
+  teardown-staging.sh, promote-image.sh, link-swa-backend.sh
+
+* style: ruff format (auto-fix)
+
+* fix(ci): SWA output_location="dist" + version.json to public/
+
+Oryx builds Vite app to dist/ but output_location was empty — SWA couldn't locate artifacts. Also
+  moved version.json generation to frontend/public/ so Vite copies it to dist/ during build.
+
+* fix(ci): flatten multi-line concurrency expression (startup_failure)
+
+* fix(ci): frontend SWA deploy only on push to main, not develop
+
+* feat(ci): SWA staging environment on push to develop
+
+push develop → SWA named environment 'staging' (osobny URL) push main → SWA production
+  (dotychczasowe zachowanie)
+
+Staging URL: https://staging.<hash>.<region>.azurestaticapps.net Opcjonalny secret
+  AZURE_STAGING_API_CLIENT_ID do osobnego Entra app registration na staging (fallback: prod
+  client_id).
+
+* refactor(infra): extract Container App to reusable Terraform module
+
+modules/container_app/ encapsulates: - azurerm_container_app (ingress, identity, registry, env vars)
+  - RBAC: AcrPull, Storage Blob Data Contributor, KV Secrets User
+
+prod + staging call the same module with different params: - module.api: prod, min=0 max=2,
+  zdrovena-files container - module.api_staging: staging, min=0 max=1, zdrovena-files-staging
+  container
+
+One Key Vault serves both environments.
+
+IMPORTANT: before terraform apply run state mv: terraform state mv azurerm_container_app.api
+  module.api.azurerm_container_app.this terraform state mv azurerm_role_assignment.app_acr_pull
+  module.api.azurerm_role_assignment.acr_pull terraform state mv
+  azurerm_role_assignment.app_storage_contributor
+  module.api.azurerm_role_assignment.storage_contributor terraform state mv
+  azurerm_role_assignment.app_kv_secrets_user module.api.azurerm_role_assignment.kv_secrets_user
+
+* fix(infra): lifecycle ignore_changes for image + fix staging tags
+
+- lifecycle ignore_changes on template[0].container[0].image — prevents Terraform from resetting
+  prod image to helloworld placeholder on plan; image is managed by GitHub Actions (az containerapp
+  update --image) - module api_staging: tags = merge(local.tags, { environment = "staging" }) so
+  staging Container App gets correct environment tag
+
+* fix(infra): remove duplicate lifecycle block in container_app module
+
+* fix(infra): remove public_network_access_enabled=false + add storage_use_azuread to provider
+
+- public_network_access_enabled=false breaks Terraform local access and GitHub Actions (no
+  VNet/private endpoint in this architecture). Security is enforced by: SAK=off, network_rules
+  default_action=Deny, AzureServices bypass (Container App), ip_rules allowlist (TF operator). -
+  storage_use_azuread=true in provider config required when SAK is disabled (azurerm bug: provider
+  tries to read queue props via SAK after update) - Removed duplicate lifecycle block (cherry-pick
+  artifact)
+
+* feat(api+frontend): invoices/products endpoints + live views
+
+- GET /invoices/sales?year=&month= — faktury sprzedaży z Fakturownia API - GET
+  /invoices/products?active_only= — katalog produktów - InvoiceItem + ProductItem Pydantic models -
+  SalesView i ProductsView podłączone pod live API (year/month picker, active-only filter) - feature
+  flag products: true - CloseView: year/month picker + ResultSummary po pipeline - FilesView: KPI
+  live (kpi_files_count + kpi_pipeline z /api/close/state) - 13 nowych testów (474 passed total)
+
+* chore: add .env.local and .env.*.local to .gitignore
+
+* fix(infra): lifecycle ignore_changes for container app image + rename OIDC secrets (#9)
+
+* docs: add CONTRIBUTING.md with branching strategy and dev workflow
+
+* fix: move Azure GUIDs from dev.sh to .env.template, load from .env.local
+
+* docs: update CHANGELOG for v1.1.0
+
+* fix(ci): rename AZURE_OIDC_SP_CLIENT_ID → AZURE_CLIENT_ID to match GitHub secrets
+
+- **ci**: Use AZURE_CLIENT_ID in deploy.yml and rollback.yml (matches existing GitHub secret)
+  ([#12](https://github.com/PiotrGry/zdrovena-reconciliation/pull/12),
+  [`71eb554`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/71eb554d66cd5f20a49d0eb213af0ffaafde8a33))
+
+### Features
+
+- Invoices/products views, CI/CD overhaul, contributing guide (→ v1.1.0)
+  ([#10](https://github.com/PiotrGry/zdrovena-reconciliation/pull/10),
+  [`1ae16dc`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/1ae16dc7aa891fc7ff04a193cc7d2ed8e9d5e02a))
+
+* ci: staging-smoke gate, build-once promote, rollback fix, remove master (#3)
+
+* ci: remove master, add staging-smoke gate for PRs to main
+
+* ci: build-once promote, expand staging gate, fix rollback traffic weights
+
+* ci: remove prod smoke, add manual rollback.yml with audit log
+
+---------
+
+Co-authored-by: Piotr Gryzlo <Piotr.Gryzlo_EPAM@kantar.com>
+
+* fix(ci): wait for staging container app ready before update
+
+* fix(ci): fail-fast on Failed state, add post-deploy wait, extend smoke retries Pre-update wait
+  loop now breaks immediately on Failed (instead of looping all 18 attempts). After az containerapp
+  update, a separate wait step ensures the new revision is fully provisioned before the smoke test
+  starts. Smoke test retries increased from 5×10s to 18×10s (~3 min) to handle cold-start latency
+  with min-replicas=0.
+
+* fix(ci): set min-replicas=1 on staging deploy to eliminate cold-start timeout
+
+* fix(deploy): use staging-latest tag to bridge SHA mismatch on promote CI tags image as
+  staging-<develop-sha>. When merged to main, the deploy workflow runs with a different SHA (the
+  merge commit). Using staging-latest as intermediate tag avoids image-not-found on docker pull in
+  promote step.
+
+* chore: trigger CI for PR #6
+
+* ci: merge ci.yml + deploy.yml → single ci-cd.yml pipeline
+
+Branch/event determines what runs: - PR → develop: quality gate only (lint, type, test, security,
+  fitness, infra, docker) - PR → main: quality gate + staging deploy & smoke - push main: promote
+  staging-latest → prod + deploy (--min-replicas 1) + semantic release - workflow_dispatch: same as
+  push main
+
+Eliminates SHA mismatch class of bugs (staging-latest bridge), --min-replicas 1 in one place for
+  both envs, one file to maintain.
+
+* ci(smoke): add /docs and /files 401 checks to staging smoke test
+
+/health 200 alone only proves the process is alive. /docs 200 verifies routing + middleware loaded
+  without crash. /files 401/403 (no token) verifies auth middleware is active and not 500-ing.
+
+* ci: hardcode container app names, add authenticated smoke test
+
+- AZURE_CONTAINER_APP_NAME + AZURE_STAGING_CONTAINER_APP_NAME removed from secrets — names are
+  config, not secrets. Hardcoded as env vars in jobs. - Smoke test step 4: /files with OIDC token →
+  200 (verifies full auth stack). Uses az account get-access-token with api://<CLIENT_ID> scope. If
+  SP lacks zdrovena-viewer role the step warns but does not fail — allows gradual rollout without
+  breaking CI immediately.
+
+For integration tests between services: staging-smoke job deploys all svc containers to one env and
+  asserts their interactions before allowing merge.
+
+* ci(staging): teardown staging after smoke tests (scale to zero)
+
+Staging jest efemeryczny — po testach skaluje sie do 0 replik = brak kosztow idle miedzy runami PR.
+  Krok if: always() wiec dziala nawet gdy testy sie wysypia. Deploy step z --min-replicas 1
+  automatycznie budzi staging przy kolejnym PR.
+
+* feat(api+frontend): invoices/products endpoints + live views (#8)
+
+* feat(frontend): add SWA UI with MSAL auth + rename OIDC secrets
+
+- frontend/index.html: vanilla HTML + MSAL.js v3, lists files and triggers close - roles claim
+  check: close button only for admin/accountant - /api/* routed to Container App via SWA linked
+  backend - frontend/staticwebapp.config.json: security headers, CSP, no SWA built-in auth -
+  .github/workflows/frontend.yml: SWA deploy on frontend/** changes -
+  ci-cd.yml/rollback.yml/deploy.yml: rename AZURE_CLIENT_ID → AZURE_OIDC_SP_CLIENT_ID - smoke test
+  uses AZURE_API_CLIENT_ID (zdrovena-api audience) - OIDC login uses AZURE_OIDC_SP_CLIENT_ID
+  (zdrovena-github-actions SP) - infra/terraform/outputs.tf: output renamed to match new secret name
+  - infra/terraform/variables.tf: improved description for azure_client_id_entra
+
+GitHub Secrets to add: AZURE_OIDC_SP_CLIENT_ID — rename from AZURE_CLIENT_ID (same value)
+  AZURE_API_CLIENT_ID — client ID of zdrovena-api App Registration SWA_DEPLOYMENT_TOKEN — from
+  terraform output github_secret_SWA_DEPLOYMENT_TOKEN
+
+* feat(infra): upgrade Container App storage role to Blob Data Contributor
+
+Reader → Contributor: managed identity może teraz zapisywać pliki do blob container. storage.py ma
+  już metodę upload() — nie wymaga zmian w kodzie. Wymaga: terraform apply
+
+* feat(frontend): add API/frontend version compatibility check
+
+- workflow generuje frontend/version.json z pyproject.toml przy deploy (frontend_version,
+  api_version, min_api_major, git_sha, deployed_at) - index.html przy starcie fetchuje /version.json
+  + /api/health - porównuje major version — mismatch = żółty banner z ostrzeżeniem - brak blokowania
+  UX gdy /version.json niedostępny (local dev)
+
+* docs(readme): full rewrite — REST API, frontend, CLI, infra, secrets
+
+* feat(backend): migrate pipeline checkpoint to Blob, add PUT /files upload
+
+- PipelineState: primary storage on Azure Blob (.state.json), fallback to local; reset() deletes
+  both on email send - Orchestrator: uploads ZIP to faktury/{year}/{month}/ on Blob, calls
+  state.reset() after successful email - GET /close/state: reads checkpoint from Blob via
+  PipelineState - PUT /files/{key}: upload endpoint (accountant/admin role) -
+  ApiClient.upload_file() + CLI 'files upload' command - CORS: add PUT to allowed methods -
+  BlobStorageService.exists() + storage refactor
+
+* feat(frontend): Vite + React SPA with ESLint quality gate
+
+- React 18 + Vite 5 SPA (moved from index.html monolith to src/) - ESLint 9 flat config: react,
+  react-hooks plugins, no-console warn, no-unused-vars error — 0 warnings, 0 errors -
+  staticwebapp.config.json: SPA routing + /api proxy config - package.json: lint script (eslint
+  --max-warnings 0) - dev.sh: one-command local dev (backend + frontend concurrently) -
+  PIPELINE_STEPS: 7 steps (removed bank statement), no source field - node_modules/ + frontend/dist/
+  added to .gitignore
+
+* ci: split workflows into reusable modules + extract scripts/ci/
+
+- ci-cd.yml: slim orchestrator (91 lines) with paths: filter for backend-only triggers; calls
+  _quality-gate, _staging-smoke, _deploy - _quality-gate.yml: lint, typecheck, test, security,
+  fitness, infra, docker-build (reusable, workflow_call) - _staging-smoke.yml: deploy to staging +
+  smoke test + teardown - _deploy.yml: promote staging→prod image, deploy, health check, link SWA
+  backend - frontend.yml: quality-gate job (ESLint + npm audit --audit-level=high) before deploy -
+  scripts/ci/: 5 reusable shell scripts (set -euo pipefail) wait-containerapp.sh, smoke-test.sh,
+  teardown-staging.sh, promote-image.sh, link-swa-backend.sh
+
+* style: ruff format (auto-fix)
+
+* fix(ci): SWA output_location="dist" + version.json to public/
+
+Oryx builds Vite app to dist/ but output_location was empty — SWA couldn't locate artifacts. Also
+  moved version.json generation to frontend/public/ so Vite copies it to dist/ during build.
+
+* fix(ci): flatten multi-line concurrency expression (startup_failure)
+
+* fix(ci): frontend SWA deploy only on push to main, not develop
+
+* feat(ci): SWA staging environment on push to develop
+
+push develop → SWA named environment 'staging' (osobny URL) push main → SWA production
+  (dotychczasowe zachowanie)
+
+Staging URL: https://staging.<hash>.<region>.azurestaticapps.net Opcjonalny secret
+  AZURE_STAGING_API_CLIENT_ID do osobnego Entra app registration na staging (fallback: prod
+  client_id).
+
+* refactor(infra): extract Container App to reusable Terraform module
+
+modules/container_app/ encapsulates: - azurerm_container_app (ingress, identity, registry, env vars)
+  - RBAC: AcrPull, Storage Blob Data Contributor, KV Secrets User
+
+prod + staging call the same module with different params: - module.api: prod, min=0 max=2,
+  zdrovena-files container - module.api_staging: staging, min=0 max=1, zdrovena-files-staging
+  container
+
+One Key Vault serves both environments.
+
+IMPORTANT: before terraform apply run state mv: terraform state mv azurerm_container_app.api
+  module.api.azurerm_container_app.this terraform state mv azurerm_role_assignment.app_acr_pull
+  module.api.azurerm_role_assignment.acr_pull terraform state mv
+  azurerm_role_assignment.app_storage_contributor
+  module.api.azurerm_role_assignment.storage_contributor terraform state mv
+  azurerm_role_assignment.app_kv_secrets_user module.api.azurerm_role_assignment.kv_secrets_user
+
+* fix(infra): lifecycle ignore_changes for image + fix staging tags
+
+- lifecycle ignore_changes on template[0].container[0].image — prevents Terraform from resetting
+  prod image to helloworld placeholder on plan; image is managed by GitHub Actions (az containerapp
+  update --image) - module api_staging: tags = merge(local.tags, { environment = "staging" }) so
+  staging Container App gets correct environment tag
+
+* fix(infra): remove duplicate lifecycle block in container_app module
+
+* fix(infra): remove public_network_access_enabled=false + add storage_use_azuread to provider
+
+- public_network_access_enabled=false breaks Terraform local access and GitHub Actions (no
+  VNet/private endpoint in this architecture). Security is enforced by: SAK=off, network_rules
+  default_action=Deny, AzureServices bypass (Container App), ip_rules allowlist (TF operator). -
+  storage_use_azuread=true in provider config required when SAK is disabled (azurerm bug: provider
+  tries to read queue props via SAK after update) - Removed duplicate lifecycle block (cherry-pick
+  artifact)
+
+* feat(api+frontend): invoices/products endpoints + live views
+
+- GET /invoices/sales?year=&month= — faktury sprzedaży z Fakturownia API - GET
+  /invoices/products?active_only= — katalog produktów - InvoiceItem + ProductItem Pydantic models -
+  SalesView i ProductsView podłączone pod live API (year/month picker, active-only filter) - feature
+  flag products: true - CloseView: year/month picker + ResultSummary po pipeline - FilesView: KPI
+  live (kpi_files_count + kpi_pipeline z /api/close/state) - 13 nowych testów (474 passed total)
+
+* chore: add .env.local and .env.*.local to .gitignore
+
+* fix(infra): lifecycle ignore_changes for container app image + rename OIDC secrets (#9)
+
+* docs: add CONTRIBUTING.md with branching strategy and dev workflow
+
+* fix: move Azure GUIDs from dev.sh to .env.template, load from .env.local
+
+* docs: update CHANGELOG for v1.1.0
 
 
 ## v1.0.0 (2026-04-20)
