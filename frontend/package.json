@@ -1,0 +1,26 @@
+{
+    "name": "zdrovena-frontend",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview",
+        "lint": "eslint src --max-warnings 0"
+    },
+    "dependencies": {
+        "@azure/msal-browser": "^3.27.0",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1"
+    },
+    "devDependencies": {
+        "@vitejs/plugin-react": "^4.3.4",
+        "vite": "^5.4.14",
+        "eslint": "^9.24.0",
+        "eslint-plugin-react": "^7.37.5",
+        "eslint-plugin-react-hooks": "^5.2.0",
+        "@eslint/js": "^9.24.0",
+        "globals": "^16.0.0"
+    }
+}

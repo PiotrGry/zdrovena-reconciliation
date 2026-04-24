@@ -65,7 +65,7 @@ resource "azurerm_storage_account" "storage" {
   # checkov:skip=CKV_AZURE_206: LRS replication intentional — single-region deployment, non-critical files, cost optimised
   # checkov:skip=CKV2_AZURE_41: No SAS tokens issued — all access via managed identity (RBAC)
   # checkov:skip=CKV2_AZURE_1: Customer Managed Key not required — files are non-sensitive reports; Microsoft-managed encryption at rest is sufficient for this tier
-  # checkov:skip=CKV2_AZURE_33: Private endpoint requires VNet not present in this architecture; public access disabled via public_network_access_enabled=false + network_rules Deny
+  # checkov:skip=CKV2_AZURE_33: Private endpoint requires VNet not present in this architecture; access restricted via network_rules default_action=Deny + ip_rules allowlist + AzureServices bypass
   # checkov:skip=CKV2_AZURE_21: Blob diagnostic logging (read requests) not configured — operational overhead not justified for this single-region non-critical storage
   name                            = "${replace(var.prefix, "-", "")}files"
   resource_group_name             = azurerm_resource_group.rg.name
@@ -73,7 +73,6 @@ resource "azurerm_storage_account" "storage" {
   account_tier                    = "Standard"
   account_replication_type        = "LRS"
   allow_nested_items_to_be_public = false
-  public_network_access_enabled   = false # CKV_AZURE_59 — enforce at resource level, network_rules default_action=Deny also blocks access
   shared_access_key_enabled       = false # CKV2_AZURE_40 — disable Shared Key auth; all access via managed identity
   min_tls_version                 = "TLS1_2"
   tags                            = local.tags
@@ -103,93 +102,64 @@ resource "azurerm_storage_container" "files" {
   container_access_type = "private"
 }
 
-# ── Container App ──────────────────────────────────────────────────────────────
-
-resource "azurerm_container_app" "api" {
-  name                         = "${var.prefix}-api"
-  container_app_environment_id = azurerm_container_app_environment.env.id
-  resource_group_name          = azurerm_resource_group.rg.name
-  revision_mode                = "Single"
-  tags                         = local.tags
-
-  # System-assigned managed identity — used for ACR pull + blob read
-  identity {
-    type = "SystemAssigned"
-  }
-
-  # Pull images from ACR using managed identity (no password needed)
-  registry {
-    server   = azurerm_container_registry.acr.login_server
-    identity = "System"
-  }
-
-  # External ingress required so Static Web Apps linked backend can proxy
-  # /api/* requests to this Container App.
-  # The browser NEVER calls this URL directly — only the SWA edge nodes do.
-  # CORS is restricted to the SWA origin (ALLOWED_ORIGINS env var below).
-  ingress {
-    external_enabled = true
-    target_port      = 8000
-    transport        = "http"
-
-    traffic_weight {
-      percentage      = 100
-      latest_revision = true
-    }
-  }
-
-  template {
-    min_replicas = 0 # scale-to-zero when idle
-    max_replicas = 2
-
-    container {
-      name = "api"
-      # Placeholder — GitHub Actions replaces on first deploy
-      image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
-      cpu    = var.container_app_cpu
-      memory = var.container_app_memory
-
-      env {
-        name  = "APP_ENV"
-        value = "prod"
-      }
-
-      env {
-        name  = "AZURE_STORAGE_ACCOUNT_URL"
-        value = "https://${azurerm_storage_account.storage.name}.blob.core.windows.net"
-      }
-
-      env {
-        name  = "AZURE_STORAGE_CONTAINER"
-        value = azurerm_storage_container.files.name
-      }
-
-      env {
-        name  = "AZURE_TENANT_ID"
-        value = var.azure_tenant_id
-      }
-
-      env {
-        name  = "AZURE_CLIENT_ID"
-        value = var.azure_client_id_entra
-      }
-
-      # Restrict CORS to the SWA origin — blocks any other browser origin.
-      # FastAPI reads ALLOWED_ORIGINS and passes it to CORSMiddleware.
-      env {
-        name  = "ALLOWED_ORIGINS"
-        value = "https://${azurerm_static_web_app.ui.default_host_name}"
-      }
-
-      env {
-        name  = "AZURE_KEYVAULT_URL"
-        value = azurerm_key_vault.kv.vault_uri
-      }
-    }
-  }
+resource "azurerm_storage_container" "files_staging" {
+  # checkov:skip=CKV2_AZURE_21: Blob diagnostic logging not configured — non-critical storage, operational overhead not justified
+  name                  = "zdrovena-files-staging"
+  storage_account_name  = azurerm_storage_account.storage.name
+  container_access_type = "private"
 }
 
-# ── Key Vault ──────────────────────────────────────────────────────────────────
+# ── Container Apps ─────────────────────────────────────────────────────────────
+# Prod and staging share the same module — differ only in name, environment,
+# replicas and storage container. One Key Vault serves both.
+
+module "api" {
+  source = "./modules/container_app"
+
+  name                                  = "${var.prefix}-api"
+  environment                           = "prod"
+  resource_group_name                   = azurerm_resource_group.rg.name
+  container_app_environment_id          = azurerm_container_app_environment.env.id
+  acr_login_server                      = azurerm_container_registry.acr.login_server
+  acr_id                                = azurerm_container_registry.acr.id
+  storage_account_url                   = "https://${azurerm_storage_account.storage.name}.blob.core.windows.net"
+  storage_container_name                = azurerm_storage_container.files.name
+  storage_container_resource_manager_id = azurerm_storage_container.files.resource_manager_id
+  key_vault_id                          = azurerm_key_vault.kv.id
+  key_vault_url                         = azurerm_key_vault.kv.vault_uri
+  azure_tenant_id                       = var.azure_tenant_id
+  azure_client_id_entra                 = var.azure_client_id_entra
+  allowed_origins                       = "https://${azurerm_static_web_app.ui.default_host_name}"
+  min_replicas                          = 0
+  max_replicas                          = 2
+  cpu                                   = var.container_app_cpu
+  memory                                = var.container_app_memory
+  tags                                  = local.tags
+}
+
+module "api_staging" {
+  source = "./modules/container_app"
+
+  name                                  = "${var.prefix}-api-staging"
+  environment                           = "staging"
+  resource_group_name                   = azurerm_resource_group.rg.name
+  container_app_environment_id          = azurerm_container_app_environment.env.id
+  acr_login_server                      = azurerm_container_registry.acr.login_server
+  acr_id                                = azurerm_container_registry.acr.id
+  storage_account_url                   = "https://${azurerm_storage_account.storage.name}.blob.core.windows.net"
+  storage_container_name                = azurerm_storage_container.files_staging.name
+  storage_container_resource_manager_id = azurerm_storage_container.files_staging.resource_manager_id
+  key_vault_id                          = azurerm_key_vault.kv.id
+  key_vault_url                         = azurerm_key_vault.kv.vault_uri
+  azure_tenant_id                       = var.azure_tenant_id
+  azure_client_id_entra                 = var.azure_client_id_entra
+  allowed_origins                       = "https://${azurerm_static_web_app.ui.default_host_name}"
+  min_replicas                          = 0
+  max_replicas                          = 1
+  cpu                                   = var.container_app_cpu
+  memory                                = var.container_app_memory
+  tags                                  = merge(local.tags, { environment = "staging" })
+}
 # Stores all application secrets (Fakturownia, Zoho, KSeF, Google Ads).
 # Container App reads them via managed identity — no secrets in env vars or code.
 
@@ -226,15 +196,6 @@ resource "azurerm_key_vault" "kv" {
   }
 }
 
-# ── RBAC: Container App → Key Vault Secrets User ──────────────────────────────
-
-resource "azurerm_role_assignment" "app_kv_secrets_user" {
-  scope                = azurerm_key_vault.kv.id
-  role_definition_name = "Key Vault Secrets User"
-  principal_id         = azurerm_container_app.api.identity[0].principal_id
-  depends_on           = [azurerm_container_app.api]
-}
-
 # ── Static Web App (frontend) ──────────────────────────────────────────────────
 # SWA serves the JS/React/Vue bundle from Azure CDN.
 # /api/* routes are proxied by the SWA edge to the Container App above;
@@ -248,24 +209,6 @@ resource "azurerm_static_web_app" "ui" {
   sku_tier            = "Standard"
   sku_size            = "Standard"
   tags                = local.tags
-}
-
-# ── RBAC: Container App → AcrPull ─────────────────────────────────────────────
-
-resource "azurerm_role_assignment" "app_acr_pull" {
-  scope                = azurerm_container_registry.acr.id
-  role_definition_name = "AcrPull"
-  principal_id         = azurerm_container_app.api.identity[0].principal_id
-  depends_on           = [azurerm_container_app.api]
-}
-
-# ── RBAC: Container App → Storage Blob Data Reader (on the container only) ────
-
-resource "azurerm_role_assignment" "app_storage_reader" {
-  scope                = azurerm_storage_container.files.resource_manager_id
-  role_definition_name = "Storage Blob Data Reader"
-  principal_id         = azurerm_container_app.api.identity[0].principal_id
-  depends_on           = [azurerm_container_app.api]
 }
 
 # ── User-Assigned Identity for GitHub Actions (OIDC) ──────────────────────────

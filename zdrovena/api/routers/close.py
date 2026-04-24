@@ -5,11 +5,14 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from zdrovena.api.auth import Principal, require_accountant_or_admin
-from zdrovena.api.models import CloseRequest, CloseResponse
+from zdrovena.api.models import CloseRequest, CloseResponse, CloseStateResponse
+from zdrovena.common.storage import get_storage_service
+from zdrovena.month_closing.config import BASE_DIR, POLISH_MONTHS
 from zdrovena.month_closing.orchestrator import MonthCloseOrchestrator
+from zdrovena.month_closing.state import PipelineState
 
 logger = logging.getLogger("zdrovena.api.routers.close")
 router = APIRouter(prefix="/close", tags=["close"])
@@ -62,3 +65,22 @@ def run_close(
         ) from exc
 
     return CloseResponse.from_close_report(report)
+
+
+@router.get(
+    "/state",
+    response_model=CloseStateResponse,
+    summary="Get pipeline checkpoint state for a given month",
+)
+def get_close_state(
+    year: int = Query(...),
+    month: int = Query(..., ge=1, le=12),
+    principal: Annotated[Principal, Depends(require_accountant_or_admin)] = None,
+) -> CloseStateResponse:
+    """Return which pipeline steps have already been completed for the given month."""
+    month_pl = POLISH_MONTHS[month - 1]
+    month_dir = BASE_DIR / str(year) / month_pl
+    storage = get_storage_service()
+    blob_key = f"faktury/{year}/{month_pl}/.state.json"
+    state = PipelineState(month_dir, storage=storage, blob_key=blob_key)
+    return CloseStateResponse(completed_steps=state.completed_steps)
