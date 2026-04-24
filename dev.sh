@@ -5,9 +5,9 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 # Backend
 source "$ROOT/.venv/bin/activate"
+# Load dev env vars from .env.local (copy from .env.template, never commit)
+[ -f "$ROOT/.env.local" ] && source "$ROOT/.env.local"
 AZURE_AUTH_DISABLED=true \
-AZURE_TENANT_ID=a2e78da5-20fe-4ebe-b625-02652d87fda6 \
-AZURE_CLIENT_ID=7a690aca-4a5f-4317-bd89-93b71e0db012 \
 uvicorn zdrovena.api.main:app --reload --port 8000 &
 BACKEND_PID=$!
 
