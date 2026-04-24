@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v1.1.1 (2026-04-24)
+
+### Bug Fixes
+
+- **frontend**: Prefix SWA build env vars with VITE_ so Vite picks them up
+  ([#13](https://github.com/PiotrGry/zdrovena-reconciliation/pull/13),
+  [`f3d365c`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/f3d365ca54d4e2ef5f79a250281458f160134093))
+
+
 ## v1.1.0 (2026-04-24)
 
 ### Bug Fixes
