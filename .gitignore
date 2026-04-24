@@ -9,6 +9,10 @@ build/
 # Virtual environment
 .venv/
 
+# Node
+node_modules/
+frontend/dist/
+
 # IDE
 .idea/
 .vscode/
@@ -17,6 +21,8 @@ build/
 
 # Secrets
 .env
+.env.local
+.env.*.local
 
 # OS
 .DS_Store

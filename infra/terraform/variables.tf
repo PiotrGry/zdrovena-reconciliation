@@ -33,7 +33,7 @@ variable "azure_tenant_id" {
 }
 
 variable "azure_client_id_entra" {
-  description = "Entra ID app registration client ID used for JWT audience validation (AZURE_CLIENT_ID)"
+  description = "Entra ID app registration client ID (zdrovena-api) used for JWT audience validation — set as Container App env var AZURE_CLIENT_ID and GitHub Secret AZURE_API_CLIENT_ID"
   type        = string
   default     = ""
 }

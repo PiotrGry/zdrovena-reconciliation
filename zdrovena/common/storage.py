@@ -14,9 +14,10 @@ Resolution (get_storage_service factory):
 
 Download model (RBAC, no SAS):
   • Blob container: private, no public access
-  • Required role on container: ``Storage Blob Data Reader`` assigned to the app’s managed identity
-  • Clients call  GET /files/download/{key}  on FastAPI — never a direct blob URL
+  • Required role on container: ``Storage Blob Data Contributor`` assigned to the app's managed identity
+  • Clients call  GET /files/{key}  on FastAPI — never a direct blob URL
   • FastAPI calls  storage.stream(key)  and returns StreamingResponse authenticated by DefaultAzureCredential
+  • Clients upload via  PUT /files/{key}  — requires zdrovena-accountant or zdrovena-admin role
 
 Usage::
 
@@ -35,16 +36,17 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import BinaryIO, Protocol, runtime_checkable
 
 logger = logging.getLogger("zdrovena.common.storage")
 
 try:
-    from azure.storage.blob import BlobServiceClient
+    from azure.storage.blob import BlobServiceClient, ContentSettings
 
     _AZURE_STORAGE_AVAILABLE = True
 except ImportError:
     BlobServiceClient = None  # type: ignore[assignment,misc]
+    ContentSettings = None  # type: ignore[assignment,misc]
     _AZURE_STORAGE_AVAILABLE = False
 
 try:
@@ -72,6 +74,9 @@ class BlobFile:
 @runtime_checkable
 class StorageService(Protocol):
     def upload(self, local_path: Path, key: str) -> None: ...
+    def upload_stream(
+        self, data: BinaryIO, key: str, content_type: str = "application/octet-stream"
+    ) -> None: ...
     def download(self, key: str, local_path: Path) -> None: ...
     def stream(self, key: str, chunk_size: int = 4 * 1024 * 1024) -> Iterator[bytes]: ...
     def list_files(self, prefix: str = "") -> list[BlobFile]: ...
@@ -93,6 +98,15 @@ class LocalStorageService:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(local_path, dest)
         logger.debug("LocalStorage: uploaded %s → %s", local_path, dest)
+
+    def upload_stream(
+        self, data: BinaryIO, key: str, content_type: str = "application/octet-stream"
+    ) -> None:
+        dest = self.root / key
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with dest.open("wb") as f:
+            shutil.copyfileobj(data, f)
+        logger.debug("LocalStorage: upload_stream → %s", dest)
 
     def download(self, key: str, local_path: Path) -> None:
         src = self.root / key
@@ -195,6 +209,15 @@ class BlobStorageService:
         with local_path.open("rb") as f:
             blob.upload_blob(f, overwrite=True)
         logger.debug("BlobStorage: uploaded %s → %s/%s", local_path, self._container, key)
+
+    def upload_stream(
+        self, data: BinaryIO, key: str, content_type: str = "application/octet-stream"
+    ) -> None:
+        blob = self._client.get_blob_client(container=self._container, blob=key)
+        blob.upload_blob(
+            data, overwrite=True, content_settings=ContentSettings(content_type=content_type)
+        )
+        logger.debug("BlobStorage: upload_stream → %s/%s", self._container, key)
 
     def download(self, key: str, local_path: Path) -> None:
         blob = self._client.get_blob_client(container=self._container, blob=key)

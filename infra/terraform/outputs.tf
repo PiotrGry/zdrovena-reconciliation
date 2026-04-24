@@ -10,12 +10,12 @@ output "acr_login_server" {
 
 output "container_app_name" {
   description = "Set as AZURE_CONTAINER_APP_NAME in GitHub Secrets"
-  value       = azurerm_container_app.api.name
+  value       = module.api.name
 }
 
 output "container_app_fqdn" {
   description = "Container App FQDN — only accessible via SWA proxy, not publicly documented"
-  value       = azurerm_container_app.api.latest_revision_fqdn
+  value       = module.api.fqdn
 }
 
 output "swa_url" {
@@ -36,8 +36,8 @@ output "storage_account_name" {
 # ── GitHub Secrets — copy these values after `terraform apply` ──────────────
 # Add them at: https://github.com/<owner>/<repo>/settings/secrets/actions
 
-output "github_secret_AZURE_CLIENT_ID" {
-  description = "OIDC identity client ID — set as GitHub Secret AZURE_CLIENT_ID"
+output "github_secret_AZURE_OIDC_SP_CLIENT_ID" {
+  description = "OIDC identity client ID (zdrovena-github-actions SP) — set as GitHub Secret AZURE_OIDC_SP_CLIENT_ID"
   value       = azurerm_user_assigned_identity.github_actions.client_id
 }
 

@@ -1,4 +1,6 @@
-"""GET /files/{key} — RBAC-authenticated blob streaming."""
+"""GET /files/{key} — RBAC-authenticated blob streaming.
+PUT /files/{key} — RBAC-authenticated blob upload (accountant or admin).
+"""
 
 from __future__ import annotations
 
@@ -6,10 +8,10 @@ import mimetypes
 import urllib.parse
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
-from zdrovena.api.auth import Principal, require_viewer_or_above
+from zdrovena.api.auth import Principal, require_accountant_or_admin, require_viewer_or_above
 from zdrovena.api.deps import StorageDep
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -81,3 +83,27 @@ def download_file(
         media_type=media_type or "application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.put(
+    "/{key:path}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Upload a file to storage",
+    responses={
+        204: {"description": "Uploaded successfully"},
+        400: {"description": "Invalid key"},
+        403: {"description": "Insufficient role"},
+    },
+)
+def upload_file(
+    key: str,
+    request: Request,
+    storage: StorageDep,
+    principal: Annotated[Principal, Depends(require_accountant_or_admin)],
+) -> None:
+    """Upload a file to storage. Requires accountant or admin role."""
+    normalised = urllib.parse.unquote(key)
+    if not normalised or ".." in normalised or normalised.startswith("/"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid key")
+    content_type = request.headers.get("content-type", "application/octet-stream")
+    storage.upload_stream(request.stream(), normalised, content_type)

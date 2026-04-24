@@ -1,0 +1,86 @@
+name: CI / CD
+
+# Orkiestrator — deleguje do reusable workflows:
+#   PR → develop          : quality-gate
+#   PR → main             : quality-gate + staging-smoke
+#   push main / dispatch  : deploy (promote → prod → release)
+#
+# Reusable workflows (prefiks _):
+#   _quality-gate.yml   : lint, typecheck, test, security, fitness, infra, docker-build
+#   _staging-smoke.yml  : staging deploy + smoke test
+#   _deploy.yml         : promote image → prod deploy → semantic release
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "zdrovena/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "Dockerfile"
+      - ".github/workflows/ci-cd.yml"
+      - ".github/workflows/_quality-gate.yml"
+      - ".github/workflows/_staging-smoke.yml"
+      - ".github/workflows/_deploy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "zdrovena/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "Dockerfile"
+      - ".github/workflows/ci-cd.yml"
+      - ".github/workflows/_deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: read
+  id-token: write
+
+concurrency:
+  group: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 'deploy-production' || format('ci-{0}', github.head_ref || github.ref_name) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ── Quality gate — każdy PR ────────────────────────────────────────────────
+  quality-gate:
+    name: Quality gate
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/_quality-gate.yml
+    secrets: inherit
+
+  # ── Staging smoke — tylko PR → main ───────────────────────────────────────
+  staging:
+    name: Staging smoke
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    needs: quality-gate
+    uses: ./.github/workflows/_staging-smoke.yml
+    secrets: inherit
+
+  # ── CI Gate — jeden wymagany check do branch protection rules ─────────────
+  ci-gate:
+    name: CI Gate
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs: [quality-gate, staging]
+    steps:
+      - name: Check all jobs passed
+        run: |
+          results='${{ toJSON(needs.*.result) }}'
+          echo "Job results: $results"
+          if echo "$results" | grep -qE '"failure"|"cancelled"'; then
+            echo "One or more CI jobs failed or were cancelled."
+            exit 1
+          fi
+          echo "All CI jobs passed."
+
+  # ── Production deploy — push main lub workflow_dispatch ───────────────────
+  deploy:
+    name: Deploy production
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/_deploy.yml
+    secrets: inherit
