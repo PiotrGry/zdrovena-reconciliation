@@ -14,6 +14,7 @@ on:
     branches: [develop, main]
     paths:
       - "frontend/**"
+      - ".github/workflows/frontend.yml"
   workflow_dispatch:
 
 permissions:
@@ -140,6 +141,58 @@ jobs:
           output_location: "dist"
           skip_api_build: true
           skip_app_build: true
+
+  smoke-test-staging:
+    name: Smoke test — staging auth + app
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    steps:
+      - name: Wait for SWA propagation
+        run: sleep 20
+
+      - name: Check staging app loads (HTTP 200)
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
+            "https://icy-water-0e2b04d03-staging.7.azurestaticapps.net")
+          echo "HTTP status: $HTTP"
+          [ "$HTTP" = "200" ] || (echo "FAIL: staging returned $HTTP" && exit 1)
+
+      - name: Check auth config baked into bundle (no undefined tenant)
+        run: |
+          BASE="https://icy-water-0e2b04d03-staging.7.azurestaticapps.net"
+          # Get the JS bundle URL from the HTML
+          BUNDLE=$(curl -s --max-time 15 "$BASE" \
+            | grep -o 'src="/assets/[^"]*\.js"' | head -1 \
+            | sed 's/src="//;s/"//')
+          echo "Bundle: $BUNDLE"
+          [ -n "$BUNDLE" ] || (echo "FAIL: no JS bundle found in HTML" && exit 1)
+          # Download bundle and check authority string
+          CONTENT=$(curl -s --max-time 20 "$BASE$BUNDLE")
+          # Must NOT contain undefined as the tenant segment
+          if echo "$CONTENT" | grep -q 'microsoftonline\.com/undefined'; then
+            echo "FAIL: VITE_AZURE_TENANT_ID is 'undefined' in bundle — env var not injected at build time"
+            exit 1
+          fi
+          # Must contain a real tenant GUID (UUID pattern) in the authority
+          if ! echo "$CONTENT" | grep -qE 'microsoftonline\.com/[0-9a-f]{8}-[0-9a-f]{4}'; then
+            echo "FAIL: no tenant GUID found in authority URL — auth will not work"
+            exit 1
+          fi
+          echo "PASS: tenant GUID present in bundle"
+
+      - name: Check API client ID baked into bundle (no undefined client)
+        run: |
+          BASE="https://icy-water-0e2b04d03-staging.7.azurestaticapps.net"
+          BUNDLE=$(curl -s --max-time 15 "$BASE" \
+            | grep -o 'src="/assets/[^"]*\.js"' | head -1 \
+            | sed 's/src="//;s/"//')
+          CONTENT=$(curl -s --max-time 20 "$BASE$BUNDLE")
+          if echo "$CONTENT" | grep -q 'api://undefined'; then
+            echo "FAIL: VITE_AZURE_API_CLIENT_ID is 'undefined' in bundle"
+            exit 1
+          fi
+          echo "PASS: API client ID present in bundle"
 
   close-pr-preview:
     name: Close PR preview

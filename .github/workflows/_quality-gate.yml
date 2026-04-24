@@ -179,3 +179,49 @@ jobs:
             --label "git.sha=${{ github.sha }}" \
             -t zdrovena-api:ci-${{ github.sha }} \
             .
+
+  # PR→main only: verify staging SWA has real auth config baked in.
+  # Catches VITE_ env vars not injected at build time before anything hits prod.
+  frontend-smoke:
+    name: Frontend smoke — staging auth config
+    if: github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check staging app loads
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
+            "https://icy-water-0e2b04d03-staging.7.azurestaticapps.net")
+          echo "HTTP: $HTTP"
+          [ "$HTTP" = "200" ] || (echo "FAIL: staging returned $HTTP" && exit 1)
+
+      - name: Check tenant GUID baked into JS bundle
+        run: |
+          BASE="https://icy-water-0e2b04d03-staging.7.azurestaticapps.net"
+          BUNDLE=$(curl -s --max-time 15 "$BASE" \
+            | grep -o 'src="/assets/[^"]*\.js"' | head -1 \
+            | sed 's/src="//;s/"//')
+          echo "Bundle: $BUNDLE"
+          [ -n "$BUNDLE" ] || (echo "FAIL: no JS bundle in HTML" && exit 1)
+          CONTENT=$(curl -s --max-time 20 "$BASE$BUNDLE")
+          if echo "$CONTENT" | grep -q 'microsoftonline\.com/undefined'; then
+            echo "FAIL: VITE_AZURE_TENANT_ID=undefined in bundle"
+            exit 1
+          fi
+          if ! echo "$CONTENT" | grep -qE 'microsoftonline\.com/[0-9a-f]{8}-[0-9a-f]{4}'; then
+            echo "FAIL: no tenant GUID in authority — check AZURE_TENANT_ID secret"
+            exit 1
+          fi
+          echo "PASS: tenant GUID present in bundle"
+
+      - name: Check API client ID baked into JS bundle
+        run: |
+          BASE="https://icy-water-0e2b04d03-staging.7.azurestaticapps.net"
+          BUNDLE=$(curl -s --max-time 15 "$BASE" \
+            | grep -o 'src="/assets/[^"]*\.js"' | head -1 \
+            | sed 's/src="//;s/"//')
+          CONTENT=$(curl -s --max-time 20 "$BASE$BUNDLE")
+          if echo "$CONTENT" | grep -q 'api://undefined'; then
+            echo "FAIL: VITE_AZURE_API_CLIENT_ID=undefined in bundle"
+            exit 1
+          fi
+          echo "PASS: API client ID present in bundle"
