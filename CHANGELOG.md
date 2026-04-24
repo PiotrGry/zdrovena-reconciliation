@@ -1,5 +1,39 @@
 # CHANGELOG
 
+## v1.1.0 (2026-04-24)
+
+### Features
+
+- **API + Frontend:** Sales and cost invoice views now live — `/invoices/sales` and
+  `/invoices/products` endpoints serve paginated Fakturownia data to the React dashboard.
+  Sales view is searchable and filterable by month/year. Products view shows the full catalog.
+
+- **CI/CD overhaul:** Single `ci-cd.yml` orchestrator delegates to reusable workflows
+  (`_quality-gate.yml`, `_staging-smoke.yml`, `_deploy.yml`). Staging teardown after
+  smoke tests eliminates idle Container App cost. Frontend gets its own `frontend.yml`
+  pipeline with SWA deploy.
+
+### Bug Fixes
+
+- **Infra:** `lifecycle` `ignore_changes` for Container App image prevents Terraform
+  from reverting CI-deployed images on next `terraform apply`. OIDC secrets renamed
+  to match new workflow structure.
+
+- **Deploy:** Use `staging-latest` tag to bridge SHA mismatch when promoting
+  develop → main (CI tags as `staging-<develop-sha>` but merge commit has a different SHA).
+
+- **CI resilience:** Fail-fast on `Failed` Container App state, extended smoke test
+  retries (5×10s → 18×10s) for cold-start latency. Min-replicas set to 1 on staging
+  deploy to eliminate cold-start timeout.
+
+- **Security:** Azure tenant and client IDs moved from `dev.sh` to `.env.template`;
+  `dev.sh` now reads from `.env.local` instead of hardcoding values.
+
+### Documentation
+
+- `CONTRIBUTING.md` added: branching strategy (`develop → main`), commit conventions,
+  quality gate commands, RBAC roles, KSeF safety note.
+
 
 ## v1.0.0 (2026-04-20)
 
