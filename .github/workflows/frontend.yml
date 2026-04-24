@@ -79,8 +79,8 @@ jobs:
           deployment_environment: staging
           skip_api_build: true
         env:
-          AZURE_API_CLIENT_ID: ${{ secrets.AZURE_STAGING_API_CLIENT_ID || secrets.AZURE_API_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          VITE_AZURE_API_CLIENT_ID: ${{ secrets.AZURE_STAGING_API_CLIENT_ID || secrets.AZURE_API_CLIENT_ID }}
+          VITE_AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
   deploy:
     name: Deploy to SWA (production)
@@ -116,8 +116,8 @@ jobs:
           output_location: "dist"
           skip_api_build: true
         env:
-          AZURE_API_CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          VITE_AZURE_API_CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
+          VITE_AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
   close-pr-preview:
     name: Close PR preview
