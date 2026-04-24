@@ -1,9 +1,10 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useAuth } from '../auth'
 import { useT } from '../lang'
+import { FEATURES } from '../features'
 import { PageHead } from '../components/PageHead'
 import { Icon } from '../components/Icon'
-import { fmtBytes, fmtDate, KPIS_STUB } from '../data'
+import { fmtBytes, fmtDate, MONTHS_PL, PIPELINE_STEPS } from '../data'
 
 function extOf(name) {
     const m = name?.match(/\.([^.]+)$/)
@@ -41,6 +42,7 @@ export default function FilesView() {
     const [sortAsc, setSortAsc] = useState(true)
     const [dragOver, setDragOver] = useState(false)
     const [toast, setToast] = useState(null)
+    const [pipelineSteps, setPipelineSteps] = useState([])
     const fileInput = useRef(null)
     const loadedRef = useRef(false)
 
@@ -66,6 +68,27 @@ export default function FilesView() {
             setLoading(false)
         }
     }, [getToken, prefix])
+
+    useEffect(() => {
+        if (!FEATURES.kpi_pipeline) return
+        const fetchPipelineState = async () => {
+            try {
+                const token = await getToken()
+                const now = new Date()
+                const res = await fetch(
+                    `/api/close/state?year=${now.getFullYear()}&month=${now.getMonth() + 1}`,
+                    { headers: { Authorization: `Bearer ${token}` } }
+                )
+                if (res.ok) {
+                    const data = await res.json()
+                    setPipelineSteps(data.completed_steps ?? [])
+                }
+            } catch {
+                // non-blocking
+            }
+        }
+        fetchPipelineState()
+    }, [getToken])
 
     // Load on mount
     if (!loadedRef.current) { loadedRef.current = true; loadFiles('') }
@@ -166,16 +189,52 @@ export default function FilesView() {
                 }
             />
 
-            {/* KPI row */}
-            <div className="kpi-row">
-                {KPIS_STUB.map((k, i) => (
-                    <div className="kpi" key={i} style={{ '--kpi-accent': k.accent }}>
-                        <div className="kpi-label">{k.label}</div>
-                        <div className="kpi-value">{k.value}</div>
-                        <div className="kpi-meta">{k.meta}</div>
-                    </div>
-                ))}
-            </div>
+            {/* KPI row — tylko flagi włączone */}
+            {(FEATURES.kpi_files_count || FEATURES.kpi_pipeline || FEATURES.kpi_revenue || FEATURES.kpi_sales_count) && (
+                <div className="kpi-row">
+                    {FEATURES.kpi_revenue && (
+                        <div className="kpi" style={{ '--kpi-accent': 'var(--primary)' }}>
+                            <div className="kpi-label">{T.kpi_revenue}</div>
+                            <div className="kpi-value">—</div>
+                            <div className="kpi-meta">{T.kpi_no_api}</div>
+                        </div>
+                    )}
+                    {FEATURES.kpi_sales_count && (
+                        <div className="kpi" style={{ '--kpi-accent': 'var(--accent)' }}>
+                            <div className="kpi-label">{T.kpi_sales_count}</div>
+                            <div className="kpi-value">—</div>
+                            <div className="kpi-meta">{T.kpi_no_api}</div>
+                        </div>
+                    )}
+                    {FEATURES.kpi_files_count && (() => {
+                        const allFiles = items.filter(i => !(i.is_directory || i.type === 'folder' || (i.key || i.name || '').endsWith('/')))
+                        const today = new Date().toISOString().slice(0, 10)
+                        const uploadedToday = allFiles.filter(i => (i.last_modified ?? '').startsWith(today)).length
+                        return (
+                            <div className="kpi" style={{ '--kpi-accent': 'var(--success)' }}>
+                                <div className="kpi-label">{T.kpi_files}</div>
+                                <div className="kpi-value">{loading ? '…' : allFiles.length.toLocaleString('pl-PL')}</div>
+                                <div className="kpi-meta">
+                                    {uploadedToday > 0 ? `${uploadedToday} ${T.kpi_today}` : T.kpi_files_sub}
+                                </div>
+                            </div>
+                        )
+                    })()}
+                    {FEATURES.kpi_pipeline && (() => {
+                        const now = new Date()
+                        const done = pipelineSteps.length
+                        const total = PIPELINE_STEPS.length
+                        const isReady = done >= total
+                        return (
+                            <div className="kpi" style={{ '--kpi-accent': isReady ? 'var(--success)' : 'var(--warning)' }}>
+                                <div className="kpi-label">{T.kpi_pipeline}</div>
+                                <div className="kpi-value">{isReady ? T.kpi_pipeline_ready : `${done}/${total}`}</div>
+                                <div className="kpi-meta">{MONTHS_PL[now.getMonth()]} {now.getFullYear()}</div>
+                            </div>
+                        )
+                    })()}
+                </div>
+            )}
 
             {/* Breadcrumbs */}
             <div className="crumbs">

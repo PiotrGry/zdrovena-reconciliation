@@ -69,3 +69,55 @@ class ErrorResponse(BaseModel):
 
 class CloseStateResponse(BaseModel):
     completed_steps: list[str]
+
+
+class InvoiceItem(BaseModel):
+    id: int
+    number: str
+    kind: str
+    sell_date: str | None
+    issue_date: str | None
+    buyer_name: str | None
+    price_net: str | None
+    price_tax: str | None
+    price_gross: str | None
+    currency: str | None
+    status: str | None
+
+    @classmethod
+    def from_fakturownia(cls, inv: dict[str, Any]) -> InvoiceItem:
+        return cls(
+            id=inv["id"],
+            number=inv.get("number", ""),
+            kind=inv.get("kind", "vat"),
+            sell_date=inv.get("sell_date") or inv.get("issue_date"),
+            issue_date=inv.get("issue_date"),
+            buyer_name=inv.get("buyer_name"),
+            price_net=str(inv["price_net"]) if inv.get("price_net") is not None else None,
+            price_tax=str(inv["price_tax"]) if inv.get("price_tax") is not None else None,
+            price_gross=str(inv["price_gross"]) if inv.get("price_gross") is not None else None,
+            currency=inv.get("currency", "PLN"),
+            status=inv.get("status"),
+        )
+
+
+class ProductItem(BaseModel):
+    id: int
+    name: str
+    code: str | None
+    price_net: str | None
+    price_gross: str | None
+    currency: str | None
+    active: bool
+
+    @classmethod
+    def from_fakturownia(cls, p: dict[str, Any]) -> ProductItem:
+        return cls(
+            id=p["id"],
+            name=p.get("name", ""),
+            code=p.get("code") or p.get("sku"),
+            price_net=str(p["price_net"]) if p.get("price_net") is not None else None,
+            price_gross=str(p["price_gross"]) if p.get("price_gross") is not None else None,
+            currency=p.get("currency", "PLN"),
+            active=not p.get("disabled", False),
+        )
