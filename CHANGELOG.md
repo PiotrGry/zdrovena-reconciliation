@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v1.1.2 (2026-04-24)
+
+### Bug Fixes
+
+- **frontend**: Pre-build with VITE_ env vars before SWA deploy (skip_app_build)
+  ([#14](https://github.com/PiotrGry/zdrovena-reconciliation/pull/14),
+  [`f2dae2c`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/f2dae2cc653390eb340cc4339cc2973dc7061bdf))
+
+
 ## v1.1.1 (2026-04-24)
 
 ### Bug Fixes
