@@ -28,6 +28,7 @@ from zdrovena.audit.sections import check_numbering
 from zdrovena.common import FakturowniaClient
 from zdrovena.common.formatting import to_decimal
 from zdrovena.common.secrets import get_secret as _get_secret_impl
+from zdrovena.common.storage import get_storage_service
 from zdrovena.month_closing.canva_downloader import download_canva_invoice
 from zdrovena.month_closing.config import (
     ACCOUNTANT_EMAIL,
@@ -121,8 +122,14 @@ class MonthCloseOrchestrator:
         self.sales_dir = self.month_dir / "sprzedaz"
         self.costs_dir = self.month_dir / "koszty"
 
+        self.storage = get_storage_service()
+        _blob_prefix = f"faktury/{year}/{self.month_pl}"
         self.report = CloseReport()
-        self.state = PipelineState(self.month_dir)
+        self.state = PipelineState(
+            self.month_dir,
+            storage=self.storage,
+            blob_key=f"{_blob_prefix}/.state.json",
+        )
         self.out = ConsoleReporter()
 
     @staticmethod
@@ -655,6 +662,14 @@ class MonthCloseOrchestrator:
         zip_path = create_month_archive(self.month_dir, self.month_pl, self.year)
         self.report.zip_path = zip_path
         self.out.ok(zip_path.name)
+        # Upload ZIP to Blob Storage
+        blob_zip_key = f"faktury/{self.year}/{self.month_pl}/{zip_path.name}"
+        try:
+            self.storage.upload(zip_path, blob_zip_key)
+            self.out.ok(f"ZIP uploaded to blob → {blob_zip_key}")
+        except Exception as exc:
+            logger.warning("Could not upload ZIP to blob: %s", exc)
+            self.report.warnings.append(f"ZIP blob upload failed: {exc}")
         self._mark_step_done("ZIP archive")
 
     def _step_7_email(self) -> None:
@@ -681,6 +696,9 @@ class MonthCloseOrchestrator:
         self.report.email_sent = True
         self.out.ok(f"Email sent → {ACCOUNTANT_EMAIL}")
         self._mark_step_done("Email")
+        # Delete blob checkpoint — pipeline complete
+        self.state.reset()
+        self.out.ok("Pipeline checkpoint removed from blob")
 
     # ── Summary & helpers ────────────────────────────────────────────────────
 

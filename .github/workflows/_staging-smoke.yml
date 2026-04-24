@@ -1,0 +1,72 @@
+name: Staging Smoke (reusable)
+
+on:
+  workflow_call:
+
+jobs:
+  staging-smoke:
+    name: Staging deploy & smoke
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      STAGING_APP: zdrovena-api-staging
+      RG: zdrovena-rg
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_OIDC_SP_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to ACR
+        run: az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
+
+      - name: Build & push staging image
+        env:
+          IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api
+        run: |
+          docker build \
+            --label "git.sha=${{ github.sha }}" \
+            --label "git.ref=${{ github.head_ref }}" \
+            -t "$IMAGE:staging-${{ github.sha }}" \
+            .
+          docker push "$IMAGE:staging-${{ github.sha }}"
+          docker tag  "$IMAGE:staging-${{ github.sha }}" "$IMAGE:staging-latest"
+          docker push "$IMAGE:staging-latest"
+
+      - name: Wait for staging Container App to be ready
+        run: bash scripts/ci/wait-containerapp.sh "$STAGING_APP" "$RG" 18 10
+
+      - name: Deploy API to staging
+        run: |
+          az containerapp update \
+            --name            "$STAGING_APP" \
+            --resource-group  "$RG" \
+            --image           "${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:staging-${{ github.sha }}" \
+            --min-replicas    1
+
+      - name: Wait for staging deployment to complete
+        run: bash scripts/ci/wait-containerapp.sh "$STAGING_APP" "$RG" 36 10
+
+      - name: Resolve staging FQDN
+        id: url
+        run: |
+          FQDN=$(az containerapp show \
+            --name "$STAGING_APP" --resource-group "$RG" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          echo "fqdn=$FQDN" >> $GITHUB_OUTPUT
+
+      - name: API smoke test
+        env:
+          CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
+        run: bash scripts/ci/smoke-test.sh "https://${{ steps.url.outputs.fqdn }}" "$CLIENT_ID"
+
+      - name: Teardown staging (scale to zero)
+        if: always()
+        run: bash scripts/ci/teardown-staging.sh "$STAGING_APP" "$RG"

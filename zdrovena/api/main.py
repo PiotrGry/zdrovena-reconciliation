@@ -10,7 +10,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from zdrovena.api.routers import close, files
+from zdrovena.api.routers import close, files, invoices
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -38,12 +38,13 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
 app.include_router(close.router)
 app.include_router(files.router)
+app.include_router(invoices.router)
 
 
 @app.get("/health", tags=["health"])
