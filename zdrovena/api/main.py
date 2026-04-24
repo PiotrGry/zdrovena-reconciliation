@@ -10,7 +10,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from zdrovena.api.routers import close, files
+from zdrovena.api.routers import close, files, invoices
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -44,6 +44,7 @@ app.add_middleware(
 
 app.include_router(close.router)
 app.include_router(files.router)
+app.include_router(invoices.router)
 
 
 @app.get("/health", tags=["health"])
