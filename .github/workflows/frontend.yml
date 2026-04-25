@@ -1,25 +1,24 @@
-name: Frontend — SWA Deploy
+name: Frontend — Quality Gate
 
-# Deploy frontend do Azure Static Web Apps:
-#   PR → develop : preview deployment (osobny URL)
-#   push develop : deploy na środowisko dev/staging
-#   push main    : deploy na produkcję
+# Push to develop  → lint + audit only (no deploy)
+# PR develop→main  → full test suite handles frontend deploy (see _full-test-suite.yml)
+# Push to main     → production SWA deploy
 
 on:
-  pull_request:
-    branches: [develop, main]
-    paths:
-      - "frontend/**"
   push:
     branches: [develop, main]
     paths:
       - "frontend/**"
       - ".github/workflows/frontend.yml"
+  pull_request:
+    branches: [develop]
+    paths:
+      - "frontend/**"
   workflow_dispatch:
 
 permissions:
   contents: read
-  pull-requests: write  # SWA CLI dodaje komentarz z preview URL
+  pull-requests: write
 
 jobs:
   quality-gate:
@@ -27,78 +26,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: npm
           cache-dependency-path: frontend/package-lock.json
-
       - name: Install dependencies
         working-directory: frontend
         run: npm ci
-
       - name: ESLint
         working-directory: frontend
         run: npm run lint
-
       - name: npm audit (high+)
         working-directory: frontend
         run: npm audit --audit-level=high
 
-  deploy-staging:
-    name: Deploy to SWA (staging)
-    runs-on: ubuntu-latest
-    needs: quality-gate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-    environment: staging
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Generate version.json
-        run: |
-          API_VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/version = "//;s/"//')
-          MAJOR=$(echo "$API_VERSION" | cut -d. -f1)
-          cat > frontend/public/version.json <<EOF
-          {
-            "frontend_version": "$API_VERSION",
-            "api_version": "$API_VERSION",
-            "min_api_major": $MAJOR,
-            "git_sha": "${{ github.sha }}",
-            "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          }
-          EOF
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Build frontend (staging)
-        working-directory: frontend
-        env:
-          VITE_AZURE_API_CLIENT_ID: ${{ secrets.AZURE_STAGING_API_CLIENT_ID || secrets.AZURE_API_CLIENT_ID }}
-          VITE_AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-        run: npm ci && npm run build
-
-      - name: Deploy to SWA staging environment
-        uses: Azure/static-web-apps-deploy@v1
-        with:
-          azure_static_web_apps_api_token: ${{ secrets.SWA_DEPLOYMENT_TOKEN }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          action: "upload"
-          app_location: "frontend/dist"
-          output_location: ""
-          deployment_environment: staging
-          skip_api_build: true
-          skip_app_build: true
-
+  # Production deploy — push to main only
+  # PR develop→main deploy is handled by _full-test-suite.yml
   deploy:
     name: Deploy to SWA (production)
     runs-on: ubuntu-latest
     needs: quality-gate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment: production
     steps:
       - uses: actions/checkout@v4
@@ -116,12 +65,11 @@ jobs:
             "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           }
           EOF
-          echo "Generated version.json for API v$API_VERSION"
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Build frontend (production)
@@ -136,63 +84,11 @@ jobs:
         with:
           azure_static_web_apps_api_token: ${{ secrets.SWA_DEPLOYMENT_TOKEN }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          action: "upload"
-          app_location: "frontend/dist"
+          action: upload
+          app_location: frontend/dist
           output_location: ""
           skip_api_build: true
           skip_app_build: true
-
-  smoke-test-staging:
-    name: Smoke test — staging auth + app
-    runs-on: ubuntu-latest
-    needs: deploy-staging
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-    steps:
-      - name: Wait for SWA propagation
-        run: sleep 20
-
-      - name: Check staging app loads (HTTP 200)
-        run: |
-          HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
-            "https://icy-water-0e2b04d03-staging.7.azurestaticapps.net")
-          echo "HTTP status: $HTTP"
-          [ "$HTTP" = "200" ] || (echo "FAIL: staging returned $HTTP" && exit 1)
-
-      - name: Check auth config baked into bundle (no undefined tenant)
-        run: |
-          BASE="https://icy-water-0e2b04d03-staging.7.azurestaticapps.net"
-          # Get the JS bundle URL from the HTML
-          BUNDLE=$(curl -s --max-time 15 "$BASE" \
-            | grep -o 'src="/assets/[^"]*\.js"' | head -1 \
-            | sed 's/src="//;s/"//')
-          echo "Bundle: $BUNDLE"
-          [ -n "$BUNDLE" ] || (echo "FAIL: no JS bundle found in HTML" && exit 1)
-          # Download bundle and check authority string
-          CONTENT=$(curl -s --max-time 20 "$BASE$BUNDLE")
-          # Must NOT contain undefined as the tenant segment
-          if echo "$CONTENT" | grep -q 'microsoftonline\.com/undefined'; then
-            echo "FAIL: VITE_AZURE_TENANT_ID is 'undefined' in bundle — env var not injected at build time"
-            exit 1
-          fi
-          # Must contain a real tenant GUID (UUID pattern) in the authority
-          if ! echo "$CONTENT" | grep -qE 'microsoftonline\.com/[0-9a-f]{8}-[0-9a-f]{4}'; then
-            echo "FAIL: no tenant GUID found in authority URL — auth will not work"
-            exit 1
-          fi
-          echo "PASS: tenant GUID present in bundle"
-
-      - name: Check API client ID baked into bundle (no undefined client)
-        run: |
-          BASE="https://icy-water-0e2b04d03-staging.7.azurestaticapps.net"
-          BUNDLE=$(curl -s --max-time 15 "$BASE" \
-            | grep -o 'src="/assets/[^"]*\.js"' | head -1 \
-            | sed 's/src="//;s/"//')
-          CONTENT=$(curl -s --max-time 20 "$BASE$BUNDLE")
-          if echo "$CONTENT" | grep -q 'api://undefined'; then
-            echo "FAIL: VITE_AZURE_API_CLIENT_ID is 'undefined' in bundle"
-            exit 1
-          fi
-          echo "PASS: API client ID present in bundle"
 
   close-pr-preview:
     name: Close PR preview
@@ -203,4 +99,4 @@ jobs:
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.SWA_DEPLOYMENT_TOKEN }}
-          action: "close"
+          action: close
