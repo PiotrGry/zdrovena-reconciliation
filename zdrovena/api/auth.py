@@ -100,7 +100,11 @@ def _validate_token(token: str) -> Principal:
             detail="Auth service unavailable",
         ) from exc
 
-    audience = os.environ.get("AZURE_CLIENT_ID", "")
+    # v2 tokens have aud="api://<guid>", v1 tokens have aud="<guid>".
+    # python-jose accepts a list — try both so this works regardless of
+    # the app reg's accessTokenAcceptedVersion setting.
+    client_id = os.environ.get("AZURE_CLIENT_ID", "")
+    audience = [client_id, f"api://{client_id}"] if client_id else ""
     try:
         claims = jwt.decode(
             token,
