@@ -55,3 +55,15 @@ output "key_vault_url" {
   description = "Key Vault URI — set as AZURE_KEYVAULT_URL in .env.local and GitHub Secrets"
   value       = azurerm_key_vault.kv.vault_uri
 }
+
+output "application_insights_connection_string" {
+  description = "Set as APPLICATIONINSIGHTS_CONNECTION_STRING in Container App env vars (wire during Node.js migration)"
+  value       = azurerm_application_insights.ai.connection_string
+  sensitive   = true
+}
+
+output "application_insights_instrumentation_key" {
+  description = "App Insights instrumentation key"
+  value       = azurerm_application_insights.ai.instrumentation_key
+  sensitive   = true
+}

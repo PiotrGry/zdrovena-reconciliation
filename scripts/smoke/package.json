@@ -1,0 +1,14 @@
+{
+  "name": "zdrovena-smoke",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Extensible smoke test suite for zdrovena API + SWA",
+  "scripts": {
+    "test": "tsx runner.ts",
+    "test:verbose": "tsx runner.ts --verbose"
+  },
+  "dependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
