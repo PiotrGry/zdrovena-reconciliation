@@ -28,8 +28,6 @@ jobs:
     environment: staging
     outputs:
       image: ${{ steps.meta.outputs.image }}
-      staging-url: ${{ steps.staging-url.outputs.url }}
-      swa-staging-url: ${{ steps.swa-url.outputs.url }}
     steps:
       - uses: actions/checkout@v4
 
