@@ -73,9 +73,9 @@ def run_close(
     summary="Get pipeline checkpoint state for a given month",
 )
 def get_close_state(
+    principal: Annotated[Principal, Depends(require_accountant_or_admin)],
     year: int = Query(...),
     month: int = Query(..., ge=1, le=12),
-    principal: Annotated[Principal, Depends(require_accountant_or_admin)],
 ) -> CloseStateResponse:
     """Return which pipeline steps have already been completed for the given month."""
     month_pl = POLISH_MONTHS[month - 1]
