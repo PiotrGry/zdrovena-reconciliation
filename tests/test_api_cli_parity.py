@@ -31,7 +31,7 @@ class TestApiCliParity:
           from fastapi.testclient import TestClient
           from zdrovena.api.main import app
           client = TestClient(app)
-          api_result = client.post("/close", json={"year": 2025, "month": 6, "dry_run": True}).json()
+          api_result = client.post("/api/close", json={"year": 2025, "month": 6, "dry_run": True}).json()
 
           assert set(asdict(local_result).keys()) == set(api_result.keys())
         """

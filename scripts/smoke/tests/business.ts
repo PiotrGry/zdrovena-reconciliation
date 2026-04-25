@@ -25,7 +25,7 @@ const closeStateViewerAccessible: SmokeTest = {
     // Unauthenticated → should return 401 (not 403 or 500)
     // A 401 means the endpoint exists and auth is working correctly
     const res = await ctx.fetch(
-      `${ctx.apiUrl}/close/state?year=2026&month=4`,
+      `${ctx.apiUrl}/api/close/state?year=2026&month=4`,
       { timeoutMs: 8_000 }
     );
     // 401 = endpoint exists, requires auth (correct)

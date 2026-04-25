@@ -64,7 +64,7 @@ const unauthenticatedFilesReturns401: SmokeTest = {
   category: "api",
   async run(ctx: TestContext): Promise<TestResult> {
     const t0 = ms();
-    const res = await ctx.fetch(`${ctx.apiUrl}/files`, { timeoutMs: 8_000 });
+    const res = await ctx.fetch(`${ctx.apiUrl}/api/files`, { timeoutMs: 8_000 });
     const ok = res.status === 401 || res.status === 403;
     return {
       name: this.name,
@@ -82,7 +82,7 @@ const unauthenticatedInvoicesReturns401: SmokeTest = {
   category: "api",
   async run(ctx: TestContext): Promise<TestResult> {
     const t0 = ms();
-    const res = await ctx.fetch(`${ctx.apiUrl}/invoices/sales?year=2026&month=4`, { timeoutMs: 8_000 });
+    const res = await ctx.fetch(`${ctx.apiUrl}/api/invoices/sales?year=2026&month=4`, { timeoutMs: 8_000 });
     const ok = res.status === 401 || res.status === 403;
     return {
       name: this.name,

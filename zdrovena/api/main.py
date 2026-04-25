@@ -42,9 +42,11 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
-app.include_router(close.router)
-app.include_router(files.router)
-app.include_router(invoices.router)
+# SWA's linked backend routes /api/* to this Container App without stripping
+# the /api prefix, so we mount the routers under /api to match what arrives.
+app.include_router(close.router, prefix="/api")
+app.include_router(files.router, prefix="/api")
+app.include_router(invoices.router, prefix="/api")
 
 
 @app.get("/health", tags=["health"])
