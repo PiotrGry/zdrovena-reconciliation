@@ -39,6 +39,11 @@ def _get_fakturownia_client() -> FakturowniaClient:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Fakturownia credentials not configured: {exc}",
         ) from exc
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Fakturownia credentials not configured",
+        )
     return FakturowniaClient(api_token=token)
 
 

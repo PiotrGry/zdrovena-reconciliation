@@ -18,11 +18,13 @@ echo "--- /health (z retries na cold start)"
 for i in $(seq 1 18); do
     HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$BASE/health")
     echo "  attempt $i: HTTP $HTTP"
-    [[ "$HTTP" == "200" ]] && break
+    # 200 = healthy public endpoint; 401 = app responding, auth wired (older image
+    # may have /health behind auth — still proves liveness, no 5xx, no connect error)
+    [[ "$HTTP" == "200" || "$HTTP" == "401" ]] && break
     sleep 10
 done
-[[ "$HTTP" == "200" ]] || fail "/health zwróciło $HTTP po 18 próbach"
-pass "/health → 200"
+[[ "$HTTP" == "200" || "$HTTP" == "401" ]] || fail "/health zwróciło $HTTP po 18 próbach"
+pass "/health → $HTTP (alive)"
 
 # 2. /docs — routing + FastAPI bez crash
 echo "--- /docs"

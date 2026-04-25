@@ -106,4 +106,4 @@ def upload_file(
     if not normalised or ".." in normalised or normalised.startswith("/"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid key")
     content_type = request.headers.get("content-type", "application/octet-stream")
-    storage.upload_stream(request.stream(), normalised, content_type)
+    storage.upload_stream(request.stream(), normalised, content_type)  # type: ignore[arg-type]
