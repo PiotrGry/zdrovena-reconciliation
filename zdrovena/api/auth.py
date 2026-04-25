@@ -101,16 +101,16 @@ def _validate_token(token: str) -> Principal:
         ) from exc
 
     # v2 tokens have aud="api://<guid>", v1 tokens have aud="<guid>".
-    # python-jose accepts a list — try both so this works regardless of
-    # the app reg's accessTokenAcceptedVersion setting.
+    # python-jose's audience parameter accepts a list at runtime even though
+    # its type stubs only declare str | None.
     client_id = os.environ.get("AZURE_CLIENT_ID", "")
-    audience = [client_id, f"api://{client_id}"] if client_id else ""
+    audience: list[str] = [client_id, f"api://{client_id}"] if client_id else []
     try:
         claims = jwt.decode(
             token,
             jwks,
             algorithms=["RS256"],
-            audience=audience,
+            audience=audience,  # type: ignore[arg-type]
             options={"verify_exp": True},
         )
     except JWTError as exc:
