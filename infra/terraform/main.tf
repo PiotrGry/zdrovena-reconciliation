@@ -66,6 +66,7 @@ resource "azurerm_storage_account" "storage" {
   # checkov:skip=CKV2_AZURE_41: No SAS tokens issued — all access via managed identity (RBAC)
   # checkov:skip=CKV2_AZURE_1: Customer Managed Key not required — files are non-sensitive reports; Microsoft-managed encryption at rest is sufficient for this tier
   # checkov:skip=CKV2_AZURE_33: Private endpoint requires VNet not present in this architecture; access restricted via network_rules default_action=Deny + ip_rules allowlist + AzureServices bypass
+  # checkov:skip=CKV_AZURE_59: public_network_access_enabled=true required so the network_rules ip_rules allowlist works at all; default_action=Deny gives the same security guarantee
   # checkov:skip=CKV2_AZURE_21: Blob diagnostic logging (read requests) not configured — operational overhead not justified for this single-region non-critical storage
   name                            = "${replace(var.prefix, "-", "")}files"
   resource_group_name             = azurerm_resource_group.rg.name

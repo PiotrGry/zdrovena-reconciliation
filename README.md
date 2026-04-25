@@ -183,7 +183,7 @@ zdrovena setup --check                    # sprawdź co skonfigurowane
 
 | Secret | Opis |
 |--------|------|
-| `AZURE_OIDC_SP_CLIENT_ID` | Client ID SP `zdrovena-github-actions` (OIDC login) |
+| `AZURE_CLIENT_ID` | Client ID SP `zdrovena-github-actions` (OIDC login) |
 | `AZURE_TENANT_ID` | ID tenanta Entra ID |
 | `AZURE_SUBSCRIPTION_ID` | ID subskrypcji Azure |
 | `AZURE_API_CLIENT_ID` | Client ID App Registration `zdrovena-api` (JWT audience) |

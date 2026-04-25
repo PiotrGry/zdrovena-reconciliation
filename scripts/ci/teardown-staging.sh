@@ -12,7 +12,7 @@ az containerapp update \
     --name           "$APP" \
     --resource-group "$RG" \
     --min-replicas   0 \
-    --max-replicas   0 \
+    --max-replicas   1 \
     --output none
 
-echo "Staging '$APP' scaled to 0 — no idle costs."
+echo "Staging '$APP' scaled to min=0 max=1 — replicas drop to 0 when idle."
