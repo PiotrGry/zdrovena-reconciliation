@@ -13,6 +13,8 @@ jobs:
       id-token: write
       contents: read
     steps:
+      - uses: actions/checkout@v4
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
@@ -38,6 +40,8 @@ jobs:
       id-token: write
       contents: read
     steps:
+      - uses: actions/checkout@v4
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
