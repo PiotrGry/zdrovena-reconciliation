@@ -1,0 +1,31 @@
+name: Production Deploy
+
+# Push to main — promotes staging-latest image to prod, deploys, runs post-deploy
+# health checks, creates a semantic-release tag + GitHub Release.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "zdrovena/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "Dockerfile"
+      - ".github/workflows/prod-deploy.yml"
+      - ".github/workflows/_deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write  # release job pushes version bump + creates GitHub Release
+  id-token: write
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy
+    uses: ./.github/workflows/_deploy.yml
+    secrets: inherit
