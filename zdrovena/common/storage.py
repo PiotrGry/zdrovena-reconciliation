@@ -215,7 +215,7 @@ class BlobStorageService:
     ) -> None:
         blob = self._client.get_blob_client(container=self._container, blob=key)
         blob.upload_blob(
-            data, overwrite=True, content_settings=ContentSettings(content_type=content_type)
+            data, overwrite=True, content_settings=ContentSettings(content_type=content_type)  # type: ignore[misc]
         )
         logger.debug("BlobStorage: upload_stream → %s/%s", self._container, key)
 

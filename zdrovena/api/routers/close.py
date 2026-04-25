@@ -75,7 +75,7 @@ def run_close(
 def get_close_state(
     year: int = Query(...),
     month: int = Query(..., ge=1, le=12),
-    principal: Annotated[Principal, Depends(require_accountant_or_admin)] = None,
+    principal: Annotated[Principal, Depends(require_accountant_or_admin)],
 ) -> CloseStateResponse:
     """Return which pipeline steps have already been completed for the given month."""
     month_pl = POLISH_MONTHS[month - 1]
