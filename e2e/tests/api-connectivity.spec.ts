@@ -16,13 +16,13 @@ test.describe("API connectivity", () => {
 
   test("unauthenticated /files returns 401 not 500", async ({ request }) => {
     test.skip(!API_URL, "API_URL not set — skipping direct API tests");
-    const res = await request.get(`${API_URL}/files`);
+    const res = await request.get(`${API_URL}/api/files`);
     expect([401, 403]).toContain(res.status());
   });
 
   test("unauthenticated /invoices/sales returns 401 not 500", async ({ request }) => {
     test.skip(!API_URL, "API_URL not set — skipping direct API tests");
-    const res = await request.get(`${API_URL}/invoices/sales?year=2026&month=4`);
+    const res = await request.get(`${API_URL}/api/invoices/sales?year=2026&month=4`);
     expect([401, 403]).toContain(res.status());
   });
 });
