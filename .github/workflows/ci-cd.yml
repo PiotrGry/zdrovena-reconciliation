@@ -1,19 +1,23 @@
 name: CI / CD
 
 # Push to develop  → fast quality gate only (lint, typecheck, test, security)
-# PR develop→main  → quality gate + full test suite (staging deploy + smoke + E2E + AI verdict)
+# PR develop→main  → quality gate + full test suite (staging deploy + smoke + E2E)
 # Push to main     → production deploy
 
 on:
   push:
-    branches: [develop]
+    branches: [develop, main]
     paths:
       - "zdrovena/**"
       - "tests/**"
+      - "scripts/**"
       - "pyproject.toml"
       - "Dockerfile"
+      - "e2e/**"
       - ".github/workflows/ci-cd.yml"
       - ".github/workflows/_quality-gate.yml"
+      - ".github/workflows/_full-test-suite.yml"
+      - ".github/workflows/_deploy.yml"
   pull_request:
     branches: [main]
     paths:
@@ -26,14 +30,6 @@ on:
       - ".github/workflows/ci-cd.yml"
       - ".github/workflows/_quality-gate.yml"
       - ".github/workflows/_full-test-suite.yml"
-  push:
-    branches: [main]
-    paths:
-      - "zdrovena/**"
-      - "tests/**"
-      - "pyproject.toml"
-      - "Dockerfile"
-      - ".github/workflows/ci-cd.yml"
       - ".github/workflows/_deploy.yml"
   workflow_dispatch:
 
@@ -62,7 +58,7 @@ jobs:
     uses: ./.github/workflows/_quality-gate.yml
     secrets: inherit
 
-  # ── PR develop → main: full test suite (staging + smoke + E2E + AI) ───────
+  # ── PR develop → main: full test suite (staging + smoke + E2E) ────────────
   full-test-suite:
     name: Full test suite
     if: github.event_name == 'pull_request'
@@ -70,7 +66,7 @@ jobs:
     uses: ./.github/workflows/_full-test-suite.yml
     secrets: inherit
 
-  # ── CI Gate — single required check for branch protection ─────────────────
+  # ── CI Gate — single required check ───────────────────────────────────────
   ci-gate:
     name: CI Gate
     if: always() && github.event_name == 'pull_request'
@@ -82,12 +78,12 @@ jobs:
           results='${{ toJSON(needs.*.result) }}'
           echo "Job results: $results"
           if echo "$results" | grep -qE '"failure"|"cancelled"'; then
-            echo "One or more CI jobs failed or were cancelled."
+            echo "One or more CI jobs failed."
             exit 1
           fi
           echo "All CI jobs passed — ready to merge."
 
-  # ── Production deploy — push to main or manual dispatch ───────────────────
+  # ── Production deploy — push to main ──────────────────────────────────────
   deploy:
     name: Deploy production
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
