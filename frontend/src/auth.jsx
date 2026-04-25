@@ -3,8 +3,11 @@ import { createContext, useContext, useState, useEffect } from 'react'
 
 const DEV_AUTH_DISABLED = import.meta.env.VITE_AUTH_DISABLED === 'true'
 
-const API_CLIENT_ID = import.meta.env.VITE_AZURE_API_CLIENT_ID
-const TENANT_ID = import.meta.env.VITE_AZURE_TENANT_ID
+// Trim env vars: GitHub Secrets sometimes carry trailing newlines that break
+// scope URIs (the API GUID was getting a \n appended, causing AADSTS500011
+// because the parsed scope became "api://<guid>" + "/user_access" — two scopes).
+const API_CLIENT_ID = import.meta.env.VITE_AZURE_API_CLIENT_ID?.trim()
+const TENANT_ID = import.meta.env.VITE_AZURE_TENANT_ID?.trim()
 
 // Dev stub — mirrors backend _DEV_PRINCIPAL when VITE_AUTH_DISABLED=true
 const DEV_ACCOUNT = {
