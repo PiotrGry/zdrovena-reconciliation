@@ -1,0 +1,34 @@
+name: Develop — Fast Gate
+
+# Push to develop branch — runs lint, typecheck, unit tests, security, infra checks.
+# No deploy, no staging. Target: under 5 minutes.
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "zdrovena/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "Dockerfile"
+      - "e2e/**"
+      - ".github/workflows/develop-gate.yml"
+      - ".github/workflows/_quality-gate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: read
+  id-token: write
+
+concurrency:
+  group: develop-gate-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  fast-gate:
+    name: Fast gate
+    uses: ./.github/workflows/_quality-gate.yml
+    secrets: inherit
