@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
   security-events: write
+  pull-requests: read  # gitleaks needs to list PR commits, checkov lists PR files
 
 jobs:
   lint:
