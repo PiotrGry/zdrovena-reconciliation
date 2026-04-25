@@ -1,0 +1,49 @@
+name: PR Validate — develop → main
+
+# Every PR targeting main — runs the FULL pipeline:
+# quality gate (fast checks) → full test suite (build, staging deploy, smoke, E2E)
+# → CI gate as the single required check.
+# No path filter: untested code must never reach main, regardless of which file changed.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: pr-validate-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gate:
+    name: Quality gate
+    uses: ./.github/workflows/_quality-gate.yml
+    secrets: inherit
+
+  full-test-suite:
+    name: Full test suite
+    needs: quality-gate
+    uses: ./.github/workflows/_full-test-suite.yml
+    secrets: inherit
+
+  ci-gate:
+    name: CI Gate
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [quality-gate, full-test-suite]
+    steps:
+      - name: Check all jobs passed
+        run: |
+          results='${{ toJSON(needs.*.result) }}'
+          echo "Job results: $results"
+          if echo "$results" | grep -qE '"failure"|"cancelled"'; then
+            echo "One or more CI jobs failed."
+            exit 1
+          fi
+          echo "All CI jobs passed — ready to merge."
