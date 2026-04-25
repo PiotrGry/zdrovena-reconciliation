@@ -85,7 +85,7 @@ class TestSalesInvoices:
             patch("zdrovena.api.routers.invoices._FAKTUROWNIA_DISABLED", False),
             patch("zdrovena.api.routers.invoices.get_secret", return_value="fake-token"),
         ):
-            resp = api.get("/invoices/sales?year=2026&month=4")
+            resp = api.get("/api/invoices/sales?year=2026&month=4")
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 2
@@ -99,7 +99,7 @@ class TestSalesInvoices:
             patch("zdrovena.api.routers.invoices._FAKTUROWNIA_DISABLED", False),
             patch("zdrovena.api.routers.invoices.get_secret", return_value="fake-token"),
         ):
-            resp = api.get("/invoices/sales?year=2026")
+            resp = api.get("/api/invoices/sales?year=2026")
         inv = resp.json()[0]
         for field in (
             "id",
@@ -118,12 +118,12 @@ class TestSalesInvoices:
         """Without auth disabled, should reject unauthenticated request."""
         with patch("zdrovena.api.routers.invoices._FAKTUROWNIA_DISABLED", True):
             # auth is disabled globally in this module so we just check 503 from disabled flag
-            resp = api.get("/invoices/sales?year=2026")
+            resp = api.get("/api/invoices/sales?year=2026")
         assert resp.status_code == 503
 
     def test_disabled_returns_503(self, api):
         with patch("zdrovena.api.routers.invoices._FAKTUROWNIA_DISABLED", True):
-            resp = api.get("/invoices/sales?year=2026")
+            resp = api.get("/api/invoices/sales?year=2026")
         assert resp.status_code == 503
 
     def test_missing_credentials_returns_503(self, api):
@@ -136,17 +136,17 @@ class TestSalesInvoices:
                 side_effect=MissingSecretError("fakturownia_api_token", "humio"),
             ),
         ):
-            resp = api.get("/invoices/sales?year=2026")
+            resp = api.get("/api/invoices/sales?year=2026")
         assert resp.status_code == 503
 
     def test_invalid_month_returns_422(self, api):
         with patch("zdrovena.api.routers.invoices._FAKTUROWNIA_DISABLED", True):
-            resp = api.get("/invoices/sales?year=2026&month=13")
+            resp = api.get("/api/invoices/sales?year=2026&month=13")
         assert resp.status_code == 422
 
     def test_invalid_year_returns_422(self, api):
         with patch("zdrovena.api.routers.invoices._FAKTUROWNIA_DISABLED", True):
-            resp = api.get("/invoices/sales?year=1999")
+            resp = api.get("/api/invoices/sales?year=1999")
         assert resp.status_code == 422
 
     def test_empty_result(self, api):
@@ -155,7 +155,7 @@ class TestSalesInvoices:
             patch("zdrovena.api.routers.invoices._FAKTUROWNIA_DISABLED", False),
             patch("zdrovena.api.routers.invoices.get_secret", return_value="fake-token"),
         ):
-            resp = api.get("/invoices/sales?year=2026&month=1")
+            resp = api.get("/api/invoices/sales?year=2026&month=1")
         assert resp.status_code == 200
         assert resp.json() == []
 
@@ -170,7 +170,7 @@ class TestProducts:
             patch("zdrovena.api.routers.invoices._FAKTUROWNIA_DISABLED", False),
             patch("zdrovena.api.routers.invoices.get_secret", return_value="fake-token"),
         ):
-            resp = api.get("/invoices/products")
+            resp = api.get("/api/invoices/products")
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 2
@@ -181,7 +181,7 @@ class TestProducts:
             patch("zdrovena.api.routers.invoices._FAKTUROWNIA_DISABLED", False),
             patch("zdrovena.api.routers.invoices.get_secret", return_value="fake-token"),
         ):
-            resp = api.get("/invoices/products?active_only=true")
+            resp = api.get("/api/invoices/products?active_only=true")
         data = resp.json()
         assert len(data) == 1
         assert data[0]["code"] == "ZD-001"
@@ -193,7 +193,7 @@ class TestProducts:
             patch("zdrovena.api.routers.invoices._FAKTUROWNIA_DISABLED", False),
             patch("zdrovena.api.routers.invoices.get_secret", return_value="fake-token"),
         ):
-            resp = api.get("/invoices/products")
+            resp = api.get("/api/invoices/products")
         p = resp.json()[0]
         for field in ("id", "name", "code", "price_net", "price_gross", "currency", "active"):
             assert field in p, f"missing field: {field}"
@@ -204,12 +204,12 @@ class TestProducts:
             patch("zdrovena.api.routers.invoices._FAKTUROWNIA_DISABLED", False),
             patch("zdrovena.api.routers.invoices.get_secret", return_value="fake-token"),
         ):
-            resp = api.get("/invoices/products")
+            resp = api.get("/api/invoices/products")
         data = resp.json()
         disabled = next(p for p in data if p["code"] == "ZD-008")
         assert disabled["active"] is False
 
     def test_disabled_returns_503(self, api):
         with patch("zdrovena.api.routers.invoices._FAKTUROWNIA_DISABLED", True):
-            resp = api.get("/invoices/products")
+            resp = api.get("/api/invoices/products")
         assert resp.status_code == 503

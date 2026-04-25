@@ -36,7 +36,7 @@ pass "/docs → $HTTP_DOCS"
 
 # 3. /files bez tokenu → 401/403, nie 500
 echo "--- /files (bez tokenu)"
-HTTP_ANON=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$BASE/files")
+HTTP_ANON=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$BASE/api/files")
 [[ "$HTTP_ANON" == "401" || "$HTTP_ANON" == "403" ]] \
     || fail "/files bez tokenu zwróciło $HTTP_ANON (oczekiwano 401/403)"
 pass "/files (anon) → $HTTP_ANON"
@@ -47,7 +47,7 @@ if TOKEN=$(az account get-access-token \
         --resource "api://$CLIENT_ID" \
         --query accessToken -o tsv 2>/dev/null) && [[ -n "$TOKEN" ]]; then
     HTTP_AUTH=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-        -H "Authorization: Bearer $TOKEN" "$BASE/files")
+        -H "Authorization: Bearer $TOKEN" "$BASE/api/files")
     [[ "$HTTP_AUTH" == "200" ]] || fail "/files z tokenem zwróciło $HTTP_AUTH (oczekiwano 200)"
     pass "/files (auth) → 200"
 else

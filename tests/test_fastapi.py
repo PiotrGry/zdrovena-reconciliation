@@ -88,7 +88,7 @@ class TestFilesDownload:
         (storage.root / "invoices/sales").mkdir(parents=True)
         (storage.root / "invoices/sales/faktura.pdf").write_bytes(b"PDF data")
 
-        resp = c.get("/files/invoices/sales/faktura.pdf")
+        resp = c.get("/api/files/invoices/sales/faktura.pdf")
 
         assert resp.status_code == 200
         assert resp.content == b"PDF data"
@@ -97,12 +97,12 @@ class TestFilesDownload:
 
     def test_download_missing_file_returns_404(self, api):
         c, _ = api
-        resp = c.get("/files/missing/file.pdf")
+        resp = c.get("/api/files/missing/file.pdf")
         assert resp.status_code == 404
 
     def test_download_path_traversal_rejected(self, api):
         c, _ = api
-        resp = c.get("/files/../etc/passwd")
+        resp = c.get("/api/files/../etc/passwd")
         assert resp.status_code in (400, 404)
 
     def test_content_type_pdf(self, api):
@@ -110,7 +110,7 @@ class TestFilesDownload:
         storage.root.mkdir(parents=True, exist_ok=True)
         (storage.root / "doc.pdf").write_bytes(b"%PDF")
 
-        resp = c.get("/files/doc.pdf")
+        resp = c.get("/api/files/doc.pdf")
 
         assert "pdf" in resp.headers.get("content-type", "").lower()
 
@@ -121,7 +121,7 @@ class TestFilesDownload:
 class TestFilesList:
     def test_list_empty(self, api):
         c, _ = api
-        resp = c.get("/files/")
+        resp = c.get("/api/files/")
         assert resp.status_code == 200
         assert resp.json() == []
 
@@ -131,7 +131,7 @@ class TestFilesList:
         (storage.root / "invoices/a.pdf").write_bytes(b"a")
         (storage.root / "invoices/b.pdf").write_bytes(b"b")
 
-        resp = c.get("/files/", params={"prefix": "invoices"})
+        resp = c.get("/api/files/", params={"prefix": "invoices"})
 
         assert resp.status_code == 200
         keys = {f["key"] for f in resp.json()}
@@ -143,7 +143,7 @@ class TestFilesList:
         storage.root.mkdir(parents=True, exist_ok=True)
         (storage.root / "x.pdf").write_bytes(b"x")
 
-        entry = c.get("/files/").json()[0]
+        entry = c.get("/api/files/").json()[0]
 
         assert {"key", "size", "last_modified"} <= entry.keys()
 
@@ -157,7 +157,7 @@ class TestFilesAuth:
         storage = LocalStorageService(root=tmp_path / "storage")
         with patch("zdrovena.api.deps._storage_singleton", return_value=storage):
             with TestClient(app, raise_server_exceptions=True) as c:
-                resp = c.get("/files/any/file.pdf")
+                resp = c.get("/api/files/any/file.pdf")
         assert resp.status_code == 401
 
     def test_no_roles_returns_403(self, tmp_path):
@@ -169,7 +169,7 @@ class TestFilesAuth:
         try:
             with patch("zdrovena.api.deps._storage_singleton", return_value=storage):
                 with TestClient(app, raise_server_exceptions=False) as c:
-                    resp = c.get("/files/x.pdf")
+                    resp = c.get("/api/files/x.pdf")
         finally:
             app.dependency_overrides.pop(get_current_principal, None)
         assert resp.status_code == 403
@@ -184,7 +184,7 @@ class TestCloseEndpoint:
         report = _make_report(sales_invoice_count=5)
         with patch("zdrovena.api.routers.close.MonthCloseOrchestrator") as M:
             M.return_value.execute.return_value = report
-            resp = c.post("/close", json={"year": 2026, "month": 3, "dry_run": True})
+            resp = c.post("/api/close", json={"year": 2026, "month": 3, "dry_run": True})
 
         assert resp.status_code == 200
         data = resp.json()
@@ -202,7 +202,7 @@ class TestCloseEndpoint:
         )
         with patch("zdrovena.api.routers.close.MonthCloseOrchestrator") as M:
             M.return_value.execute.return_value = report
-            data = c.post("/close", json={"year": 2026, "month": 3}).json()
+            data = c.post("/api/close", json={"year": 2026, "month": 3}).json()
 
         assert data["sales_invoice_count"] == 3
         assert data["sales_gross_total"] == "1500.00"
@@ -212,12 +212,12 @@ class TestCloseEndpoint:
 
     def test_invalid_month_returns_422(self, api):
         c, _ = api
-        resp = c.post("/close", json={"year": 2026, "month": 13})
+        resp = c.post("/api/close", json={"year": 2026, "month": 13})
         assert resp.status_code == 422
 
     def test_invalid_year_returns_422(self, api):
         c, _ = api
-        resp = c.post("/close", json={"year": 1999, "month": 3})
+        resp = c.post("/api/close", json={"year": 1999, "month": 3})
         assert resp.status_code == 422
 
     def test_orchestrator_value_error_returns_400(self, api):
@@ -226,7 +226,7 @@ class TestCloseEndpoint:
             "zdrovena.api.routers.close.MonthCloseOrchestrator",
             side_effect=ValueError("bad"),
         ):
-            resp = c.post("/close", json={"year": 2026, "month": 3})
+            resp = c.post("/api/close", json={"year": 2026, "month": 3})
         assert resp.status_code == 400
 
     def test_close_requires_auth_when_enabled(self, tmp_path, monkeypatch):
@@ -234,7 +234,7 @@ class TestCloseEndpoint:
         storage = LocalStorageService(root=tmp_path / "storage")
         with patch("zdrovena.api.deps._storage_singleton", return_value=storage):
             with TestClient(app, raise_server_exceptions=True) as c:
-                resp = c.post("/close", json={"year": 2026, "month": 3})
+                resp = c.post("/api/close", json={"year": 2026, "month": 3})
         assert resp.status_code == 401
 
     def test_close_viewer_role_returns_403(self, tmp_path):
@@ -244,7 +244,7 @@ class TestCloseEndpoint:
         try:
             with patch("zdrovena.api.deps._storage_singleton", return_value=storage):
                 with TestClient(app, raise_server_exceptions=False) as c:
-                    resp = c.post("/close", json={"year": 2026, "month": 3})
+                    resp = c.post("/api/close", json={"year": 2026, "month": 3})
         finally:
             app.dependency_overrides.pop(get_current_principal, None)
         assert resp.status_code == 403
