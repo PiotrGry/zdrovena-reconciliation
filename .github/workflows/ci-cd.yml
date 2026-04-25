@@ -20,17 +20,8 @@ on:
       - ".github/workflows/_deploy.yml"
   pull_request:
     branches: [main]
-    paths:
-      - "zdrovena/**"
-      - "tests/**"
-      - "scripts/**"
-      - "pyproject.toml"
-      - "Dockerfile"
-      - "e2e/**"
-      - ".github/workflows/ci-cd.yml"
-      - ".github/workflows/_quality-gate.yml"
-      - ".github/workflows/_full-test-suite.yml"
-      - ".github/workflows/_deploy.yml"
+    # No path filter — every PR to main runs the full suite.
+    # Untested code should never reach main regardless of which file changed.
   workflow_dispatch:
 
 permissions:
