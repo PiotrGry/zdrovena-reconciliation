@@ -29,8 +29,10 @@ pass "/health → $HTTP (alive)"
 # 2. /docs — routing + FastAPI bez crash
 echo "--- /docs"
 HTTP_DOCS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$BASE/docs")
-[[ "$HTTP_DOCS" == "200" ]] || fail "/docs zwróciło $HTTP_DOCS (oczekiwano 200)"
-pass "/docs → 200"
+# 200 = public swagger; 401 = auth-gated swagger (older image) — both prove app is up
+[[ "$HTTP_DOCS" == "200" || "$HTTP_DOCS" == "401" ]] \
+    || fail "/docs zwróciło $HTTP_DOCS (oczekiwano 200/401, nie 5xx)"
+pass "/docs → $HTTP_DOCS"
 
 # 3. /files bez tokenu → 401/403, nie 500
 echo "--- /files (bez tokenu)"
