@@ -7,10 +7,10 @@ name: Full Test Suite (reusable)
 #   3. Build + deploy frontend to SWA staging (with real VITE_ vars)
 #   4. Run extensible smoke test suite (TypeScript runner)
 #   5. Run E2E tests (Playwright) against staging
-#   6. AI verdict — Claude reviews all results, posts PR comment
+#   6. PR summary comment
 #   7. Teardown staging
 #
-# Gate: all stages must pass. AI verdict FAIL blocks merge.
+# Gate: all stages must pass — ci-gate in ci-cd.yml blocks merge on failure.
 
 on:
   workflow_call:
@@ -225,160 +225,54 @@ jobs:
             e2e/playwright-report/
 
   # ── 6. AI verdict ─────────────────────────────────────────────────────────
-  ai-verdict:
-    name: AI verdict
+
+  # ── 6. PR summary comment ─────────────────────────────────────────────────
+  pr-summary:
+    name: Post PR summary
     runs-on: ubuntu-latest
     needs: [smoke, e2e]
     if: always()
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download smoke report
-        uses: actions/download-artifact@v4
-        with:
-          name: smoke-report
-          path: artifacts/smoke
-        continue-on-error: true
-
-      - name: Download E2E results
-        uses: actions/download-artifact@v4
-        with:
-          name: e2e-results
-          path: artifacts/e2e
-        continue-on-error: true
-
-      - name: Download test results
-        uses: actions/download-artifact@v4
-        with:
-          name: test-results
-          path: artifacts/unit
-        continue-on-error: true
-
-      - name: Build verdict input
-        id: input
-        run: |
-          SMOKE_RESULT="${{ needs.smoke.outputs.result }}"
-          E2E_RESULT="${{ needs.e2e.outputs.result }}"
-
-          SMOKE_REPORT=$(cat artifacts/smoke/report.json 2>/dev/null || echo '{"tests":[]}')
-          E2E_OUTPUT=$(head -100 artifacts/e2e/e2e-results.txt 2>/dev/null || echo "No E2E output")
-
-          cat > verdict-input.json << EOF
-          {
-            "pr": "${{ github.event.pull_request.number }}",
-            "sha": "${{ github.sha }}",
-            "branch": "${{ github.head_ref }}",
-            "smoke": { "result": "$SMOKE_RESULT", "report": $SMOKE_REPORT },
-            "e2e": { "result": "$E2E_RESULT", "output": $(echo "$E2E_OUTPUT" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))") },
-            "overall": "$([ '$SMOKE_RESULT' = 'PASS' ] && [ '$E2E_RESULT' = 'PASS' ] && echo PASS || echo FAIL)"
-          }
-          EOF
-          echo "overall=$([ '$SMOKE_RESULT' = 'PASS' ] && [ '$E2E_RESULT' = 'PASS' ] && echo PASS || echo FAIL)" >> $GITHUB_OUTPUT
-
-      - name: Call Claude API for verdict
-        id: claude
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          INPUT=$(cat verdict-input.json)
-          RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
-            -H "x-api-key: $ANTHROPIC_API_KEY" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "content-type: application/json" \
-            -d "{
-              \"model\": \"claude-haiku-4-5-20251001\",
-              \"max_tokens\": 1024,
-              \"messages\": [{
-                \"role\": \"user\",
-                \"content\": \"You are a CI gate reviewing test results for a pull request. Analyze the results and give a PASS or FAIL verdict with a brief explanation. Be direct.\n\nTest results:\n$(echo "$INPUT" | tr '\"' \"'\")\n\nOutput exactly:\nVERDICT: PASS or FAIL\nSUMMARY: one sentence\nDETAILS: bullet points of key findings (max 5)\"
-              }]
-            }" 2>/dev/null || echo '{"content":[{"text":"VERDICT: ERROR\nSUMMARY: Claude API unavailable\nDETAILS: - Proceeding based on raw test results only"}]}')
-
-          VERDICT_TEXT=$(echo "$RESPONSE" | python3 -c "
-          import json, sys
-          r = json.load(sys.stdin)
-          print(r.get('content', [{}])[0].get('text', 'VERDICT: ERROR'))
-          " 2>/dev/null || echo "VERDICT: ERROR")
-
-          echo "verdict_text<<EOF" >> $GITHUB_OUTPUT
-          echo "$VERDICT_TEXT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-          # Extract PASS/FAIL from Claude response, fall back to raw results
-          if echo "$VERDICT_TEXT" | grep -q "VERDICT: PASS"; then
-            echo "verdict=PASS" >> $GITHUB_OUTPUT
-          elif echo "$VERDICT_TEXT" | grep -q "VERDICT: FAIL"; then
-            echo "verdict=FAIL" >> $GITHUB_OUTPUT
-          else
-            # Claude unavailable — use raw results
-            echo "verdict=${{ steps.input.outputs.overall }}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Post PR comment
+      - name: Post result comment
         uses: actions/github-script@v7
         with:
           script: |
-            const verdict = '${{ steps.claude.outputs.verdict }}';
-            const overall = '${{ steps.input.outputs.overall }}';
             const smokeResult = '${{ needs.smoke.outputs.result }}';
-            const e2eResult = '${{ needs.e2e.outputs.result }}';
-            const verdictText = `${{ steps.claude.outputs.verdict_text }}`;
-            const icon = verdict === 'PASS' ? '✅' : '❌';
+            const e2eResult   = '${{ needs.e2e.outputs.result }}';
+            const allPass     = smokeResult === 'PASS' && e2eResult === 'PASS';
+            const icon        = allPass ? '✅' : '❌';
 
-            const body = `## ${icon} CI Verdict: ${verdict}
+            const body = `## ${icon} Test Suite: ${allPass ? 'PASS' : 'FAIL'}
 
             | Check | Result |
             |-------|--------|
             | Smoke tests | ${smokeResult === 'PASS' ? '✅ PASS' : '❌ FAIL'} |
-            | E2E tests | ${e2eResult === 'PASS' ? '✅ PASS' : '❌ FAIL'} |
-            | AI analysis | ${verdict} |
+            | E2E tests   | ${e2eResult   === 'PASS' ? '✅ PASS' : '❌ FAIL'} |
 
-            ### AI Analysis
-            \`\`\`
-            ${verdictText}
-            \`\`\`
+            <sub>Commit: \`${{ github.sha }}\` · [Artifacts](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})</sub>`;
 
-            <sub>Commit: \`${{ github.sha }}\` | [View artifacts](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})</sub>`;
-
-            // Update existing comment if present, otherwise create
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
             });
-
-            const existing = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('CI Verdict')
-            );
-
+            const existing = comments.find(c => c.user.type === 'Bot' && c.body.includes('Test Suite'));
             if (existing) {
               await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body,
               });
             } else {
               await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-                body,
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number, body,
               });
             }
 
-      - name: Fail if verdict is FAIL
-        if: steps.claude.outputs.verdict == 'FAIL'
-        run: |
-          echo "AI verdict: FAIL — merge blocked."
-          echo "${{ steps.claude.outputs.verdict_text }}"
-          exit 1
-
-  # ── 7. Teardown staging ────────────────────────────────────────────────────
   teardown:
     name: Teardown staging
     runs-on: ubuntu-latest
-    needs: [smoke, e2e, ai-verdict]
+    needs: [smoke, e2e]
     if: always()
     environment: staging
     env:
