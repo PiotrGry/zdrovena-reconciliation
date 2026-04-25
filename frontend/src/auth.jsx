@@ -22,6 +22,10 @@ export const msalInstance = DEV_AUTH_DISABLED ? null : new PublicClientApplicati
     cache: { cacheLocation: 'sessionStorage', storeAuthStateInCookie: false },
 })
 
+// Login: only standard OIDC scopes — getting an ID token here, not an API token.
+// Mixing API scopes into loginRedirect causes Azure to attempt resource exchange
+// at /token before the SP is fully consented, surfacing as AADSTS500011.
+export const LOGIN_REQUEST = { scopes: ['openid', 'profile', 'offline_access'] }
 export const TOKEN_REQUEST = { scopes: [`api://${API_CLIENT_ID}/user_access`] }
 
 export const AuthCtx = createContext(null)
@@ -54,7 +58,7 @@ export function AuthProvider({ children }) {
 
     const login = () => DEV_AUTH_DISABLED
         ? setAccount(DEV_ACCOUNT)
-        : msalInstance.loginRedirect({ ...TOKEN_REQUEST, prompt: 'select_account' })
+        : msalInstance.loginRedirect({ ...LOGIN_REQUEST, prompt: 'select_account' })
 
     const logout = () => DEV_AUTH_DISABLED
         ? setAccount(null)
