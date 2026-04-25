@@ -1,6 +1,53 @@
 # CHANGELOG
 
 
+## v1.1.5 (2026-04-25)
+
+### Bug Fixes
+
+- **auth**: Type: ignore on jwt.decode audience list (jose stubs say str only)
+  ([`7ac6efe`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/7ac6efe575ad5a78ab3aafa182df9aa3ba615117))
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **auth**: V2 tokens — split login from token, accept both aud formats
+  ([`057e770`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/057e770c92ebae5a8175abe62dee4b2f4010e8b5))
+
+Triple-fix for AADSTS500011 invalid_resource on production login:
+
+1. App registration `accessTokenAcceptedVersion` set to 2 (was null=v1). v2 /token endpoint refused
+  to issue access tokens for v1-only resources, surfacing as "resource principal not found" even
+  though the SP existed. (applied via Graph API PATCH out-of-band)
+
+2. Frontend: split LOGIN_REQUEST (openid/profile/offline_access) from TOKEN_REQUEST
+  (api://.../user_access). Calling loginRedirect with the API scope was forcing immediate resource
+  exchange before MSAL had a session, which is what crashed at handleRedirectPromise.
+
+3. Backend: audience validation now accepts both `<guid>` and `api://<guid>`. v1 tokens use the GUID
+  form; v2 tokens use the URI form. Both are valid; accepting both keeps the API working through any
+  future token-version migrations.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+### Refactoring
+
+- **ci**: Split ci-cd.yml into 3 event-specific workflows
+  ([`dead16d`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/dead16dec335bb3bb066c6e9014ddc4b83146051))
+
+Replaces the monolithic ci-cd.yml that triggered on push+PR+dispatch and relied on per-job `if:`
+  guards. Side effect: every event would render unrelated jobs as "skipping" in the Actions UI,
+  making green runs look half-failed and confusing reviewers.
+
+Now one event = one workflow: - develop-gate.yml → push to develop (fast quality gate) -
+  pr-validate.yml → PR to main (quality + full suite + CI Gate) - prod-deploy.yml → push to main
+  (promote → deploy → release)
+
+Reusable workflows (_quality-gate, _full-test-suite, _deploy) unchanged. Functionally identical
+  pipeline; cleaner UI, no skipping noise.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+
 ## v1.1.4 (2026-04-25)
 
 ### Bug Fixes
