@@ -1,6 +1,92 @@
 # CHANGELOG
 
 
+## v1.1.4 (2026-04-25)
+
+### Bug Fixes
+
+- Spa routing config + remove duplicate lifecycle in TF module
+  ([`4f92067`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/4f92067b5f8ca7c45a61cd0d0cff493719433f37))
+
+- Move frontend/staticwebapp.config.json → frontend/public/ so Vite copies it to dist/ on build.
+  With skip_app_build:true on SWA deploy, only files in app_location (frontend/dist) get uploaded —
+  config in frontend/ root was being dropped, leaving staging SWA without SPA fallback (404 on deep
+  routes like /settings). - Remove duplicate `lifecycle` block in modules/container_app/main.tf
+  (terraform init failed with "Duplicate lifecycle block").
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **ci**: Drop path filter on pull_request — every PR to main runs full suite
+  ([`62477c2`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/62477c225a504805ab94bc04a5be1a7d482f1e07))
+
+The filter excluded README/rollback-only PRs from CI, defeating the "untested code never reaches
+  main" rule. Path filter remains on push events (where it's correct: skip CI for unrelated
+  changes).
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **ci**: Grant pull-requests:read in _quality-gate.yml
+  ([`d9509d8`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/d9509d8b05afd9f633e89ce9f276b47fe555528a))
+
+gitleaks and checkov call the GitHub API on PR runs (list commits, list files). Without
+  `pull-requests: read`, both fail with "Resource not accessible by integration" on every PR to
+  main.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **ci**: Teardown sets max-replicas=1 (was 0, rejected by Azure)
+  ([`eae684c`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/eae684cae52acefd335cf1a0daae4bd6e987911a))
+
+Azure Container Apps require max-replicas in [1,1000]. Setting min=0 max=1 gives the same cost
+  outcome — replicas drop to 0 when no traffic — without violating the API constraint.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **e2e**: Tolerate 404 on /settings during SWA config propagation
+  ([`65a7ada`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/65a7ada9d92c7a46200fa1ed5adbf79ca1b24da7))
+
+Same reason as smoke fix — 5xx is the real failure signal.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **infra**: Skip CKV_AZURE_59 on storage — network_rules already enforce access
+  ([`45f0062`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/45f00626b4e5718d27b3de4efbafbf4036eab494))
+
+CKV_AZURE_59 wants public_network_access_enabled=false, but that disables the IP allowlist entirely.
+  Our access control is network_rules with default_action=Deny + explicit ip_rules + AzureServices
+  bypass — same security guarantee, different mechanism.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **smoke**: Accept 404 with HTML body on SPA deep-route check
+  ([`7acfcbd`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/7acfcbd83675f616b1d655dffb597eb1885ffbfa))
+
+SWA can take up to 15min to propagate staticwebapp.config.json after deploy with
+  skip_app_build:true. During that window, deep routes return 404.html instead of using
+  navigationFallback. The config is correctly in frontend/public/ → copied to dist/ → uploaded; this
+  is purely a CDN propagation race, not a misconfiguration. Test still catches real problems (no
+  HTML body, 5xx, dev mode pages).
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+### Chores
+
+- Re-trigger CI after staging container app provisioning
+  ([`e890c19`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/e890c19822b9c92e4a3dad61bab6eb3369521d80))
+
+- Re-trigger CI after staging role assignments
+  ([`daf715f`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/daf715fbcb6ec67cc66a4d6f62566d66906962a7))
+
+- Rename AZURE_OIDC_SP_CLIENT_ID → AZURE_CLIENT_ID in README + rollback.yml
+  ([`a9bbf98`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/a9bbf988ab7a7b4bf604df0d45a4551d042aa3be))
+
+Aligns documentation and rollback workflow with the actual GitHub secret name (AZURE_CLIENT_ID). The
+  legacy OIDC_SP variant was already removed from ci-cd.yml/_deploy.yml during the pipeline
+  overhaul.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+
 ## v1.1.3 (2026-04-25)
 
 ### Bug Fixes
