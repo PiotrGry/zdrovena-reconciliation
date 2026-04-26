@@ -1,6 +1,74 @@
 # CHANGELOG
 
 
+## v1.1.6 (2026-04-26)
+
+### Bug Fixes
+
+- **api**: Mount routers under /api — match SWA proxy + frontend calls
+  ([`da69704`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/da697048e8532f6c1e7742acc7f35c990efb2232))
+
+Frontend hits /api/close, /api/files, /api/invoices; SWA's linked-backend forwards those paths
+  verbatim to the Container App (does NOT strip the /api prefix as Azure Functions integrations do).
+  Backend was mounting routers at root → every authenticated request from the SPA returned 404.
+
+Smoke + integration tests hit the backend Container App directly, never through the SWA, so the path
+  mismatch went undetected. Updating tests to use /api as well, so this regression catches
+  automatically next time.
+
+Files updated: - zdrovena/api/main.py: include_router(prefix="/api") -
+  scripts/smoke/tests/{api,business}.ts: /api prefix - scripts/ci/smoke-test.sh: /api/files -
+  tests/{test_fastapi,test_api_cli_parity,test_invoices_router}.py: /api prefix
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **auth**: Trim VITE_AZURE_* env vars — trailing newline broke scope URI
+  ([`284d1a1`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/284d1a1cccab33282f01b0d0faf9fb0c2a64fdce))
+
+Root cause of persistent AADSTS500011 in production: the AZURE_API_CLIENT_ID GitHub Secret has a
+  trailing newline character. Vite injects the env var verbatim into the bundle, so the template
+  literal `api://${API_CLIENT_ID}/user_access` produced "api://7a690aca-...\n/user_access". MSAL
+  space-joins scopes, so on the wire the request became:
+
+scope=api://7a690aca-...%20/user_access%20openid%20profile%20offline_access
+
+Azure parsed that as TWO broken scopes ("api://<guid>" with no scope name, plus "/user_access" with
+  no resource). The first one couldn't resolve to any SP → "resource principal not found".
+
+Fix in code: .trim() both env vars at module load. More robust than fixing the secret because
+  trailing whitespace in secrets is a common, easy-to-miss issue across teams.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **e2e**: Update api-connectivity to /api/* prefix
+  ([`aba87af`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/aba87affd4eb5fc73bcfce296f9fe4a7e5935274))
+
+Same root cause as previous commit — direct backend tests need /api prefix since FastAPI routers now
+  mount there.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+### Refactoring
+
+- **ci**: Fold frontend.yml into _quality-gate + _deploy
+  ([`125d8eb`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/125d8eb63b11b992253e56ab89d864d5ddd0de7f))
+
+Continues the consolidation from PR #20 (split ci-cd.yml). frontend.yml was running parallel to the
+  3-workflow split, causing duplicate UI entries and race conditions on prod (no concurrency group).
+  Now:
+
+- frontend lint+audit runs as a job in _quality-gate.yml (gated by paths-filter on frontend/** so
+  PR-only frontend changes still skip the job on backend pushes — same pattern as infra/checkov) -
+  frontend SWA deploy runs in parallel to backend promote+deploy in _deploy.yml; release job needs
+  both before tagging - develop-gate.yml + prod-deploy.yml gain frontend/** to their path filters -
+  frontend.yml deleted (close-pr-preview job was dead — wrong trigger config)
+
+UI side: 1 event = 1 workflow run, no duplicate quality-gate entries. Concurrency: prod-deploy.yml's
+  `deploy-production` group now serializes frontend deploys too (was missing before).
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+
 ## v1.1.5 (2026-04-25)
 
 ### Bug Fixes
