@@ -216,6 +216,17 @@ resource "azurerm_static_web_app" "ui" {
   tags                = local.tags
 }
 
+# Custom domain — opt-in via swa_custom_domain variable.
+# Prereq: the hostname must already CNAME to azurerm_static_web_app.ui.default_host_name
+# (apex domains use ALIAS / ANAME or a TXT-validated record). SWA provisions the
+# managed certificate automatically once validation succeeds.
+resource "azurerm_static_web_app_custom_domain" "ui" {
+  count             = var.swa_custom_domain == "" ? 0 : 1
+  static_web_app_id = azurerm_static_web_app.ui.id
+  domain_name       = var.swa_custom_domain
+  validation_type   = "cname-delegation"
+}
+
 # ── User-Assigned Identity for GitHub Actions (OIDC) ──────────────────────────
 
 resource "azurerm_user_assigned_identity" "github_actions" {
