@@ -12,6 +12,7 @@ on:
       - "scripts/**"
       - "pyproject.toml"
       - "Dockerfile"
+      - "frontend/**"
       - ".github/workflows/prod-deploy.yml"
       - ".github/workflows/_deploy.yml"
   workflow_dispatch:
