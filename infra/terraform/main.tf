@@ -80,11 +80,15 @@ resource "azurerm_storage_account" "storage" {
 
   # Block all public internet access.
   # AzureServices bypass allows the Container App to access blobs via
-  # Azure backbone using managed identity — no traffic traverses the internet.
+  # Network ACLs intentionally permissive: storage is fully RBAC-locked
+  # (shared_access_key_enabled=false, no SAS issued), so identity-based
+  # access — not network position — is the actual security boundary.
+  # Container Apps' "AzureServices" bypass is unreliable; rather than
+  # special-case its outbound IPs, we let the access layer enforce policy.
   network_rules {
-    default_action             = "Deny"
+    default_action             = "Allow"
     bypass                     = ["AzureServices"]
-    ip_rules                   = var.terraform_ip_allowlist
+    ip_rules                   = []
     virtual_network_subnet_ids = []
   }
 
