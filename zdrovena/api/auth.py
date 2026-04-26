@@ -14,8 +14,12 @@ Local dev / tests (AZURE_AUTH_DISABLED=true):
   - Never enable this in production
 
 Required env vars (production):
-  AZURE_TENANT_ID   — Entra ID tenant UUID
-  AZURE_CLIENT_ID   — App registration client_id (audience)
+  AZURE_TENANT_ID    — Entra ID tenant UUID
+  AZURE_API_AUDIENCE — App registration client_id used as JWT audience.
+                       Renamed from AZURE_CLIENT_ID to avoid conflict with
+                       azure-identity's DefaultAzureCredential, which treats
+                       AZURE_CLIENT_ID as the Managed Identity client_id
+                       and hangs trying to fetch a token for it.
 
 App roles:
   zdrovena-admin       — full access
@@ -104,7 +108,10 @@ def _validate_token(token: str) -> Principal:
     # (despite type stubs claiming Optional[str|list]). To accept both v1-style
     # aud=<guid> and v2-style aud=api://<guid> tokens we skip the built-in
     # check and validate the audience claim manually below.
-    client_id = os.environ.get("AZURE_CLIENT_ID", "")
+    # Read AZURE_API_AUDIENCE; fall back to AZURE_CLIENT_ID for backwards
+    # compatibility during the rename rollout, but prefer the new name —
+    # AZURE_CLIENT_ID is reserved by azure-identity for managed identity client_id.
+    client_id = os.environ.get("AZURE_API_AUDIENCE") or os.environ.get("AZURE_CLIENT_ID", "")
     try:
         claims = jwt.decode(
             token,
