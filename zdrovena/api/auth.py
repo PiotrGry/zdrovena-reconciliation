@@ -130,7 +130,12 @@ def _validate_token(token: str) -> Principal:
     if client_id:
         token_aud = claims.get("aud")
         if token_aud not in (client_id, f"api://{client_id}"):
-            logger.warning("Token aud mismatch: got %r, expected %r or %r", token_aud, client_id, f"api://{client_id}")
+            logger.warning(
+                "Token aud mismatch: got %r, expected %r or %r",
+                token_aud,
+                client_id,
+                f"api://{client_id}",
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token audience",

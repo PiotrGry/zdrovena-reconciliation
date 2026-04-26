@@ -44,6 +44,10 @@ jobs:
     name: Plan
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    # OIDC subject claim must match an existing federated credential on the
+    # gha SP. The `staging` env's federated cred (subject :environment:staging)
+    # exists; the default `:pull_request` subject does not. Reuse staging.
+    environment: staging
     outputs:
       plan-exit-code: ${{ steps.plan.outputs.exitcode }}
     steps:

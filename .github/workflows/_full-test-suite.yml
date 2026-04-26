@@ -101,6 +101,12 @@ jobs:
   deploy-frontend:
     name: Deploy frontend to SWA staging
     runs-on: ubuntu-latest
+    # `environment: staging` is required so the OIDC token's subject claim is
+    # repo:.../zdrovena-reconciliation:environment:staging — matching the
+    # `github-staging` federated identity credential on the gha SP. Without it,
+    # the subject becomes `:pull_request` on PR runs and AAD rejects the login
+    # with AADSTS700213 (no matching federated identity).
+    environment: staging
     needs: build
     outputs:
       swa-url: "https://icy-water-0e2b04d03-staging.7.azurestaticapps.net"
