@@ -64,14 +64,40 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      # Some Azure secrets in this repo were stored with trailing newlines.
+      # azure/login (JS action) trims internally; terraform's ARM_* env vars
+      # do not — they get a stray \n which breaks URL parsing (net/url:
+      # invalid control character in URL). Trim once and export to GITHUB_ENV
+      # so all later terraform steps see clean values.
+      - name: Sanitize ARM credentials
+        env:
+          RAW_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          RAW_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          RAW_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RAW_API_CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
+        run: |
+          TENANT=$(printf '%s' "$RAW_TENANT_ID" | tr -d '[:space:]')
+          CLIENT=$(printf '%s' "$RAW_CLIENT_ID" | tr -d '[:space:]')
+          SUB=$(printf '%s' "$RAW_SUBSCRIPTION_ID" | tr -d '[:space:]')
+          API_CLIENT=$(printf '%s' "$RAW_API_CLIENT_ID" | tr -d '[:space:]')
+          echo "::add-mask::$TENANT"
+          echo "::add-mask::$CLIENT"
+          echo "::add-mask::$SUB"
+          echo "::add-mask::$API_CLIENT"
+          {
+            echo "ARM_TENANT_ID=$TENANT"
+            echo "ARM_CLIENT_ID=$CLIENT"
+            echo "ARM_SUBSCRIPTION_ID=$SUB"
+            echo "TF_VAR_subscription_id=$SUB"
+            echo "TF_VAR_azure_tenant_id=$TENANT"
+            echo "TF_VAR_azure_client_id_entra=$API_CLIENT"
+          } >> "$GITHUB_ENV"
+
       - name: Terraform fmt check
         run: terraform fmt -check -recursive
 
       - name: Terraform init
-        env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        # ARM_* env vars are set by Sanitize step via $GITHUB_ENV (trimmed).
         run: terraform init -backend-config=backend.hcl -input=false
 
       - name: Terraform validate
@@ -81,13 +107,8 @@ jobs:
         id: plan
         # exit 2 = changes pending (not a failure here — CI gate decides)
         # exit 1 = real error
+        # ARM_* and most TF_VAR_* are inherited from $GITHUB_ENV (sanitized).
         env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          TF_VAR_azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
-          TF_VAR_azure_client_id_entra: ${{ secrets.AZURE_API_CLIENT_ID }}
           TF_VAR_github_owner: ${{ github.repository_owner }}
           TF_VAR_github_repo: ${{ github.event.repository.name }}
           TF_VAR_terraform_ip_allowlist: '[]'
@@ -187,21 +208,42 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Terraform init
+      # Some Azure secrets in this repo were stored with trailing newlines.
+      # azure/login (JS action) trims internally; terraform's ARM_* env vars
+      # do not — they get a stray \n which breaks URL parsing (net/url:
+      # invalid control character in URL). Trim once and export to GITHUB_ENV
+      # so all later terraform steps see clean values.
+      - name: Sanitize ARM credentials
         env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RAW_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          RAW_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          RAW_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RAW_API_CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
+        run: |
+          TENANT=$(printf '%s' "$RAW_TENANT_ID" | tr -d '[:space:]')
+          CLIENT=$(printf '%s' "$RAW_CLIENT_ID" | tr -d '[:space:]')
+          SUB=$(printf '%s' "$RAW_SUBSCRIPTION_ID" | tr -d '[:space:]')
+          API_CLIENT=$(printf '%s' "$RAW_API_CLIENT_ID" | tr -d '[:space:]')
+          echo "::add-mask::$TENANT"
+          echo "::add-mask::$CLIENT"
+          echo "::add-mask::$SUB"
+          echo "::add-mask::$API_CLIENT"
+          {
+            echo "ARM_TENANT_ID=$TENANT"
+            echo "ARM_CLIENT_ID=$CLIENT"
+            echo "ARM_SUBSCRIPTION_ID=$SUB"
+            echo "TF_VAR_subscription_id=$SUB"
+            echo "TF_VAR_azure_tenant_id=$TENANT"
+            echo "TF_VAR_azure_client_id_entra=$API_CLIENT"
+          } >> "$GITHUB_ENV"
+
+      - name: Terraform init
+        # ARM_* env vars are set by Sanitize step via $GITHUB_ENV (trimmed).
         run: terraform init -backend-config=backend.hcl -input=false
 
       - name: Terraform apply
+        # ARM_* and most TF_VAR_* are inherited from $GITHUB_ENV (sanitized).
         env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          TF_VAR_azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
-          TF_VAR_azure_client_id_entra: ${{ secrets.AZURE_API_CLIENT_ID }}
           TF_VAR_github_owner: ${{ github.repository_owner }}
           TF_VAR_github_repo: ${{ github.event.repository.name }}
           TF_VAR_terraform_ip_allowlist: '[]'
