@@ -88,6 +88,64 @@ jobs:
             "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             "${{ secrets.AZURE_LOCATION }}"
 
+  # Frontend deploy (SWA production) runs in parallel to backend promote+deploy.
+  # Both must succeed before semantic release tags the version.
+  deploy-frontend:
+    name: Deploy frontend to SWA (production)
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate version.json
+        run: |
+          API_VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/version = "//;s/"//')
+          MAJOR=$(echo "$API_VERSION" | cut -d. -f1)
+          cat > frontend/public/version.json <<EOF
+          {
+            "frontend_version": "$API_VERSION",
+            "api_version": "$API_VERSION",
+            "min_api_major": $MAJOR,
+            "git_sha": "${{ github.sha }}",
+            "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend (production)
+        working-directory: frontend
+        env:
+          VITE_AZURE_API_CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
+          VITE_AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: npm run build
+
+      - name: Deploy to SWA production
+        # NOTE: skip_app_build:true + app_location:frontend/dist is intentional —
+        # we run vite build above to inject VITE_* secrets at build time. With
+        # skip_app_build the Oryx builder is bypassed and the prebuilt dist/ is
+        # uploaded as-is. output_location must be empty for this to work.
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.SWA_DEPLOYMENT_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: frontend/dist
+          output_location: ""
+          skip_api_build: true
+          skip_app_build: true
+
   # Semantic versioning: tag + GitHub Release
   #   feat:          → MINOR bump  (2.0.0 → 2.1.0)
   #   fix:           → PATCH bump  (2.0.0 → 2.0.1)
@@ -96,7 +154,7 @@ jobs:
   release:
     name: Semantic release
     runs-on: ubuntu-latest
-    needs: [deploy-prod]
+    needs: [deploy-prod, deploy-frontend]
     permissions:
       contents: write  # push version bump commit, create tag + GitHub Release
       id-token: write
