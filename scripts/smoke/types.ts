@@ -13,9 +13,16 @@ export interface TestContext {
   azureClientId: string;
   azureApiClientId: string;
   azureSubscriptionId: string;
+  /** Smoke test SP credentials — used by auth-real tests to acquire a token
+   *  with zdrovena-viewer role and exercise authenticated endpoints. */
+  smokeSpClientId: string;
+  smokeSpClientSecret: string;
   verbose: boolean;
   /** Fetch with a timeout. Default 10s. */
   fetch(url: string, opts?: RequestInit & { timeoutMs?: number }): Promise<Response>;
+  /** Lazy-acquired viewer access token, cached for the run.
+   *  Returns null if SP creds aren't configured (tests skip themselves). */
+  getViewerToken(): Promise<string | null>;
 }
 
 export interface TestResult {

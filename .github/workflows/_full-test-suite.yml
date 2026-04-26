@@ -162,6 +162,8 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_API_CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          SMOKE_SP_CLIENT_ID: ${{ secrets.SMOKE_SP_CLIENT_ID }}
+          SMOKE_SP_CLIENT_SECRET: ${{ secrets.SMOKE_SP_CLIENT_SECRET }}
         run: |
           cd scripts/smoke
           npx tsx runner.ts --output report.json
