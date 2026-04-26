@@ -47,3 +47,4 @@ infra/terraform/.terraform.lock.hcl
 # Coverage
 .coverage
 htmlcov/
+.claude/
