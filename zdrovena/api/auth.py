@@ -100,25 +100,35 @@ def _validate_token(token: str) -> Principal:
             detail="Auth service unavailable",
         ) from exc
 
-    # v2 tokens have aud="api://<guid>", v1 tokens have aud="<guid>".
-    # python-jose's audience parameter accepts a list at runtime even though
-    # its type stubs only declare str | None.
+    # python-jose's `audience` argument requires a single string at runtime
+    # (despite type stubs claiming Optional[str|list]). To accept both v1-style
+    # aud=<guid> and v2-style aud=api://<guid> tokens we skip the built-in
+    # check and validate the audience claim manually below.
     client_id = os.environ.get("AZURE_CLIENT_ID", "")
-    audience: list[str] = [client_id, f"api://{client_id}"] if client_id else []
     try:
         claims = jwt.decode(
             token,
             jwks,
             algorithms=["RS256"],
-            audience=audience,  # type: ignore[arg-type]
-            options={"verify_exp": True},
+            options={"verify_exp": True, "verify_aud": False},
         )
     except JWTError as exc:
+        logger.warning("JWT decode failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
+
+    if client_id:
+        token_aud = claims.get("aud")
+        if token_aud not in (client_id, f"api://{client_id}"):
+            logger.warning("Token aud mismatch: got %r, expected %r or %r", token_aud, client_id, f"api://{client_id}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token audience",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     return Principal(
         sub=claims.get("sub", ""),
