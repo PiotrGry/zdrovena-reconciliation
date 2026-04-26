@@ -62,3 +62,9 @@ variable "terraform_ip_allowlist" {
   default     = []
 }
 
+variable "swa_custom_domain" {
+  description = "Custom domain hostname for the Static Web App (e.g. app.zdrovena.com). Leave empty to skip — domain must be CNAME'd to the SWA default_host_name before apply."
+  type        = string
+  default     = ""
+}
+
