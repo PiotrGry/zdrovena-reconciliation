@@ -94,6 +94,39 @@ jobs:
           exit-code: 1
           ignore-unfixed: true
 
+  frontend-lint:
+    name: Frontend lint + audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect changed frontend files
+        id: changed
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+      - uses: actions/setup-node@v4
+        if: steps.changed.outputs.frontend == 'true'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        if: steps.changed.outputs.frontend == 'true'
+        working-directory: frontend
+        run: npm ci
+      - name: ESLint
+        if: steps.changed.outputs.frontend == 'true'
+        working-directory: frontend
+        run: npm run lint
+      - name: npm audit (high+)
+        if: steps.changed.outputs.frontend == 'true'
+        working-directory: frontend
+        run: npm audit --audit-level=high
+      - if: steps.changed.outputs.frontend != 'true'
+        run: echo "No frontend files changed, frontend checks skipped."
+
   infra:
     name: Terraform validate + Checkov
     runs-on: ubuntu-latest
