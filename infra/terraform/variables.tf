@@ -1,7 +1,7 @@
 variable "subscription_id" {
-  description = "Azure subscription ID"
+  description = "Azure subscription ID (required: set in terraform.tfvars or TF_VAR_subscription_id)"
   type        = string
-  default     = "f8942601-3bfe-437d-b849-86f3b5519fea"
+  # No default - prevents accidental deployment to wrong subscription
 }
 
 variable "location" {
@@ -38,9 +38,13 @@ variable "azure_tenant_id" {
 }
 
 variable "azure_client_id_entra" {
-  description = "Entra ID app registration client ID (zdrovena-api) used for JWT audience validation — set as Container App env var AZURE_CLIENT_ID and GitHub Secret AZURE_API_CLIENT_ID"
+  description = "Entra ID app registration client ID (zdrovena-api) used for JWT audience validation — set as Container App env var AZURE_CLIENT_ID and GitHub Secret AZURE_API_CLIENT_ID. Required for production to enable authentication."
   type        = string
   default     = ""
+
+  # Note: Empty string disables authentication. For production deployments,
+  # set to a valid App Registration client ID (e.g., "api://zdrovena-api-prod").
+  # Cross-variable validation (checking var.environment) not supported in Terraform.
 }
 
 variable "container_app_cpu" {
