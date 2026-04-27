@@ -40,8 +40,11 @@ csv/
 infra/terraform/.terraform/
 infra/terraform/*.tfstate
 infra/terraform/*.tfstate.backup
+infra/terraform/*.tfplan
+infra/terraform/tfplan
 infra/terraform/terraform.tfvars
-infra/terraform/backend.hcl
+# backend.hcl intentionally NOT gitignored — values are Azure resource names,
+# not secrets. Backend security is RBAC + storage_use_azuread, not concealment.
 infra/terraform/.terraform.lock.hcl
 
 # Coverage

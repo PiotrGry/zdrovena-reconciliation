@@ -29,7 +29,7 @@ resource "azurerm_container_app" "this" {
   ingress {
     external_enabled = true
     target_port      = 8000
-    transport        = "http"
+    transport        = "auto" # Enables HTTP/2 and gRPC support
 
     traffic_weight {
       percentage      = 100
@@ -69,7 +69,11 @@ resource "azurerm_container_app" "this" {
       }
 
       env {
-        name  = "AZURE_CLIENT_ID"
+        # JWT audience — NOT the managed identity client_id. Named differently
+        # because AZURE_CLIENT_ID is reserved by azure-identity (DefaultAzureCredential
+        # uses it as the user-assigned MI client_id and hangs trying to fetch a token
+        # for an MI that doesn't exist).
+        name  = "AZURE_API_AUDIENCE"
         value = var.azure_client_id_entra
       }
 

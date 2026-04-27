@@ -1,7 +1,7 @@
 # infra/terraform/terraform.tfvars.template
 # Copy to terraform.tfvars and fill in — do NOT commit terraform.tfvars
 
-subscription_id = "f8942601-3bfe-437d-b849-86f3b5519fea"
+subscription_id = "<your-azure-subscription-id>"
 location        = "polandcentral"
 prefix          = "zdrovena"
 

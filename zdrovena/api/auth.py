@@ -14,8 +14,12 @@ Local dev / tests (AZURE_AUTH_DISABLED=true):
   - Never enable this in production
 
 Required env vars (production):
-  AZURE_TENANT_ID   — Entra ID tenant UUID
-  AZURE_CLIENT_ID   — App registration client_id (audience)
+  AZURE_TENANT_ID    — Entra ID tenant UUID
+  AZURE_API_AUDIENCE — App registration client_id used as JWT audience.
+                       Renamed from AZURE_CLIENT_ID to avoid conflict with
+                       azure-identity's DefaultAzureCredential, which treats
+                       AZURE_CLIENT_ID as the Managed Identity client_id
+                       and hangs trying to fetch a token for it.
 
 App roles:
   zdrovena-admin       — full access
@@ -100,25 +104,43 @@ def _validate_token(token: str) -> Principal:
             detail="Auth service unavailable",
         ) from exc
 
-    # v2 tokens have aud="api://<guid>", v1 tokens have aud="<guid>".
-    # python-jose's audience parameter accepts a list at runtime even though
-    # its type stubs only declare str | None.
-    client_id = os.environ.get("AZURE_CLIENT_ID", "")
-    audience: list[str] = [client_id, f"api://{client_id}"] if client_id else []
+    # python-jose's `audience` argument requires a single string at runtime
+    # (despite type stubs claiming Optional[str|list]). To accept both v1-style
+    # aud=<guid> and v2-style aud=api://<guid> tokens we skip the built-in
+    # check and validate the audience claim manually below.
+    # Read AZURE_API_AUDIENCE; fall back to AZURE_CLIENT_ID for backwards
+    # compatibility during the rename rollout, but prefer the new name —
+    # AZURE_CLIENT_ID is reserved by azure-identity for managed identity client_id.
+    client_id = os.environ.get("AZURE_API_AUDIENCE") or os.environ.get("AZURE_CLIENT_ID", "")
     try:
         claims = jwt.decode(
             token,
             jwks,
             algorithms=["RS256"],
-            audience=audience,  # type: ignore[arg-type]
-            options={"verify_exp": True},
+            options={"verify_exp": True, "verify_aud": False},
         )
     except JWTError as exc:
+        logger.warning("JWT decode failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
+
+    if client_id:
+        token_aud = claims.get("aud")
+        if token_aud not in (client_id, f"api://{client_id}"):
+            logger.warning(
+                "Token aud mismatch: got %r, expected %r or %r",
+                token_aud,
+                client_id,
+                f"api://{client_id}",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token audience",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     return Principal(
         sub=claims.get("sub", ""),

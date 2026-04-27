@@ -1,0 +1,250 @@
+name: Terraform infra
+
+# Runs Terraform plan/apply for infra/terraform/.
+#   - PR touching infra/**     → plan + comment on PR (read-only, no apply)
+#   - Push to main             → apply (gated by 'production-infra' environment)
+#   - Manual workflow_dispatch → plan only
+#
+# Replaces the previous flow where Terraform was run from the maintainer's laptop
+# (required ip_rules allowlist for the operator's home IP).
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'infra/terraform/**'
+      - '.github/workflows/terraform.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/terraform/**'
+      - '.github/workflows/terraform.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: "1.9.8"
+  TF_IN_AUTOMATION: "true"
+  ARM_USE_OIDC: "true"
+
+defaults:
+  run:
+    working-directory: infra/terraform
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    # OIDC subject claim must match an existing federated credential on the
+    # gha SP. The `staging` env's federated cred (subject :environment:staging)
+    # exists; the default `:pull_request` subject does not. Reuse staging.
+    environment: staging
+    outputs:
+      plan-exit-code: ${{ steps.plan.outputs.exitcode }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Some Azure secrets in this repo were stored with trailing newlines.
+      # azure/login (JS action) trims internally; terraform's ARM_* env vars
+      # do not — they get a stray \n which breaks URL parsing (net/url:
+      # invalid control character in URL). Trim once and export to GITHUB_ENV
+      # so all later terraform steps see clean values.
+      - name: Sanitize ARM credentials
+        env:
+          RAW_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          RAW_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          RAW_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RAW_API_CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
+        run: |
+          TENANT=$(printf '%s' "$RAW_TENANT_ID" | tr -d '[:space:]')
+          CLIENT=$(printf '%s' "$RAW_CLIENT_ID" | tr -d '[:space:]')
+          SUB=$(printf '%s' "$RAW_SUBSCRIPTION_ID" | tr -d '[:space:]')
+          API_CLIENT=$(printf '%s' "$RAW_API_CLIENT_ID" | tr -d '[:space:]')
+          echo "::add-mask::$TENANT"
+          echo "::add-mask::$CLIENT"
+          echo "::add-mask::$SUB"
+          echo "::add-mask::$API_CLIENT"
+          {
+            echo "ARM_TENANT_ID=$TENANT"
+            echo "ARM_CLIENT_ID=$CLIENT"
+            echo "ARM_SUBSCRIPTION_ID=$SUB"
+            echo "TF_VAR_subscription_id=$SUB"
+            echo "TF_VAR_azure_tenant_id=$TENANT"
+            echo "TF_VAR_azure_client_id_entra=$API_CLIENT"
+          } >> "$GITHUB_ENV"
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        # ARM_* env vars are set by Sanitize step via $GITHUB_ENV (trimmed).
+        run: terraform init -backend-config=backend.hcl -input=false
+
+      - name: Terraform validate
+        run: terraform validate -no-color
+
+      - name: Terraform plan
+        id: plan
+        # exit 2 = changes pending (not a failure here — CI gate decides)
+        # exit 1 = real error
+        # ARM_* and most TF_VAR_* are inherited from $GITHUB_ENV (sanitized).
+        env:
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_github_repo: ${{ github.event.repository.name }}
+          TF_VAR_terraform_ip_allowlist: '[]'
+        run: |
+          set +e
+          terraform plan -input=false -no-color -detailed-exitcode -out=tfplan 2>&1 | tee plan.txt
+          exitcode=${PIPESTATUS[0]}
+          echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
+          [ $exitcode -eq 1 ] && exit 1 || exit 0
+
+      - name: Upload plan artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tfplan-${{ github.run_id }}
+          path: infra/terraform/tfplan
+          retention-days: 5
+
+      - name: Comment plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const fs = require('fs');
+            const planRaw = fs.readFileSync('infra/terraform/plan.txt', 'utf8');
+            const max = 60000;
+            const plan = planRaw.length > max
+              ? planRaw.slice(0, max) + `\n\n…(truncated, ${planRaw.length - max} bytes omitted — see workflow logs)`
+              : planRaw;
+            const exitcode = '${{ steps.plan.outputs.exitcode }}';
+            const summary = exitcode === '0'
+              ? 'No infrastructure changes.'
+              : exitcode === '2'
+                ? 'Changes pending — review the plan below.'
+                : 'Plan failed — see workflow logs.';
+            const body = `### Terraform Plan\n\n${summary}\n\n<details><summary>Plan output</summary>\n\n\`\`\`hcl\n${plan}\n\`\`\`\n\n</details>`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.user.type === 'Bot' && c.body.startsWith('### Terraform Plan'));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+  apply:
+    name: Apply
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Approval gate: GitHub Free + private repo blocks Required reviewers, so we
+    # use trstringer/manual-approval which creates an issue and pauses until the
+    # listed approver comments "approve" / "approved" / "lgtm". Free, audit-trailed.
+    permissions:
+      issues: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Wait for manual approval
+        uses: trstringer/manual-approval@74d99dff7380e3e4b122d4ededcbca2b6ce59367 # v1.12.0
+        with:
+          secret: ${{ github.TOKEN }}
+          approvers: PiotrGry
+          minimum-approvals: 1
+          issue-title: "Terraform apply — run #${{ github.run_number }} (${{ github.sha }})"
+          issue-body: |
+            Manual approval required before applying terraform changes to production.
+
+            **Commit:** ${{ github.sha }}
+            **Triggered by:** ${{ github.event.head_commit.author.name }}
+            **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Review the plan output in the linked run, then comment one of: `approve`, `approved`, `lgtm` (or `deny` / `denied` to cancel).
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Some Azure secrets in this repo were stored with trailing newlines.
+      # azure/login (JS action) trims internally; terraform's ARM_* env vars
+      # do not — they get a stray \n which breaks URL parsing (net/url:
+      # invalid control character in URL). Trim once and export to GITHUB_ENV
+      # so all later terraform steps see clean values.
+      - name: Sanitize ARM credentials
+        env:
+          RAW_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          RAW_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          RAW_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RAW_API_CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
+        run: |
+          TENANT=$(printf '%s' "$RAW_TENANT_ID" | tr -d '[:space:]')
+          CLIENT=$(printf '%s' "$RAW_CLIENT_ID" | tr -d '[:space:]')
+          SUB=$(printf '%s' "$RAW_SUBSCRIPTION_ID" | tr -d '[:space:]')
+          API_CLIENT=$(printf '%s' "$RAW_API_CLIENT_ID" | tr -d '[:space:]')
+          echo "::add-mask::$TENANT"
+          echo "::add-mask::$CLIENT"
+          echo "::add-mask::$SUB"
+          echo "::add-mask::$API_CLIENT"
+          {
+            echo "ARM_TENANT_ID=$TENANT"
+            echo "ARM_CLIENT_ID=$CLIENT"
+            echo "ARM_SUBSCRIPTION_ID=$SUB"
+            echo "TF_VAR_subscription_id=$SUB"
+            echo "TF_VAR_azure_tenant_id=$TENANT"
+            echo "TF_VAR_azure_client_id_entra=$API_CLIENT"
+          } >> "$GITHUB_ENV"
+
+      - name: Terraform init
+        # ARM_* env vars are set by Sanitize step via $GITHUB_ENV (trimmed).
+        run: terraform init -backend-config=backend.hcl -input=false
+
+      - name: Terraform apply
+        # ARM_* and most TF_VAR_* are inherited from $GITHUB_ENV (sanitized).
+        env:
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_github_repo: ${{ github.event.repository.name }}
+          TF_VAR_terraform_ip_allowlist: '[]'
+        run: terraform apply -input=false -auto-approve -no-color
