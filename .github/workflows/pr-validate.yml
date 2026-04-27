@@ -7,10 +7,23 @@ name: PR Validate — develop → main
 # the code is identical (same SHA), the checks are deterministic, and our flow
 # requires every PR to main to come from develop — so develop-gate is always
 # the upstream guard. KISS / DRY.
+#
+# Path filtering: Skip for infra-only changes (terraform.yml handles those).
 
 on:
   pull_request:
     branches: [main]
+    paths:
+      - "zdrovena/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "Dockerfile"
+      - "e2e/**"
+      - "frontend/**"
+      - ".github/workflows/pr-validate.yml"
+      - ".github/workflows/_full-test-suite.yml"
+      # infra/** intentionally omitted — terraform.yml runs plan for those
   workflow_dispatch:
 
 permissions:
