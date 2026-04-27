@@ -80,11 +80,10 @@ resource "azurerm_log_analytics_workspace" "law" {
 # ── Container Apps Environment ─────────────────────────────────────────────────
 
 resource "azurerm_container_app_environment" "env" {
-  name                           = "${var.prefix}-cae"
-  resource_group_name            = azurerm_resource_group.rg.name
-  location                       = azurerm_resource_group.rg.location
-  log_analytics_workspace_id     = azurerm_log_analytics_workspace.law.id
-  infrastructure_subnet_id       = var.enable_private_network ? azurerm_subnet.container_apps[0].id : null
-  internal_load_balancer_enabled = var.enable_private_network
-  tags                           = local.tags
+  name                       = "${var.prefix}-cae"
+  resource_group_name        = azurerm_resource_group.rg.name
+  location                   = azurerm_resource_group.rg.location
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
+  infrastructure_subnet_id   = var.enable_private_network ? azurerm_subnet.container_apps[0].id : null
+  tags                       = local.tags
 }
