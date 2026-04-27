@@ -20,10 +20,12 @@ resource "azurerm_key_vault" "kv" {
 
   # CKV_AZURE_109 — restrict access to AzureServices only (Container App managed identity)
   # Terraform operator gets access via ip_rules (allowlist from variables)
+  # When private network is enabled, access is further restricted to VNet subnet
   network_acls {
-    default_action = "Deny"
-    bypass         = "AzureServices"
-    ip_rules       = var.terraform_ip_allowlist
+    default_action             = "Deny"
+    bypass                     = "AzureServices"
+    ip_rules                   = var.terraform_ip_allowlist
+    virtual_network_subnet_ids = var.enable_private_network ? [azurerm_subnet.container_apps[0].id] : []
   }
 
   # Allow Terraform operator (current CLI identity) to manage secrets
