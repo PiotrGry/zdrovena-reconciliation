@@ -27,7 +27,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: terraform-${{ github.ref }}
+  group: production-deploy
   cancel-in-progress: false
 
 env:
