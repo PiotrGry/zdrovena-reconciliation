@@ -1,0 +1,4 @@
+# CODEOWNERS — auto-route reviewers and audit AI agent contributions.
+# Solo dev: every change requires owner review.
+# Without CODEOWNERS, AI agents (Copilot, Claude) can self-approve PRs via auto-merge.
+* @PiotrGry
