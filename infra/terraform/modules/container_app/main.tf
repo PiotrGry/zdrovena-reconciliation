@@ -29,7 +29,7 @@ resource "azurerm_container_app" "this" {
   ingress {
     external_enabled = true
     target_port      = 8000
-    transport        = "http"
+    transport        = "auto" # Enables HTTP/2 and gRPC support
 
     traffic_weight {
       percentage      = 100

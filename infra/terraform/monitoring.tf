@@ -17,7 +17,7 @@ resource "azurerm_monitor_metric_alert" "high_error_rate" {
   name                = "${var.prefix}-alert-error-rate"
   resource_group_name = azurerm_resource_group.rg.name
   scopes              = [azurerm_application_insights.ai.id]
-  description         = "Error rate exceeded 1% — action required"
+  description         = "More than 5 failed requests in 5 minutes — action required"
   severity            = 1
   frequency           = "PT5M"
   window_size         = "PT5M"
@@ -39,7 +39,7 @@ resource "azurerm_monitor_metric_alert" "high_latency" {
   name                = "${var.prefix}-alert-latency"
   resource_group_name = azurerm_resource_group.rg.name
   scopes              = [azurerm_application_insights.ai.id]
-  description         = "p95 request latency exceeded 3 seconds"
+  description         = "Average response time exceeded 3 seconds (3000ms)"
   severity            = 2
   frequency           = "PT5M"
   window_size         = "PT5M"
