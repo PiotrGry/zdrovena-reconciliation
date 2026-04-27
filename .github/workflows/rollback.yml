@@ -17,15 +17,18 @@ permissions:
   id-token: write
   contents: read
 
-# Nigdy nie anuluj rollbacku — niech się skończy
+# Nigdy nie anuluj rollbacku — niech się skończy.
+# WAŻNE: ta sama grupa co prod-deploy.yml + terraform.yml — zapobiega
+# wystartowaniu rollbacku równolegle z deployem (race condition na produkcji).
 concurrency:
-  group: deploy-production
+  group: production-deploy
   cancel-in-progress: false
 
 jobs:
   rollback:
     name: Rollback
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: production  # wymagane zatwierdzenie jeśli skonfigurowano
 
     steps:

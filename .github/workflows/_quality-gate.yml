@@ -3,9 +3,23 @@ name: Quality Gate (reusable)
 # Fast checks only — runs on every push to develop and every PR to main.
 # No deploy, no staging, no docker push.
 # Target: under 5 minutes.
+#
+# Per-area gating: detect-changes job decides which areas (backend / frontend /
+# infra) actually changed; downstream jobs skip if their area didn't change.
+# This keeps frontend-only commits from running the full Python test suite.
 
 on:
   workflow_call:
+    outputs:
+      backend:
+        description: "True if backend Python code changed"
+        value: ${{ jobs.detect-changes.outputs.backend }}
+      frontend:
+        description: "True if frontend code changed"
+        value: ${{ jobs.detect-changes.outputs.frontend }}
+      infra:
+        description: "True if Terraform code changed"
+        value: ${{ jobs.detect-changes.outputs.infra }}
 
 permissions:
   contents: read
@@ -13,9 +27,37 @@ permissions:
   pull-requests: read  # gitleaks needs to list PR commits, checkov lists PR files
 
 jobs:
+  detect-changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      infra: ${{ steps.filter.outputs.infra }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - id: filter
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
+        with:
+          filters: |
+            backend:
+              - 'zdrovena/**'
+              - 'tests/**'
+              - 'scripts/**'
+              - 'pyproject.toml'
+              - 'Dockerfile'
+            frontend:
+              - 'frontend/**'
+            infra:
+              - 'infra/terraform/**'
+
   lint:
     name: Lint & format
     runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend == 'true'
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -29,6 +71,9 @@ jobs:
   typecheck:
     name: Typecheck (Pyright)
     runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend == 'true'
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -41,6 +86,9 @@ jobs:
   test:
     name: Unit tests + coverage
     runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend == 'true'
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -69,7 +117,9 @@ jobs:
   security:
     name: Security scan
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [detect-changes, test]
+    if: needs.detect-changes.outputs.backend == 'true'
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -97,65 +147,45 @@ jobs:
   frontend-lint:
     name: Frontend lint + audit
     runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true'
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Detect changed frontend files
-        id: changed
-        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
-        with:
-          filters: |
-            frontend:
-              - 'frontend/**'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        if: steps.changed.outputs.frontend == 'true'
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
-        if: steps.changed.outputs.frontend == 'true'
         working-directory: frontend
         run: npm ci
       - name: ESLint
-        if: steps.changed.outputs.frontend == 'true'
         working-directory: frontend
         run: npm run lint
       - name: npm audit (high+)
-        if: steps.changed.outputs.frontend == 'true'
         working-directory: frontend
         run: npm audit --audit-level=high
-      - if: steps.changed.outputs.frontend != 'true'
-        run: echo "No frontend files changed, frontend checks skipped."
 
   infra:
     name: Terraform validate + Checkov
     runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.infra == 'true'
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Detect changed infra files
-        id: changed
-        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
-        with:
-          filters: |
-            infra:
-              - 'infra/terraform/**'
       - name: Setup Terraform
-        if: steps.changed.outputs.infra == 'true'
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
-          terraform_version: "~1.5"
+          terraform_version: "1.9.8"
       - name: Terraform init (no backend)
-        if: steps.changed.outputs.infra == 'true'
-        run: terraform -chdir=infra/terraform init -backend=false
+        run: terraform -chdir=infra/terraform init -backend=false -lock-timeout=5m
       - name: Terraform validate
-        if: steps.changed.outputs.infra == 'true'
         run: terraform -chdir=infra/terraform validate
       - name: Checkov IaC security scan
-        if: steps.changed.outputs.infra == 'true'
         uses: bridgecrewio/checkov-action@3203f966a7ccd680cd8f6aaa3c3c5b0b3e9afa32 # v12
         with:
           directory: infra/terraform
           quiet: true
           soft_fail: false
-      - if: steps.changed.outputs.infra != 'true'
-        run: echo "No terraform files changed, infra checks skipped."

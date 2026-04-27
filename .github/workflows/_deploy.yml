@@ -7,6 +7,7 @@ jobs:
   promote:
     name: Promote image to production
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       image: ${{ steps.promote.outputs.image }}
     permissions:
@@ -34,6 +35,7 @@ jobs:
   deploy-prod:
     name: Deploy to production
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: promote
     environment: production
     permissions:
@@ -93,6 +95,7 @@ jobs:
   deploy-frontend:
     name: Deploy frontend to SWA (production)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: production
     permissions:
       id-token: write
@@ -170,6 +173,7 @@ jobs:
   release:
     name: Semantic release
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [deploy-prod, deploy-frontend]
     permissions:
       contents: write  # push version bump commit, create tag + GitHub Release
