@@ -1,12 +1,9 @@
 name: PR Validate — develop → main
 
-# Every PR targeting main — runs the integration-and-deploy pipeline only.
-# The quality gate (lint, typecheck, unit tests, security, infra, frontend lint)
-# already ran on the same SHA via develop-gate.yml when the commit landed on
-# develop. Re-running it here would duplicate ~3 min of CI for zero new signal:
-# the code is identical (same SHA), the checks are deterministic, and our flow
-# requires every PR to main to come from develop — so develop-gate is always
-# the upstream guard. KISS / DRY.
+# Every PR targeting main — runs quality gate + full test suite.
+# Quality gate is re-run here (even though it ran on develop for the same SHA)
+# because reviewers may push fixup commits to the PR. Without re-running,
+# lint/typecheck/security/coverage would not validate the new commits.
 #
 # Path filtering: Skip for infra-only changes (terraform.yml handles those).
 
@@ -36,8 +33,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Re-run quality gate on the PR HEAD. Even though the same SHA already passed
+  # develop-gate when the commit landed on develop, a reviewer may push fixup
+  # commits to the PR — those would skip lint/typecheck/security/coverage
+  # without this gate. KISS: deterministic checks are cheap, run them again.
+  quality-gate:
+    name: Quality gate
+    uses: ./.github/workflows/_quality-gate.yml
+    secrets: inherit
+
   full-test-suite:
     name: Full test suite
+    needs: quality-gate
     uses: ./.github/workflows/_full-test-suite.yml
     secrets: inherit
 
@@ -45,7 +52,8 @@ jobs:
     name: CI Gate
     if: always()
     runs-on: ubuntu-latest
-    needs: [full-test-suite]
+    timeout-minutes: 2
+    needs: [quality-gate, full-test-suite]
     steps:
       - name: Check all jobs passed
         run: |

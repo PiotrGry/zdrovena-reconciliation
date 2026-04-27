@@ -43,6 +43,7 @@ jobs:
   plan:
     name: Plan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     # OIDC subject claim must match an existing federated credential on the
     # gha SP. The `staging` env's federated cred (subject :environment:staging)
@@ -170,6 +171,7 @@ jobs:
   apply:
     name: Apply
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     # Approval gate: GitHub Free + private repo blocks Required reviewers, so we
     # use trstringer/manual-approval which creates an issue and pauses until the
