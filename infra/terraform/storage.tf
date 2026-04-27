@@ -21,18 +21,19 @@ resource "azurerm_storage_account" "storage" {
   min_tls_version                 = "TLS1_2"
   tags                            = local.tags
 
-  # Block all public internet access.
-  # AzureServices bypass allows the Container App to access blobs via
-  # Network ACLs intentionally permissive: storage is fully RBAC-locked
-  # (shared_access_key_enabled=false, no SAS issued), so identity-based
-  # access — not network position — is the actual security boundary.
-  # Container Apps' "AzureServices" bypass is unreliable; rather than
-  # special-case its outbound IPs, we let the access layer enforce policy.
+  # Network ACLs intentionally permissive when public (default_action=Allow):
+  # storage is fully RBAC-locked (shared_access_key_enabled=false, no SAS issued),
+  # so identity-based access — not network position — is the security boundary.
+  # Container Apps' "AzureServices" bypass is unreliable; rather than special-case
+  # its outbound IPs, we let the RBAC layer enforce policy.
+  #
+  # When private network is enabled (var.enable_private_network=true):
+  # default_action=Deny, access only via Private Endpoint from VNet.
   network_rules {
-    default_action             = "Allow"
+    default_action             = var.enable_private_network ? "Deny" : "Allow"
     bypass                     = ["AzureServices"]
-    ip_rules                   = []
-    virtual_network_subnet_ids = []
+    ip_rules                   = var.enable_private_network ? [] : var.terraform_ip_allowlist
+    virtual_network_subnet_ids = var.enable_private_network ? [azurerm_subnet.container_apps[0].id] : []
   }
 
   blob_properties {
