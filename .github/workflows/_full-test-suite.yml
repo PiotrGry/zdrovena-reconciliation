@@ -25,6 +25,7 @@ jobs:
   build:
     name: Build & push staging image
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: staging
     outputs:
       image: ${{ steps.meta.outputs.image }}
@@ -60,6 +61,7 @@ jobs:
   deploy-backend:
     name: Deploy backend to staging
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: staging
     needs: build
     env:
@@ -101,6 +103,7 @@ jobs:
   deploy-frontend:
     name: Deploy frontend to SWA staging
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # `environment: staging` is required so the OIDC token's subject claim is
     # repo:.../zdrovena-reconciliation:environment:staging — matching the
     # `github-staging` federated identity credential on the gha SP. Without it,
@@ -162,6 +165,7 @@ jobs:
   smoke:
     name: Smoke tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [deploy-backend, deploy-frontend]
     outputs:
       result: ${{ steps.run.outputs.result }}
@@ -213,6 +217,7 @@ jobs:
   e2e:
     name: E2E tests (Playwright)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [deploy-backend, deploy-frontend]
     outputs:
       result: ${{ steps.run.outputs.result }}
@@ -256,6 +261,7 @@ jobs:
   pr-summary:
     name: Post PR summary
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: [smoke, e2e]
     if: always()
     steps:
@@ -298,6 +304,7 @@ jobs:
   teardown:
     name: Teardown staging
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: [smoke, e2e]
     if: always()
     environment: staging
