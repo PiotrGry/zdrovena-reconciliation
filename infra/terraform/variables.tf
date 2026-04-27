@@ -73,3 +73,9 @@ variable "swa_custom_domain" {
   default     = ""
 }
 
+variable "enable_private_network" {
+  description = "Enable VNet + Service Endpoints for Storage and Key Vault (cost-optimized). Cost: ~€3/month (VNet traffic only). Service Endpoints = FREE (vs €14/month for Private Endpoints). Traffic via Microsoft backbone, firewall default_action=Deny, RBAC enforced. Sufficient for business data; upgrade to Private Endpoints if HIPAA/PCI-DSS compliance required."
+  type        = bool
+  default     = false
+}
+
