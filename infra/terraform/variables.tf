@@ -14,6 +14,11 @@ variable "prefix" {
   description = "Short prefix used for all resource names"
   type        = string
   default     = "zdrovena"
+
+  validation {
+    condition     = can(regex("^[a-z0-9-]{3,20}$", var.prefix))
+    error_message = "Prefix must be 3-20 lowercase alphanumeric characters or hyphens."
+  }
 }
 
 variable "github_owner" {
