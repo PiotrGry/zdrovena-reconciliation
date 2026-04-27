@@ -172,12 +172,123 @@ zdrovena setup --check                    # sprawdź co skonfigurowane
 
 | Komponent | Serwis Azure |
 |-----------|-------------|
-| REST API | Container Apps (`zdrovena-api`, `zdrovena-api-staging`) |
+| REST API | Container Apps (`zdrovena-api-prod`, `zdrovena-api-staging`) |
 | Frontend | Static Web Apps (`zdrovena-ui`) |
 | Pliki | Blob Storage (prywatny kontener, RBAC) |
 | Sekrety | Key Vault |
 | Obrazy | Container Registry |
 | Tożsamość | Entra ID (App Registration `zdrovena-api`, Managed Identity) |
+| Monitoring | Application Insights + metric alerts |
+| Logs | Log Analytics Workspace |
+
+### Architektura
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Production Environment (polandcentral)                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌──────────────┐       ┌──────────────────┐                   │
+│  │ Static Web   │──────▶│ Container App    │                   │
+│  │ App (UI)     │ /api/*│ (api-prod)       │                   │
+│  └──────────────┘       │ min=0, max=2     │                   │
+│        │                └────────┬─────────┘                   │
+│        │ cdn                     │                             │
+│        ▼                         ▼                             │
+│  ┌──────────────┐       ┌──────────────────┐                   │
+│  │ Custom Domain│       │ Blob Storage     │                   │
+│  │ (optional)   │       │ (files)          │                   │
+│  └──────────────┘       └──────────────────┘                   │
+│                                  │                             │
+│                                  ▼                             │
+│                         ┌──────────────────┐                   │
+│                         │ Key Vault        │                   │
+│                         │ (secrets)        │                   │
+│                         └──────────────────┘                   │
+├─────────────────────────────────────────────────────────────────┤
+│ Staging Environment (same region, shared infra)                │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌──────────────────┐   ┌──────────────────┐                   │
+│  │ Container App    │   │ Blob Storage     │                   │
+│  │ (api-staging)    │──▶│ (files_staging)  │                   │
+│  │ min=0, max=1     │   └──────────────────┘                   │
+│  └──────────────────┘                                          │
+├─────────────────────────────────────────────────────────────────┤
+│ Shared Infrastructure (cost optimization)                      │
+├─────────────────────────────────────────────────────────────────┤
+│  • Container Registry (ACR Basic)                              │
+│  • Container App Environment                                   │
+│  • Log Analytics Workspace                                     │
+│  • Key Vault (shared secrets for both envs)                    │
+│  • Application Insights (unified monitoring)                   │
+│  • GitHub Actions Identity (OIDC)                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Kluczowe decyzje architektoniczne:**
+- **Shared infrastructure** — pojedyncze ACR, KV, LAW, CAE dla obu środowisk = niższe koszty (~$10-15/mies)
+- **Scale-to-zero** — Container Apps z `min_replicas=0` → brak kosztów compute w idle
+- **Managed Identity wszędzie** — zero secrets w env vars/kodzie, pełen RBAC
+- **Storage isolation** — osobne kontenery dla prod (`files`) i staging (`files_staging`)
+- **Network security** — RBAC jako główna bariera (shared_access_key_enabled=false, bypass=AzureServices)
+
+### Planowane serwisy (rozwój)
+
+#### **Faza 1: Persistence layer (Q2 2026)**
+- **PostgreSQL Flexible Server** — transakcyjne dane, historia faktur, audyt trail
+  - SKU: Burstable B1ms (1 vCore, 2 GiB) — ~$15/mies
+  - Passwordless auth via Managed Identity
+  - Backup retention: 7 dni
+  - Use cases: faktury cache, user sessions, workflow state
+
+#### **Faza 2: Performance optimization (Q3 2026)**
+- **Azure Cache for Redis** — session store, rate limiting, hot data
+  - SKU: Basic C0 (250 MB) — ~$17/mies
+  - Use cases: JWT blacklist, invoice metadata cache, rate limiting
+
+#### **Faza 3: Async workflows (Q3-Q4 2026)**
+- **Service Bus** — kolejki dla długich operacji (KSeF fetch, PDF generation)
+  - SKU: Basic — ~$0.05/milion operacji
+  - Use cases: month-close pipeline steps, batch invoice processing
+
+#### **Faza 4: Multi-region HA (2027)**
+- **ACR Premium** — georeplikacja obrazów do westeurope (~$5/mies → ~$150/mies)
+- **Traffic Manager** — DNS-based load balancing między regionami
+- **Blob GRS** — geo-redundant storage (LRS → GRS: +50% kosztu)
+
+#### **Faza 5: Enterprise security (2027+)**
+- **VNet + Private Endpoints** — izolacja sieciowa Storage/KV/DB (~$15/mies per endpoint)
+- **Azure Front Door** — WAF + DDoS protection (~$35/mies + traffic)
+- **Azure Policy** — governance (deny public endpoints, enforce tags)
+
+**Szacowane koszty po pełnym rozwoju:** ~$250-300/mies (vs obecne ~$12-15/mies)
+
+### Terraform — struktura plików
+
+```
+infra/terraform/
+├── main.tf         — Core: Resource Group, ACR, Log Analytics, Container App Env
+├── compute.tf      — Container Apps (api_prod, api_staging modules)
+├── storage.tf      — Storage Account + blob containers
+├── security.tf     — Key Vault, GitHub OIDC Identity, RBAC assignments
+├── frontend.tf     — Static Web App + custom domain
+├── monitoring.tf   — Application Insights + metric alerts
+├── variables.tf    — Input variables
+├── outputs.tf      — Output values
+├── providers.tf    — Provider config (azurerm 4.2+)
+└── modules/
+    └── container_app/  — Reusable Container App module
+```
+
+**Deployment:**
+```bash
+cd infra/terraform
+cp terraform.tfvars.template terraform.tfvars
+# uzupełnij terraform.tfvars
+terraform init -backend-config=backend.hcl
+terraform plan
+terraform apply
+```
 
 ### GitHub Secrets (wymagane)
 

@@ -1,7 +1,7 @@
 variable "subscription_id" {
-  description = "Azure subscription ID"
+  description = "Azure subscription ID (required: set in terraform.tfvars or TF_VAR_subscription_id)"
   type        = string
-  default     = "f8942601-3bfe-437d-b849-86f3b5519fea"
+  # No default - prevents accidental deployment to wrong subscription
 }
 
 variable "location" {
@@ -14,6 +14,11 @@ variable "prefix" {
   description = "Short prefix used for all resource names"
   type        = string
   default     = "zdrovena"
+
+  validation {
+    condition     = can(regex("^[a-z0-9-]{3,20}$", var.prefix))
+    error_message = "Prefix must be 3-20 lowercase alphanumeric characters or hyphens."
+  }
 }
 
 variable "github_owner" {
@@ -33,9 +38,13 @@ variable "azure_tenant_id" {
 }
 
 variable "azure_client_id_entra" {
-  description = "Entra ID app registration client ID (zdrovena-api) used for JWT audience validation — set as Container App env var AZURE_CLIENT_ID and GitHub Secret AZURE_API_CLIENT_ID"
+  description = "Entra ID app registration client ID (zdrovena-api) used for JWT audience validation — set as Container App env var AZURE_CLIENT_ID and GitHub Secret AZURE_API_CLIENT_ID. Required for production to enable authentication."
   type        = string
   default     = ""
+
+  # Note: Empty string disables authentication. For production deployments,
+  # set to a valid App Registration client ID (e.g., "api://zdrovena-api-prod").
+  # Cross-variable validation (checking var.environment) not supported in Terraform.
 }
 
 variable "container_app_cpu" {
@@ -60,5 +69,17 @@ variable "terraform_ip_allowlist" {
   description = "List of IPs allowed to access storage account (needed for Terraform to manage storage containers). Remove after initial apply if desired."
   type        = list(string)
   default     = []
+}
+
+variable "swa_custom_domain" {
+  description = "Custom domain hostname for the Static Web App (e.g. app.zdrovena.com). Leave empty to skip — domain must be CNAME'd to the SWA default_host_name before apply."
+  type        = string
+  default     = ""
+}
+
+variable "enable_private_network" {
+  description = "Enable VNet + Service Endpoints for Storage and Key Vault (cost-optimized). Cost: ~€3/month (VNet traffic only). Service Endpoints = FREE (vs €14/month for Private Endpoints). Traffic via Microsoft backbone, firewall default_action=Deny, RBAC enforced. Sufficient for business data; upgrade to Private Endpoints if HIPAA/PCI-DSS compliance required."
+  type        = bool
+  default     = false
 }
 

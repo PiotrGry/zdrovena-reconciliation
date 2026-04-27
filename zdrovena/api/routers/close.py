@@ -7,7 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from zdrovena.api.auth import Principal, require_accountant_or_admin
+from zdrovena.api.auth import Principal, require_accountant_or_admin, require_viewer_or_above
 from zdrovena.api.models import CloseRequest, CloseResponse, CloseStateResponse
 from zdrovena.common.storage import get_storage_service
 from zdrovena.month_closing.config import BASE_DIR, POLISH_MONTHS
@@ -73,11 +73,14 @@ def run_close(
     summary="Get pipeline checkpoint state for a given month",
 )
 def get_close_state(
-    principal: Annotated[Principal, Depends(require_accountant_or_admin)],
+    principal: Annotated[Principal, Depends(require_viewer_or_above)],
     year: int = Query(...),
     month: int = Query(..., ge=1, le=12),
 ) -> CloseStateResponse:
-    """Return which pipeline steps have already been completed for the given month."""
+    """Return which pipeline steps have already been completed for the given month.
+
+    Read-only — accessible to viewer role and above (D3 decision from eng review).
+    """
     month_pl = POLISH_MONTHS[month - 1]
     month_dir = BASE_DIR / str(year) / month_pl
     storage = get_storage_service()

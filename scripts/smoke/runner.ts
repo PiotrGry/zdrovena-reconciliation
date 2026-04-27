@@ -11,12 +11,14 @@ import type { SmokeReport, SmokeTest, TestContext, TestResult } from "./types.js
 // ── Load all test modules ──────────────────────────────────────────────────
 import { tests as apiTests } from "./tests/api.js";
 import { tests as authTests } from "./tests/auth.js";
+import { tests as authRealTests } from "./tests/auth-real.js";
 import { tests as frontendTests } from "./tests/frontend.js";
 import { tests as businessTests } from "./tests/business.js";
 
 const ALL_TESTS: SmokeTest[] = [
   ...apiTests,
   ...authTests,
+  ...authRealTests,
   ...frontendTests,
   ...businessTests,
 ];
@@ -37,6 +39,37 @@ function fetchWithTimeout(url: string, opts: RequestInit & { timeoutMs?: number 
   );
 }
 
+// Lazy-cached viewer access token — fetched once on first call, reused for the run.
+let cachedViewerToken: string | null | undefined;
+async function getViewerToken(): Promise<string | null> {
+  if (cachedViewerToken !== undefined) return cachedViewerToken;
+  const tenant = process.env.AZURE_TENANT_ID?.trim();
+  const clientId = process.env.SMOKE_SP_CLIENT_ID?.trim();
+  const clientSecret = process.env.SMOKE_SP_CLIENT_SECRET;
+  const apiClientId = process.env.AZURE_API_CLIENT_ID?.trim();
+  if (!tenant || !clientId || !clientSecret || !apiClientId) {
+    cachedViewerToken = null;
+    return null;
+  }
+  const body = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope: `api://${apiClientId}/.default`,
+  });
+  const res = await fetchWithTimeout(
+    `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
+    { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body, timeoutMs: 10_000 },
+  );
+  if (!res.ok) {
+    cachedViewerToken = null;
+    return null;
+  }
+  const json = await res.json() as { access_token?: string };
+  cachedViewerToken = json.access_token ?? null;
+  return cachedViewerToken;
+}
+
 const ctx: TestContext = {
   apiUrl: process.env.API_URL ?? "http://localhost:8000",
   swaUrl: process.env.SWA_URL ?? "http://localhost:5173",
@@ -44,8 +77,11 @@ const ctx: TestContext = {
   azureClientId: process.env.AZURE_CLIENT_ID ?? "",
   azureApiClientId: process.env.AZURE_API_CLIENT_ID ?? "",
   azureSubscriptionId: process.env.AZURE_SUBSCRIPTION_ID ?? "",
+  smokeSpClientId: process.env.SMOKE_SP_CLIENT_ID ?? "",
+  smokeSpClientSecret: process.env.SMOKE_SP_CLIENT_SECRET ?? "",
   verbose,
   fetch: fetchWithTimeout,
+  getViewerToken,
 };
 
 // ── Run tests ──────────────────────────────────────────────────────────────
