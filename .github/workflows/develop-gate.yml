@@ -1,6 +1,12 @@
 name: Develop — Fast Gate
 
-# Push to develop branch — runs lint, typecheck, unit tests, security, infra checks.
+# Triggers:
+#  - push to develop: runs lint, typecheck, unit tests, security, infra checks.
+#  - pull_request → develop: same gate, validates contributions (incl. Dependabot)
+#    before they land. No paths filter on PR — internal detect-changes job in
+#    _quality-gate.yml handles per-area skipping, so the workflow always reports
+#    a status (avoids "no checks reported" gap that blocks branch protection /
+#    auto-merge for non-code PRs like dependabot.yml or workflow tweaks).
 # No deploy, no staging. Target: under 5 minutes.
 
 on:
@@ -16,6 +22,8 @@ on:
       - "frontend/**"
       - ".github/workflows/develop-gate.yml"
       - ".github/workflows/_quality-gate.yml"
+  pull_request:
+    branches: [develop]
   workflow_dispatch:
 
 permissions:
@@ -25,7 +33,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: develop-gate-${{ github.ref_name }}
+  group: develop-gate-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
