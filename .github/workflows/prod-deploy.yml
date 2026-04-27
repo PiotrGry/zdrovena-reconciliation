@@ -22,7 +22,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: deploy-production
+  group: production-deploy
   cancel-in-progress: false
 
 jobs:
