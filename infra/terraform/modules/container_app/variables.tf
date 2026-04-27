@@ -32,8 +32,9 @@ variable "storage_container_name" {
   type = string
 }
 
-variable "storage_container_resource_manager_id" {
-  type = string
+variable "storage_container_id" {
+  type        = string
+  description = "Storage container Resource Manager ID for RBAC scope"
 }
 
 variable "key_vault_id" {

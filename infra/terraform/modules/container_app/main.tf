@@ -101,7 +101,7 @@ resource "azurerm_role_assignment" "acr_pull" {
 # ── RBAC: Container App → Storage Blob Data Contributor ───────────────────────
 
 resource "azurerm_role_assignment" "storage_contributor" {
-  scope                = var.storage_container_resource_manager_id
+  scope                = var.storage_container_id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = azurerm_container_app.this.identity[0].principal_id
 }
