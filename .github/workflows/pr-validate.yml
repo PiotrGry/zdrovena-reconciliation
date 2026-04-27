@@ -27,6 +27,7 @@ permissions:
   contents: read
   pull-requests: write
   id-token: write
+  security-events: write  # required by _quality-gate.yml (gitleaks/trivy SARIF upload)
 
 concurrency:
   group: pr-validate-${{ github.head_ref || github.ref_name }}
