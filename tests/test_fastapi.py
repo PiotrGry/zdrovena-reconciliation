@@ -229,6 +229,19 @@ class TestCloseEndpoint:
             resp = c.post("/api/close", json={"year": 2026, "month": 3})
         assert resp.status_code == 400
 
+    def test_preflight_blockers_return_422_not_500(self, api):
+        """SystemExit from pre-flight blockers must yield 422, never 500."""
+        c, _ = api
+        with patch("zdrovena.api.routers.close.MonthCloseOrchestrator") as M:
+            instance = M.return_value
+            instance.report.errors = ["Brakuje wyciągu bankowego"]
+            instance.execute.side_effect = SystemExit(1)
+            resp = c.post("/api/close", json={"year": 2026, "month": 3, "dry_run": True})
+        assert resp.status_code == 422
+        body = resp.json()["detail"]
+        assert body["blockers"] == ["Brakuje wyciągu bankowego"]
+        assert "log_lines" in body
+
     def test_close_requires_auth_when_enabled(self, tmp_path, monkeypatch):
         monkeypatch.setenv("AZURE_AUTH_DISABLED", "false")
         storage = LocalStorageService(root=tmp_path / "storage")

@@ -109,10 +109,24 @@ export function CloseRunner({ year, month, dryRun, preCompleted = [], onDone }) 
 
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
-                throw new Error(body.detail ?? `HTTP ${res.status}`)
+                const detail = body.detail
+                // 422 — pre-flight blockers: {blockers: [...], log_lines: [...]}
+                if (res.status === 422 && detail?.blockers) {
+                    setStates(prev => prev.map(s => s === 'running' ? 'error' : s))
+                    detail.log_lines?.forEach(line => addLog(line, 'info'))
+                    addLog('── Brakujące dokumenty ──', 'err')
+                    detail.blockers.forEach(d => addLog(`  • ${d}`, 'err'))
+                    setStatus('error')
+                    onDone?.('error', null)
+                    return
+                }
+                throw new Error(Array.isArray(detail) ? detail.join(', ') : (detail ?? `HTTP ${res.status}`))
             }
 
             const data = await res.json()
+
+            // Show full CLI output in log panel
+            data.log_lines?.forEach(line => addLog(line, 'info'))
 
             // Reconcile actual completed steps from API response
             const allCompleted = new Set([...(preCompleted ?? []), ...(data.steps_completed ?? [])])
