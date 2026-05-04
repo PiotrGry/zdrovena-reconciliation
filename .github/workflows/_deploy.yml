@@ -55,11 +55,16 @@ jobs:
         env:
           PROD_APP: zdrovena-api-prod
           RG: zdrovena-rg
+          IMAGE: ${{ needs.promote.outputs.image }}
         run: |
+          if [[ -z "$IMAGE" ]]; then
+            echo "::error::promote job did not output an image — aborting deploy"
+            exit 1
+          fi
           az containerapp update \
             --name            "$PROD_APP" \
             --resource-group  "$RG" \
-            --image           "${{ needs.promote.outputs.image }}" \
+            --image           "$IMAGE" \
             --min-replicas    1
 
       - name: Wait for production deployment to complete
