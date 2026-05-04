@@ -30,7 +30,11 @@ jobs:
         id: promote
         env:
           ACR: ${{ secrets.ACR_LOGIN_SERVER }}
-        run: bash scripts/ci/promote-image.sh "$ACR" "${{ github.sha }}"
+        run: |
+          bash scripts/ci/promote-image.sh "$ACR" "${{ github.sha }}"
+          # Write output explicitly in the GHA run context (not a subshell)
+          # to guarantee $GITHUB_OUTPUT is populated for downstream jobs.
+          echo "image=$ACR/zdrovena-api:${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
   deploy-prod:
     name: Deploy to production
