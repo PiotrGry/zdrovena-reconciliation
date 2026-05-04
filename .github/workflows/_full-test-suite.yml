@@ -323,3 +323,15 @@ jobs:
 
       - name: Scale staging to zero
         run: bash scripts/ci/teardown-staging.sh "$STAGING_APP" "$RG"
+
+      - name: Delete SWA staging environment
+        env:
+          SWA_NAME: ${{ secrets.AZURE_SWA_NAME }}
+          SWA_RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+        run: |
+          az staticwebapp environment delete \
+            --name "$SWA_NAME" \
+            --resource-group "$SWA_RG" \
+            --environment-name "$PR_NUM" \
+            --yes 2>/dev/null || echo "SWA env $PR_NUM already gone or not found — OK"
