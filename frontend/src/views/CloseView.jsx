@@ -251,12 +251,14 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal }) {
 
     if (!open) return null
 
-    const start = () => setRunning(true)
-    const done = (s) => { setStatus(s); setRunning(false); onDoneExternal?.(s) }
+    const start = () => { setStatus('ready'); setRunning(true) }
+    // On error: keep runner visible so user can read logs — don't tear it down.
+    // User must explicitly click "Spróbuj ponownie" or "Zamknij" to proceed.
+    const done = (s) => { setStatus(s); if (s !== 'error' && s !== 'done') setRunning(false); onDoneExternal?.(s) }
 
     return (
-        <div className="modal-backdrop open" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 860, width: '92vw' }}>
+        <div className="modal-backdrop open">
+            <div className="modal" style={{ width: '92vw' }}>
                 <div className="modal-head">
                     <div className="modal-eyebrow">{T.close_step} · {MONTHS_PL[month - 1]} {year}</div>
                     <h2 className="modal-title">{T.close_title}</h2>
@@ -324,6 +326,11 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal }) {
                         {!running && status !== 'done' && (
                             <button className="btn btn-primary" onClick={start}>
                                 <Icon name="play" size={14} /> {T.close_run}
+                            </button>
+                        )}
+                        {running && status === 'error' && (
+                            <button className="btn btn-ghost" onClick={() => { setRunning(false); setStatus('ready') }}>
+                                ↩ Spróbuj ponownie
                             </button>
                         )}
                     </div>
