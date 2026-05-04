@@ -72,7 +72,7 @@ def run_close(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"blockers": detail, "log_lines": log_lines},
-        )
+        ) from None
     except Exception as exc:
         logger.exception("Close pipeline failed: %s", exc)
         raise HTTPException(
