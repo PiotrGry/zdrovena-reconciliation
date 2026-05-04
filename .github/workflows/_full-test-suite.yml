@@ -112,7 +112,8 @@ jobs:
     environment: staging
     needs: build
     outputs:
-      swa-url: "https://icy-water-0e2b04d03-staging.7.azurestaticapps.net"
+      # SWA action creates env named after PR number (e.g. 47 → icy-water-0e2b04d03-47.westeurope.7.azurestaticapps.net)
+      swa-url: "https://icy-water-0e2b04d03-${{ github.event.pull_request.number }}.westeurope.7.azurestaticapps.net"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -157,8 +158,6 @@ jobs:
           action: upload
           app_location: frontend/dist
           output_location: ""
-          deployment_environment: staging
-          skip_api_build: true
           skip_app_build: true
 
   # ── 4. Smoke test suite ────────────────────────────────────────────────────
@@ -323,3 +322,15 @@ jobs:
 
       - name: Scale staging to zero
         run: bash scripts/ci/teardown-staging.sh "$STAGING_APP" "$RG"
+
+      - name: Delete SWA staging environment
+        env:
+          SWA_NAME: ${{ secrets.AZURE_SWA_NAME }}
+          SWA_RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+        run: |
+          az staticwebapp environment delete \
+            --name "$SWA_NAME" \
+            --resource-group "$SWA_RG" \
+            --environment-name "$PR_NUM" \
+            --yes 2>/dev/null || echo "SWA env $PR_NUM already gone or not found — OK"

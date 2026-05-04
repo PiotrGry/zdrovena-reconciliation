@@ -40,9 +40,10 @@ class CloseResponse(BaseModel):
     errors: list[str]
     steps_completed: list[str]
     has_critical_errors: bool
+    log_lines: list[str] = []
 
     @classmethod
-    def from_close_report(cls, report: Any) -> CloseResponse:
+    def from_close_report(cls, report: Any, *, log_lines: list[str] | None = None) -> CloseResponse:
         """Convert a CloseReport dataclass to CloseResponse."""
         return cls(
             sales_invoice_count=report.sales_invoice_count,
@@ -59,6 +60,7 @@ class CloseResponse(BaseModel):
             errors=report.errors,
             steps_completed=report.steps_completed,
             has_critical_errors=report.has_critical_errors,
+            log_lines=log_lines or [],
         )
 
 
