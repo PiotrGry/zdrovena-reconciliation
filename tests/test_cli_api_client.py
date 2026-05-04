@@ -791,7 +791,8 @@ class TestApiCliParity:
         api_fields = set(CloseResponse.model_fields.keys())
 
         extra_in_api = api_fields - local_fields
-        # The only extra field allowed is has_critical_errors (promoted from property)
-        assert extra_in_api <= {"has_critical_errors"}, (
-            f"Unexpected extra fields in CloseResponse: {extra_in_api - {'has_critical_errors'}}"
+        # Allowed extras: has_critical_errors (promoted from property), log_lines (API-only output capture)
+        allowed_extras = {"has_critical_errors", "log_lines"}
+        assert extra_in_api <= allowed_extras, (
+            f"Unexpected extra fields in CloseResponse: {extra_in_api - allowed_extras}"
         )
