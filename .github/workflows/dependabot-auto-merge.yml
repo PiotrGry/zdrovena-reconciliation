@@ -1,0 +1,76 @@
+name: Dependabot auto-merge
+
+# Auto-merges Dependabot PRs that pass all required checks, but ONLY for safe
+# update categories:
+#   - All dev-dependencies (any semver bump)
+#   - Patch updates for runtime dependencies
+#   - Minor updates for runtime dependencies
+#   - GitHub Actions: any update (pinned by SHA, low risk)
+#   - Docker base image: patch + minor only
+#
+# Major version bumps for runtime deps are NEVER auto-merged — manual review.
+#
+# All Dependabot PRs target `develop` (per dependabot.yml). After this workflow
+# enables auto-merge, the PR waits for required status checks to pass, then
+# squash-merges automatically.
+#
+# Note: requires "Allow auto-merge" in repo Settings → General → Pull Requests.
+
+on:
+  pull_request:
+    branches: [develop]
+
+permissions:
+  contents: write       # merge PRs
+  pull-requests: write  # approve + enable auto-merge
+
+jobs:
+  auto-merge:
+    name: Enable auto-merge for safe updates
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7 # v2.4.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decide auto-merge eligibility
+        id: decide
+        env:
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          DEP_TYPE: ${{ steps.meta.outputs.dependency-type }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+        run: |
+          eligible=false
+          # Dev-dependencies: auto-merge any semver bump
+          if [[ "$DEP_TYPE" == "direct:development" || "$DEP_TYPE" == "indirect" ]]; then
+            eligible=true
+          # Runtime deps: only patch + minor
+          elif [[ "$UPDATE_TYPE" == "version-update:semver-patch" || "$UPDATE_TYPE" == "version-update:semver-minor" ]]; then
+            eligible=true
+          # GitHub Actions: SHA-pinned, low risk → always auto-merge
+          elif [[ "$ECOSYSTEM" == "github_actions" ]]; then
+            eligible=true
+          fi
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+          echo "Update type: $UPDATE_TYPE"
+          echo "Dep type: $DEP_TYPE"
+          echo "Ecosystem: $ECOSYSTEM"
+          echo "Eligible: $eligible"
+
+      - name: Approve PR
+        if: steps.decide.outputs.eligible == 'true'
+        run: gh pr review --approve "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge (squash)
+        if: steps.decide.outputs.eligible == 'true'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
