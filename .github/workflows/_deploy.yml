@@ -8,8 +8,6 @@ jobs:
     name: Promote image to production
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    outputs:
-      image: ${{ steps.promote.outputs.image }}
     permissions:
       id-token: write
       contents: read
@@ -27,14 +25,9 @@ jobs:
         run: az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
 
       - name: Promote staging image
-        id: promote
         env:
           ACR: ${{ secrets.ACR_LOGIN_SERVER }}
-        run: |
-          bash scripts/ci/promote-image.sh "$ACR" "${{ github.sha }}"
-          # Write output explicitly in the GHA run context (not a subshell)
-          # to guarantee $GITHUB_OUTPUT is populated for downstream jobs.
-          echo "image=$ACR/zdrovena-api:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+        run: bash scripts/ci/promote-image.sh "$ACR" "${{ github.sha }}"
 
   deploy-prod:
     name: Deploy to production
@@ -59,12 +52,8 @@ jobs:
         env:
           PROD_APP: zdrovena-api-prod
           RG: zdrovena-rg
-          IMAGE: ${{ needs.promote.outputs.image }}
+          IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:${{ github.sha }}
         run: |
-          if [[ -z "$IMAGE" ]]; then
-            echo "::error::promote job did not output an image — aborting deploy"
-            exit 1
-          fi
           az containerapp update \
             --name            "$PROD_APP" \
             --resource-group  "$RG" \
