@@ -10,7 +10,7 @@
         "lint": "eslint src --max-warnings 0"
     },
     "dependencies": {
-        "@azure/msal-browser": "^3.27.0",
+        "@azure/msal-browser": "^5.9.0",
         "react": "^18.3.1",
         "react-dom": "^18.3.1"
     },
