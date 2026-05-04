@@ -454,12 +454,13 @@ button {
 
 .btn-ghost {
     background: transparent;
-    border-color: transparent;
+    border-color: var(--border-strong);
     color: var(--text-2);
 }
 
 .btn-ghost:hover {
-    background: rgba(26, 20, 14, .04);
+    background: rgba(26, 20, 14, .06);
+    border-color: var(--border-strong);
 }
 
 .btn-sm {
@@ -789,6 +790,11 @@ table.files tbody tr:hover .row-actions {
     color: var(--primary);
 }
 
+.icon-btn.danger:hover {
+    background: rgba(220, 38, 38, 0.08);
+    color: #dc2626;
+}
+
 .icon-btn svg {
     width: 15px;
     height: 15px;
@@ -883,14 +889,17 @@ table.files tbody tr:hover .row-actions {
 }
 
 .modal {
-    width: min(720px, 92vw);
-    max-height: 86vh;
+    width: min(1200px, 96vw);
+    min-width: 680px;
+    min-height: 360px;
+    max-height: 92vh;
     background: var(--surface);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-md);
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    resize: both;
     animation: rise .25s cubic-bezier(.2, .7, .2, 1);
 }
 
@@ -1289,11 +1298,12 @@ table.files tbody tr:hover .row-actions {
 
 .close-body {
     display: grid;
-    grid-template-columns: 1fr 380px;
+    grid-template-columns: 1fr 760px;
     gap: var(--gap);
+    min-width: 0;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 900px) {
     .close-body {
         grid-template-columns: 1fr;
     }
@@ -1305,30 +1315,42 @@ table.files tbody tr:hover .row-actions {
 }
 
 .log-body {
-    padding: 12px 16px;
+    padding: 10px 14px;
     font-family: var(--font-mono);
-    font-size: 12px;
-    line-height: 1.7;
-    background: #1a1a18;
-    color: #d7cfc1;
+    font-size: 13px;
+    line-height: 1.6;
+    background: #1b1b19;
+    color: #d4ccc0;
     flex: 1;
-    min-height: 220px;
+    min-height: 360px;
     overflow-y: auto;
-    max-height: 400px;
+    max-height: 600px;
+    overflow-x: hidden;
 }
 
 .log-line {
-    display: flex;
-    gap: 10px;
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    gap: 8px;
+    padding: 1px 0;
 }
 
 .log-time {
-    color: #8a8278;
+    color: #6b6460;
+    font-size: 11px;
+    padding-top: 2px;
     flex-shrink: 0;
+    user-select: none;
+}
+
+.log-line span:last-child {
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-width: 0;
 }
 
 .log-line.ok {
-    color: #9fd6b4;
+    color: #86c99e;
 }
 
 .log-line.info {
@@ -1336,11 +1358,13 @@ table.files tbody tr:hover .row-actions {
 }
 
 .log-line.muted {
-    color: #8a8278;
+    color: #6b6460;
 }
 
 .log-line.err {
-    color: #f19090;
+    color: #f08080;
+    background: rgba(240, 80, 60, 0.06);
+    border-radius: 2px;
 }
 
 /* Auth screens */

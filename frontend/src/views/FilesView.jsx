@@ -93,6 +93,23 @@ export default function FilesView() {
     // Load on mount
     if (!loadedRef.current) { loadedRef.current = true; loadFiles('') }
 
+    const deleteFile = async key => {
+        const name = key.split('/').pop()
+        if (!window.confirm(`Usuń plik "${name}"?`)) return
+        try {
+            const token = await getToken()
+            const res = await fetch(`/api/files/${encodeURIComponent(key)}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            if (!res.ok) throw new Error(res.statusText)
+            showToast(`Usunięto: ${name}`)
+            loadFiles(prefix)
+        } catch (e) {
+            showToast(`Błąd usuwania: ${e.message}`)
+        }
+    }
+
     const downloadFile = async key => {
         try {
             const token = await getToken()
@@ -337,6 +354,9 @@ export default function FilesView() {
                                             <div className="row-actions">
                                                 <button className="icon-btn" title="Pobierz" onClick={() => downloadFile(getKey(file))}>
                                                     <Icon name="download" size={15} />
+                                                </button>
+                                                <button className="icon-btn danger" title="Usuń" onClick={() => deleteFile(getKey(file))}>
+                                                    <Icon name="trash" size={15} />
                                                 </button>
                                             </div>
                                         </td>
