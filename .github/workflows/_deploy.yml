@@ -95,6 +95,17 @@ jobs:
             "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             "${{ secrets.AZURE_LOCATION }}"
 
+      - name: SWA end-to-end smoke test
+        env:
+          CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
+          SWA_NAME: ${{ secrets.AZURE_SWA_NAME }}
+          SWA_RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        run: |
+          SWA_URL=$(az staticwebapp show \
+            --name "$SWA_NAME" --resource-group "$SWA_RG" \
+            --query defaultHostname -o tsv)
+          bash scripts/ci/smoke-test.sh "https://$SWA_URL" "$CLIENT_ID"
+
   # Frontend deploy (SWA production) runs in parallel to backend promote+deploy.
   # Both must succeed before semantic release tags the version.
   deploy-frontend:
