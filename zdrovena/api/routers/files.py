@@ -1,9 +1,11 @@
 """GET /files/{key} — RBAC-authenticated blob streaming.
 PUT /files/{key} — RBAC-authenticated blob upload (accountant or admin).
+DELETE /files/{key} — RBAC-authenticated blob delete (accountant or admin).
 """
 
 from __future__ import annotations
 
+import io
 import mimetypes
 import urllib.parse
 from typing import Annotated
@@ -95,7 +97,7 @@ def download_file(
         403: {"description": "Insufficient role"},
     },
 )
-def upload_file(
+async def upload_file(
     key: str,
     request: Request,
     storage: StorageDep,
@@ -106,4 +108,30 @@ def upload_file(
     if not normalised or ".." in normalised or normalised.startswith("/"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid key")
     content_type = request.headers.get("content-type", "application/octet-stream")
-    storage.upload_stream(request.stream(), normalised, content_type)  # type: ignore[arg-type]
+    body = await request.body()
+    storage.upload_stream(io.BytesIO(body), normalised, content_type)
+
+
+@router.delete(
+    "/{key:path}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a file from storage",
+    responses={
+        204: {"description": "Deleted successfully"},
+        400: {"description": "Invalid key"},
+        403: {"description": "Insufficient role"},
+        404: {"description": "File not found"},
+    },
+)
+def delete_file(
+    key: str,
+    storage: StorageDep,
+    principal: Annotated[Principal, Depends(require_accountant_or_admin)],
+) -> None:
+    """Delete a file from storage. Requires accountant or admin role."""
+    normalised = urllib.parse.unquote(key)
+    if not normalised or ".." in normalised or normalised.startswith("/"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid key")
+    if not storage.exists(normalised):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Not found: {key!r}")
+    storage.delete(normalised)
