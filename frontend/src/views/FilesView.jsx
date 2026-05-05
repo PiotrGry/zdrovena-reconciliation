@@ -72,7 +72,7 @@ export default function FilesView() {
         } finally {
             setLoading(false)
         }
-    }, [getToken, prefix])
+    }, [getToken])
 
     useEffect(() => {
         if (!FEATURES.kpi_pipeline) return
@@ -114,7 +114,7 @@ export default function FilesView() {
         }
     }, [getToken])
 
-    const uploadToInbox = async file => {
+    const uploadToInbox = useCallback(async file => {
         const key = `${INBOX_PREFIX}/${file.name}`
         try {
             const token = await getToken()
@@ -129,9 +129,9 @@ export default function FilesView() {
         } catch (e) {
             showToast(`Błąd wgrywania: ${e.message}`)
         }
-    }
+    }, [getToken, loadInbox])
 
-    const deleteInboxFile = async key => {
+    const deleteInboxFile = useCallback(async key => {
         const name = key.split('/').pop()
         if (!window.confirm(`Usuń plik "${name}" z inbox?`)) return
         try {
@@ -146,7 +146,7 @@ export default function FilesView() {
         } catch (e) {
             showToast(`Błąd usuwania: ${e.message}`)
         }
-    }
+    }, [getToken, loadInbox])
 
     // Load on mount
     if (!loadedRef.current) { loadedRef.current = true; loadFiles(''); loadInbox() }
