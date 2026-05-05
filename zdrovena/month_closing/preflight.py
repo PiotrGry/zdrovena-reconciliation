@@ -7,12 +7,19 @@ Fakturownia reports) are present before the pipeline starts.
 
 from __future__ import annotations
 
+import fnmatch
 import logging
+import os
 import re
 import shutil
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from zdrovena.common.storage import BlobFile, StorageService
 
 from zdrovena.month_closing.config import (
     DOWNLOAD_WATCH_DIR,
@@ -46,6 +53,8 @@ class PreflightChecker:
         dry_run: bool,
         get_secret: Callable[..., str | None],
         no_browser: bool = False,
+        storage: StorageService | None = None,
+        blob_inbox_prefix: str = "faktury/inbox",
     ) -> None:
         self.year = year
         self.month = month
@@ -56,6 +65,9 @@ class PreflightChecker:
         self.dry_run = dry_run
         self._get_secret = get_secret
         self.no_browser = no_browser
+        self._storage = storage
+        self._blob_inbox_prefix = blob_inbox_prefix
+        self._blob_downloads: list[tuple[str, Path]] = []
         self.result = PreflightResult()
 
     def run(self) -> PreflightResult:
@@ -101,6 +113,8 @@ class PreflightChecker:
         return blockers
 
     def copy_to_folders(self, month_dir: Path, costs_dir: Path) -> None:
+        tmp_to_blob: dict[Path, str] = {tmp: key for key, tmp in self._blob_downloads}
+
         for vendor_cfg, src_pdf in self.result.matches:
             name = vendor_cfg.name if isinstance(vendor_cfg, VendorConfig) else vendor_cfg["name"]
             dest_name = vendor_cfg.get("dest_name") if isinstance(vendor_cfg, dict) else None
@@ -116,24 +130,54 @@ class PreflightChecker:
             target = dest_dir / safe_name
             if target.exists():
                 logger.info("Pre-flight: %s already exists — skipping", target)
+                self._cleanup_blob_tmp(src_pdf, tmp_to_blob)
                 continue
             if not self.dry_run:
                 shutil.copy2(src_pdf, target)
                 logger.info("Pre-flight: copied %s → %s", src_pdf, target)
+                self._cleanup_blob_tmp(src_pdf, tmp_to_blob)
             dest_label = dest_dir.name + "/"
             print(f"  📥 {name}: copied {src_pdf.name} → {dest_label}")
 
     # ── Private helpers ──────────────────────────────────────────────────────
 
-    def _check_vendors(self, manual_vendors: list[VendorConfig]) -> None:
-        watch_dir = DOWNLOAD_WATCH_DIR
-        if not watch_dir.exists():
-            for v in manual_vendors:
-                self.result.missing_vendors.append(v)
-                print(f"  │  ⚠️  {v.name}: inbox/ not found")
-            return
+    def _cleanup_blob_tmp(self, src_pdf: Path, tmp_to_blob: dict[Path, str]) -> None:
+        blob_key = tmp_to_blob.get(src_pdf)
+        if blob_key and self._storage:
+            try:
+                self._storage.delete(blob_key)
+                logger.info("Pre-flight: deleted blob %s after copy", blob_key)
+            except Exception as exc:
+                logger.warning("Pre-flight: could not delete blob %s: %s", blob_key, exc)
+        if src_pdf in tmp_to_blob:
+            src_pdf.unlink(missing_ok=True)
 
-        zoho: ZohoMailClient | None = None
+    def _list_blob_inbox(self) -> list[BlobFile]:
+        if not self._storage:
+            return []
+        prefix = self._blob_inbox_prefix.rstrip("/") + "/"
+        try:
+            return self._storage.list_files(prefix)
+        except Exception as exc:
+            logger.warning("Could not list blob inbox %s: %s", prefix, exc)
+            return []
+
+    def _download_blob_to_tmp(self, key: str) -> Path | None:
+        if not self._storage:
+            return None
+        try:
+            suffix = Path(key).suffix
+            fd, tmp_name = tempfile.mkstemp(suffix=suffix)
+            os.close(fd)
+            tmp = Path(tmp_name)
+            self._storage.download(key, tmp)
+            self._blob_downloads.append((key, tmp))
+            return tmp
+        except Exception as exc:
+            logger.warning("Could not download blob %s: %s", key, exc)
+            return None
+
+    def _init_zoho(self) -> ZohoMailClient | None:
         try:
             from zdrovena.month_closing.config import (
                 KEYCHAIN_SERVICE_ZOHO_CLIENT_ID,
@@ -149,12 +193,35 @@ class PreflightChecker:
                     client_id=client_id, client_secret=client_secret, refresh_token=refresh_token
                 )
                 zoho.authenticate()
+                return zoho
         except Exception as exc:
             logger.warning("Zoho init for pre-flight failed: %s", exc)
             print(f"  │  ℹ️  Zoho unavailable — using glob patterns only ({exc})")
+        return None
 
+    def _check_vendors(self, manual_vendors: list[VendorConfig]) -> None:
+        watch_dir = DOWNLOAD_WATCH_DIR
+        zoho = self._init_zoho()
         zf = self.date_from.replace("-", "/")
         zt = self.cost_date_to.replace("-", "/")
+
+        if not watch_dir.exists():
+            if self._storage:
+                blob_files = self._list_blob_inbox()
+                for vendor_cfg in manual_vendors:
+                    try:
+                        found = self._find_vendor_in_blob(vendor_cfg, blob_files, zoho, zf, zt)
+                        if not found:
+                            self.result.missing_vendors.append(vendor_cfg)
+                    except Exception as exc:
+                        logger.warning("Pre-flight blob %s failed: %s", vendor_cfg.name, exc)
+                        print(f"  │  ⚠️  {vendor_cfg.name}: blob check failed — {exc}")
+                        self.result.missing_vendors.append(vendor_cfg)
+            else:
+                for v in manual_vendors:
+                    self.result.missing_vendors.append(v)
+                    print(f"  │  ⚠️  {v.name}: inbox/ not found")
+            return
 
         for vendor_cfg in manual_vendors:
             try:
@@ -165,6 +232,69 @@ class PreflightChecker:
                 logger.warning("Pre-flight %s failed: %s", vendor_cfg.name, exc)
                 print(f"  │  ⚠️  {vendor_cfg.name}: check failed — {exc}")
                 self.result.missing_vendors.append(vendor_cfg)
+
+    def _find_vendor_in_blob(self, vendor_cfg, blob_files, zoho, date_from, date_to) -> bool:
+        name = vendor_cfg.name
+        invoice_id_re = vendor_cfg.invoice_id_re
+        file_tpl = vendor_cfg.invoice_file_tpl
+        email_term = vendor_cfg.email or vendor_cfg.pattern
+        glob_pat = vendor_cfg.download_glob or ""
+        fallback_url = vendor_cfg.fallback_url or ""
+
+        expected_files: list[str] = []
+        email_urls: list[str] = []
+
+        if zoho and invoice_id_re and file_tpl and email_term:
+            try:
+                invoice_ids = zoho.extract_invoice_ids(
+                    search_term=email_term,
+                    date_from=date_from,
+                    date_to=date_to,
+                    invoice_id_re=invoice_id_re,
+                )
+                for inv in invoice_ids:
+                    fname = file_tpl.format(id=inv["id"])
+                    expected_files.append(fname)
+                    if inv.get("url"):
+                        email_urls.append(inv["url"])
+            except Exception as exc:
+                logger.warning("Zoho invoice ID extraction for %s failed: %s", name, exc)
+
+        if expected_files:
+            blob_names = {Path(b.key).name: b.key for b in blob_files}
+            for fname in expected_files:
+                if fname in blob_names:
+                    tmp = self._download_blob_to_tmp(blob_names[fname])
+                    if tmp:
+                        self.result.matches.append((vendor_cfg, tmp))
+                        print(f"  │  ✅ {name}: found {fname} (from blob)")
+                        return True
+            print(f"  │  ⚠️  {name}: expected {', '.join(expected_files)} — not in blob inbox/")
+            if email_urls:
+                for url in email_urls:
+                    print(f"  │     🔗 {url}")
+            elif fallback_url:
+                print(f"  │     🔗 Download from: {fallback_url}")
+            return False
+
+        if glob_pat:
+            matches = sorted(
+                [b for b in blob_files if fnmatch.fnmatch(Path(b.key).name, glob_pat)],
+                key=lambda b: b.last_modified,
+                reverse=True,
+            )
+            if matches:
+                newest = matches[0]
+                tmp = self._download_blob_to_tmp(newest.key)
+                if tmp:
+                    self.result.matches.append((vendor_cfg, tmp))
+                    print(f"  │  ✅ {name}: found {Path(newest.key).name} (from blob)")
+                    return True
+
+        print(f"  │  ⚠️  {name}: no matching PDF in blob inbox/")
+        if fallback_url:
+            print(f"  │     🔗 Download from: {fallback_url}")
+        return False
 
     def _find_vendor(self, vendor_cfg, watch_dir, zoho, date_from, date_to) -> bool:
         name = vendor_cfg.name
@@ -255,6 +385,36 @@ class PreflightChecker:
             if pko_downloads:
                 wrong = pko_downloads[0]
                 print(f"  └─ ⚠️  Found {wrong.name} but it's not for {self.year}-{self.month:02d}")
+        elif self._storage:
+            blob_files = self._list_blob_inbox()
+            pko_blobs = sorted(
+                [
+                    b
+                    for b in blob_files
+                    if fnmatch.fnmatch(Path(b.key).name, "Wyciag_na_zadanie_*.pdf")
+                ],
+                key=lambda b: b.last_modified,
+                reverse=True,
+            )
+            matching_blobs = [
+                b for b in pko_blobs if pko_matches_month(Path(b.key).name, self.year, self.month)
+            ]
+            if matching_blobs:
+                best = matching_blobs[0]
+                tmp = self._download_blob_to_tmp(best.key)
+                if tmp:
+                    self.result.matches.append(
+                        ({"name": "PKO BP", "download_glob": "Wyciag_na_zadanie_*.pdf"}, tmp)
+                    )
+                    self.result.bank_statement_found = True
+                    print(f"  └─ ✅ Bank statement: {Path(best.key).name} (from blob)")
+                    return
+            if pko_blobs:
+                wrong = pko_blobs[0]
+                print(
+                    f"  └─ ⚠️  Found {Path(wrong.key).name} but it's not for "
+                    f"{self.year}-{self.month:02d}"
+                )
 
         self.result.bank_statement_found = False
         self.result.warnings.append(
@@ -273,8 +433,8 @@ class PreflightChecker:
     def _check_reports(self) -> None:
         watch_dir = DOWNLOAD_WATCH_DIR
         print("  ┌─ Fakturownia reports")
+        blob_files = self._list_blob_inbox() if not watch_dir.exists() and self._storage else []
 
-        # First pass: check what's already present
         missing: list[dict] = []
         for rpt in FAKTUROWNIA_REPORTS:
             dest = self.month_dir / rpt["dest_name"]
@@ -294,9 +454,26 @@ class PreflightChecker:
                     )
                     print(f"  │  ✅ {rpt['name']}: found {newest.name}")
                     continue
+            elif blob_files:
+                blob_matches = sorted(
+                    [b for b in blob_files if fnmatch.fnmatch(Path(b.key).name, rpt["glob"])],
+                    key=lambda b: b.last_modified,
+                    reverse=True,
+                )
+                if blob_matches:
+                    newest_blob = blob_matches[0]
+                    tmp = self._download_blob_to_tmp(newest_blob.key)
+                    if tmp:
+                        self.result.matches.append(
+                            ({"name": rpt["name"], "dest_name": rpt["dest_name"]}, tmp)
+                        )
+                        print(
+                            f"  │  ✅ {rpt['name']}: found {Path(newest_blob.key).name} (from blob)"
+                        )
+                        continue
             missing.append(rpt)
 
-        # Remaining missing reports listed below (auto-download happens in orchestrator step 3)
+        # Remaining missing reports are warnings only — auto-download happens in orchestrator step 3
         for rpt in missing:
             self.result.missing_reports.append(rpt)
             print(f"  │  ⚠️  {rpt['name']}: not found in inbox/")
