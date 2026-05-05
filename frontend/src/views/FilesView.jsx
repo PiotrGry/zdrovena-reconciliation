@@ -46,6 +46,11 @@ export default function FilesView() {
     const fileInput = useRef(null)
     const loadedRef = useRef(false)
 
+    const [inboxItems, setInboxItems] = useState([])
+    const [inboxLoading, setInboxLoading] = useState(false)
+    const [inboxDragOver, setInboxDragOver] = useState(false)
+    const inboxFileInput = useRef(null)
+
     const showToast = msg => {
         setToast(msg)
         setTimeout(() => setToast(null), 3000)
@@ -90,8 +95,61 @@ export default function FilesView() {
         fetchPipelineState()
     }, [getToken])
 
+    const INBOX_PREFIX = 'faktury/inbox'
+
+    const loadInbox = useCallback(async () => {
+        setInboxLoading(true)
+        try {
+            const token = await getToken()
+            const res = await fetch(`/api/files?prefix=${encodeURIComponent(INBOX_PREFIX)}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            if (!res.ok) throw new Error(res.statusText)
+            const data = await res.json()
+            setInboxItems((data.items ?? data).filter(i => !(i.is_directory || i.type === 'folder' || (i.key || i.name || '').endsWith('/'))))
+        } catch (e) {
+            showToast(`Błąd ładowania inbox: ${e.message}`)
+        } finally {
+            setInboxLoading(false)
+        }
+    }, [getToken])
+
+    const uploadToInbox = async file => {
+        const key = `${INBOX_PREFIX}/${file.name}`
+        try {
+            const token = await getToken()
+            const res = await fetch(`/api/files/${encodeURIComponent(key)}`, {
+                method: 'PUT',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': file.type || 'application/octet-stream' },
+                body: file,
+            })
+            if (!res.ok) throw new Error(res.statusText)
+            showToast(`Wgrano do inbox: ${file.name}`)
+            loadInbox()
+        } catch (e) {
+            showToast(`Błąd wgrywania: ${e.message}`)
+        }
+    }
+
+    const deleteInboxFile = async key => {
+        const name = key.split('/').pop()
+        if (!window.confirm(`Usuń plik "${name}" z inbox?`)) return
+        try {
+            const token = await getToken()
+            const res = await fetch(`/api/files/${encodeURIComponent(key)}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            if (!res.ok) throw new Error(res.statusText)
+            showToast(`Usunięto: ${name}`)
+            loadInbox()
+        } catch (e) {
+            showToast(`Błąd usuwania: ${e.message}`)
+        }
+    }
+
     // Load on mount
-    if (!loadedRef.current) { loadedRef.current = true; loadFiles('') }
+    if (!loadedRef.current) { loadedRef.current = true; loadFiles(''); loadInbox() }
 
     const deleteFile = async key => {
         const name = key.split('/').pop()
@@ -252,6 +310,73 @@ export default function FilesView() {
                     })()}
                 </div>
             )}
+
+            {/* Inbox — pliki do zamknięcia miesiąca */}
+            <div className="card">
+                <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                        <div className="card-title" style={{ fontWeight: 600, marginBottom: 2 }}>Inbox — pliki do zamknięcia miesiąca</div>
+                        <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Faktury dostawców, wyciąg PKO BP, raporty Fakturowni • <code>faktury/inbox/</code></div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input ref={inboxFileInput} type="file" multiple style={{ display: 'none' }}
+                            onChange={e => { Array.from(e.target.files).forEach(uploadToInbox); e.target.value = '' }} />
+                        <button className="btn btn-primary btn-sm" onClick={() => inboxFileInput.current.click()}>
+                            <Icon name="upload" size={13} /> Wgraj do inbox
+                        </button>
+                    </div>
+                </div>
+                <div
+                    style={{ padding: '0 0 8px' }}
+                    onDragOver={e => { e.preventDefault(); setInboxDragOver(true) }}
+                    onDragLeave={() => setInboxDragOver(false)}
+                    onDrop={e => { e.preventDefault(); setInboxDragOver(false); Array.from(e.dataTransfer.files).forEach(uploadToInbox) }}
+                >
+                    {inboxLoading && <div style={{ padding: '16px 16px', color: 'var(--text-dim)', fontSize: 13 }}>Ładowanie…</div>}
+                    {!inboxLoading && inboxItems.length === 0 && (
+                        <div className={`dropzone${inboxDragOver ? ' active' : ''}`} style={{ margin: '8px 16px' }}>
+                            <span className="hint">{inboxDragOver ? 'Upuść pliki tutaj' : 'Przeciągnij pliki lub kliknij „Wgraj do inbox"'}</span>
+                        </div>
+                    )}
+                    {!inboxLoading && inboxItems.length > 0 && (
+                        <div style={{ overflowX: 'auto' }}>
+                            <table className="files">
+                                <tbody>
+                                    {inboxItems.map(file => {
+                                        const n = getName(file)
+                                        const ext = extOf(n)
+                                        return (
+                                            <tr key={getKey(file)}>
+                                                <td>
+                                                    <div className="name-cell">
+                                                        <span className={extChipClass(ext)}>{ext.toUpperCase() || '—'}</span>
+                                                        <span className="main-text">{n}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="mono">{fmtBytes(file.size)}</td>
+                                                <td className="mono dim">{fmtDate(file.last_modified)}</td>
+                                                <td>
+                                                    <div className="row-actions">
+                                                        <button className="icon-btn" title="Pobierz" onClick={() => downloadFile(getKey(file))}>
+                                                            <Icon name="download" size={15} />
+                                                        </button>
+                                                        <button className="icon-btn danger" title="Usuń z inbox" onClick={() => deleteInboxFile(getKey(file))}>
+                                                            <Icon name="trash" size={15} />
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        )
+                                    })}
+                                </tbody>
+                            </table>
+                            <div className={`dropzone${inboxDragOver ? ' active' : ''}`} style={{ margin: '0 0' }}>
+                                <span className="hint">{inboxDragOver ? 'Upuść pliki tutaj' : 'Upuść pliki aby dodać do inbox'}</span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
 
             {/* Breadcrumbs */}
             <div className="crumbs">
