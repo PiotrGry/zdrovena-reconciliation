@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -235,14 +236,12 @@ class TestCheckVendors:
 
 # ── Blob storage fallback tests ───────────────────────────────────────────────
 
-from datetime import datetime, timezone
-
 
 def _make_blob_file(key: str, size: int = 1000):
     bf = MagicMock()
     bf.key = key
     bf.size = size
-    bf.last_modified = datetime(2025, 6, 15, tzinfo=timezone.utc)
+    bf.last_modified = datetime(2025, 6, 15, tzinfo=UTC)
     return bf
 
 
