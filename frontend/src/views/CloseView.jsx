@@ -146,12 +146,6 @@ export default function CloseView() {
         if (s === 'done') loadState()
     }
 
-    const retry = (y, m) => {
-        setYear(y)
-        setMonth(m)
-        setRunning(false)
-        setStatus('ready')
-    }
 
     return (
         <div className="close-view">
