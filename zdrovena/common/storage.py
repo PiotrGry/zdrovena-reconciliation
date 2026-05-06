@@ -34,7 +34,7 @@ import os
 import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO, Protocol, runtime_checkable
 
@@ -140,7 +140,7 @@ class LocalStorageService:
                     BlobFile(
                         key=key,
                         size=stat.st_size,
-                        last_modified=datetime.fromtimestamp(stat.st_mtime, tz=UTC),
+                        last_modified=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
                     )
                 )
         return results
@@ -234,7 +234,7 @@ class BlobStorageService:
             BlobFile(
                 key=b.name,
                 size=b.size or 0,
-                last_modified=b.last_modified or datetime.now(tz=UTC),
+                last_modified=b.last_modified or datetime.now(tz=timezone.utc),
             )
             for b in blobs
         ]

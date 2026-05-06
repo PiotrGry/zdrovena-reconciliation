@@ -12,7 +12,7 @@ import hashlib
 import json
 import logging
 import re
-from datetime import UTC
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
@@ -246,9 +246,9 @@ class ZohoMailClient:
         from datetime import datetime
 
         try:
-            dt_from = datetime.strptime(date_from, "%Y/%m/%d").replace(tzinfo=UTC)
+            dt_from = datetime.strptime(date_from, "%Y/%m/%d").replace(tzinfo=timezone.utc)
             dt_to = datetime.strptime(date_to, "%Y/%m/%d").replace(
-                hour=23, minute=59, second=59, tzinfo=UTC
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
             )
             ts_from = int(dt_from.timestamp() * 1000)
             ts_to = int(dt_to.timestamp() * 1000)
