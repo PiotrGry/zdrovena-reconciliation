@@ -73,11 +73,20 @@ def run_close(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"blockers": detail, "log_lines": log_lines},
         ) from None
+    except RuntimeError as exc:
+        # Pipeline business logic error (missing vendors, KSeF mismatch, etc.) — 422 with message.
+        log_lines = buf.getvalue().splitlines()
+        logger.warning("Close pipeline blocked for %d/%02d: %s", req.year, req.month, exc)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"blockers": [str(exc)], "log_lines": log_lines},
+        ) from exc
     except Exception as exc:
         logger.exception("Close pipeline failed: %s", exc)
+        log_lines = buf.getvalue().splitlines()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Pipeline error — check server logs",
+            detail={"blockers": [f"Nieoczekiwany błąd: {exc}"], "log_lines": log_lines},
         ) from exc
 
     return CloseResponse.from_close_report(report, log_lines=log_lines)
