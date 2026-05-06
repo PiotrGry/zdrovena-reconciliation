@@ -1,0 +1,53 @@
+# Local development environment
+# Starts: Azurite (Azure Storage emulator) + FastAPI backend
+# Frontend runs natively: cd frontend && npm run dev
+#
+# Usage:
+#   docker compose up          # start all services
+#   docker compose up -d       # start in background
+#   docker compose down        # stop and remove containers
+#
+# After first start, seed the storage with test invoice files:
+#   python3 scripts/seed-local-storage.py
+
+services:
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.33.0
+    container_name: zdrovena-azurite
+    command: azurite-blob --blobHost 0.0.0.0 --loose
+    ports:
+      - "10000:10000"
+    volumes:
+      - azurite_data:/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "10000"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: zdrovena-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./zdrovena:/app/zdrovena
+    environment:
+      AZURE_AUTH_DISABLED: "true"
+      AZURE_STORAGE_CONNECTION_STRING: >-
+        DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tiqFhM8YKHkNATVD6wd+0=;BlobEndpoint=http://azurite:10000/devstoreaccount1;
+      AZURE_STORAGE_CONTAINER: "zdrovena-files"
+    depends_on:
+      azurite:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  azurite_data:
