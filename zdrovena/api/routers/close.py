@@ -70,7 +70,8 @@ def run_close(
         logger.warning("Close pre-flight blocked for %d/%02d: %s", req.year, req.month, detail)
         append_close_history(get_storage_service(), build_history_entry(
             year=req.year, month=req.month, month_name=POLISH_MONTHS[req.month],
-            status="blocked", dry_run=req.dry_run, error="; ".join(detail),
+            status="blocked", dry_run=req.dry_run,
+            report=orchestrator.report, error="; ".join(detail),
         ))
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -81,7 +82,8 @@ def run_close(
         logger.warning("Close pipeline blocked for %d/%02d: %s", req.year, req.month, exc)
         append_close_history(get_storage_service(), build_history_entry(
             year=req.year, month=req.month, month_name=POLISH_MONTHS[req.month],
-            status="error", dry_run=req.dry_run, error=str(exc),
+            status="error", dry_run=req.dry_run,
+            report=orchestrator.report, error=str(exc),
         ))
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

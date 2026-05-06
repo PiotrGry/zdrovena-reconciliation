@@ -211,7 +211,7 @@ function ResultSummary({ result, T }) {
     )
 }
 
-export function CloseRunner({ year, month, dryRun, preCompleted = [], onDone }) {
+export function CloseRunner({ year, month, dryRun, preCompleted = [], ignoredVendors = [], onDone }) {
     const { getToken } = useAuth()
     const { t, lang } = useT()
     const T = t[lang]
@@ -256,7 +256,7 @@ export function CloseRunner({ year, month, dryRun, preCompleted = [], onDone }) 
             const res = await fetch('/api/close', {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ year, month, dry_run: dryRun }),
+                body: JSON.stringify({ year, month, dry_run: dryRun, ignore_vendors: ignoredVendors }),
                 signal: abortRef.current.signal,
             })
 
@@ -319,7 +319,7 @@ export function CloseRunner({ year, month, dryRun, preCompleted = [], onDone }) 
                 onDone?.('error', null)
             }
         }
-    }, [year, month, dryRun, getToken, onDone, preCompleted])
+    }, [year, month, dryRun, getToken, onDone, preCompleted, ignoredVendors])
 
     const abort = () => abortRef.current?.abort()
 
@@ -380,6 +380,7 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear 
     const [running, setRunning] = useState(false)
     const [status, setStatus] = useState('ready')
     const [preCompleted, setPreCompleted] = useState([])
+    const [ignoredVendors, setIgnoredVendors] = useState([])
     const [year, setYear] = useState(() => initialYear ?? new Date().getFullYear())
     const [month, setMonth] = useState(() => initialMonth ?? new Date().getMonth() + 1)
 
@@ -411,6 +412,7 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear 
     }, [open, year, month, getToken])
 
     const resumeCount = preCompleted.length
+    const toggleVendor = (v) => setIgnoredVendors(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v])
 
     useEffect(() => {
         if (!open) { setRunning(false); setStatus('ready') }
@@ -470,10 +472,31 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear 
                             month={month}
                             dryRun={dryRun}
                             preCompleted={preCompleted}
+                            ignoredVendors={ignoredVendors}
                             onDone={done}
                         />
                     )}
                 </div>
+                {!running && (
+                    <div style={{ padding: '0 26px 14px', borderTop: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 12, color: 'var(--text-3)', margin: '10px 0 6px' }}>
+                            Pomiń brakujące faktury kosztowe (od dostawców emailowych):
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
+                            {EMAIL_VENDORS.map(v => (
+                                <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', color: ignoredVendors.includes(v) ? 'var(--text-3)' : 'var(--text)' }}>
+                                    <input type="checkbox" checked={ignoredVendors.includes(v)} onChange={() => toggleVendor(v)} />
+                                    {v}
+                                </label>
+                            ))}
+                        </div>
+                        {ignoredVendors.length > 0 && (
+                            <div style={{ fontSize: 11, color: 'var(--warning, orange)', marginTop: 4 }}>
+                                ⚠️ {ignoredVendors.length} dostawców zostanie pominięty — potwierdź że faktur nie będzie w tym miesiącu
+                            </div>
+                        )}
+                    </div>
+                )}
                 <div className="modal-foot">
                     <label className="dry-toggle">
                         <input type="checkbox" checked={dryRun} onChange={e => setDryRun(e.target.checked)} disabled={running} />
@@ -500,16 +523,17 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear 
 
 const STATUS_CONFIG = {
     success:  { icon: '✅', label: 'Sukces — wszystkie kroki wykonane, email wysłany' },
-    partial:  { icon: '⚠️', label: 'Zamknięto z ostrzeżeniami — ZIP OK, ale email zablokowany (brak faktur lub JPK)' },
-    blocked:  { icon: '🚫', label: 'Zablokowany przez preflight — brak wymaganych plików w Inbox' },
-    error:    { icon: '❌', label: 'Błąd wykonania — pipeline crashnął w trakcie kroku' },
+    partial:  { icon: '⚠️', label: 'Zamknięto z ostrzeżeniami — ZIP OK, ale email zablokowany (brak faktur kosztowych lub JPK)' },
+    blocked:  { icon: '🚫', label: 'Zablokowany przez preflight — brak wymaganych plików w Inbox (wyciąg, Canva, itp.)' },
+    error:    { icon: '❌', label: 'Błąd wykonania — pipeline crashnął w trakcie kroku (szczegóły poniżej)' },
 }
+
+const EMAIL_VENDORS = ['Shopify', 'BaseLinker', 'Allegro', 'PayU', 'InPost', 'Apaczka', 'PulsePure', 'Accounting/Bożena']
 
 function CloseHistory({ onRetry }) {
     const { getToken } = useAuth()
     const [history, setHistory] = useState([])
     const [loading, setLoading] = useState(true)
-    const [tooltip, setTooltip] = useState(null)
 
     const load = useCallback(async () => {
         try {
@@ -552,46 +576,32 @@ function CloseHistory({ onRetry }) {
                 <tbody>
                     {history.map((h) => {
                         const cfg = STATUS_CONFIG[h.status] ?? { icon: '❓', label: h.status }
-                        const canRetry = h.status !== 'success'
+                        const steps = h.steps_completed ?? 0
+                        const incomplete = steps < PIPELINE_STEPS.length
+                        const statusTitle = cfg.label + (h.error ? `\n\nBłąd: ${h.error}` : '')
                         return (
                             <tr key={h.ts}>
                                 <td style={{ padding: '6px 16px' }}>
                                     <strong>{h.month_name} {h.year}</strong>
                                     {h.dry_run && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 4px', borderRadius: 3 }}>DRY</span>}
                                 </td>
-                                <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
-                                    <span
-                                        title={cfg.label}
-                                        style={{ cursor: 'help' }}
-                                        onMouseEnter={() => setTooltip(h.ts)}
-                                        onMouseLeave={() => setTooltip(null)}
-                                    >
-                                        {cfg.icon}
-                                    </span>
-                                    {' '}
+                                <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }} title={statusTitle}>
+                                    {cfg.icon}{' '}
                                     <span style={{ fontSize: 11, color: 'var(--text-2)' }}>
-                                        {h.status === 'success' ? 'Sukces' : h.status === 'partial' ? 'Z ostrzeżeniami' : h.status === 'blocked' ? 'Brak plików' : 'Błąd'}
+                                        {h.status === 'success' ? 'Sukces' : h.status === 'partial' ? 'Z ostrzeżeniami' : h.status === 'blocked' ? 'Brak plików' : 'Błąd wykonania'}
                                     </span>
-                                    {tooltip === h.ts && (
-                                        <div style={{ position: 'absolute', zIndex: 10, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', fontSize: 11, maxWidth: 260, marginTop: 2, boxShadow: '0 2px 8px rgba(0,0,0,.15)' }}>
-                                            {cfg.label}
-                                            {h.error && <><br /><em style={{ color: 'var(--err)' }}>{h.error}</em></>}
-                                        </div>
-                                    )}
                                 </td>
                                 <td style={{ padding: '6px 8px', color: 'var(--text-2)' }}>{h.sales_invoice_count ?? '—'}</td>
                                 <td style={{ padding: '6px 8px', color: 'var(--text-2)' }}>{h.sales_gross_total ? `${Number(h.sales_gross_total).toLocaleString('pl-PL')} PLN` : '—'}</td>
-                                <td style={{ padding: '6px 8px', color: h.steps_completed < PIPELINE_STEPS.length ? 'var(--warning)' : 'var(--text-2)' }}>
-                                    {h.steps_completed ?? 0}/{PIPELINE_STEPS.length}
+                                <td style={{ padding: '6px 8px', color: incomplete ? 'var(--warning, orange)' : 'var(--text-2)' }}>
+                                    {steps}/{PIPELINE_STEPS.length}
                                 </td>
                                 <td style={{ padding: '6px 16px', color: 'var(--text-3)' }}>{h.ts ? new Date(h.ts).toLocaleString('pl-PL') : '—'}</td>
                                 <td style={{ padding: '6px 8px' }}>
                                     <div className="row-actions">
-                                        {canRetry && (
-                                            <button className="icon-btn" title={`Wznów od kroku ${h.steps_completed ?? 0}/${PIPELINE_STEPS.length}`} onClick={() => onRetry(h.year, h.month)}>
-                                                <Icon name="refresh-cw" size={14} />
-                                            </button>
-                                        )}
+                                        <button className="icon-btn" title={incomplete ? `Wznów od kroku ${steps}` : 'Uruchom ponownie'} onClick={() => onRetry(h.year, h.month)}>
+                                            <Icon name="refresh-cw" size={14} />
+                                        </button>
                                         <button className="icon-btn danger" title="Usuń z historii" onClick={() => deleteEntry(h.ts)}>
                                             <Icon name="trash" size={14} />
                                         </button>
