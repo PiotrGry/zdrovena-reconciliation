@@ -79,8 +79,8 @@ function InboxPanel() {
                     {' '}Inbox — dokumenty do zamknięcia
                 </span>
                 <div style={{ display: 'flex', gap: 8 }}>
-                    <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}>
-                        <Icon name="refresh-cw" size={12} />
+                    <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading} title="Odśwież listę plików">
+                        <Icon name="refresh-cw" size={12} /> Odśwież
                     </button>
                     <input ref={fileInput} type="file" multiple style={{ display: 'none' }}
                         onChange={e => { Array.from(e.target.files).forEach(upload); e.target.value = '' }} />
