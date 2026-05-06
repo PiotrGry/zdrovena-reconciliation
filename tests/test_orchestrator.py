@@ -36,13 +36,13 @@ def _make_orchestrator(
 
 
 class TestWarningsGate:
-    def test_strict_mode_raises(self):
-        """Default (strict): warnings gate should abort the pipeline."""
+    def test_strict_mode_warns_not_raises(self):
+        """Warnings gate no longer raises — pipeline always continues to ZIP.
+        Email is blocked separately in step 7."""
         orch = _make_orchestrator(ignore_warnings=False)
         orch.report.warnings.append("Missing JPK_V7M")
-
-        with pytest.raises(RuntimeError, match="warning"):
-            orch._check_warnings_gate()
+        orch._check_warnings_gate()  # must NOT raise
+        assert len(orch.report.warnings) == 1
 
     def test_ignore_warnings_continues(self):
         """With --ignore-warnings, gate should NOT raise."""
@@ -262,12 +262,13 @@ class TestStep5BankStatement:
         orch.report.bank_statement_found = True
         orch._step_5_bank_statement()  # should not raise
 
-    def test_no_file_raises(self, tmp_path):
+    def test_no_file_adds_warning(self, tmp_path):
+        """Missing bank statement is now a warning, not a crash."""
         orch = _make_orchestrator()
         orch.month_dir = tmp_path
         orch.report.bank_statement_found = False
-        with pytest.raises(RuntimeError, match="Bank statement"):
-            orch._step_5_bank_statement()
+        orch._step_5_bank_statement()
+        assert any("PKO" in w or "Wyciąg" in w for w in orch.report.warnings)
 
 
 # ── _step_6_zip_archive ──────────────────────────────────────────────────────
