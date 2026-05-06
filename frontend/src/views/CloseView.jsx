@@ -620,7 +620,9 @@ function CloseHistory({ onRetry }) {
                                         {h.status === 'success' ? 'Sukces' : h.status === 'partial' ? 'Z ostrzeżeniami' : h.status === 'blocked' ? 'Brak plików' : 'Błąd wykonania'}
                                     </span>
                                 </td>
-                                <td style={{ padding: '6px 8px', color: 'var(--text-2)' }}>{h.sales_invoice_count ?? '—'}</td>
+                                <td style={{ padding: '6px 8px', color: 'var(--text-2)' }}>
+                                    {(h.status === 'success' || h.status === 'partial') ? (h.sales_invoice_count ?? '—') : '—'}
+                                </td>
                                 <td style={{ padding: '6px 8px', color: 'var(--text-2)' }}>{h.sales_gross_total ? `${Number(h.sales_gross_total).toLocaleString('pl-PL')} PLN` : '—'}</td>
                                 <td style={{ padding: '6px 8px', color: incomplete ? 'var(--warning, orange)' : 'var(--text-2)' }}>
                                     {steps}/{PIPELINE_STEPS.length}
@@ -649,14 +651,24 @@ export default function CloseView() {
     const { t, lang } = useT()
     const { getToken } = useAuth()
     const T = t[lang]
-    const [open, setOpen] = useState(false)
-    const [retryYear, setRetryYear] = useState(null)
-    const [retryMonth, setRetryMonth] = useState(null)
-    const [lastStatus, setLastStatus] = useState('ready')
-    const [completedSteps, setCompletedSteps] = useState([])
 
-    const year = new Date().getFullYear()
-    const month = new Date().getMonth() + 1
+    // Default to previous month (the month to close)
+    const now = new Date()
+    const defaultMonth = now.getMonth() === 0 ? 12 : now.getMonth()
+    const defaultYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()
+
+    const [year, setYear] = useState(defaultYear)
+    const [month, setMonth] = useState(defaultMonth)
+    const [dryRun, setDryRun] = useState(true)
+    const [running, setRunning] = useState(false)
+    const [status, setStatus] = useState('ready')
+    const [preCompleted, setPreCompleted] = useState([])
+    const [ignoredVendors, setIgnoredVendors] = useState([])
+    const [inboxReady, setInboxReady] = useState(false)
+
+    const toggleVendor = (v) => setIgnoredVendors(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v])
+
+    useEffect(() => { setInboxReady(false) }, [month, year])
 
     const loadState = useCallback(async () => {
         try {
@@ -666,68 +678,141 @@ export default function CloseView() {
             })
             if (res.ok) {
                 const data = await res.json()
-                setCompletedSteps(data.completed_steps ?? [])
+                setPreCompleted(data.completed_steps ?? [])
             }
-        } catch {
-            // ignore — non-blocking
-        }
+        } catch { /* ignore */ }
     }, [getToken, year, month])
 
     useEffect(() => { loadState() }, [loadState])
 
-    const statusClass = {
-        ready: 'state-ready',
-        running: 'state-running',
-        done: 'state-done',
-        error: 'state-error',
-    }[lastStatus] ?? 'state-ready'
+    const resumeCount = preCompleted.length
+    const canRun = inboxReady && !running
+    const runReason = !inboxReady ? 'Uzupełnij brakujące pliki w Inbox' : null
 
-    const statusLabel = {
-        ready: T.close_status_ready,
-        running: T.close_status_running,
-        done: T.close_status_done,
-        error: T.close_status_error,
-    }[lastStatus] ?? ''
+    const start = () => { setStatus('ready'); setRunning(true) }
+    const done = (s) => { setStatus(s); setRunning(false); if (s === 'done') loadState() }
 
-    const handleDone = s => {
-        setLastStatus(s)
-        if (s === 'done') loadState()
+    const statusConfig = {
+        ready:   { cls: 'state-ready',   label: T.close_status_ready },
+        running: { cls: 'state-running',  label: T.close_status_running },
+        done:    { cls: 'state-done',     label: T.close_status_done },
+        error:   { cls: 'state-error',    label: T.close_status_error },
     }
+    const { cls: statusCls, label: statusLabel } = statusConfig[status] ?? statusConfig.ready
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gap)' }}>
-            <PageHead
-                title={T.close_title}
-                sub={T.close_sub}
-                actions={
-                    <button className="btn btn-primary" onClick={() => setOpen(true)}>
-                        <Icon name="zap" size={14} /> {T.close_run}
-                    </button>
-                }
-            />
+            <PageHead title={T.close_title} sub={T.close_sub} />
 
-            <div className="close-status-bar">
-                <div className="close-state">
-                    <span className={`state-badge ${statusClass}`}>{statusLabel}</span>
-                    <span className="close-summary">
-                        Pipeline 8-stopniowy · {MONTHS_PL[month - 1]} {year}
-                    </span>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'start' }}>
+
+                {/* ── Lewy panel: Inbox ───────────────────────────── */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+                    {/* Selektor miesiąca */}
+                    <div className="card">
+                        <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span style={{ fontSize: 13, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>Zamykasz:</span>
+                            <select
+                                value={month}
+                                onChange={e => { setMonth(Number(e.target.value)); setRunning(false); setStatus('ready') }}
+                                style={{ flex: 1, fontSize: 16, fontWeight: 600, padding: '6px 10px', border: '1.5px solid var(--border)', borderRadius: 7, background: 'var(--bg)', cursor: 'pointer', color: 'var(--text)' }}
+                            >
+                                {MONTHS_PL.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+                            </select>
+                            <select
+                                value={year}
+                                onChange={e => { setYear(Number(e.target.value)); setRunning(false); setStatus('ready') }}
+                                style={{ fontSize: 16, fontWeight: 600, padding: '6px 10px', border: '1.5px solid var(--border)', borderRadius: 7, background: 'var(--bg)', cursor: 'pointer', color: 'var(--text)' }}
+                            >
+                                {[defaultYear - 1, defaultYear, defaultYear + 1].filter(y => y <= now.getFullYear()).map(y => (
+                                    <option key={y} value={y}>{y}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
+                    {/* Inbox */}
+                    <InboxPanel onStatusChange={setInboxReady} />
+
+                    {/* Pomiń vendorów */}
+                    <div className="card">
+                        <div style={{ padding: '10px 16px' }}>
+                            <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>
+                                Pomiń brakujące faktury kosztowe:
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
+                                {EMAIL_VENDORS.map(v => (
+                                    <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', color: ignoredVendors.includes(v) ? 'var(--text-3)' : 'var(--text)' }}>
+                                        <input type="checkbox" checked={ignoredVendors.includes(v)} onChange={() => toggleVendor(v)} />
+                                        {v}
+                                    </label>
+                                ))}
+                            </div>
+                            {ignoredVendors.length > 0 && (
+                                <div style={{ fontSize: 11, color: 'var(--warning, orange)', marginTop: 6 }}>
+                                    ⚠ {ignoredVendors.length} dostawców zostanie pominięty
+                                </div>
+                            )}
+                        </div>
+                    </div>
                 </div>
-                {completedSteps.length > 0 && (
-                    <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-                        {completedSteps.length} / {PIPELINE_STEPS.length} kroków ukończonych
-                    </span>
-                )}
+
+                {/* ── Prawy panel: Pipeline ────────────────────────── */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+                    {/* Kontrolki */}
+                    {!running && (
+                        <div className="card">
+                            <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                {resumeCount > 0 && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--ok-bg, #f0fdf4)', border: '1px solid var(--ok, #38a169)', borderRadius: 6, fontSize: 13 }}>
+                                        <Icon name="refresh-cw" size={14} style={{ color: 'var(--ok, #38a169)' }} />
+                                        <span><strong>Checkpoint:</strong> {resumeCount}/{PIPELINE_STEPS.length} kroków — pipeline wznowi od miejsca gdzie skończył</span>
+                                    </div>
+                                )}
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <label className="dry-toggle">
+                                        <input type="checkbox" checked={dryRun} onChange={e => setDryRun(e.target.checked)} />
+                                        {T.close_dryrun}
+                                    </label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                        {runReason && <span style={{ fontSize: 12, color: 'var(--text-3)' }}>⚠ {runReason}</span>}
+                                        <button className="btn btn-primary" onClick={start} disabled={!canRun} title={runReason ?? ''}>
+                                            <Icon name="play" size={14} /> {T.close_run}
+                                        </button>
+                                    </div>
+                                </div>
+                                {status !== 'ready' && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                        <span className={`state-badge ${statusCls}`}>{statusLabel}</span>
+                                        {status === 'error' && (
+                                            <button className="btn btn-ghost btn-sm" onClick={() => { setStatus('ready') }}>
+                                                ↩ Spróbuj ponownie
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Runner */}
+                    {running && (
+                        <CloseRunner
+                            year={year}
+                            month={month}
+                            dryRun={dryRun}
+                            preCompleted={preCompleted}
+                            ignoredVendors={ignoredVendors}
+                            onDone={done}
+                        />
+                    )}
+                </div>
             </div>
 
-            <CloseModal
-                open={open}
-                onClose={() => { setOpen(false); setRetryYear(null); setRetryMonth(null) }}
-                onDone={handleDone}
-                initialYear={retryYear}
-                initialMonth={retryMonth}
-            />
-            <CloseHistory onRetry={(y, m) => { setRetryYear(y); setRetryMonth(m); setOpen(true) }} />
+            {/* Historia */}
+            <CloseHistory onRetry={(y, m) => { setYear(y); setMonth(m); setRunning(false); setStatus('ready') }} />
         </div>
     )
 }
