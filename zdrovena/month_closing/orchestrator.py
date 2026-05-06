@@ -57,7 +57,7 @@ from zdrovena.month_closing.invoice_date_check import (
 from zdrovena.month_closing.ksef import KSeFClient
 from zdrovena.month_closing.preflight import PreflightChecker
 from zdrovena.month_closing.state import PipelineState
-from zdrovena.month_closing.zip_service import create_month_archive
+from zdrovena.month_closing.zip_service import create_month_archive, create_month_archive_from_blob
 from zdrovena.month_closing.zoho_mail import ZohoMailClient
 
 logger = logging.getLogger("zdrovena.month_closing.orchestrator")
@@ -123,12 +123,12 @@ class MonthCloseOrchestrator:
         self.costs_dir = self.month_dir / "koszty"
 
         self.storage = get_storage_service()
-        _blob_prefix = f"faktury/{year}/{self.month_pl}"
+        self._blob_prefix = f"faktury/{year}/{self.month_pl}"
         self.report = CloseReport()
         self.state = PipelineState(
             self.month_dir,
             storage=self.storage,
-            blob_key=f"{_blob_prefix}/.state.json",
+            blob_key=f"{self._blob_prefix}/.state.json",
         )
         self.out = ConsoleReporter()
 
@@ -142,6 +142,33 @@ class MonthCloseOrchestrator:
             self.report.steps_completed.append(step_name)
             return True
         return False
+
+    def _upload_to_blob(self, local_path: Path, blob_dir_key: str) -> None:
+        """Upload a single local file to blob storage. No-op in dry_run."""
+        if self.dry_run or not local_path.exists():
+            return
+        try:
+            key = f"{blob_dir_key}/{local_path.name}"
+            self.storage.upload(local_path, key)
+            logger.debug("Uploaded to blob: %s", key)
+        except Exception as exc:
+            logger.warning("Blob upload failed for %s: %s", local_path.name, exc)
+
+    def _upload_dir_to_blob(self, local_dir: Path, blob_dir_key: str) -> None:
+        """Upload all files in a directory to blob storage. No-op in dry_run."""
+        if self.dry_run or not local_dir.exists():
+            return
+        for f in local_dir.iterdir():
+            if f.is_file():
+                self._upload_to_blob(f, blob_dir_key)
+
+    def _blob_file_exists(self, blob_dir_key: str, filename: str) -> bool:
+        """Check if a file exists in blob storage under the given prefix."""
+        try:
+            blobs = self.storage.list_files(blob_dir_key + "/")
+            return any(b.key.endswith(f"/{filename}") or b.key == f"{blob_dir_key}/{filename}" for b in blobs)
+        except Exception:
+            return False
 
     def _mark_step_done(self, step_name: str) -> None:
         self.report.steps_completed.append(step_name)
@@ -262,8 +289,11 @@ class MonthCloseOrchestrator:
         checker = getattr(self, "_preflight_checker", None)
         if checker is not None:
             checker.copy_to_folders(self.month_dir, self.costs_dir)
+            # Upload pre-flight files to blob for production persistence
+            self._upload_dir_to_blob(self.month_dir, self._blob_prefix)
+            self._upload_dir_to_blob(self.costs_dir, f"{self._blob_prefix}/koszty")
         self._mark_step_done("Folder structure")
-        self.out.ok(str(self.month_dir))
+        self.out.ok(f"{self.month_dir} → blob:{self._blob_prefix}")
 
     def _step_2_sales_invoices(self) -> None:
         self.out.step(2, "Downloading sales invoices (Fakturownia)")
@@ -312,13 +342,18 @@ class MonthCloseOrchestrator:
 
         saved = client.download_all_pdfs(invoices, self.sales_dir, dry_run=self.dry_run)
         self.report.sales_pdfs_downloaded = len(saved)
+        blob_sales = f"{self._blob_prefix}/sprzedaz"
+        for pdf_path in saved:
+            self._upload_to_blob(pdf_path, blob_sales)
         self._mark_step_done("Sales invoices")
 
     def _step_3_jpk_reports(self) -> None:
         self.out.step(3, "Verifying JPK and VAT reports")
 
         missing = [
-            rpt for rpt in FAKTUROWNIA_REPORTS if not (self.month_dir / rpt["dest_name"]).exists()
+            rpt for rpt in FAKTUROWNIA_REPORTS
+            if not (self.month_dir / rpt["dest_name"]).exists()
+            and not self._blob_file_exists(self._blob_prefix, rpt["dest_name"])
         ]
         for rpt in FAKTUROWNIA_REPORTS:
             if rpt not in missing:
@@ -336,6 +371,7 @@ class MonthCloseOrchestrator:
                 for rpt_cfg, path in downloaded:
                     self.out.ok(f"{rpt_cfg['name']}: downloaded → {path.name}")
                     missing = [r for r in missing if r["name"] != rpt_cfg["name"]]
+                    self._upload_to_blob(path, self._blob_prefix)
             except Exception as exc:
                 logger.warning("Playwright report download failed: %s", exc)
                 self.out.warn(f"Auto-download failed: {exc}")
@@ -607,6 +643,7 @@ class MonthCloseOrchestrator:
                 "All expected vendors must be accounted for before proceeding."
             )
         self.out.detail("✅ All expected vendors accounted for!")
+        self._upload_dir_to_blob(self.costs_dir, f"{self._blob_prefix}/koszty")
         self._mark_step_done("Cost invoices")
 
     def _step_5_bank_statement(self) -> None:
@@ -618,6 +655,20 @@ class MonthCloseOrchestrator:
             and ("wyciag" in f.name.lower() or "pko" in f.name.lower())
             and f.suffix.lower() == ".pdf"
         ]
+        # Also check blob for files uploaded in step 1 (from preflight)
+        if not pko_files and not self.report.bank_statement_found:
+            try:
+                blob_files = self.storage.list_files(self._blob_prefix + "/")
+                pko_blobs = [
+                    b for b in blob_files
+                    if ("wyciag" in b.key.lower() or "pko" in b.key.lower())
+                    and b.key.lower().endswith(".pdf")
+                ]
+                if pko_blobs:
+                    pko_files = [Path(pko_blobs[0].key)]
+            except Exception:
+                pass
+
         if pko_files:
             self.report.bank_statement_found = True
             self.out.ok(f"Bank statement found: {pko_files[0].name}")
@@ -664,17 +715,23 @@ class MonthCloseOrchestrator:
             self.out.info(f"[DRY-RUN] Would create: {zip_name}")
             self._mark_step_done("ZIP archive (dry-run)")
             return
-        zip_path = create_month_archive(self.month_dir, self.month_pl, self.year)
-        self.report.zip_path = zip_path
-        self.out.ok(zip_path.name)
-        # Upload ZIP to Blob Storage
-        blob_zip_key = f"faktury/{self.year}/{self.month_pl}/{zip_path.name}"
         try:
-            self.storage.upload(zip_path, blob_zip_key)
-            self.out.ok(f"ZIP uploaded to blob → {blob_zip_key}")
+            blob_zip_key, count = create_month_archive_from_blob(
+                self.storage, self._blob_prefix, self.month_pl, self.year
+            )
+            self.report.zip_path = Path(blob_zip_key)
+            self.out.ok(f"ZIP created from blob → {blob_zip_key} ({count} files)")
         except Exception as exc:
-            logger.warning("Could not upload ZIP to blob: %s", exc)
-            self.report.warnings.append(f"ZIP blob upload failed: {exc}")
+            logger.warning("Blob ZIP failed, falling back to local: %s", exc)
+            zip_path = create_month_archive(self.month_dir, self.month_pl, self.year)
+            self.report.zip_path = zip_path
+            blob_zip_key = f"{self._blob_prefix}/{zip_path.name}"
+            try:
+                self.storage.upload(zip_path, blob_zip_key)
+                self.out.ok(f"ZIP uploaded to blob → {blob_zip_key}")
+            except Exception as upload_exc:
+                logger.warning("Could not upload ZIP to blob: %s", upload_exc)
+                self.report.warnings.append(f"ZIP blob upload failed: {upload_exc}")
         self._mark_step_done("ZIP archive")
 
     def _step_7_email(self) -> None:
