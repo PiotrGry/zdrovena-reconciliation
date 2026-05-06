@@ -36,7 +36,7 @@ export default function CloseView() {
     const [status, setStatus] = useState('ready')
     const [preCompleted, setPreCompleted] = useState([])
     const [ignoredVendors, setIgnoredVendors] = useState([])
-    const [inboxReady, setInboxReady] = useState(false)
+    const [inboxReady, setInboxReady] = useState(null) // null=loading, true=ok, false=missing
     const [hasResult, setHasResult] = useState(false)
     const [resultData, setResultData] = useState(null)
     const [runProgress, setRunProgress] = useState(0)
@@ -54,7 +54,7 @@ export default function CloseView() {
 
     // Zmiana miesiąca/roku resetuje stan biegu i wyniku
     useEffect(() => {
-        setInboxReady(false)
+        setInboxReady(null)
         setRunning(false)
         setStatus('ready')
         setHasResult(false)
@@ -107,12 +107,11 @@ export default function CloseView() {
     }, [getToken, historyKey])
 
     // Decyzja: czy CTA jest aktywne i jaki jest powód blokady
-    const canRun = inboxReady && !running
-    const runReason = running
-        ? null
-        : !inboxReady
-            ? 'Uzupełnij brakujące dokumenty w checklist powyżej'
-            : null
+    const canRun = inboxReady === true && !running
+    const runReason = running ? null
+        : inboxReady === null ? 'Sprawdzam dokumenty…'
+        : inboxReady === false ? 'Uzupełnij brakujące dokumenty w checklist powyżej'
+        : null
 
     // Status pochodny dla hero (uwzględnia inboxReady)
     const heroStatus = running
@@ -142,11 +141,9 @@ export default function CloseView() {
         if (s === 'done' || s === 'error') {
             setHasResult(true)
             setResultData(data)
+            setHistoryKey(k => k + 1) // odśwież historię zawsze po zakończeniu
         }
-        if (s === 'done') {
-            loadState()
-            setHistoryKey(k => k + 1)
-        }
+        if (s === 'done') loadState()
     }
 
     const retry = (y, m) => {
