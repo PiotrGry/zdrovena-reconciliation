@@ -51,3 +51,6 @@ infra/terraform/.terraform.lock.hcl
 .coverage
 htmlcov/
 .claude/
+
+# Docker local dev
+.env.local.template.bak
