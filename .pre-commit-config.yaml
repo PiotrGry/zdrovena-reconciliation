@@ -1,10 +1,9 @@
 repos:
-  # Python linting (ruff)
+  # Python linting (ruff) — check only, no auto-fix to preserve Python 3.10 compatibility
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: "v0.8.0"
     hooks:
       - id: ruff
-        args: [--fix]
       - id: ruff-format
 
   # Python type checking (pyright)
@@ -17,22 +16,13 @@ repos:
         pass_filenames: false
         stages: [commit]
 
-  # Frontend linting (eslint)
+  # Frontend linting (eslint) — check only
   - repo: local
     hooks:
       - id: eslint
         name: eslint
-        entry: bash -c 'cd frontend && npm run lint:fix'
+        entry: bash -c 'cd frontend && npm run lint'
         language: system
         files: ^frontend/src/
-        stages: [commit]
-
-  # Prettier formatting
-  - repo: local
-    hooks:
-      - id: prettier
-        name: prettier
-        entry: bash -c 'cd frontend && npm run format'
-        language: system
-        files: \.(jsx?|tsx?|css|json|md)$
+        pass_filenames: false
         stages: [commit]
