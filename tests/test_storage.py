@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -228,7 +228,7 @@ class TestBlobStorageServiceMocked:
         mock_blob = MagicMock()
         mock_blob.name = "2026/03/file.pdf"
         mock_blob.size = 1024
-        mock_blob.last_modified = datetime(2026, 3, 1, tzinfo=UTC)
+        mock_blob.last_modified = datetime(2026, 3, 1, tzinfo=timezone.utc)
         mock_container.list_blobs.return_value = [mock_blob]
 
         files = svc.list_files("2026/03")
