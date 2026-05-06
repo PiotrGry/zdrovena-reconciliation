@@ -280,16 +280,20 @@ class TestStep6ZipArchive:
         assert orch.report.zip_path is None
         assert any("ZIP archive" in s for s in orch.report.steps_completed)
 
-    @patch("zdrovena.month_closing.orchestrator.create_month_archive")
-    def test_live_creates_zip(self, mock_archive, tmp_path):
+    def test_live_creates_zip(self, tmp_path):
+        """ZIP is created from blob storage and zip_path points to blob key."""
+        from unittest.mock import MagicMock, patch
         orch = MonthCloseOrchestrator(year=2025, month=6, dry_run=False)
         orch.out = MagicMock()
         orch.month_dir = tmp_path
-        fake_zip = tmp_path / "czerwiec_2025_HUMIO.zip"
-        mock_archive.return_value = fake_zip
-        orch._step_6_zip_archive()
-        assert orch.report.zip_path == fake_zip
-        mock_archive.assert_called_once()
+        blob_key = "faktury/2025/czerwiec/czerwiec_2025_HUMIO.zip"
+        with patch(
+            "zdrovena.month_closing.orchestrator.create_month_archive_from_blob",
+            return_value=(blob_key, 5),
+        ):
+            orch._step_6_zip_archive()
+        assert str(orch.report.zip_path) == blob_key
+        assert any("ZIP archive" in s for s in orch.report.steps_completed)
 
 
 # ── _step_7_email ────────────────────────────────────────────────────────────
