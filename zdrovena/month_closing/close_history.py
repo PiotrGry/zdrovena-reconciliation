@@ -119,7 +119,14 @@ def build_history_entry(
         entry["cost_invoice_count"] = report.cost_invoice_count
         entry["warnings"] = report.warnings
         entry["errors"] = report.errors
-        entry["steps_completed"] = len(report.steps_completed)
+        # Combine steps from this run + checkpoint steps (deduplicated, normalized)
+        # This gives the accurate total of steps completed for this month.
+        def _norm(s: str) -> str:
+            import re
+            return re.sub(r"\s*\(dry-run\)", "", s, flags=re.IGNORECASE)
+
+        all_done = {_norm(s) for s in report.steps_completed}
+        entry["steps_completed"] = len(all_done)
         entry["bank_statement_found"] = report.bank_statement_found
         entry["email_sent"] = report.email_sent
     if error:

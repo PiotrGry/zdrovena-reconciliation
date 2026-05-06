@@ -183,7 +183,9 @@ class TestStepTracking:
         orch.state = MagicMock()
         orch.state.is_done.return_value = True
         assert orch._skip_if_done("Foo") is True
-        assert "Foo" in orch.report.steps_completed
+        # Checkpoint steps are NOT added to report.steps_completed — only freshly
+        # completed steps are tracked there so history counts are accurate.
+        assert "Foo" not in orch.report.steps_completed
 
     def test_skip_if_done_returns_false_when_not_done(self):
         orch = _make_orchestrator()

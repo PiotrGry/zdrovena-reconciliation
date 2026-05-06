@@ -139,7 +139,9 @@ class MonthCloseOrchestrator:
     def _skip_if_done(self, step_name: str) -> bool:
         if self.state.is_done(step_name):
             self.out.skip(f"{step_name} (already done — skipping)")
-            self.report.steps_completed.append(step_name)
+            # Do NOT add to report.steps_completed — checkpoint steps are tracked
+            # separately via state.completed_steps. report.steps_completed contains
+            # only steps completed IN THIS run so history counts are accurate.
             return True
         return False
 
