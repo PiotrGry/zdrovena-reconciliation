@@ -96,7 +96,14 @@ export function RunPanel({
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
                 const detail = body.detail
-                setStates(prev => prev.map(s => s === 'running' ? 'error' : s))
+                setStates(prev => {
+                    const hasRunning = prev.some(s => s === 'running')
+                    return prev.map((s, i) => {
+                        if (s === 'running') return 'error'
+                        if (!hasRunning && i === 0) return 'error'
+                        return s
+                    })
+                })
                 if (detail?.blockers) {
                     detail.log_lines?.forEach(line => addLog(line, 'info'))
                     addLog('── Błąd pipeline ──', 'err')
@@ -142,7 +149,14 @@ export function RunPanel({
                 setStatus('ready')
                 onDone?.('ready', null)
             } else {
-                setStates(prev => prev.map(s => s === 'running' ? 'error' : s))
+                setStates(prev => {
+                    const hasRunning = prev.some(s => s === 'running')
+                    return prev.map((s, i) => {
+                        if (s === 'running') return 'error'
+                        if (!hasRunning && i === 0) return 'error'
+                        return s
+                    })
+                })
                 addLog(`Błąd: ${e.message}`, 'err')
                 setStatus('error')
                 onDone?.('error', null)

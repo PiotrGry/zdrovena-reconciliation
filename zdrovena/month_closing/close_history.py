@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,12 +15,32 @@ logger = logging.getLogger("zdrovena.month_closing.history")
 HISTORY_BLOB_KEY = "faktury/.close_history.jsonl"
 
 
-def append_close_history(storage: Any, entry: dict) -> None:
-    """Append one entry to the history log in blob storage.
+def _get_table_connection() -> str | None:
+    """Return Azure Storage connection string or account URL if configured."""
+    return os.environ.get("AZURE_STORAGE_CONNECTION_STRING") or os.environ.get(
+        "AZURE_STORAGE_ACCOUNT_URL"
+    )
 
-    Uses download → append → upload to avoid concurrent write issues for this
-    low-frequency operation (month-close runs at most once a month per year).
+
+def append_close_history(storage: Any, entry: dict) -> None:
+    """Append one entry to the history log.
+
+    Tries Azure Table Storage first (if AZURE_STORAGE_CONNECTION_STRING or
+    AZURE_STORAGE_ACCOUNT_URL is set), falls back to JSONL blob.
+
+    Uses download → append → upload for JSONL to avoid concurrent write issues
+    for this low-frequency operation (month-close runs at most once a month per year).
     """
+    conn = _get_table_connection()
+    if conn:
+        from zdrovena.month_closing.table_history import append_history_table
+
+        try:
+            append_history_table(conn, entry)
+            return
+        except Exception as exc:
+            logger.warning("Table Storage append failed, falling back to JSONL: %s", exc)
+
     try:
         with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as f:
             tmp = Path(f.name)
@@ -43,7 +64,20 @@ def append_close_history(storage: Any, entry: dict) -> None:
 
 
 def read_close_history(storage: Any, limit: int = 50) -> list[dict]:
-    """Return last `limit` history entries, newest first."""
+    """Return last `limit` history entries, newest first.
+
+    Tries Azure Table Storage first (if AZURE_STORAGE_CONNECTION_STRING or
+    AZURE_STORAGE_ACCOUNT_URL is set), falls back to JSONL blob.
+    """
+    conn = _get_table_connection()
+    if conn:
+        from zdrovena.month_closing.table_history import read_history_table
+
+        try:
+            return read_history_table(conn, limit=limit)
+        except Exception as exc:
+            logger.warning("Table Storage read failed, falling back to JSONL: %s", exc)
+
     try:
         with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as f:
             tmp = Path(f.name)
@@ -62,7 +96,20 @@ def read_close_history(storage: Any, limit: int = 50) -> list[dict]:
 
 
 def delete_history_entry(storage: Any, ts: str) -> bool:
-    """Remove one entry by timestamp. Returns True if found and removed."""
+    """Remove one entry by timestamp. Returns True if found and removed.
+
+    Tries Azure Table Storage first (if AZURE_STORAGE_CONNECTION_STRING or
+    AZURE_STORAGE_ACCOUNT_URL is set), falls back to JSONL blob.
+    """
+    conn = _get_table_connection()
+    if conn:
+        from zdrovena.month_closing.table_history import delete_history_entry_table
+
+        try:
+            return delete_history_entry_table(conn, ts)
+        except Exception as exc:
+            logger.warning("Table Storage delete failed, falling back to JSONL: %s", exc)
+
     try:
         with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as f:
             tmp = Path(f.name)
