@@ -6,6 +6,109 @@ import { Icon } from '../components/Icon'
 import { Pill } from '../components/Pill'
 import { PIPELINE_STEPS, MONTHS_PL } from '../data'
 
+const INBOX_PREFIX = 'faktury/inbox'
+
+const REQUIRED_DOCS = [
+    { key: 'canva',     label: 'Canva',              hint: 'invoice-XXXXX-YYYYMMDD.pdf',    match: f => /^invoice-\d{5}-\d{8}\.pdf$/i.test(f) },
+    { key: 'gads',      label: 'Google Ads',          hint: '0XXXXXXXXX.pdf (10 cyfr)',       match: f => /^\d{10}\.pdf$/i.test(f) },
+    { key: 'pko',       label: 'Wyciąg PKO BP',       hint: 'Wyciag_na_zadanie_*.pdf',        match: f => /^wyciag_na_zadanie_/i.test(f) },
+    { key: 'jpk_fa',    label: 'JPK_FA',              hint: 'zdrovena-...-jpk_fa.xml',        match: f => /jpk.?fa/i.test(f),   link: 'https://zdrovena.fakturownia.pl/reports/jpk_fa?kind=jpk_fa&query_date_kind=transaction_date&form_variant=4' },
+    { key: 'jpk_v7m',   label: 'JPK_V7M',             hint: 'zdrovena-...-jpkv7m.xml',        match: f => /jpkv7m/i.test(f),    link: 'https://zdrovena.fakturownia.pl/accounting/app/reports/jpk_vat' },
+    { key: 'vat',       label: 'Wykaz sprzedaży VAT', hint: 'zdrovena-YYYY-MM-DD_*.pdf',      match: f => /^zdrovena-\d{4}-\d{2}-\d{2}_/i.test(f), link: 'https://zdrovena.fakturownia.pl/reports/income_tax_records' },
+]
+
+function InboxChecklist() {
+    const { getToken } = useAuth()
+    const [files, setFiles] = useState([])
+    const [loading, setLoading] = useState(true)
+    const inputRefs = useRef({})
+
+    const load = useCallback(async () => {
+        setLoading(true)
+        try {
+            const token = await getToken()
+            const res = await fetch(`/api/files?prefix=${encodeURIComponent(INBOX_PREFIX)}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            if (!res.ok) throw new Error(res.statusText)
+            const data = await res.json()
+            const items = (data.items ?? data).filter(i => !(i.is_directory || (i.key ?? i.name ?? '').endsWith('/')))
+            setFiles(items.map(i => (i.key ?? i.name ?? '').split('/').pop()))
+        } catch {
+            setFiles([])
+        } finally {
+            setLoading(false)
+        }
+    }, [getToken])
+
+    useEffect(() => { load() }, [load])
+
+    const upload = useCallback(async (file) => {
+        const key = `${INBOX_PREFIX}/${file.name}`
+        const token = await getToken()
+        await fetch(`/api/files/${encodeURIComponent(key)}`, {
+            method: 'PUT',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': file.type || 'application/octet-stream' },
+            body: file,
+        })
+        load()
+    }, [getToken, load])
+
+    const matched = REQUIRED_DOCS.map(doc => ({
+        ...doc,
+        found: files.find(f => doc.match(f)) ?? null,
+    }))
+    const allFound = matched.every(d => d.found)
+
+    return (
+        <div className="card" style={{ marginBottom: 12 }}>
+            <div className="card-head">
+                <span className="card-title">
+                    <Icon name={allFound ? 'check' : 'alert-circle'} size={14} />
+                    {' '}Dokumenty do zamknięcia
+                </span>
+                <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}>
+                    <Icon name="refresh-cw" size={12} /> Odśwież
+                </button>
+            </div>
+            <div style={{ padding: '4px 16px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {matched.map(doc => (
+                    <div key={doc.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                        <span style={{ width: 16, textAlign: 'center', color: doc.found ? 'var(--ok, #38a169)' : 'var(--err, #e53e3e)' }}>
+                            {doc.found ? '✅' : '❌'}
+                        </span>
+                        <span style={{ flex: 1 }}>
+                            <strong>{doc.label}</strong>
+                            {doc.found
+                                ? <span style={{ color: 'var(--text-3)', marginLeft: 6, fontSize: 11 }}>{doc.found}</span>
+                                : <span style={{ color: 'var(--text-3)', marginLeft: 6, fontSize: 11 }}>{doc.hint}</span>
+                            }
+                        </span>
+                        {!doc.found && (
+                            <>
+                                <input
+                                    ref={el => inputRefs.current[doc.key] = el}
+                                    type="file"
+                                    style={{ display: 'none' }}
+                                    onChange={e => { if (e.target.files[0]) upload(e.target.files[0]); e.target.value = '' }}
+                                />
+                                <button className="btn btn-ghost btn-sm" onClick={() => inputRefs.current[doc.key]?.click()}>
+                                    <Icon name="upload" size={12} /> Wgraj
+                                </button>
+                                {doc.link && (
+                                    <a href={doc.link} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">
+                                        <Icon name="external-link" size={12} /> Fakturownia
+                                    </a>
+                                )}
+                            </>
+                        )}
+                    </div>
+                ))}
+            </div>
+        </div>
+    )
+}
+
 const STEP_EST_MS = [2000, 1000, 5000, 8000, 12000, 2000, 4000, 3000]
 
 function stepStateClass(state) {
@@ -266,6 +369,7 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal }) {
                 <div className="modal-body" style={{ padding: '18px 26px' }}>
                     {!running ? (
                         <>
+                            <InboxChecklist />
                             {status === 'ready' && (
                                 <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
                                     <label style={{ fontSize: 13, color: 'var(--text-2)' }}>{T.close_month}</label>
