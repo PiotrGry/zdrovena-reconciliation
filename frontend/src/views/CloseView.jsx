@@ -202,7 +202,7 @@ export default function CloseView() {
                 <ResultPanel result={resultData} />
             )}
 
-            <CloseHistoryTable onRetry={retry} refreshKey={historyKey} />
+            <CloseHistoryTable refreshKey={historyKey} />
         </div>
     )
 }
