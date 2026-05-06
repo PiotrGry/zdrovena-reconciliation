@@ -443,23 +443,21 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear 
                             )}
                             <InboxPanel />
                             {status === 'ready' && (
-                                <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
-                                    <label style={{ fontSize: 13, color: 'var(--text-2)' }}>{T.close_month}</label>
+                                <div style={{ display: 'flex', gap: 8, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <span style={{ fontSize: 13, color: 'var(--text-3)', marginRight: 4 }}>Zamykasz:</span>
                                     <select
-                                        className="filter-btn"
                                         value={month}
                                         onChange={e => setMonth(Number(e.target.value))}
-                                        style={{ padding: '4px 8px' }}
+                                        style={{ fontSize: 18, fontWeight: 700, padding: '6px 12px', border: '2px solid var(--border)', borderRadius: 8, background: 'var(--bg)', cursor: 'pointer', color: 'var(--text)' }}
                                     >
                                         {MONTHS_PL.map((m, i) => (
                                             <option key={i + 1} value={i + 1}>{m}</option>
                                         ))}
                                     </select>
                                     <select
-                                        className="filter-btn"
                                         value={year}
                                         onChange={e => setYear(Number(e.target.value))}
-                                        style={{ padding: '4px 8px' }}
+                                        style={{ fontSize: 18, fontWeight: 700, padding: '6px 12px', border: '2px solid var(--border)', borderRadius: 8, background: 'var(--bg)', cursor: 'pointer', color: 'var(--text)' }}
                                     >
                                         {years.map(y => <option key={y} value={y}>{y}</option>)}
                                     </select>
