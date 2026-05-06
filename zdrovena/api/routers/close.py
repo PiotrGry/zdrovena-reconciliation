@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from zdrovena.api.auth import Principal, require_accountant_or_admin, require_viewer_or_above
 from zdrovena.api.models import CloseRequest, CloseResponse, CloseStateResponse
 from zdrovena.common.storage import get_storage_service
-from zdrovena.month_closing.close_history import append_close_history, build_history_entry, read_close_history
+from zdrovena.month_closing.close_history import append_close_history, build_history_entry, delete_history_entry, read_close_history
 from zdrovena.month_closing.config import BASE_DIR, POLISH_MONTHS
 from zdrovena.month_closing.console import ConsoleReporter
 from zdrovena.month_closing.orchestrator import MonthCloseOrchestrator
@@ -136,3 +136,18 @@ def get_close_history(
     """Return last N close runs, newest first. Accessible to viewer role and above."""
     storage = get_storage_service()
     return read_close_history(storage, limit=limit)
+
+
+@router.delete(
+    "/history/{ts:path}",
+    summary="Delete a history entry by timestamp",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_close_history_entry(
+    ts: str,
+    principal: Annotated[Principal, Depends(require_accountant_or_admin)],
+) -> None:
+    """Remove one history entry. Requires accountant or admin role."""
+    storage = get_storage_service()
+    if not delete_history_entry(storage, ts):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entry not found")

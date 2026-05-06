@@ -61,6 +61,40 @@ def read_close_history(storage: Any, limit: int = 50) -> list[dict]:
         return []
 
 
+def delete_history_entry(storage: Any, ts: str) -> bool:
+    """Remove one entry by timestamp. Returns True if found and removed."""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as f:
+            tmp = Path(f.name)
+        try:
+            storage.download(HISTORY_BLOB_KEY, tmp)
+            lines = [l.strip() for l in tmp.read_text(encoding="utf-8").splitlines() if l.strip()]
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            return False
+
+        kept = []
+        removed = 0
+        for line in lines:
+            try:
+                entry = json.loads(line)
+                if entry.get("ts") == ts:
+                    removed += 1
+                else:
+                    kept.append(line)
+            except json.JSONDecodeError:
+                kept.append(line)
+
+        new_content = "\n".join(kept) + ("\n" if kept else "")
+        tmp.write_text(new_content, encoding="utf-8")
+        storage.upload(tmp, HISTORY_BLOB_KEY)
+        tmp.unlink(missing_ok=True)
+        return removed > 0
+    except Exception as exc:
+        logger.warning("Could not delete history entry %s: %s", ts, exc)
+        return False
+
+
 def build_history_entry(
     *,
     year: int,
