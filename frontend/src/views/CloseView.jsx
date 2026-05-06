@@ -434,6 +434,29 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear 
                 <div className="modal-body" style={{ padding: '18px 26px' }}>
                     {!running ? (
                         <>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, padding: '12px 16px', background: 'var(--bg-2, #f8fafc)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                                <span style={{ fontSize: 13, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>Zamykasz:</span>
+                                <select
+                                    value={month}
+                                    onChange={e => setMonth(Number(e.target.value))}
+                                    disabled={running}
+                                    style={{ flex: 1, fontSize: 16, fontWeight: 600, padding: '6px 10px', border: '1.5px solid var(--border)', borderRadius: 7, background: 'var(--bg)', cursor: 'pointer', color: 'var(--text)' }}
+                                >
+                                    {MONTHS_PL.map((m, i) => (
+                                        <option key={i + 1} value={i + 1}>{m}</option>
+                                    ))}
+                                </select>
+                                <select
+                                    value={year}
+                                    onChange={e => setYear(Number(e.target.value))}
+                                    disabled={running}
+                                    style={{ fontSize: 16, fontWeight: 600, padding: '6px 10px', border: '1.5px solid var(--border)', borderRadius: 7, background: 'var(--bg)', cursor: 'pointer', color: 'var(--text)' }}
+                                >
+                                    {[new Date().getFullYear() - 1, new Date().getFullYear()].map(y => (
+                                        <option key={y} value={y}>{y}</option>
+                                    ))}
+                                </select>
+                            </div>
                             {resumeCount > 0 && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', marginBottom: 12, background: 'var(--ok-bg, #f0fdf4)', border: '1px solid var(--ok, #38a169)', borderRadius: 6, fontSize: 13 }}>
                                     <Icon name="refresh-cw" size={14} style={{ color: 'var(--ok, #38a169)' }} />
@@ -441,45 +464,6 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear 
                                 </div>
                             )}
                             <InboxPanel />
-                            {status === 'ready' && (
-                                <div style={{ marginBottom: 20 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                                        <button className="btn btn-ghost btn-sm" onClick={() => setYear(y => y - 1)} disabled={year <= new Date().getFullYear() - 2}>
-                                            <Icon name="caret" size={14} style={{ transform: 'rotate(90deg)' }} />
-                                        </button>
-                                        <span style={{ fontWeight: 700, fontSize: 18, letterSpacing: 1 }}>{year}</span>
-                                        <button className="btn btn-ghost btn-sm" onClick={() => setYear(y => y + 1)} disabled={year >= new Date().getFullYear()}>
-                                            <Icon name="caret" size={14} style={{ transform: 'rotate(-90deg)' }} />
-                                        </button>
-                                    </div>
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
-                                        {MONTHS_PL.map((m, i) => {
-                                            const isSelected = month === i + 1
-                                            const isFuture = (year === new Date().getFullYear() && i + 1 >= new Date().getMonth() + 1)
-                                            return (
-                                                <button
-                                                    key={i}
-                                                    onClick={() => setMonth(i + 1)}
-                                                    disabled={isFuture}
-                                                    style={{
-                                                        padding: '8px 4px',
-                                                        borderRadius: 8,
-                                                        border: isSelected ? '2px solid var(--primary, #3b82f6)' : '1px solid var(--border)',
-                                                        background: isSelected ? 'var(--primary, #3b82f6)' : 'var(--bg)',
-                                                        color: isSelected ? '#fff' : isFuture ? 'var(--text-3)' : 'var(--text)',
-                                                        fontWeight: isSelected ? 700 : 400,
-                                                        fontSize: 13,
-                                                        cursor: isFuture ? 'default' : 'pointer',
-                                                        transition: 'all .15s',
-                                                    }}
-                                                >
-                                                    {m.slice(0, 3)}
-                                                </button>
-                                            )
-                                        })}
-                                    </div>
-                                </div>
-                            )}
                         </>
                     ) : (
                         <CloseRunner
