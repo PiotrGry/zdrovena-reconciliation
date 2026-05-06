@@ -434,17 +434,19 @@ class TestStep3JpkReports:
         orch._step_3_jpk_reports()  # should not raise
         assert any("JPK" in s for s in orch.report.steps_completed)
 
-    def test_missing_reports_dry_run_raises(self, tmp_path):
-        """In non-interactive dry_run, missing reports should raise."""
-        orch = _make_orchestrator(non_interactive=True)
+    def test_missing_reports_dry_run_warns_not_raises(self, tmp_path):
+        """In dry_run, missing reports produce a warning instead of raising.
+        Files may not be copied to month_dir yet (preflight found them in blob inbox).
+        """
+        orch = _make_orchestrator(non_interactive=True)  # dry_run=True by default
         orch.month_dir = tmp_path
         # Don't create any report files — all will be missing
         with patch(
             "zdrovena.month_closing.orchestrator.FAKTUROWNIA_REPORTS",
             [{"name": "JPK_FA", "dest_name": "jpk_fa.pdf"}],
         ):
-            with pytest.raises(RuntimeError, match="JPK"):
-                orch._step_3_jpk_reports()
+            orch._step_3_jpk_reports()  # must NOT raise in dry_run
+            assert any("JPK" in s for s in orch.report.steps_completed)
 
     def test_all_reports_present_passes(self, tmp_path):
         orch = _make_orchestrator()
