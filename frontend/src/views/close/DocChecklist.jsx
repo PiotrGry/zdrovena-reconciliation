@@ -60,13 +60,18 @@ export function DocChecklist({ onStatusChange }) {
     const getName = i => i.name || getKey(i).split('/').pop() || ''
 
     const upload = useCallback(async (file) => {
-        const token = await getToken()
-        await fetch(`/api/files/${encodeURIComponent(`${INBOX_PREFIX}/${file.name}`)}`, {
-            method: 'PUT',
-            headers: { Authorization: `Bearer ${token}`, 'Content-Type': file.type || 'application/octet-stream' },
-            body: file,
-        })
-        load()
+        try {
+            const token = await getToken()
+            const res = await fetch(`/api/files/${encodeURIComponent(`${INBOX_PREFIX}/${file.name}`)}`, {
+                method: 'PUT',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': file.type || 'application/octet-stream' },
+                body: file,
+            })
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            load()
+        } catch (e) {
+            alert(`Błąd wgrywania ${file.name}: ${e.message}`)
+        }
     }, [getToken, load])
 
     const deleteFile = useCallback(async (key) => {
@@ -88,7 +93,8 @@ export function DocChecklist({ onStatusChange }) {
     const missingCount = matched.filter(d => !d.found).length
 
     useEffect(() => {
-        if (!loading) onStatusChange?.(allFound)
+        // null = still loading (unknown), true/false = resolved
+        onStatusChange?.(loading ? null : allFound)
     }, [allFound, loading, onStatusChange])
 
     return (
