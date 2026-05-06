@@ -405,6 +405,8 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal }) {
         fetchState()
     }, [open, year, month, getToken])
 
+    const resumeCount = preCompleted.length
+
     useEffect(() => {
         if (!open) { setRunning(false); setStatus('ready') }
     }, [open])
@@ -426,6 +428,12 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal }) {
                 <div className="modal-body" style={{ padding: '18px 26px' }}>
                     {!running ? (
                         <>
+                            {resumeCount > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', marginBottom: 12, background: 'var(--ok-bg, #f0fdf4)', border: '1px solid var(--ok, #38a169)', borderRadius: 6, fontSize: 13 }}>
+                                    <Icon name="refresh-cw" size={14} style={{ color: 'var(--ok, #38a169)' }} />
+                                    <span><strong>Checkpoint:</strong> {resumeCount}/{PIPELINE_STEPS.length} kroków ukończonych — pipeline wznowi od miejsca gdzie skończył</span>
+                                </div>
+                            )}
                             <InboxPanel />
                             {status === 'ready' && (
                                 <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
@@ -497,6 +505,65 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal }) {
                     </div>
                 </div>
             </div>
+        </div>
+    )
+}
+
+function CloseHistory() {
+    const { getToken } = useAuth()
+    const [history, setHistory] = useState([])
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+        (async () => {
+            try {
+                const token = await getToken()
+                const res = await fetch('/api/close/history?limit=10', {
+                    headers: { Authorization: `Bearer ${token}` },
+                })
+                if (res.ok) setHistory(await res.json())
+            } catch { /* ignore */ } finally { setLoading(false) }
+        })()
+    }, [getToken])
+
+    if (loading) return null
+    if (!history.length) return null
+
+    const statusIcon = s => s === 'success' ? '✅' : s === 'partial' ? '⚠️' : '❌'
+    const statusLabel = s => s === 'success' ? 'Sukces' : s === 'partial' ? 'Z ostrzeżeniami' : s === 'blocked' ? 'Zablokowany' : 'Błąd'
+
+    return (
+        <div className="card">
+            <div className="card-head">
+                <span className="card-title"><Icon name="clock" size={14} /> Historia zamknięć</span>
+            </div>
+            <table className="files" style={{ fontSize: 12 }}>
+                <thead>
+                    <tr>
+                        <th style={{ padding: '6px 16px', textAlign: 'left', color: 'var(--text-3)' }}>Miesiąc</th>
+                        <th style={{ padding: '6px 8px', color: 'var(--text-3)' }}>Status</th>
+                        <th style={{ padding: '6px 8px', color: 'var(--text-3)' }}>Faktury</th>
+                        <th style={{ padding: '6px 8px', color: 'var(--text-3)' }}>Brutto</th>
+                        <th style={{ padding: '6px 8px', color: 'var(--text-3)' }}>Kroki</th>
+                        <th style={{ padding: '6px 16px', color: 'var(--text-3)' }}>Data</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {history.map((h, i) => (
+                        <tr key={i}>
+                            <td style={{ padding: '6px 16px' }}>
+                                <strong>{h.month_name} {h.year}</strong>
+                                {h.dry_run && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 4px', borderRadius: 3 }}>DRY</span>}
+                            </td>
+                            <td style={{ padding: '6px 8px' }}>{statusIcon(h.status)} {statusLabel(h.status)}</td>
+                            <td style={{ padding: '6px 8px', color: 'var(--text-2)' }}>{h.sales_invoice_count ?? '—'}</td>
+                            <td style={{ padding: '6px 8px', color: 'var(--text-2)' }}>{h.sales_gross_total ? `${Number(h.sales_gross_total).toLocaleString('pl-PL')} PLN` : '—'}</td>
+                            <td style={{ padding: '6px 8px', color: 'var(--text-2)' }}>{h.steps_completed ?? '—'}/{PIPELINE_STEPS.length}</td>
+                            <td style={{ padding: '6px 16px', color: 'var(--text-3)' }}>{h.ts ? new Date(h.ts).toLocaleString('pl-PL') : '—'}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
         </div>
     )
 }
@@ -596,6 +663,7 @@ export default function CloseView() {
             </div>
 
             <CloseModal open={open} onClose={() => setOpen(false)} onDone={handleDone} />
+            <CloseHistory />
         </div>
     )
 }

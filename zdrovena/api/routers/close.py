@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from zdrovena.api.auth import Principal, require_accountant_or_admin, require_viewer_or_above
 from zdrovena.api.models import CloseRequest, CloseResponse, CloseStateResponse
 from zdrovena.common.storage import get_storage_service
+from zdrovena.month_closing.close_history import append_close_history, build_history_entry, read_close_history
 from zdrovena.month_closing.config import BASE_DIR, POLISH_MONTHS
 from zdrovena.month_closing.console import ConsoleReporter
 from zdrovena.month_closing.orchestrator import MonthCloseOrchestrator
@@ -63,20 +64,25 @@ def run_close(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except SystemExit:
-        # Pre-flight found blockers (missing files/invoices) — treat as 422, not 500.
-        # report.errors was populated by the orchestrator before raising SystemExit.
         log_lines = buf.getvalue().splitlines()
         blockers = orchestrator.report.errors
         detail = blockers if blockers else ["Pre-flight checks failed — check server logs"]
         logger.warning("Close pre-flight blocked for %d/%02d: %s", req.year, req.month, detail)
+        append_close_history(get_storage_service(), build_history_entry(
+            year=req.year, month=req.month, month_name=POLISH_MONTHS[req.month],
+            status="blocked", dry_run=req.dry_run, error="; ".join(detail),
+        ))
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"blockers": detail, "log_lines": log_lines},
         ) from None
     except RuntimeError as exc:
-        # Pipeline business logic error (missing vendors, KSeF mismatch, etc.) — 422 with message.
         log_lines = buf.getvalue().splitlines()
         logger.warning("Close pipeline blocked for %d/%02d: %s", req.year, req.month, exc)
+        append_close_history(get_storage_service(), build_history_entry(
+            year=req.year, month=req.month, month_name=POLISH_MONTHS[req.month],
+            status="error", dry_run=req.dry_run, error=str(exc),
+        ))
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"blockers": [str(exc)], "log_lines": log_lines},
@@ -89,6 +95,11 @@ def run_close(
             detail={"blockers": [f"Nieoczekiwany błąd: {exc}"], "log_lines": log_lines},
         ) from exc
 
+    append_close_history(orchestrator.storage, build_history_entry(
+        year=req.year, month=req.month, month_name=POLISH_MONTHS[req.month],
+        status="success" if not report.warnings else "partial",
+        dry_run=req.dry_run, report=report,
+    ))
     return CloseResponse.from_close_report(report, log_lines=log_lines)
 
 
@@ -112,3 +123,16 @@ def get_close_state(
     blob_key = f"faktury/{year}/{month_pl}/.state.json"
     state = PipelineState(month_dir, storage=storage, blob_key=blob_key)
     return CloseStateResponse(completed_steps=state.completed_steps)
+
+
+@router.get(
+    "/history",
+    summary="Get history of month-closing runs",
+)
+def get_close_history(
+    principal: Annotated[Principal, Depends(require_viewer_or_above)],
+    limit: int = Query(default=20, ge=1, le=100),
+) -> list[dict]:
+    """Return last N close runs, newest first. Accessible to viewer role and above."""
+    storage = get_storage_service()
+    return read_close_history(storage, limit=limit)
