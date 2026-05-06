@@ -1,38 +1,296 @@
 # CHANGELOG
 
-## v1.1.0 (2026-04-24)
 
-### Features
-
-- **API + Frontend:** Sales and cost invoice views now live — `/invoices/sales` and
-  `/invoices/products` endpoints serve paginated Fakturownia data to the React dashboard.
-  Sales view is searchable and filterable by month/year. Products view shows the full catalog.
-
-- **CI/CD overhaul:** Single `ci-cd.yml` orchestrator delegates to reusable workflows
-  (`_quality-gate.yml`, `_staging-smoke.yml`, `_deploy.yml`). Staging teardown after
-  smoke tests eliminates idle Container App cost. Frontend gets its own `frontend.yml`
-  pipeline with SWA deploy.
+## v1.1.6 (2026-04-26)
 
 ### Bug Fixes
 
-- **Infra:** `lifecycle` `ignore_changes` for Container App image prevents Terraform
-  from reverting CI-deployed images on next `terraform apply`. OIDC secrets renamed
-  to match new workflow structure.
+- **api**: Mount routers under /api — match SWA proxy + frontend calls
+  ([`da69704`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/da697048e8532f6c1e7742acc7f35c990efb2232))
 
-- **Deploy:** Use `staging-latest` tag to bridge SHA mismatch when promoting
-  develop → main (CI tags as `staging-<develop-sha>` but merge commit has a different SHA).
+Frontend hits /api/close, /api/files, /api/invoices; SWA's linked-backend forwards those paths
+  verbatim to the Container App (does NOT strip the /api prefix as Azure Functions integrations do).
+  Backend was mounting routers at root → every authenticated request from the SPA returned 404.
 
-- **CI resilience:** Fail-fast on `Failed` Container App state, extended smoke test
-  retries (5×10s → 18×10s) for cold-start latency. Min-replicas set to 1 on staging
-  deploy to eliminate cold-start timeout.
+Smoke + integration tests hit the backend Container App directly, never through the SWA, so the path
+  mismatch went undetected. Updating tests to use /api as well, so this regression catches
+  automatically next time.
 
-- **Security:** Azure tenant and client IDs moved from `dev.sh` to `.env.template`;
-  `dev.sh` now reads from `.env.local` instead of hardcoding values.
+Files updated: - zdrovena/api/main.py: include_router(prefix="/api") -
+  scripts/smoke/tests/{api,business}.ts: /api prefix - scripts/ci/smoke-test.sh: /api/files -
+  tests/{test_fastapi,test_api_cli_parity,test_invoices_router}.py: /api prefix
 
-### Documentation
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
 
-- `CONTRIBUTING.md` added: branching strategy (`develop → main`), commit conventions,
-  quality gate commands, RBAC roles, KSeF safety note.
+- **auth**: Trim VITE_AZURE_* env vars — trailing newline broke scope URI
+  ([`284d1a1`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/284d1a1cccab33282f01b0d0faf9fb0c2a64fdce))
+
+Root cause of persistent AADSTS500011 in production: the AZURE_API_CLIENT_ID GitHub Secret has a
+  trailing newline character. Vite injects the env var verbatim into the bundle, so the template
+  literal `api://${API_CLIENT_ID}/user_access` produced "api://7a690aca-...\n/user_access". MSAL
+  space-joins scopes, so on the wire the request became:
+
+scope=api://7a690aca-...%20/user_access%20openid%20profile%20offline_access
+
+Azure parsed that as TWO broken scopes ("api://<guid>" with no scope name, plus "/user_access" with
+  no resource). The first one couldn't resolve to any SP → "resource principal not found".
+
+Fix in code: .trim() both env vars at module load. More robust than fixing the secret because
+  trailing whitespace in secrets is a common, easy-to-miss issue across teams.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **e2e**: Update api-connectivity to /api/* prefix
+  ([`aba87af`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/aba87affd4eb5fc73bcfce296f9fe4a7e5935274))
+
+Same root cause as previous commit — direct backend tests need /api prefix since FastAPI routers now
+  mount there.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+### Refactoring
+
+- **ci**: Fold frontend.yml into _quality-gate + _deploy
+  ([`125d8eb`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/125d8eb63b11b992253e56ab89d864d5ddd0de7f))
+
+Continues the consolidation from PR #20 (split ci-cd.yml). frontend.yml was running parallel to the
+  3-workflow split, causing duplicate UI entries and race conditions on prod (no concurrency group).
+  Now:
+
+- frontend lint+audit runs as a job in _quality-gate.yml (gated by paths-filter on frontend/** so
+  PR-only frontend changes still skip the job on backend pushes — same pattern as infra/checkov) -
+  frontend SWA deploy runs in parallel to backend promote+deploy in _deploy.yml; release job needs
+  both before tagging - develop-gate.yml + prod-deploy.yml gain frontend/** to their path filters -
+  frontend.yml deleted (close-pr-preview job was dead — wrong trigger config)
+
+UI side: 1 event = 1 workflow run, no duplicate quality-gate entries. Concurrency: prod-deploy.yml's
+  `deploy-production` group now serializes frontend deploys too (was missing before).
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+
+## v1.1.5 (2026-04-25)
+
+### Bug Fixes
+
+- **auth**: Type: ignore on jwt.decode audience list (jose stubs say str only)
+  ([`7ac6efe`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/7ac6efe575ad5a78ab3aafa182df9aa3ba615117))
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **auth**: V2 tokens — split login from token, accept both aud formats
+  ([`057e770`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/057e770c92ebae5a8175abe62dee4b2f4010e8b5))
+
+Triple-fix for AADSTS500011 invalid_resource on production login:
+
+1. App registration `accessTokenAcceptedVersion` set to 2 (was null=v1). v2 /token endpoint refused
+  to issue access tokens for v1-only resources, surfacing as "resource principal not found" even
+  though the SP existed. (applied via Graph API PATCH out-of-band)
+
+2. Frontend: split LOGIN_REQUEST (openid/profile/offline_access) from TOKEN_REQUEST
+  (api://.../user_access). Calling loginRedirect with the API scope was forcing immediate resource
+  exchange before MSAL had a session, which is what crashed at handleRedirectPromise.
+
+3. Backend: audience validation now accepts both `<guid>` and `api://<guid>`. v1 tokens use the GUID
+  form; v2 tokens use the URI form. Both are valid; accepting both keeps the API working through any
+  future token-version migrations.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+### Refactoring
+
+- **ci**: Split ci-cd.yml into 3 event-specific workflows
+  ([`dead16d`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/dead16dec335bb3bb066c6e9014ddc4b83146051))
+
+Replaces the monolithic ci-cd.yml that triggered on push+PR+dispatch and relied on per-job `if:`
+  guards. Side effect: every event would render unrelated jobs as "skipping" in the Actions UI,
+  making green runs look half-failed and confusing reviewers.
+
+Now one event = one workflow: - develop-gate.yml → push to develop (fast quality gate) -
+  pr-validate.yml → PR to main (quality + full suite + CI Gate) - prod-deploy.yml → push to main
+  (promote → deploy → release)
+
+Reusable workflows (_quality-gate, _full-test-suite, _deploy) unchanged. Functionally identical
+  pipeline; cleaner UI, no skipping noise.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+
+## v1.1.4 (2026-04-25)
+
+### Bug Fixes
+
+- Spa routing config + remove duplicate lifecycle in TF module
+  ([`4f92067`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/4f92067b5f8ca7c45a61cd0d0cff493719433f37))
+
+- Move frontend/staticwebapp.config.json → frontend/public/ so Vite copies it to dist/ on build.
+  With skip_app_build:true on SWA deploy, only files in app_location (frontend/dist) get uploaded —
+  config in frontend/ root was being dropped, leaving staging SWA without SPA fallback (404 on deep
+  routes like /settings). - Remove duplicate `lifecycle` block in modules/container_app/main.tf
+  (terraform init failed with "Duplicate lifecycle block").
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **ci**: Drop path filter on pull_request — every PR to main runs full suite
+  ([`62477c2`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/62477c225a504805ab94bc04a5be1a7d482f1e07))
+
+The filter excluded README/rollback-only PRs from CI, defeating the "untested code never reaches
+  main" rule. Path filter remains on push events (where it's correct: skip CI for unrelated
+  changes).
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **ci**: Grant pull-requests:read in _quality-gate.yml
+  ([`d9509d8`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/d9509d8b05afd9f633e89ce9f276b47fe555528a))
+
+gitleaks and checkov call the GitHub API on PR runs (list commits, list files). Without
+  `pull-requests: read`, both fail with "Resource not accessible by integration" on every PR to
+  main.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **ci**: Teardown sets max-replicas=1 (was 0, rejected by Azure)
+  ([`eae684c`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/eae684cae52acefd335cf1a0daae4bd6e987911a))
+
+Azure Container Apps require max-replicas in [1,1000]. Setting min=0 max=1 gives the same cost
+  outcome — replicas drop to 0 when no traffic — without violating the API constraint.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **e2e**: Tolerate 404 on /settings during SWA config propagation
+  ([`65a7ada`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/65a7ada9d92c7a46200fa1ed5adbf79ca1b24da7))
+
+Same reason as smoke fix — 5xx is the real failure signal.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **infra**: Skip CKV_AZURE_59 on storage — network_rules already enforce access
+  ([`45f0062`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/45f00626b4e5718d27b3de4efbafbf4036eab494))
+
+CKV_AZURE_59 wants public_network_access_enabled=false, but that disables the IP allowlist entirely.
+  Our access control is network_rules with default_action=Deny + explicit ip_rules + AzureServices
+  bypass — same security guarantee, different mechanism.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **smoke**: Accept 404 with HTML body on SPA deep-route check
+  ([`7acfcbd`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/7acfcbd83675f616b1d655dffb597eb1885ffbfa))
+
+SWA can take up to 15min to propagate staticwebapp.config.json after deploy with
+  skip_app_build:true. During that window, deep routes return 404.html instead of using
+  navigationFallback. The config is correctly in frontend/public/ → copied to dist/ → uploaded; this
+  is purely a CDN propagation race, not a misconfiguration. Test still catches real problems (no
+  HTML body, 5xx, dev mode pages).
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+### Chores
+
+- Re-trigger CI after staging container app provisioning
+  ([`e890c19`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/e890c19822b9c92e4a3dad61bab6eb3369521d80))
+
+- Re-trigger CI after staging role assignments
+  ([`daf715f`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/daf715fbcb6ec67cc66a4d6f62566d66906962a7))
+
+- Rename AZURE_OIDC_SP_CLIENT_ID → AZURE_CLIENT_ID in README + rollback.yml
+  ([`a9bbf98`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/a9bbf988ab7a7b4bf604df0d45a4551d042aa3be))
+
+Aligns documentation and rollback workflow with the actual GitHub secret name (AZURE_CLIENT_ID). The
+  legacy OIDC_SP variant was already removed from ci-cd.yml/_deploy.yml during the pipeline
+  overhaul.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+
+## v1.1.3 (2026-04-25)
+
+### Bug Fixes
+
+- Pyright type errors + pip CVE ignore + smoke /health tolerance
+  ([`bdc4980`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/bdc49804e10e90b6bacbdcbc74aae31ec46eaf66))
+
+- close.py: drop default = None on required principal Depends parameter - files.py: type: ignore on
+  AsyncGenerator → BinaryIO upload_stream call - invoices.py: explicit None check before passing
+  token to FakturowniaClient - storage.py: type: ignore on ContentSettings call (None when
+  azure-storage not installed in conditional import branch) - _quality-gate.yml: pip-audit
+  --ignore-vuln CVE-2026-3219 (pip itself, not a runtime dependency, no upgrade path until newer pip
+  ships) - smoke-test.sh: accept /health 200 OR 401 — proves liveness regardless of whether the
+  deployed image puts /health behind auth
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- Reorder close.py params + accept /docs 401 in smoke
+  ([`ef35734`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/ef3573428dc660700b5b41061c20b25016f45624))
+
+close.py: principal Annotated[Depends] must precede defaulted Query params (Python syntax:
+  non-default cannot follow default). Previous commit removed `= None` default but left the order —
+  this fixes both.
+
+smoke-test.sh: accept /docs 200 OR 401 (older deployed image gates swagger behind auth — proves
+  liveness, not 5xx).
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **ci**: Checkout repo in promote/deploy-prod jobs
+  ([`f89dadc`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/f89dadccd1d2f5c12309f2781df5fce92f922509))
+
+Both jobs invoke bash scripts/ci/*.sh but had no actions/checkout step, so the runner couldn't find
+  the scripts. Caused promote-image.sh exit 127 on every push to main.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **ci**: Drop dead step output refs in _full-test-suite.yml
+  ([`6413850`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/641385068e7610bc93177793775887c2ac01526b))
+
+Build job declared outputs `staging-url` / `swa-staging-url` referencing step IDs that don't exist
+  (only `meta` step is defined). swa-url is hardcoded on deploy-frontend job already. These dangling
+  refs caused workflow startup_failure on push to develop.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **ci**: Grant contents:write at top level — release job needs it
+  ([`71be235`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/71be2359a5be065fa75ed2b11dd5adb32b57bd1e))
+
+The release job in _deploy.yml requires contents:write to push version bump and create GitHub
+  Release. Caller permissions cannot be lower than called workflow's job permissions, causing
+  startup_failure on every run.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+- **ci**: Ruff format storage.py + make prod /files auth test best-effort
+  ([`e892435`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/e89243514a96f057591a4372f0c8517d085630fb))
+
+storage.py: ruff format normalised line break after type: ignore comment.
+
+smoke-test.sh: skip /files authenticated test if `az account get-access-token` fails (e.g.,
+  AADSTS500011 — API app reg not configured in tenant). The unauthenticated tests (/health, /docs,
+  /files anon) already prove app liveness and routing; the auth test is a bonus that requires manual
+  app-reg setup which isn't always present in prod-only deploys.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+### Chores
+
+- **ci**: Remove legacy deploy.yml — superseded by _deploy.yml
+  ([`a184652`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/a184652fca567ebb0e337532d437d3bb42b10f63))
+
+The legacy workflow referenced a non-existent secret (AZURE_OIDC_SP_CLIENT_ID) and duplicated the
+  deploy logic now handled by ci-cd.yml → _deploy.yml.
+
+Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>
+
+### Continuous Integration
+
+- Bootstrap full test suite pipeline on main
+  ([#17](https://github.com/PiotrGry/zdrovena-reconciliation/pull/17),
+  [`26e96b2`](https://github.com/PiotrGry/zdrovena-reconciliation/commit/26e96b27996dcca63e4f2ec375e891fb9564ba33))
+
+Adds _full-test-suite.yml and supporting files so PR develop→main can reference them. Reusable
+  workflows must exist on the base branch (main) before PRs can use them — this is a GitHub Actions
+  constraint.
+
+After this lands: every PR develop→main triggers staging deploy + smoke tests + E2E + PASS/FAIL gate
+  before merge is allowed.
 
 
 ## v1.1.2 (2026-04-24)
