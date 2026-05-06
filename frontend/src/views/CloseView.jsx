@@ -265,17 +265,22 @@ export function CloseRunner({ year, month, dryRun, preCompleted = [], onDone }) 
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
                 const detail = body.detail
-                // 422 — pre-flight blockers: {blockers: [...], log_lines: [...]}
-                if (res.status === 422 && detail?.blockers) {
-                    setStates(prev => prev.map(s => s === 'running' ? 'error' : s))
+                setStates(prev => prev.map(s => s === 'running' ? 'error' : s))
+                // 422 / 500 — {blockers: [...], log_lines: [...]}
+                if (detail?.blockers) {
                     detail.log_lines?.forEach(line => addLog(line, 'info'))
-                    addLog('── Brakujące dokumenty ──', 'err')
-                    detail.blockers.forEach(d => addLog(`  • ${d}`, 'err'))
+                    addLog('── Błąd pipeline ──', 'err')
+                    detail.blockers.forEach(d => addLog(`  ❌ ${d}`, 'err'))
                     setStatus('error')
                     onDone?.('error', null)
                     return
                 }
-                throw new Error(Array.isArray(detail) ? detail.join(', ') : (detail ?? `HTTP ${res.status}`))
+                // Fallback dla innych błędów
+                const msg = Array.isArray(detail) ? detail.join(', ') : (typeof detail === 'string' ? detail : `HTTP ${res.status}`)
+                addLog(`❌ ${msg}`, 'err')
+                setStatus('error')
+                onDone?.('error', null)
+                return
             }
 
             const data = await res.json()
