@@ -39,7 +39,14 @@ def get_client():
         print("ERROR: azure-storage-blob not installed. Run: pip install azure-storage-blob")
         sys.exit(1)
 
+    if account_url := os.environ.get("AZURE_STORAGE_ACCOUNT_URL"):
+        # Real Azure — use DefaultAzureCredential (OIDC in CI, az login locally)
+        from azure.identity import DefaultAzureCredential
+        print(f"Using Azure storage: {account_url}")
+        return BlobServiceClient(account_url=account_url, credential=DefaultAzureCredential())
+
     conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", AZURITE_CONNECTION_STRING)
+    print(f"Using connection string: {conn[:60]}...")
     return BlobServiceClient.from_connection_string(conn)
 
 

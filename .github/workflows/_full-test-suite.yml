@@ -160,12 +160,53 @@ jobs:
           output_location: ""
           skip_app_build: true
 
-  # ── 4. Smoke test suite ────────────────────────────────────────────────────
+  # ── 4. Seed staging storage with test invoice files ──────────────────────
+  seed-staging:
+    name: Seed staging inbox
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: staging
+    needs: [deploy-backend, deploy-frontend]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install "azure-storage-blob>=12.19.0" "azure-identity>=1.16.0"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Seed staging inbox with test invoices
+        env:
+          AZURE_STORAGE_ACCOUNT_URL: ${{ secrets.AZURE_STAGING_STORAGE_ACCOUNT_URL }}
+          AZURE_STORAGE_CONTAINER: zdrovena-files-staging
+        run: |
+          NOW=$(date -u +"%Y-%m")
+          YEAR=${NOW%-*}
+          MONTH_NUM=$(date -u +"%m" | sed 's/^0//')
+          PREV_MONTH=$(( MONTH_NUM == 1 ? 12 : MONTH_NUM - 1 ))
+          PREV_YEAR=$(( MONTH_NUM == 1 ? YEAR - 1 : YEAR ))
+          echo "Seeding staging inbox for ${PREV_YEAR}/${PREV_MONTH}..."
+          python3 scripts/seed-local-storage.py \
+            --year "$PREV_YEAR" \
+            --month "$PREV_MONTH" \
+            --clear
+
+  # ── 5. Smoke test suite ────────────────────────────────────────────────────
   smoke:
     name: Smoke tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [deploy-backend, deploy-frontend]
+    needs: [deploy-backend, deploy-frontend, seed-staging]
     outputs:
       result: ${{ steps.run.outputs.result }}
       report: ${{ steps.run.outputs.report }}
@@ -193,6 +234,8 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           SMOKE_SP_CLIENT_ID: ${{ secrets.SMOKE_SP_CLIENT_ID }}
           SMOKE_SP_CLIENT_SECRET: ${{ secrets.SMOKE_SP_CLIENT_SECRET }}
+          SMOKE_ACCOUNTANT_SP_CLIENT_ID: ${{ secrets.SMOKE_ACCOUNTANT_SP_CLIENT_ID }}
+          SMOKE_ACCOUNTANT_SP_CLIENT_SECRET: ${{ secrets.SMOKE_ACCOUNTANT_SP_CLIENT_SECRET }}
         run: |
           cd scripts/smoke
           npx tsx runner.ts --output report.json
@@ -217,7 +260,7 @@ jobs:
     name: E2E tests (Playwright)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [deploy-backend, deploy-frontend]
+    needs: [deploy-backend, deploy-frontend, seed-staging]
     outputs:
       result: ${{ steps.run.outputs.result }}
     steps:
