@@ -458,22 +458,6 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal }) {
                                     </select>
                                 </div>
                             )}
-                            <div className="steps">
-                                {preCompleted.length > 0 && (
-                                    <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                                        <Icon name="check" size={12} /> {preCompleted.length} z {PIPELINE_STEPS.length} kroków ukończonych z poprzedniego runu (checkpoint)
-                                    </div>
-                                )}
-                                {PIPELINE_STEPS.map(step => (
-                                    <div key={step.n} className="step" data-state={preCompleted.includes(step.key) ? 'done' : 'pending'}>
-                                        <div className="step-num">{preCompleted.includes(step.key) ? <Icon name="check" size={11} /> : step.n}</div>
-                                        <div>
-                                            <div className="step-title">{step.title}</div>
-                                        </div>
-                                        <div className="step-duration">{preCompleted.includes(step.key) ? '✓' : step.est}</div>
-                                    </div>
-                                ))}
-                            </div>
                         </>
                     ) : (
                         <CloseRunner
@@ -639,27 +623,6 @@ export default function CloseView() {
                         {completedSteps.length} / {PIPELINE_STEPS.length} kroków ukończonych
                     </span>
                 )}
-            </div>
-
-            <div className="card">
-                <div className="card-head">
-                    <span className="card-title"><Icon name="play" size={14} /> Kroki pipeline</span>
-                </div>
-                <div className="steps" style={{ padding: '4px 16px 12px' }}>
-                    {PIPELINE_STEPS.map(step => (
-                        <div key={step.n} className="step" data-state={completedSteps.includes(step.key) ? 'done' : 'pending'}>
-                            <div className="step-num">
-                                {completedSteps.includes(step.key) ? <Icon name="check" size={11} /> : step.n}
-                            </div>
-                            <div>
-                                <div className="step-title">{step.title}</div>
-                            </div>
-                            <div className="step-duration">
-                                {completedSteps.includes(step.key) ? '✓' : step.est}
-                            </div>
-                        </div>
-                    ))}
-                </div>
             </div>
 
             <CloseModal open={open} onClose={() => setOpen(false)} onDone={handleDone} />
