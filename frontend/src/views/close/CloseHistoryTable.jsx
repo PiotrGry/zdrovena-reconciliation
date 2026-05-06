@@ -14,7 +14,7 @@ const STATUS_CONFIG = {
  * Tabela ostatnich zamknięć. Akcje: wznów / uruchom ponownie, usuń.
  * Renderuje się tylko jeśli są wpisy w historii.
  */
-export function CloseHistoryTable({ onRetry, refreshKey = 0 }) {
+export function CloseHistoryTable({ refreshKey = 0 }) {
     const { getToken } = useAuth()
     const [history, setHistory] = useState([])
     const [loading, setLoading] = useState(true)
@@ -102,15 +102,6 @@ export function CloseHistoryTable({ onRetry, refreshKey = 0 }) {
                                 </td>
                                 <td>
                                     <div className="row-actions">
-                                        <button
-                                            type="button"
-                                            className="icon-btn"
-                                            title={incomplete ? `Wznów od kroku ${steps}` : 'Uruchom ponownie'}
-                                            aria-label={incomplete ? `Wznów ${h.month_name} ${h.year}` : `Uruchom ponownie ${h.month_name} ${h.year}`}
-                                            onClick={() => onRetry(h.year, h.month)}
-                                        >
-                                            <Icon name="refresh-cw" size={14} />
-                                        </button>
                                         <button
                                             type="button"
                                             className="icon-btn danger"
