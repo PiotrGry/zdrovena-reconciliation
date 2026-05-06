@@ -8,6 +8,7 @@ and keychain service names used during the monthly accounting close.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,7 +53,7 @@ from zdrovena.common.formatting import (
 
 # ─── Base Directory ───────────────────────────────────────────────────────────
 
-BASE_DIR: Path = Path.home() / "Documents" / "Humio" / "faktury"
+BASE_DIR: Path = Path(os.environ.get("FAKTUROWNIA_BASE_DIR", str(Path.home() / "Documents" / "Humio" / "faktury")))
 
 # ─── Company Details (used in JPK XML generation) ────────────────────────────
 
@@ -182,7 +183,7 @@ GOOGLE_ADS_LOGIN_CUSTOMER_ID: str | None = None
 
 # ─── KSeF ─────────────────────────────────────────────────────────────────────
 
-KSEF_ENABLED = True
+KSEF_ENABLED = os.environ.get("KSEF_ENABLED", "true").lower() not in ("false", "0", "no")
 KSEF_API_URL = "https://api.ksef.mf.gov.pl/v2"
 KSEF_AUTH_POLL_INTERVAL = 2
 KSEF_AUTH_POLL_MAX = 30
