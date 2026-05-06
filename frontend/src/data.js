@@ -20,14 +20,18 @@ export const fmtPLN = n => {
 }
 
 export const PIPELINE_STEPS = [
-    { n: 1, key: 'Pre-flight', title: 'Preflight checks', est: '~2 s' },
-    { n: 2, key: 'Folder structure', title: 'Struktura folderów', est: '~1 s' },
-    { n: 3, key: 'Sales invoices', title: 'Faktury sprzedaży', est: '~5 s' },
-    { n: 4, key: 'JPK & VAT reports', title: 'Raporty JPK & VAT', est: '~8 s' },
-    { n: 5, key: 'Cost invoices', title: 'Faktury kosztowe', est: '~12 s' },
-    { n: 6, key: 'ZIP archive', title: 'Archiwum ZIP', est: '~4 s' },
-    { n: 7, key: 'Email', title: 'Wyślij e-mail', est: '~3 s' },
+    { n: 1, key: 'Pre-flight',         title: 'Preflight checks',    est: '~2 s' },
+    { n: 2, key: 'Folder structure',   title: 'Struktura folderów',  est: '~1 s' },
+    { n: 3, key: 'Sales invoices',     title: 'Faktury sprzedaży',   est: '~5 s' },
+    { n: 4, key: 'JPK & VAT reports',  title: 'Raporty JPK & VAT',   est: '~8 s' },
+    { n: 5, key: 'Cost invoices',      title: 'Faktury kosztowe',    est: '~12 s' },
+    { n: 6, key: 'Bank statement check', title: 'Wyciąg bankowy',    est: '~1 s' },
+    { n: 7, key: 'ZIP archive',        title: 'Archiwum ZIP',        est: '~4 s' },
+    { n: 8, key: 'Email',              title: 'Wyślij e-mail',       est: '~3 s' },
 ]
+
+// Dry-run step keys contain "(dry-run)" suffix — normalize for matching
+export const normalizeStepKey = (key) => key.replace(/\s*\(dry-run\)/i, '')
 
 export const KPIS_STUB = [
     { label: 'Przychód (netto)', value: '87 420 zł', meta: 'kwiecień 2026', accent: 'var(--primary)' },
