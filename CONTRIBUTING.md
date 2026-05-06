@@ -1,5 +1,33 @@
 # Contributing
 
+## Local setup
+
+### Pre-commit hooks (required for code quality)
+
+Lint and formatting checks run **locally before you commit**, not in CI. This keeps your PR unblocked and catches issues early.
+
+1. Install pre-commit:
+   ```bash
+   pip install pre-commit
+   ```
+
+2. Install the git hooks:
+   ```bash
+   pre-commit install
+   ```
+
+3. Run checks before committing (automatic after install):
+   ```bash
+   pre-commit run --all-files
+   ```
+
+Checks that run locally:
+- **Python**: ruff (linting + formatting)
+- **Python**: pyright (type checking)
+- **Frontend**: eslint (linting) + prettier (formatting)
+
+If pre-commit fails, it will show you the issues. Most are auto-fixable — run the commands again after fixes are made.
+
 ## Branching strategy
 
 ```
