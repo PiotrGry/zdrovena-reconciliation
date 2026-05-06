@@ -17,12 +17,19 @@ export interface TestContext {
    *  with zdrovena-viewer role and exercise authenticated endpoints. */
   smokeSpClientId: string;
   smokeSpClientSecret: string;
+  /** Accountant SP credentials — used by business tests to trigger POST /close.
+   *  Set SMOKE_ACCOUNTANT_SP_CLIENT_ID + SMOKE_ACCOUNTANT_SP_CLIENT_SECRET in CI. */
+  smokeAccountantSpClientId: string;
+  smokeAccountantSpClientSecret: string;
   verbose: boolean;
   /** Fetch with a timeout. Default 10s. */
   fetch(url: string, opts?: RequestInit & { timeoutMs?: number }): Promise<Response>;
   /** Lazy-acquired viewer access token, cached for the run.
    *  Returns null if SP creds aren't configured (tests skip themselves). */
   getViewerToken(): Promise<string | null>;
+  /** Lazy-acquired accountant access token, cached for the run.
+   *  Returns null if accountant SP creds aren't configured (tests skip themselves). */
+  getAccountantToken(): Promise<string | null>;
 }
 
 export interface TestResult {
