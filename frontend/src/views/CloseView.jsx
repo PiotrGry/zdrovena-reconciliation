@@ -4,7 +4,7 @@ import { useT } from '../lang'
 import { PageHead } from '../components/PageHead'
 import { Icon } from '../components/Icon'
 import { Pill } from '../components/Pill'
-import { PIPELINE_STEPS, MONTHS_PL, fmtBytes, fmtDate } from '../data'
+import { PIPELINE_STEPS, MONTHS_PL, fmtBytes, fmtDate, normalizeStepKey } from '../data'
 
 const INBOX_PREFIX = 'faktury/inbox'
 
@@ -218,7 +218,7 @@ export function CloseRunner({ year, month, dryRun, preCompleted = [], ignoredVen
     const { t, lang } = useT()
     const T = t[lang]
     const [states, setStates] = useState(() =>
-        PIPELINE_STEPS.map(s => preCompleted.includes(s.key) ? 'done' : 'pending')
+        PIPELINE_STEPS.map(s => preCompleted.map(normalizeStepKey).includes(s.key) ? 'done' : 'pending')
     )
     const [logs, setLogs] = useState(() =>
         preCompleted.map(k => {
@@ -291,7 +291,7 @@ export function CloseRunner({ year, month, dryRun, preCompleted = [], ignoredVen
             data.log_lines?.forEach(line => addLog(line, 'info'))
 
             // Reconcile actual completed steps from API response
-            const allCompleted = new Set([...(preCompleted ?? []), ...(data.steps_completed ?? [])])
+            const allCompleted = new Set([...(preCompleted ?? []), ...(data.steps_completed ?? [])].map(normalizeStepKey))
             setStates(PIPELINE_STEPS.map(s => {
                 if (allCompleted.has(s.key)) return 'done'
                 if (data.has_critical_errors) return 'error'
@@ -686,11 +686,14 @@ export default function CloseView() {
     useEffect(() => { loadState() }, [loadState])
 
     const resumeCount = preCompleted.length
+    const [hasResult, setHasResult] = useState(false)
+    const [runKey, setRunKey] = useState(0)
+
     const canRun = inboxReady && !running
     const runReason = !inboxReady ? 'Uzupełnij brakujące pliki w Inbox' : null
 
-    const start = () => { setStatus('ready'); setRunning(true) }
-    const done = (s) => { setStatus(s); setRunning(false); if (s === 'done') loadState() }
+    const start = () => { setStatus('ready'); setRunning(true); setHasResult(false); setRunKey(k => k + 1) }
+    const done = (s) => { setStatus(s); setRunning(false); setHasResult(true); if (s === 'done') loadState() }
 
     const statusConfig = {
         ready:   { cls: 'state-ready',   label: T.close_status_ready },
@@ -761,45 +764,44 @@ export default function CloseView() {
                 {/* ── Prawy panel: Pipeline ────────────────────────── */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-                    {/* Kontrolki */}
-                    {!running && (
-                        <div className="card">
-                            <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-                                {resumeCount > 0 && (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--ok-bg, #f0fdf4)', border: '1px solid var(--ok, #38a169)', borderRadius: 6, fontSize: 13 }}>
-                                        <Icon name="refresh-cw" size={14} style={{ color: 'var(--ok, #38a169)' }} />
-                                        <span><strong>Checkpoint:</strong> {resumeCount}/{PIPELINE_STEPS.length} kroków — pipeline wznowi od miejsca gdzie skończył</span>
-                                    </div>
-                                )}
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <label className="dry-toggle">
-                                        <input type="checkbox" checked={dryRun} onChange={e => setDryRun(e.target.checked)} />
-                                        {T.close_dryrun}
-                                    </label>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                        {runReason && <span style={{ fontSize: 12, color: 'var(--text-3)' }}>⚠ {runReason}</span>}
-                                        <button className="btn btn-primary" onClick={start} disabled={!canRun} title={runReason ?? ''}>
-                                            <Icon name="play" size={14} /> {T.close_run}
-                                        </button>
-                                    </div>
+                    {/* Kontrolki — zawsze widoczne na górze prawego panelu */}
+                    <div className="card">
+                        <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            {resumeCount > 0 && !running && !hasResult && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: 'var(--ok-bg, #f0fdf4)', border: '1px solid var(--ok, #38a169)', borderRadius: 6, fontSize: 12 }}>
+                                    <Icon name="refresh-cw" size={13} style={{ color: 'var(--ok, #38a169)' }} />
+                                    <span>Checkpoint: {resumeCount}/{PIPELINE_STEPS.length} kroków — wznowi od miejsca gdzie skończył</span>
                                 </div>
-                                {status !== 'ready' && (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            )}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                                <label className="dry-toggle" style={{ opacity: running ? 0.5 : 1 }}>
+                                    <input type="checkbox" checked={dryRun} onChange={e => setDryRun(e.target.checked)} disabled={running} />
+                                    {T.close_dryrun}
+                                </label>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    {!running && status !== 'ready' && (
                                         <span className={`state-badge ${statusCls}`}>{statusLabel}</span>
-                                        {status === 'error' && (
-                                            <button className="btn btn-ghost btn-sm" onClick={() => { setStatus('ready') }}>
-                                                ↩ Spróbuj ponownie
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
+                                    )}
+                                    {runReason && !running && (
+                                        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>⚠ {runReason}</span>
+                                    )}
+                                    {!running ? (
+                                        <button className="btn btn-primary" onClick={start} disabled={!canRun} title={runReason ?? ''}>
+                                            <Icon name="play" size={14} />
+                                            {hasResult ? ' Uruchom ponownie' : ` ${T.close_run}`}
+                                        </button>
+                                    ) : (
+                                        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Pipeline działa…</span>
+                                    )}
+                                </div>
                             </div>
                         </div>
-                    )}
+                    </div>
 
-                    {/* Runner */}
-                    {running && (
+                    {/* Runner — widoczny podczas i po zakończeniu */}
+                    {(running || hasResult) && (
                         <CloseRunner
+                            key={runKey}
                             year={year}
                             month={month}
                             dryRun={dryRun}
