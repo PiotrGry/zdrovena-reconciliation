@@ -15,16 +15,16 @@ services:
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:3.33.0
     container_name: zdrovena-azurite
-    command: azurite-blob --blobHost 0.0.0.0 --loose
+    command: azurite-blob --blobHost 0.0.0.0 --loose --skipApiVersionCheck
     ports:
       - "10000:10000"
     volumes:
       - azurite_data:/data
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "10000"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:10000/devstoreaccount1?comp=list', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 5s
-      timeout: 3s
-      retries: 10
+      timeout: 5s
+      retries: 12
 
   api:
     build:
@@ -35,10 +35,14 @@ services:
       - "8000:8000"
     volumes:
       - ./zdrovena:/app/zdrovena
+    env_file:
+      - path: .env.local
+        required: false
     environment:
       AZURE_AUTH_DISABLED: "true"
+      FAKTUROWNIA_API_TOKEN: "${FAKTUROWNIA_API_TOKEN:-dev-placeholder}"
       AZURE_STORAGE_CONNECTION_STRING: >-
-        DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tiqFhM8YKHkNATVD6wd+0=;BlobEndpoint=http://azurite:10000/devstoreaccount1;
+        DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;
       AZURE_STORAGE_CONTAINER: "zdrovena-files"
     depends_on:
       azurite:
