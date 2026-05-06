@@ -69,30 +69,52 @@ footer bumps major. Semantic release runs automatically on merge to `main`.
 
 ## Quality gate
 
-Every PR must pass. Run locally with:
+### Local (automatic on push)
+
+When you `git push`, a pre-push hook runs all tests automatically:
+
+```bash
+git push  # ← pytest fires here, blocks push if tests fail
+```
+
+This saves time — no waiting for CI feedback on unit tests.
+
+To install the hook (one-time per developer):
+```bash
+pre-commit install --hook-type pre-push
+```
+
+### CI (after push to develop / on PR to main)
+
+The GitHub Actions quality gate is now faster (no unit tests):
+
+```bash
+# Lint + format
+ruff check . && ruff format --check .
+
+# Type check
+pyright
+
+# Security (SAST)
+bandit -r zdrovena/ -ll -ii -q
+pip-audit
+gitleaks
+trivy
+```
+
+### Manual full check (optional)
+
+To run all checks manually before pushing:
 
 ```bash
 bash scripts/check.sh
 ```
 
-This runs:
+This includes lint + typecheck + full test suite + security.
 
-```bash
-# Lint
-ruff check . && ruff format --check .
+**Staging gate (PR → main):** runs TypeScript smoke tests + Playwright E2E against a real staging deployment. This is the final quality gate before production.
 
-# Type check (optional locally — slow cold start ~30s)
-# Enable with: CHECK_TYPECHECK=1 bash scripts/check.sh
-pyright
-
-# Tests (≥80% coverage)
-pytest --cov=zdrovena --cov-fail-under=80
-
-# Security (SAST)
-bandit -r zdrovena/ -ll -ii -q
-```
-
-The frontend has its own gate (`cd frontend && npm run lint`) run in CI separately.
+The frontend has its own lint gate (`cd frontend && npm run lint`) run via pre-commit.
 
 ## Local dev
 

@@ -67,41 +67,10 @@ jobs:
       - run: pip install -e ".[dev,api,cloud,report,ksef,pdf]" pyright
       - run: pyright
 
-  test:
-    name: Unit tests + coverage
-    runs-on: ubuntu-latest
-    needs: detect-changes
-    if: needs.detect-changes.outputs.backend == 'true'
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: "3.12"
-          cache: pip
-      - run: pip install -e ".[dev,api,cloud]"
-      - name: Run tests
-        env:
-          AZURE_AUTH_DISABLED: "true"
-        run: |
-          pytest tests/ -q --tb=short \
-            --cov=zdrovena --cov-fail-under=80 \
-            --cov-report=term-missing \
-            --cov-report=xml:coverage.xml \
-            --junit-xml=test-results.xml
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: test-results
-          path: |
-            test-results.xml
-            coverage.xml
-
   security:
     name: Security scan
     runs-on: ubuntu-latest
-    needs: [detect-changes, test]
+    needs: [detect-changes]
     if: needs.detect-changes.outputs.backend == 'true'
     timeout-minutes: 10
     steps:

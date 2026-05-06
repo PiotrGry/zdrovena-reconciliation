@@ -7,10 +7,10 @@ to avoid modifying actual data.
 
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-import tempfile
 import shutil
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
