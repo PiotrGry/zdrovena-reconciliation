@@ -35,12 +35,15 @@ services:
       - "8000:8000"
     volumes:
       - ./zdrovena:/app/zdrovena
+      - faktury_data:/app/data/faktury
     env_file:
       - path: .env.local
         required: false
     environment:
       AZURE_AUTH_DISABLED: "true"
+      FAKTUROWNIA_BASE_DIR: "/app/data/faktury"
       FAKTUROWNIA_API_TOKEN: "${FAKTUROWNIA_API_TOKEN:-dev-placeholder}"
+      KSEF_ENABLED: "false"
       AZURE_STORAGE_CONNECTION_STRING: >-
         DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;
       AZURE_STORAGE_CONTAINER: "zdrovena-files"
@@ -55,3 +58,4 @@ services:
 
 volumes:
   azurite_data:
+  faktury_data:

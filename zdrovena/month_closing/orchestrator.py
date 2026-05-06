@@ -345,6 +345,10 @@ class MonthCloseOrchestrator:
 
         if not missing:
             self._mark_step_done("JPK & VAT reports")
+        elif self.dry_run:
+            # dry_run: preflight already found files in blob inbox — skip hard filesystem check
+            self.out.warn(f"dry_run: {len(missing)} JPK report(s) not yet in month folder — OK for simulation")
+            self._mark_step_done("JPK & VAT reports")
         else:
             raise RuntimeError(
                 f"JPK/VAT reports incomplete: {', '.join(r['name'] for r in missing)}. "
