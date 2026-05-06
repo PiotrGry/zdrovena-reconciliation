@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState } from 'react'
 import { useAuth } from '../auth'
 import { useT } from '../lang'
 import { BrandWave, Icon } from './Icon'
@@ -11,21 +11,6 @@ export function Header() {
     const { account, roles, logout } = useAuth()
     const { t, lang, setLang } = useT()
     const [open, setOpen] = useState(false)
-    const userRef = useRef(null)
-
-    useEffect(() => {
-        if (!open) return
-        const onKey = (e) => { if (e.key === 'Escape') setOpen(false) }
-        const onClick = (e) => {
-            if (userRef.current && !userRef.current.contains(e.target)) setOpen(false)
-        }
-        document.addEventListener('keydown', onKey)
-        document.addEventListener('mousedown', onClick)
-        return () => {
-            document.removeEventListener('keydown', onKey)
-            document.removeEventListener('mousedown', onClick)
-        }
-    }, [open])
 
     const name = account?.name || account?.username || 'User'
     const initials = name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()
@@ -43,10 +28,10 @@ export function Header() {
             </div>
 
             <div className="header-right">
-                <span className="period-chip" aria-label={`${t[lang].period}: ${PERIOD}`}>
+                <button className="period-chip btn-ghost" aria-label="Zmień okres">
                     <Icon name="caret" size={14} />
                     {t[lang].period}: <strong>{PERIOD}</strong>
-                </span>
+                </button>
 
                 <div className="seg-tiny" role="group" aria-label="Język">
                     {['pl', 'en'].map(l => (
@@ -54,7 +39,6 @@ export function Header() {
                             key={l}
                             className={`tiny-btn${lang === l ? ' active' : ''}`}
                             onClick={() => setLang(l)}
-                            aria-pressed={lang === l}
                         >
                             {l.toUpperCase()}
                         </button>
@@ -65,30 +49,16 @@ export function Header() {
                     <Icon name="bell" size={18} />
                 </button>
 
-                <div className="user" ref={userRef}>
-                    <button
-                        type="button"
-                        className="user-trigger"
-                        onClick={() => setOpen(o => !o)}
-                        aria-haspopup="menu"
-                        aria-expanded={open}
-                        aria-label={`${name} — ${t[lang][roleKey]}`}
-                    >
-                        <div className="avatar">{initials}</div>
-                        <div className="user-meta">
-                            <div className="name">{name.split(' ')[0]}</div>
-                            <div className="role">{t[lang][roleKey]}</div>
-                        </div>
-                        <Icon name={open ? 'caretUp' : 'caret'} size={14} />
-                    </button>
+                <div className="user" onClick={() => setOpen(o => !o)}>
+                    <div className="avatar">{initials}</div>
+                    <div className="user-meta">
+                        <div className="name">{name.split(' ')[0]}</div>
+                        <div className="role">{t[lang][roleKey]}</div>
+                    </div>
+                    <Icon name={open ? 'caretUp' : 'caret'} size={14} />
                     {open && (
-                        <div className="user-dropdown" role="menu">
-                            <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => { setOpen(false); logout() }}
-                                className="danger"
-                            >
+                        <div className="user-dropdown" onClick={e => e.stopPropagation()}>
+                            <button onClick={() => { setOpen(false); logout() }} className="danger">
                                 <Icon name="logout" size={14} />
                                 {t[lang].logout}
                             </button>
