@@ -372,7 +372,7 @@ export function CloseRunner({ year, month, dryRun, preCompleted = [], onDone }) 
     )
 }
 
-export function CloseModal({ open, onClose, onDone: onDoneExternal }) {
+export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear = null, initialMonth = null }) {
     const { t, lang } = useT()
     const { getToken } = useAuth()
     const T = t[lang]
@@ -380,8 +380,13 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal }) {
     const [running, setRunning] = useState(false)
     const [status, setStatus] = useState('ready')
     const [preCompleted, setPreCompleted] = useState([])
-    const [year, setYear] = useState(() => new Date().getFullYear())
-    const [month, setMonth] = useState(() => new Date().getMonth() + 1)
+    const [year, setYear] = useState(() => initialYear ?? new Date().getFullYear())
+    const [month, setMonth] = useState(() => initialMonth ?? new Date().getMonth() + 1)
+
+    useEffect(() => {
+        if (initialYear) setYear(initialYear)
+        if (initialMonth) setMonth(initialMonth)
+    }, [initialYear, initialMonth])
 
     const years = [new Date().getFullYear() - 1, new Date().getFullYear()]
 
@@ -493,28 +498,39 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal }) {
     )
 }
 
-function CloseHistory() {
+const STATUS_CONFIG = {
+    success:  { icon: '✅', label: 'Sukces — wszystkie kroki wykonane, email wysłany' },
+    partial:  { icon: '⚠️', label: 'Zamknięto z ostrzeżeniami — ZIP OK, ale email zablokowany (brak faktur lub JPK)' },
+    blocked:  { icon: '🚫', label: 'Zablokowany przez preflight — brak wymaganych plików w Inbox' },
+    error:    { icon: '❌', label: 'Błąd wykonania — pipeline crashnął w trakcie kroku' },
+}
+
+function CloseHistory({ onRetry }) {
     const { getToken } = useAuth()
     const [history, setHistory] = useState([])
     const [loading, setLoading] = useState(true)
+    const [tooltip, setTooltip] = useState(null)
 
-    useEffect(() => {
-        (async () => {
-            try {
-                const token = await getToken()
-                const res = await fetch('/api/close/history?limit=10', {
-                    headers: { Authorization: `Bearer ${token}` },
-                })
-                if (res.ok) setHistory(await res.json())
-            } catch { /* ignore */ } finally { setLoading(false) }
-        })()
+    const load = useCallback(async () => {
+        try {
+            const token = await getToken()
+            const res = await fetch('/api/close/history?limit=15', { headers: { Authorization: `Bearer ${token}` } })
+            if (res.ok) setHistory(await res.json())
+        } catch { /* ignore */ } finally { setLoading(false) }
     }, [getToken])
 
-    if (loading) return null
-    if (!history.length) return null
+    useEffect(() => { load() }, [load])
 
-    const statusIcon = s => s === 'success' ? '✅' : s === 'partial' ? '⚠️' : '❌'
-    const statusLabel = s => s === 'success' ? 'Sukces' : s === 'partial' ? 'Z ostrzeżeniami' : s === 'blocked' ? 'Zablokowany' : 'Błąd'
+    const deleteEntry = async (ts) => {
+        if (!window.confirm('Usuń ten wpis z historii?')) return
+        const token = await getToken()
+        await fetch(`/api/close/history/${encodeURIComponent(ts)}`, {
+            method: 'DELETE', headers: { Authorization: `Bearer ${token}` }
+        })
+        setHistory(prev => prev.filter(h => h.ts !== ts))
+    }
+
+    if (loading || !history.length) return null
 
     return (
         <div className="card">
@@ -530,22 +546,60 @@ function CloseHistory() {
                         <th style={{ padding: '6px 8px', color: 'var(--text-3)' }}>Brutto</th>
                         <th style={{ padding: '6px 8px', color: 'var(--text-3)' }}>Kroki</th>
                         <th style={{ padding: '6px 16px', color: 'var(--text-3)' }}>Data</th>
+                        <th style={{ padding: '6px 8px' }} />
                     </tr>
                 </thead>
                 <tbody>
-                    {history.map((h, i) => (
-                        <tr key={i}>
-                            <td style={{ padding: '6px 16px' }}>
-                                <strong>{h.month_name} {h.year}</strong>
-                                {h.dry_run && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 4px', borderRadius: 3 }}>DRY</span>}
-                            </td>
-                            <td style={{ padding: '6px 8px' }}>{statusIcon(h.status)} {statusLabel(h.status)}</td>
-                            <td style={{ padding: '6px 8px', color: 'var(--text-2)' }}>{h.sales_invoice_count ?? '—'}</td>
-                            <td style={{ padding: '6px 8px', color: 'var(--text-2)' }}>{h.sales_gross_total ? `${Number(h.sales_gross_total).toLocaleString('pl-PL')} PLN` : '—'}</td>
-                            <td style={{ padding: '6px 8px', color: 'var(--text-2)' }}>{h.steps_completed ?? '—'}/{PIPELINE_STEPS.length}</td>
-                            <td style={{ padding: '6px 16px', color: 'var(--text-3)' }}>{h.ts ? new Date(h.ts).toLocaleString('pl-PL') : '—'}</td>
-                        </tr>
-                    ))}
+                    {history.map((h) => {
+                        const cfg = STATUS_CONFIG[h.status] ?? { icon: '❓', label: h.status }
+                        const canRetry = h.status !== 'success'
+                        return (
+                            <tr key={h.ts}>
+                                <td style={{ padding: '6px 16px' }}>
+                                    <strong>{h.month_name} {h.year}</strong>
+                                    {h.dry_run && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 4px', borderRadius: 3 }}>DRY</span>}
+                                </td>
+                                <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
+                                    <span
+                                        title={cfg.label}
+                                        style={{ cursor: 'help' }}
+                                        onMouseEnter={() => setTooltip(h.ts)}
+                                        onMouseLeave={() => setTooltip(null)}
+                                    >
+                                        {cfg.icon}
+                                    </span>
+                                    {' '}
+                                    <span style={{ fontSize: 11, color: 'var(--text-2)' }}>
+                                        {h.status === 'success' ? 'Sukces' : h.status === 'partial' ? 'Z ostrzeżeniami' : h.status === 'blocked' ? 'Brak plików' : 'Błąd'}
+                                    </span>
+                                    {tooltip === h.ts && (
+                                        <div style={{ position: 'absolute', zIndex: 10, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', fontSize: 11, maxWidth: 260, marginTop: 2, boxShadow: '0 2px 8px rgba(0,0,0,.15)' }}>
+                                            {cfg.label}
+                                            {h.error && <><br /><em style={{ color: 'var(--err)' }}>{h.error}</em></>}
+                                        </div>
+                                    )}
+                                </td>
+                                <td style={{ padding: '6px 8px', color: 'var(--text-2)' }}>{h.sales_invoice_count ?? '—'}</td>
+                                <td style={{ padding: '6px 8px', color: 'var(--text-2)' }}>{h.sales_gross_total ? `${Number(h.sales_gross_total).toLocaleString('pl-PL')} PLN` : '—'}</td>
+                                <td style={{ padding: '6px 8px', color: h.steps_completed < PIPELINE_STEPS.length ? 'var(--warning)' : 'var(--text-2)' }}>
+                                    {h.steps_completed ?? 0}/{PIPELINE_STEPS.length}
+                                </td>
+                                <td style={{ padding: '6px 16px', color: 'var(--text-3)' }}>{h.ts ? new Date(h.ts).toLocaleString('pl-PL') : '—'}</td>
+                                <td style={{ padding: '6px 8px' }}>
+                                    <div className="row-actions">
+                                        {canRetry && (
+                                            <button className="icon-btn" title={`Wznów od kroku ${h.steps_completed ?? 0}/${PIPELINE_STEPS.length}`} onClick={() => onRetry(h.year, h.month)}>
+                                                <Icon name="refresh-cw" size={14} />
+                                            </button>
+                                        )}
+                                        <button className="icon-btn danger" title="Usuń z historii" onClick={() => deleteEntry(h.ts)}>
+                                            <Icon name="trash" size={14} />
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        )
+                    })}
                 </tbody>
             </table>
         </div>
@@ -557,6 +611,8 @@ export default function CloseView() {
     const { getToken } = useAuth()
     const T = t[lang]
     const [open, setOpen] = useState(false)
+    const [retryYear, setRetryYear] = useState(null)
+    const [retryMonth, setRetryMonth] = useState(null)
     const [lastStatus, setLastStatus] = useState('ready')
     const [completedSteps, setCompletedSteps] = useState([])
 
@@ -625,8 +681,14 @@ export default function CloseView() {
                 )}
             </div>
 
-            <CloseModal open={open} onClose={() => setOpen(false)} onDone={handleDone} />
-            <CloseHistory />
+            <CloseModal
+                open={open}
+                onClose={() => { setOpen(false); setRetryYear(null); setRetryMonth(null) }}
+                onDone={handleDone}
+                initialYear={retryYear}
+                initialMonth={retryMonth}
+            />
+            <CloseHistory onRetry={(y, m) => { setRetryYear(y); setRetryMonth(m); setOpen(true) }} />
         </div>
     )
 }
