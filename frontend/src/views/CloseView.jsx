@@ -25,7 +25,7 @@ function extChipClass(ext) {
     return 'ext-chip'
 }
 
-function InboxPanel() {
+function InboxPanel({ onStatusChange }) {
     const { getToken } = useAuth()
     const [items, setItems] = useState([])
     const [loading, setLoading] = useState(true)
@@ -70,6 +70,8 @@ function InboxPanel() {
     const names = items.map(i => getName(i))
     const matched = REQUIRED_DOCS.map(doc => ({ ...doc, found: names.find(f => doc.match(f)) ?? null }))
     const allFound = matched.every(d => d.found)
+
+    useEffect(() => { if (!loading) onStatusChange?.(allFound) }, [allFound, loading, onStatusChange])
 
     return (
         <div className="card" style={{ marginBottom: 12 }}>
@@ -382,6 +384,7 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear 
     const [preCompleted, setPreCompleted] = useState([])
     const [ignoredVendors, setIgnoredVendors] = useState([])
     const [inboxVisible, setInboxVisible] = useState(false)
+    const [inboxReady, setInboxReady] = useState(false)
     const [year, setYear] = useState(() => initialYear ?? new Date().getFullYear())
     const [month, setMonth] = useState(() => initialMonth ?? new Date().getMonth() + 1)
 
@@ -418,7 +421,7 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear 
         if (!open) { setRunning(false); setStatus('ready'); setInboxVisible(false) }
     }, [open])
 
-    useEffect(() => { setInboxVisible(false) }, [month, year])
+    useEffect(() => { setInboxVisible(false); setInboxReady(false) }, [month, year])
 
     if (!open) return null
 
@@ -476,7 +479,7 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear 
                                             <span><strong>Checkpoint:</strong> {resumeCount}/{PIPELINE_STEPS.length} kroków ukończonych — pipeline wznowi od miejsca gdzie skończył</span>
                                         </div>
                                     )}
-                                    <InboxPanel />
+                                    <InboxPanel onStatusChange={setInboxReady} />
                                 </div>
                             )}
 
@@ -522,11 +525,19 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear 
                     </label>
                     <div style={{ display: 'flex', gap: 10 }}>
                         <button className="btn btn-ghost" onClick={onClose}>Zamknij</button>
-                        {!running && status !== 'done' && (
-                            <button className="btn btn-primary" onClick={start}>
-                                <Icon name="play" size={14} /> {T.close_run}
-                            </button>
-                        )}
+                        {!running && status !== 'done' && (() => {
+                            const reason = !inboxVisible ? 'Najpierw wybierz miesiąc i kliknij Sprawdź'
+                                : !inboxReady ? 'Brakuje wymaganych plików w Inbox'
+                                : null
+                            return (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                    {reason && <span style={{ fontSize: 12, color: 'var(--text-3)' }}>⚠ {reason}</span>}
+                                    <button className="btn btn-primary" onClick={start} disabled={!!reason} title={reason ?? ''}>
+                                        <Icon name="play" size={14} /> {T.close_run}
+                                    </button>
+                                </div>
+                            )
+                        })()}
                         {running && status === 'error' && (
                             <button className="btn btn-ghost" onClick={() => { setRunning(false); setStatus('ready') }}>
                                 ↩ Spróbuj ponownie
