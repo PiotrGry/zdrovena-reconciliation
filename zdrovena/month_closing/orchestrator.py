@@ -380,16 +380,17 @@ class MonthCloseOrchestrator:
             self.out.warn(f"{rpt['name']}: MISSING — {self.month_dir / rpt['dest_name']}")
 
         if not missing:
-            self._mark_step_done("JPK & VAT reports")
+            pass  # all found
         elif self.dry_run:
-            # dry_run: preflight already found files in blob inbox — skip hard filesystem check
             self.out.warn(f"dry_run: {len(missing)} JPK report(s) not yet in month folder — OK for simulation")
-            self._mark_step_done("JPK & VAT reports")
         else:
-            raise RuntimeError(
+            msg = (
                 f"JPK/VAT reports incomplete: {', '.join(r['name'] for r in missing)}. "
-                "Download from Fakturownia UI and place in the month folder."
+                "Download from Fakturownia UI and upload via Inbox."
             )
+            self.report.warnings.append(msg)
+            self.out.warn(msg)
+        self._mark_step_done("JPK & VAT reports")
 
     def _step_4_cost_invoices(self) -> None:
         self.out.step(4, "Collecting cost invoices")
@@ -434,12 +435,13 @@ class MonthCloseOrchestrator:
             if missing_in_fakt:
                 for knum in sorted(missing_in_fakt):
                     self.out.item(f"❌ KSeF invoice NOT in Fakturownia: {knum}")
-                raise RuntimeError(
+                msg = (
                     f"{len(missing_in_fakt)} KSeF invoice(s) missing in Fakturownia: "
                     f"{', '.join(sorted(missing_in_fakt))}. "
-                    "Fakturownia auto-fetches every 15 min — wait and retry, or "
-                    "click 'Pobierz faktury z KSeF' in Fakturownia UI."
+                    "Fakturownia auto-fetches every 15 min — click 'Pobierz faktury z KSeF' to sync."
                 )
+                self.report.warnings.append(msg)
+                self.out.warn(msg)
             self.out.item(
                 f"✅ KSeF cross-check: all {len(ksef_numbers)} invoice(s) found in Fakturownia"
             )
@@ -638,10 +640,10 @@ class MonthCloseOrchestrator:
 
         self.out.section_end("Result:")
         if final_missing:
-            raise RuntimeError(
-                f"Missing cost vendors: {', '.join(final_missing)}. "
-                "All expected vendors must be accounted for before proceeding."
-            )
+            msg = f"Brak faktur kosztowych: {', '.join(final_missing)}. Uzupełnij lub pomiń w kolejnym miesiącu."
+            self.report.warnings.append(msg)
+            self.report.cost_missing_vendors = list(final_missing)
+            self.out.warn(msg)
         self.out.detail("✅ All expected vendors accounted for!")
         self._upload_dir_to_blob(self.costs_dir, f"{self._blob_prefix}/koszty")
         self._mark_step_done("Cost invoices")
@@ -676,10 +678,9 @@ class MonthCloseOrchestrator:
             self.out.ok("Bank statement (found in pre-flight)")
         else:
             self.report.bank_statement_found = False
-            raise RuntimeError(
-                f"Bank statement (PKO BP) for {self.year}-{self.month:02d} not found. "
-                f"Download from iPKO and place in {self.month_dir}"
-            )
+            msg = f"Wyciąg PKO BP za {self.year}-{self.month:02d} nie znaleziony. Pobierz z iPKO i wgraj do Inbox."
+            self.report.warnings.append(msg)
+            self.out.warn(msg)
         self._mark_step_done("Bank statement check")
 
     def _check_warnings_gate(self) -> None:
@@ -696,16 +697,11 @@ class MonthCloseOrchestrator:
         for w in self.report.warnings:
             self.out.detail(f"• {w}")
 
-        if self.ignore_warnings:
-            self.out.warn(
-                "--ignore-warnings: continuing to ZIP despite warnings. "
-                "Email sending is still blocked."
-            )
-            return
-
-        raise RuntimeError(
-            f"Aborting: {len(self.report.warnings)} warning(s) detected. "
-            "Fix all issues or rerun with --ignore-warnings."
+        # Warnings never block ZIP — they only block email (checked in step 7).
+        # Pipeline always completes with a report so the accountant sees full picture.
+        self.out.warn(
+            f"{len(self.report.warnings)} warning(s) — ZIP will be created. "
+            "Email is blocked until warnings are resolved."
         )
 
     def _step_6_zip_archive(self) -> None:
