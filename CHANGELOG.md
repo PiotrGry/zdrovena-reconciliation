@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v2.2.0 (2026-05-06)
+
+### Added
+
+- **month-closing**: Preflight checker now supports Azure Blob Storage fallback. When running on production Docker containers (no local filesystem access), the preflight validator automatically searches `faktury/inbox/` prefix in Azure Blob Storage for vendor invoices and bank statements. Files are downloaded to secure temporary locations, processed, then moved (deleted from blob) after successful copy to the month folder.
+- **ui**: Dedicated inbox section for month-closing files. New upload panel with drag-and-drop support allows users to upload vendor invoices, bank statements, and tax forms to the `faktury/inbox/` prefix. File list shows uploads with timestamps and quick actions (download, delete).
+- **api**: Full CLI output capture in `/close` response. When month-closing fails, users now see the complete stderr/stdout from the orchestrator, enabling faster debugging of missing files or validation issues.
+- **ci**: Smart test skipping for infrastructure-only changes. Python tests now skip when only `infra/` or `docs/` files are modified, saving ~3-5 minutes per infra-only PR.
+
+### Changed
+
+- **ui**: File browser improvements — wider modal, better log readability, improved styling for long file lists
+- **ci**: SWA staging environment now uses PR number in custom domain URL for better organization
+- **ci**: End-to-end smoke tests now run through SWA proxy to catch broken backend links before deploy
+
+### Fixed
+
+- **preflight**: Python 3.10 compatibility — replaced `datetime.UTC` with `timezone.utc`
+- **ci**: IMAGE output now correctly propagates through GitHub Actions workflow
+- **ci**: SWA backend linking is now idempotent — re-deploys no longer fail
+- **ui**: React Hook dependencies fixed in FilesView — `loadFiles` now includes `prefix` dependency
+- **linting**: HTTPException properly raised from None in exception handlers
+
+### Dependencies
+
+- Downgraded @eslint/js to ^9.x (eslint-plugin-react incompatible with ^10.x)
+- Updated 11 GitHub Actions to latest versions
+- Added Dependabot auto-merge for safe version bumps
+
+---
+
 ## v1.1.6 (2026-04-26)
 
 ### Bug Fixes
