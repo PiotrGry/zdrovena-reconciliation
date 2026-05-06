@@ -381,6 +381,7 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear 
     const [status, setStatus] = useState('ready')
     const [preCompleted, setPreCompleted] = useState([])
     const [ignoredVendors, setIgnoredVendors] = useState([])
+    const [inboxVisible, setInboxVisible] = useState(false)
     const [year, setYear] = useState(() => initialYear ?? new Date().getFullYear())
     const [month, setMonth] = useState(() => initialMonth ?? new Date().getMonth() + 1)
 
@@ -414,8 +415,10 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear 
     const toggleVendor = (v) => setIgnoredVendors(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v])
 
     useEffect(() => {
-        if (!open) { setRunning(false); setStatus('ready') }
+        if (!open) { setRunning(false); setStatus('ready'); setInboxVisible(false) }
     }, [open])
+
+    useEffect(() => { setInboxVisible(false) }, [month, year])
 
     if (!open) return null
 
@@ -431,71 +434,87 @@ export function CloseModal({ open, onClose, onDone: onDoneExternal, initialYear 
                     <div className="modal-eyebrow">{T.close_step} · {MONTHS_PL[month - 1]} {year}</div>
                     <h2 className="modal-title">{T.close_title}</h2>
                 </div>
-                <div className="modal-body" style={{ padding: '18px 26px' }}>
+                <div className="modal-body" style={{ padding: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
                     {!running ? (
                         <>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, padding: '12px 16px', background: 'var(--bg-2, #f8fafc)', borderRadius: 10, border: '1px solid var(--border)' }}>
-                                <span style={{ fontSize: 13, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>Zamykasz:</span>
-                                <select
-                                    value={month}
-                                    onChange={e => setMonth(Number(e.target.value))}
-                                    disabled={running}
-                                    style={{ flex: 1, fontSize: 16, fontWeight: 600, padding: '6px 10px', border: '1.5px solid var(--border)', borderRadius: 7, background: 'var(--bg)', cursor: 'pointer', color: 'var(--text)' }}
-                                >
-                                    {MONTHS_PL.map((m, i) => (
-                                        <option key={i + 1} value={i + 1}>{m}</option>
-                                    ))}
-                                </select>
-                                <select
-                                    value={year}
-                                    onChange={e => setYear(Number(e.target.value))}
-                                    disabled={running}
-                                    style={{ fontSize: 16, fontWeight: 600, padding: '6px 10px', border: '1.5px solid var(--border)', borderRadius: 7, background: 'var(--bg)', cursor: 'pointer', color: 'var(--text)' }}
-                                >
-                                    {[new Date().getFullYear() - 1, new Date().getFullYear()].map(y => (
-                                        <option key={y} value={y}>{y}</option>
-                                    ))}
-                                </select>
+                            {/* Sticky: selektor miesiąca */}
+                            <div style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '14px 26px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                    <span style={{ fontSize: 13, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>Zamykasz:</span>
+                                    <select
+                                        value={month}
+                                        onChange={e => setMonth(Number(e.target.value))}
+                                        style={{ flex: 1, fontSize: 16, fontWeight: 600, padding: '6px 10px', border: '1.5px solid var(--border)', borderRadius: 7, background: 'var(--bg)', cursor: 'pointer', color: 'var(--text)' }}
+                                    >
+                                        {MONTHS_PL.map((m, i) => (
+                                            <option key={i + 1} value={i + 1}>{m}</option>
+                                        ))}
+                                    </select>
+                                    <select
+                                        value={year}
+                                        onChange={e => setYear(Number(e.target.value))}
+                                        style={{ fontSize: 16, fontWeight: 600, padding: '6px 10px', border: '1.5px solid var(--border)', borderRadius: 7, background: 'var(--bg)', cursor: 'pointer', color: 'var(--text)' }}
+                                    >
+                                        {[new Date().getFullYear() - 1, new Date().getFullYear()].map(y => (
+                                            <option key={y} value={y}>{y}</option>
+                                        ))}
+                                    </select>
+                                    {!inboxVisible && (
+                                        <button className="btn btn-primary btn-sm" onClick={() => setInboxVisible(true)}>
+                                            Sprawdź <Icon name="caretRight" size={13} />
+                                        </button>
+                                    )}
+                                </div>
                             </div>
-                            {resumeCount > 0 && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', marginBottom: 12, background: 'var(--ok-bg, #f0fdf4)', border: '1px solid var(--ok, #38a169)', borderRadius: 6, fontSize: 13 }}>
-                                    <Icon name="refresh-cw" size={14} style={{ color: 'var(--ok, #38a169)' }} />
-                                    <span><strong>Checkpoint:</strong> {resumeCount}/{PIPELINE_STEPS.length} kroków ukończonych — pipeline wznowi od miejsca gdzie skończył</span>
+
+                            {/* Scrollable środek */}
+                            {inboxVisible && (
+                                <div style={{ padding: '16px 26px', flex: 1 }}>
+                                    {resumeCount > 0 && (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', marginBottom: 12, background: 'var(--ok-bg, #f0fdf4)', border: '1px solid var(--ok, #38a169)', borderRadius: 6, fontSize: 13 }}>
+                                            <Icon name="refresh-cw" size={14} style={{ color: 'var(--ok, #38a169)' }} />
+                                            <span><strong>Checkpoint:</strong> {resumeCount}/{PIPELINE_STEPS.length} kroków ukończonych — pipeline wznowi od miejsca gdzie skończył</span>
+                                        </div>
+                                    )}
+                                    <InboxPanel />
                                 </div>
                             )}
-                            <InboxPanel />
+
+                            {/* Sticky: brakujące faktury kosztowe */}
+                            {inboxVisible && (
+                                <div style={{ position: 'sticky', bottom: 0, zIndex: 10, background: 'var(--surface)', borderTop: '1px solid var(--border)', padding: '10px 26px' }}>
+                                    <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>
+                                        Pomiń brakujące faktury kosztowe:
+                                    </div>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
+                                        {EMAIL_VENDORS.map(v => (
+                                            <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', color: ignoredVendors.includes(v) ? 'var(--text-3)' : 'var(--text)' }}>
+                                                <input type="checkbox" checked={ignoredVendors.includes(v)} onChange={() => toggleVendor(v)} />
+                                                {v}
+                                            </label>
+                                        ))}
+                                    </div>
+                                    {ignoredVendors.length > 0 && (
+                                        <div style={{ fontSize: 11, color: 'var(--warning, orange)', marginTop: 4 }}>
+                                            ⚠️ {ignoredVendors.length} dostawców zostanie pominięty
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </>
                     ) : (
-                        <CloseRunner
-                            year={year}
-                            month={month}
-                            dryRun={dryRun}
-                            preCompleted={preCompleted}
-                            ignoredVendors={ignoredVendors}
-                            onDone={done}
-                        />
+                        <div style={{ padding: '18px 26px' }}>
+                            <CloseRunner
+                                year={year}
+                                month={month}
+                                dryRun={dryRun}
+                                preCompleted={preCompleted}
+                                ignoredVendors={ignoredVendors}
+                                onDone={done}
+                            />
+                        </div>
                     )}
                 </div>
-                {!running && (
-                    <div style={{ padding: '0 26px 14px', borderTop: '1px solid var(--border)' }}>
-                        <div style={{ fontSize: 12, color: 'var(--text-3)', margin: '10px 0 6px' }}>
-                            Pomiń brakujące faktury kosztowe (od dostawców emailowych):
-                        </div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
-                            {EMAIL_VENDORS.map(v => (
-                                <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', color: ignoredVendors.includes(v) ? 'var(--text-3)' : 'var(--text)' }}>
-                                    <input type="checkbox" checked={ignoredVendors.includes(v)} onChange={() => toggleVendor(v)} />
-                                    {v}
-                                </label>
-                            ))}
-                        </div>
-                        {ignoredVendors.length > 0 && (
-                            <div style={{ fontSize: 11, color: 'var(--warning, orange)', marginTop: 4 }}>
-                                ⚠️ {ignoredVendors.length} dostawców zostanie pominięty — potwierdź że faktur nie będzie w tym miesiącu
-                            </div>
-                        )}
-                    </div>
-                )}
                 <div className="modal-foot">
                     <label className="dry-toggle">
                         <input type="checkbox" checked={dryRun} onChange={e => setDryRun(e.target.checked)} disabled={running} />
