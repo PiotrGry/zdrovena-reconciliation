@@ -22,8 +22,9 @@ services:
       - "10002:10002"
     volumes:
       - azurite_data:/data
+      - ./scripts/azurite-healthcheck.js:/healthcheck.js:ro
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:10000/devstoreaccount1?comp=list', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "node", "/healthcheck.js"]
       interval: 5s
       timeout: 5s
       retries: 12
