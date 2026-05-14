@@ -73,11 +73,18 @@ def run_close(
         blockers = orchestrator.report.errors
         detail = blockers if blockers else ["Pre-flight checks failed — check server logs"]
         logger.warning("Close pre-flight blocked for %d/%02d: %s", req.year, req.month, detail)
-        append_close_history(get_storage_service(), build_history_entry(
-            year=req.year, month=req.month, month_name=POLISH_MONTHS[req.month],
-            status="blocked", dry_run=req.dry_run,
-            report=orchestrator.report, error="; ".join(detail),
-        ))
+        append_close_history(
+            get_storage_service(),
+            build_history_entry(
+                year=req.year,
+                month=req.month,
+                month_name=POLISH_MONTHS[req.month],
+                status="blocked",
+                dry_run=req.dry_run,
+                report=orchestrator.report,
+                error="; ".join(detail),
+            ),
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"blockers": detail, "log_lines": log_lines},
@@ -85,11 +92,18 @@ def run_close(
     except RuntimeError as exc:
         log_lines = buf.getvalue().splitlines()
         logger.warning("Close pipeline blocked for %d/%02d: %s", req.year, req.month, exc)
-        append_close_history(get_storage_service(), build_history_entry(
-            year=req.year, month=req.month, month_name=POLISH_MONTHS[req.month],
-            status="error", dry_run=req.dry_run,
-            report=orchestrator.report, error=str(exc),
-        ))
+        append_close_history(
+            get_storage_service(),
+            build_history_entry(
+                year=req.year,
+                month=req.month,
+                month_name=POLISH_MONTHS[req.month],
+                status="error",
+                dry_run=req.dry_run,
+                report=orchestrator.report,
+                error=str(exc),
+            ),
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"blockers": [str(exc)], "log_lines": log_lines},
@@ -102,11 +116,17 @@ def run_close(
             detail={"blockers": [f"Nieoczekiwany błąd: {exc}"], "log_lines": log_lines},
         ) from exc
 
-    append_close_history(orchestrator.storage, build_history_entry(
-        year=req.year, month=req.month, month_name=POLISH_MONTHS[req.month],
-        status="success" if not report.warnings else "partial",
-        dry_run=req.dry_run, report=report,
-    ))
+    append_close_history(
+        orchestrator.storage,
+        build_history_entry(
+            year=req.year,
+            month=req.month,
+            month_name=POLISH_MONTHS[req.month],
+            status="success" if not report.warnings else "partial",
+            dry_run=req.dry_run,
+            report=report,
+        ),
+    )
     return CloseResponse.from_close_report(report, log_lines=log_lines)
 
 

@@ -41,6 +41,7 @@ def get_client():
     if account_url := os.environ.get("AZURE_STORAGE_ACCOUNT_URL"):
         # Real Azure — use DefaultAzureCredential (OIDC in CI, az login locally)
         from azure.identity import DefaultAzureCredential
+
         print(f"Using Azure storage: {account_url}")
         return BlobServiceClient(account_url=account_url, credential=DefaultAzureCredential())
 
@@ -87,19 +88,14 @@ def seed(year: int, month: int, client) -> None:
     files: list[tuple[str, bytes]] = [
         # PKO BP bank statement (Wyciag) — next month's 1st day in filename
         (f"{INBOX}/Wyciag_na_zadanie_{bank_date}001.pdf", FAKE_PDF),
-
         # Canva invoice — pattern: invoice-XXXXX-YYYYMMDD.pdf
         (f"{INBOX}/invoice-12345-{year}{month:02d}15.pdf", FAKE_PDF),
-
         # Google Ads invoice — pattern: 10-digit number
         (f"{INBOX}/3849995102.pdf", FAKE_PDF),
-
         # Fakturownia JPK_FA report
         (f"{INBOX}/zdrovena-{year}-{month:02d}-01-jpk_fa.xml", FAKE_XML),
-
         # Fakturownia JPK_V7M report
         (f"{INBOX}/zdrovena-{year}-{month:02d}-01-jpkv7m.xml", FAKE_XML),
-
         # VAT sales register PDF
         (f"{INBOX}/zdrovena-{year}-{month:02d}-01_wykaz_sprzedazy.pdf", FAKE_PDF),
     ]
@@ -112,11 +108,15 @@ def seed(year: int, month: int, client) -> None:
     print("\nTest close month with:")
     print("  curl -s -X POST http://localhost:8000/api/close \\")
     print("    -H 'Content-Type: application/json' \\")
-    print(f"    -d '{{\"year\": {year}, \"month\": {month}, \"dry_run\": true}}' | python3 -m json.tool")
+    print(
+        f'    -d \'{{"year": {year}, "month": {month}, "dry_run": true}}\' | python3 -m json.tool'
+    )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Seed local Azurite storage with test invoice files")
+    parser = argparse.ArgumentParser(
+        description="Seed local Azurite storage with test invoice files"
+    )
     now = datetime.now(tz=timezone.utc)
     prev_month = now.month - 1 or 12
     prev_year = now.year if now.month > 1 else now.year - 1

@@ -43,7 +43,9 @@ def create_month_archive(month_dir: Path, month_name_pl: str, year: int) -> Path
     return zip_path
 
 
-def create_month_archive_from_blob(storage, blob_prefix: str, month_name_pl: str, year: int) -> tuple[str, int]:
+def create_month_archive_from_blob(
+    storage, blob_prefix: str, month_name_pl: str, year: int
+) -> tuple[str, int]:
     """Create ZIP from blob storage and upload it back. Returns (blob_key, file_count).
 
     Reads all files from `blob_prefix/` via storage.stream(), builds ZIP in memory,
@@ -59,7 +61,7 @@ def create_month_archive_from_blob(storage, blob_prefix: str, month_name_pl: str
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for blob in sorted(blobs, key=lambda b: b.key):
-            filename = blob.key[len(blob_prefix):].lstrip("/")
+            filename = blob.key[len(blob_prefix) :].lstrip("/")
             # Skip excluded files and nested .zip files
             if Path(filename).name in excluded_names:
                 continue

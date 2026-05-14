@@ -120,7 +120,6 @@ def delete_history_entry_table(storage_conn_or_url: str, ts: str) -> bool:
 
         table = client.get_table_client(TABLE_NAME)
 
-
         # Query for entities matching this ts — RowKey contains ts_safe
         entities = list(
             table.query_entities(
@@ -140,7 +139,5 @@ def delete_history_entry_table(storage_conn_or_url: str, ts: str) -> bool:
 
         return deleted
     except Exception as exc:
-        logger.warning(
-            "Could not delete close history entry %s from Table Storage: %s", ts, exc
-        )
+        logger.warning("Could not delete close history entry %s from Table Storage: %s", ts, exc)
         return False
