@@ -17,8 +17,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import date, datetime, timezone
-from pathlib import Path
+from datetime import datetime, timezone
 
 AZURITE_CONNECTION_STRING = (
     "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;"
@@ -110,9 +109,9 @@ def seed(year: int, month: int, client) -> None:
         upload(client, key, data)
 
     print(f"\n✅ {len(files)} files uploaded to {CONTAINER}/{INBOX}/")
-    print(f"\nTest close month with:")
-    print(f"  curl -s -X POST http://localhost:8000/api/close \\")
-    print(f"    -H 'Content-Type: application/json' \\")
+    print("\nTest close month with:")
+    print("  curl -s -X POST http://localhost:8000/api/close \\")
+    print("    -H 'Content-Type: application/json' \\")
     print(f"    -d '{{\"year\": {year}, \"month\": {month}, \"dry_run\": true}}' | python3 -m json.tool")
 
 

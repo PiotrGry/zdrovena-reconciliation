@@ -120,7 +120,6 @@ def delete_history_entry_table(storage_conn_or_url: str, ts: str) -> bool:
 
         table = client.get_table_client(TABLE_NAME)
 
-        ts_safe = ts.replace(":", "-").replace(".", "-").replace("+", "-")
 
         # Query for entities matching this ts — RowKey contains ts_safe
         entities = list(
