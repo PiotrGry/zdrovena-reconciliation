@@ -246,3 +246,73 @@ class TestDeleteHistoryEntry:
         storage.download.side_effect = Exception("not found")
         result = delete_history_entry(storage, "x")
         assert result is False
+
+
+# ── Table Storage success paths ───────────────────────────────────────────────
+
+_ENTRY = dict(year=2026, month=4, month_name="Kwiecień", status="success", dry_run=False)
+
+
+class TestTableStorageSuccessPaths:
+    """Cover lines 36-42, 74-79, 108-113 — table storage used when conn is available."""
+
+    def test_append_uses_table_when_connection_available(self, monkeypatch):
+        from unittest.mock import patch
+
+        storage = MagicMock()
+        entry = build_history_entry(**_ENTRY)
+        monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "UseDevelopmentStorage=true")
+
+        with patch("zdrovena.month_closing.table_history.append_history_table") as mock_tbl:
+            append_close_history(storage, entry)
+
+        mock_tbl.assert_called_once()
+        storage.download.assert_not_called()
+
+    def test_append_falls_back_to_jsonl_on_table_error(self, monkeypatch):
+        from unittest.mock import patch
+
+        storage = _make_storage("")
+        entry = build_history_entry(**_ENTRY)
+        monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "UseDevelopmentStorage=true")
+
+        with patch(
+            "zdrovena.month_closing.table_history.append_history_table",
+            side_effect=RuntimeError("table unavailable"),
+        ):
+            append_close_history(storage, entry)
+
+        records = _read_tmp(storage)
+        assert len(records) == 1
+        assert records[0]["month"] == 4
+
+    def test_read_uses_table_when_connection_available(self, monkeypatch):
+        from unittest.mock import patch
+
+        storage = MagicMock()
+        fake_rows = [{"ts": "2026-04-01T00:00:00Z", "month": 4, "year": 2026}]
+        monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "UseDevelopmentStorage=true")
+
+        with patch(
+            "zdrovena.month_closing.table_history.read_history_table", return_value=fake_rows
+        ) as mock_tbl:
+            result = read_close_history(storage, limit=10)
+
+        mock_tbl.assert_called_once()
+        assert result == fake_rows
+        storage.download.assert_not_called()
+
+    def test_delete_uses_table_when_connection_available(self, monkeypatch):
+        from unittest.mock import patch
+
+        storage = MagicMock()
+        monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "UseDevelopmentStorage=true")
+
+        with patch(
+            "zdrovena.month_closing.table_history.delete_history_entry_table", return_value=True
+        ) as mock_tbl:
+            result = delete_history_entry(storage, "2026-04-01T00:00:00Z")
+
+        mock_tbl.assert_called_once_with("UseDevelopmentStorage=true", "2026-04-01T00:00:00Z")
+        assert result is True
+        storage.download.assert_not_called()
