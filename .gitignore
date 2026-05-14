@@ -54,3 +54,4 @@ htmlcov/
 
 # Docker local dev
 .env.local.template.bak
+.gstack/

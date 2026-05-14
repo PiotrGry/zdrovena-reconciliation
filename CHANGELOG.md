@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v2.3.0 (2026-05-14)
+
+### Added
+
+- **history**: Close-month history stored in Azure Table Storage. Every pipeline run (dry or real) is logged with status, invoice counts, gross total, and step progress. History survives container restarts and is visible in the UI under "Historia zamknięć".
+- **history**: Resume from checkpoint. If a close run was interrupted, the pipeline resumes from the last completed step rather than starting over.
+- **ui**: Two-panel CloseView replaces the modal. Inbox checklist on the left, pipeline runner on the right — no more modal-inside-modal layout.
+- **ui**: Pipeline is blocked until all pre-flight documents are present. The "Uruchom" button stays disabled until the inbox checklist shows all required files.
+- **ui**: Month/year grid picker with arrow navigation replaces the flat dropdown.
+- **pipeline**: Soft-close mode — missing optional vendor invoices produce warnings instead of crashing. ZIP and history are written; only the email step is blocked until warnings are resolved.
+- **dev**: Full local close-month pipeline working with Azurite emulator via `docker compose up`. Includes seed script for test invoice files.
+- **ci**: Staging inbox is seeded before smoke tests so close-month business logic is verified on every deploy.
+
+### Changed
+
+- **history**: Storage backend migrated from append-only JSONL blob to Azure Table Storage, with JSONL blob as automatic fallback.
+- **storage**: All pipeline output files (invoices, reports, ZIP archive) go to Azure Blob Storage for production persistence across container restarts.
+- **ui**: History table shows descriptive statuses, step counts (e.g. 7/8), and gross totals. Delete and retry actions available from history rows.
+- **ux**: Real pipeline error messages shown in the UI instead of generic HTTP 500.
+
+### Fixed
+
+- **docker**: API healthcheck replaced `curl` with `python3 urllib` — `curl` is not present in `python:3.12-slim`.
+- **docker**: Azurite healthcheck rewritten as a mounted Node.js script with correct SharedKey signature (doubled account name for path-style URLs).
+- **docker**: `TableEndpoint` added to Azurite connection string so Table Storage works from the API container.
+- **terraform**: `Storage Table Data Contributor` role added for Container App managed identity — required for Azure Table Storage write access.
+- **terraform**: Table Storage endpoint derived from blob URL (`.blob.core.windows.net` → `.table.core.windows.net`) to fix silent auth failures in production.
+- **ui**: Step count accuracy (7→8 steps), retry-for-all behavior, vendor ignore checkboxes, missing SVG icons.
+- **ui**: Upload errors visible, loading state correct, history refreshes after errors.
+
+
 ## v2.2.0 (2026-05-06)
 
 ### Added
