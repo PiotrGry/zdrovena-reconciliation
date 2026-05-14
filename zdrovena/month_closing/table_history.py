@@ -11,6 +11,16 @@ TABLE_NAME = "closehistory"
 PARTITION_KEY = "close"
 
 
+def _table_endpoint(url: str) -> str:
+    """Convert a blob endpoint URL to a table endpoint URL.
+
+    AZURE_STORAGE_ACCOUNT_URL is set to the blob endpoint in Terraform
+    (https://<account>.blob.core.windows.net) but TableServiceClient needs
+    the table endpoint (https://<account>.table.core.windows.net).
+    """
+    return url.replace(".blob.core.windows.net", ".table.core.windows.net")
+
+
 def append_history_table(storage_conn_or_url: str, entry: dict) -> None:
     """Append one entry to Azure Table Storage."""
     try:
@@ -19,7 +29,7 @@ def append_history_table(storage_conn_or_url: str, entry: dict) -> None:
 
         if storage_conn_or_url.startswith("http"):
             client = TableServiceClient(
-                endpoint=storage_conn_or_url,
+                endpoint=_table_endpoint(storage_conn_or_url),
                 credential=DefaultAzureCredential(),
             )
         else:
@@ -53,7 +63,7 @@ def read_history_table(storage_conn_or_url: str, limit: int = 50) -> list[dict]:
 
         if storage_conn_or_url.startswith("http"):
             client = TableServiceClient(
-                endpoint=storage_conn_or_url,
+                endpoint=_table_endpoint(storage_conn_or_url),
                 credential=DefaultAzureCredential(),
             )
         else:
@@ -102,7 +112,7 @@ def delete_history_entry_table(storage_conn_or_url: str, ts: str) -> bool:
 
         if storage_conn_or_url.startswith("http"):
             client = TableServiceClient(
-                endpoint=storage_conn_or_url,
+                endpoint=_table_endpoint(storage_conn_or_url),
                 credential=DefaultAzureCredential(),
             )
         else:

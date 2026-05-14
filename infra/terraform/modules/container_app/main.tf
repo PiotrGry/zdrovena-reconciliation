@@ -106,6 +106,12 @@ resource "azurerm_role_assignment" "storage_contributor" {
   principal_id         = azurerm_container_app.this.identity[0].principal_id
 }
 
+resource "azurerm_role_assignment" "storage_table_contributor" {
+  scope                = var.storage_account_id
+  role_definition_name = "Storage Table Data Contributor"
+  principal_id         = azurerm_container_app.this.identity[0].principal_id
+}
+
 # ── RBAC: Container App → Key Vault Secrets User ──────────────────────────────
 
 resource "azurerm_role_assignment" "kv_secrets_user" {
