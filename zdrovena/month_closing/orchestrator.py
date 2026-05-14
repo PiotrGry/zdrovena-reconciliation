@@ -168,7 +168,10 @@ class MonthCloseOrchestrator:
         """Check if a file exists in blob storage under the given prefix."""
         try:
             blobs = self.storage.list_files(blob_dir_key + "/")
-            return any(b.key.endswith(f"/{filename}") or b.key == f"{blob_dir_key}/{filename}" for b in blobs)
+            return any(
+                b.key.endswith(f"/{filename}") or b.key == f"{blob_dir_key}/{filename}"
+                for b in blobs
+            )
         except Exception:
             return False
 
@@ -353,7 +356,8 @@ class MonthCloseOrchestrator:
         self.out.step(3, "Verifying JPK and VAT reports")
 
         missing = [
-            rpt for rpt in FAKTUROWNIA_REPORTS
+            rpt
+            for rpt in FAKTUROWNIA_REPORTS
             if not (self.month_dir / rpt["dest_name"]).exists()
             and not self._blob_file_exists(self._blob_prefix, rpt["dest_name"])
         ]
@@ -384,7 +388,9 @@ class MonthCloseOrchestrator:
         if not missing:
             pass  # all found
         elif self.dry_run:
-            self.out.warn(f"dry_run: {len(missing)} JPK report(s) not yet in month folder — OK for simulation")
+            self.out.warn(
+                f"dry_run: {len(missing)} JPK report(s) not yet in month folder — OK for simulation"
+            )
         else:
             msg = (
                 f"JPK/VAT reports incomplete: {', '.join(r['name'] for r in missing)}. "
@@ -664,7 +670,8 @@ class MonthCloseOrchestrator:
             try:
                 blob_files = self.storage.list_files(self._blob_prefix + "/")
                 pko_blobs = [
-                    b for b in blob_files
+                    b
+                    for b in blob_files
                     if ("wyciag" in b.key.lower() or "pko" in b.key.lower())
                     and b.key.lower().endswith(".pdf")
                 ]

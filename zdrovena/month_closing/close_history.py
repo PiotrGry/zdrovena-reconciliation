@@ -82,7 +82,9 @@ def read_close_history(storage: Any, limit: int = 50) -> list[dict]:
         with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as f:
             tmp = Path(f.name)
         storage.download(HISTORY_BLOB_KEY, tmp)
-        lines = [line.strip() for line in tmp.read_text(encoding="utf-8").splitlines() if line.strip()]
+        lines = [
+            line.strip() for line in tmp.read_text(encoding="utf-8").splitlines() if line.strip()
+        ]
         tmp.unlink(missing_ok=True)
         entries = []
         for line in reversed(lines[-limit:]):
@@ -115,7 +117,11 @@ def delete_history_entry(storage: Any, ts: str) -> bool:
             tmp = Path(f.name)
         try:
             storage.download(HISTORY_BLOB_KEY, tmp)
-            lines = [line.strip() for line in tmp.read_text(encoding="utf-8").splitlines() if line.strip()]
+            lines = [
+                line.strip()
+                for line in tmp.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
         except Exception:
             tmp.unlink(missing_ok=True)
             return False
@@ -166,10 +172,12 @@ def build_history_entry(
         entry["cost_invoice_count"] = report.cost_invoice_count
         entry["warnings"] = report.warnings
         entry["errors"] = report.errors
+
         # Combine steps from this run + checkpoint steps (deduplicated, normalized)
         # This gives the accurate total of steps completed for this month.
         def _norm(s: str) -> str:
             import re
+
             return re.sub(r"\s*\(dry-run\)", "", s, flags=re.IGNORECASE)
 
         all_done = {_norm(s) for s in report.steps_completed}

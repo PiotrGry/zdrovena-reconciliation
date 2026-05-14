@@ -286,6 +286,7 @@ class TestStep6ZipArchive:
     def test_live_creates_zip(self, tmp_path):
         """ZIP is created from blob storage and zip_path points to blob key."""
         from unittest.mock import MagicMock, patch
+
         orch = MonthCloseOrchestrator(year=2025, month=6, dry_run=False)
         orch.out = MagicMock()
         orch.month_dir = tmp_path

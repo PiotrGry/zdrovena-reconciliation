@@ -53,7 +53,9 @@ from zdrovena.common.formatting import (
 
 # ─── Base Directory ───────────────────────────────────────────────────────────
 
-BASE_DIR: Path = Path(os.environ.get("FAKTUROWNIA_BASE_DIR", str(Path.home() / "Documents" / "Humio" / "faktury")))
+BASE_DIR: Path = Path(
+    os.environ.get("FAKTUROWNIA_BASE_DIR", str(Path.home() / "Documents" / "Humio" / "faktury"))
+)
 
 # ─── Company Details (used in JPK XML generation) ────────────────────────────
 
