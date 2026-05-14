@@ -5,12 +5,9 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from zdrovena.month_closing.close_history import (
-    HISTORY_BLOB_KEY,
     append_close_history,
     build_history_entry,
     delete_history_entry,
@@ -39,7 +36,7 @@ def _make_storage(content: str = "") -> MagicMock:
 
 def _read_tmp(storage: MagicMock) -> list[dict]:
     lines = storage._tmp.read_text(encoding="utf-8").splitlines()
-    return [json.loads(l) for l in lines if l.strip()]
+    return [json.loads(line) for line in lines if line.strip()]
 
 
 # ── build_history_entry ──────────────────────────────────────────────────────

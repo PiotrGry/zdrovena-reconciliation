@@ -82,7 +82,7 @@ def read_close_history(storage: Any, limit: int = 50) -> list[dict]:
         with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as f:
             tmp = Path(f.name)
         storage.download(HISTORY_BLOB_KEY, tmp)
-        lines = [l.strip() for l in tmp.read_text(encoding="utf-8").splitlines() if l.strip()]
+        lines = [line.strip() for line in tmp.read_text(encoding="utf-8").splitlines() if line.strip()]
         tmp.unlink(missing_ok=True)
         entries = []
         for line in reversed(lines[-limit:]):
@@ -115,7 +115,7 @@ def delete_history_entry(storage: Any, ts: str) -> bool:
             tmp = Path(f.name)
         try:
             storage.download(HISTORY_BLOB_KEY, tmp)
-            lines = [l.strip() for l in tmp.read_text(encoding="utf-8").splitlines() if l.strip()]
+            lines = [line.strip() for line in tmp.read_text(encoding="utf-8").splitlines() if line.strip()]
         except Exception:
             tmp.unlink(missing_ok=True)
             return False

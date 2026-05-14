@@ -11,7 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from zdrovena.api.auth import Principal, require_accountant_or_admin, require_viewer_or_above
 from zdrovena.api.models import CloseRequest, CloseResponse, CloseStateResponse
 from zdrovena.common.storage import get_storage_service
-from zdrovena.month_closing.close_history import append_close_history, build_history_entry, delete_history_entry, read_close_history
+from zdrovena.month_closing.close_history import (
+    append_close_history,
+    build_history_entry,
+    delete_history_entry,
+    read_close_history,
+)
 from zdrovena.month_closing.config import BASE_DIR, POLISH_MONTHS
 from zdrovena.month_closing.console import ConsoleReporter
 from zdrovena.month_closing.orchestrator import MonthCloseOrchestrator
