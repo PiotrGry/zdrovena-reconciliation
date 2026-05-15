@@ -63,6 +63,15 @@ resource "azurerm_role_assignment" "github_acr_push" {
   principal_id         = azurerm_user_assigned_identity.github_actions.principal_id
 }
 
+# ── RBAC: GitHub Actions → Storage Blob Data Contributor on staging container ──
+# Required for seed-staging CI step to upload test invoice files to blob storage.
+# Contributor on RG does not grant data-plane blob access (Azure RBAC split).
+resource "azurerm_role_assignment" "github_staging_blob" {
+  scope                = azurerm_storage_container.files_staging.resource_manager_id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_user_assigned_identity.github_actions.principal_id
+}
+
 # ── RBAC: GitHub Actions → Contributor on RG (to update Container App) ────────
 # Scoped to the resource group; allows `az containerapp update --image`.
 
