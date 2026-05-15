@@ -21,12 +21,37 @@ permissions:
   id-token: write
 
 jobs:
+  # ── 0. Detect changed areas ────────────────────────────────────────────────
+  detect-changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      infra: ${{ steps.filter.outputs.infra }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'zdrovena/**'
+              - 'pyproject.toml'
+              - 'Dockerfile'
+            frontend:
+              - 'frontend/**'
+            infra:
+              - 'infra/**'
+
   # ── 1. Build and push staging image ───────────────────────────────────────
   build:
     name: Build & push staging image
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: staging
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend == 'true'
     outputs:
       image: ${{ steps.meta.outputs.image }}
     steps:
@@ -63,7 +88,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: staging
-    needs: build
+    needs: [detect-changes, build]
+    if: needs.detect-changes.outputs.backend == 'true'
     env:
       STAGING_APP: zdrovena-api-staging
       RG: zdrovena-rg
@@ -110,7 +136,8 @@ jobs:
     # the subject becomes `:pull_request` on PR runs and AAD rejects the login
     # with AADSTS700213 (no matching federated identity).
     environment: staging
-    needs: build
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.frontend == 'true'
     outputs:
       # SWA action creates env named after PR number (e.g. 47 → icy-water-0e2b04d03-47.westeurope.7.azurestaticapps.net)
       swa-url: "https://icy-water-0e2b04d03-${{ github.event.pull_request.number }}.westeurope.7.azurestaticapps.net"
@@ -160,13 +187,52 @@ jobs:
           output_location: ""
           skip_app_build: true
 
+  # ── 3b. Resolve staging URLs (runs even when deploy jobs are skipped) ──────
+  resolve-urls:
+    name: Resolve staging URLs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: staging
+    needs: [detect-changes, deploy-backend, deploy-frontend]
+    if: always() && !failure() && !cancelled()
+    outputs:
+      api-url: ${{ steps.urls.outputs.api_url }}
+      swa-url: ${{ steps.urls.outputs.swa_url }}
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Resolve URLs
+        id: urls
+        run: |
+          if [[ "${{ needs.deploy-backend.result }}" == "success" ]]; then
+            API_URL="${{ needs.deploy-backend.outputs.api-url }}"
+          else
+            FQDN=$(az containerapp show \
+              --name zdrovena-api-staging \
+              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+              --query "properties.configuration.ingress.fqdn" -o tsv)
+            API_URL="https://$FQDN"
+          fi
+          if [[ "${{ needs.deploy-frontend.result }}" == "success" ]]; then
+            SWA_URL="${{ needs.deploy-frontend.outputs.swa-url }}"
+          else
+            SWA_URL="https://icy-water-0e2b04d03-${{ github.event.pull_request.number }}.westeurope.7.azurestaticapps.net"
+          fi
+          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+          echo "swa_url=$SWA_URL" >> $GITHUB_OUTPUT
+
   # ── 4. Seed staging storage with test invoice files ──────────────────────
   seed-staging:
     name: Seed staging inbox
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: staging
-    needs: [deploy-backend, deploy-frontend]
+    needs: [resolve-urls]
+    if: always() && needs.resolve-urls.result == 'success'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -249,7 +315,7 @@ jobs:
     name: Smoke tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [deploy-backend, deploy-frontend, seed-staging]
+    needs: [resolve-urls, seed-staging]
     outputs:
       result: ${{ steps.run.outputs.result }}
       report: ${{ steps.run.outputs.report }}
@@ -269,8 +335,8 @@ jobs:
       - name: Run smoke test suite
         id: run
         env:
-          API_URL: ${{ needs.deploy-backend.outputs.api-url }}
-          SWA_URL: ${{ needs.deploy-frontend.outputs.swa-url }}
+          API_URL: ${{ needs.resolve-urls.outputs.api-url }}
+          SWA_URL: ${{ needs.resolve-urls.outputs.swa-url }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_API_CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
@@ -304,7 +370,7 @@ jobs:
     name: E2E tests (Playwright)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [deploy-backend, deploy-frontend, seed-staging]
+    needs: [resolve-urls, seed-staging]
     outputs:
       result: ${{ steps.run.outputs.result }}
     steps:
@@ -323,8 +389,8 @@ jobs:
       - name: Run E2E tests
         id: run
         env:
-          BASE_URL: ${{ needs.deploy-frontend.outputs.swa-url }}
-          API_URL: ${{ needs.deploy-backend.outputs.api-url }}
+          BASE_URL: ${{ needs.resolve-urls.outputs.swa-url }}
+          API_URL: ${{ needs.resolve-urls.outputs.api-url }}
         run: |
           cd e2e
           npx playwright test --reporter=json,list 2>&1 | tee e2e-results.txt

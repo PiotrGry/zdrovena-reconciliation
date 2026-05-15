@@ -83,7 +83,7 @@ FAKTUROWNIA_REPORTS: list[dict] = [
     },
     {
         "name": "JPK_V7M",
-        "glob": "zdrovena-*-jpkv7m*",
+        "glob": "zdrovena*v7*",
         "dest_name": "JPK_V7M.xml",
         "url": "https://zdrovena.fakturownia.pl/accounting/app/reports/jpk_vat",
         "append_date_params": False,
