@@ -272,10 +272,112 @@ Known failure modes and handling:
 
 ---
 
+---
+
+## Draft Persistence
+
+The background task writes one record to blob storage after the courier API responds.
+
+**Location:** `zdrovena-files` container, path `shipping/drafts.jsonl` (append-only, one JSON object per line)
+
+**Record schema:**
+
+```json
+{
+  "id": "uuid-v4",
+  "created_at": "2026-05-15T15:30:00Z",
+  "shopify_order_id": "12345678",
+  "shopify_order_number": "#1042",
+  "customer_name": "Jan Kowalski",
+  "courier": "inpost",
+  "service": "inpost_locker_standard",
+  "tracking_number": "630000000000000000000000",
+  "courier_draft_id": "98765432",
+  "status": "created",
+  "shipping_address": {
+    "street": "ul. Odbiorcza 10",
+    "city": "Kraków",
+    "post_code": "30-001"
+  },
+  "parcel": {
+    "template": "small",
+    "weight_kg": null
+  },
+  "error": null
+}
+```
+
+Failed drafts set `status: "error"` and `error: "<message>"`, `courier_draft_id: null`.
+
+---
+
+## Draft List API
+
+```
+GET /shipping/drafts
+```
+
+Reads `shipping/drafts.jsonl` from blob, parses all records, returns sorted by
+`created_at` descending. No pagination needed at current volume.
+
+Response:
+
+```json
+{
+  "drafts": [ ...records... ]
+}
+```
+
+---
+
+## Label Print API
+
+```
+GET /shipping/drafts/{courier_draft_id}/label?courier=inpost
+GET /shipping/drafts/{courier_draft_id}/label?courier=apaczka
+```
+
+Fetches the waybill PDF from the courier and streams it as `Content-Type: application/pdf`
+with `Content-Disposition: inline` so the browser opens it directly (print dialog appears).
+
+- **InPost:** `GET /v1/shipments/{id}/label` → returns PDF bytes directly
+- **Apaczka:** `POST /waybill/` with `{"order_id": id}` → returns base64-encoded PDF, decoded server-side before streaming
+
+---
+
+## Frontend — ShippingView
+
+New view `frontend/src/views/ShippingView.jsx` added to the sidebar alongside existing views.
+
+**Accordion list — collapsed row (always visible):**
+
+| Field | Source |
+|-------|--------|
+| Order # | `shopify_order_number` |
+| Customer | `customer_name` |
+| Courier | `courier` + `service` as pill (InPost Paczkomat / InPost Kurier / Apaczka) |
+| Date | `created_at` formatted |
+| Status | pill: green `created` / red `error` |
+
+Click anywhere on the row to expand/collapse.
+
+**Expanded detail panel:**
+
+- Full shipping address
+- Parcel info (template or dimensions/weight)
+- Tracking number (copyable, or "pending" if null)
+- Courier draft ID
+- Error message (if status is error)
+- **Print label** button — calls `GET /shipping/drafts/{id}/label?courier=...`, opens PDF in new tab
+
+Expansion state is local (no URL change, no persistence). Only one row expanded at a time.
+
+---
+
 ## Out of Scope
 
-- Label printing / PDF waybill retrieval
 - Tracking status polling or webhooks back from couriers
 - Daily exception report (deferred — logs + Application Insights cover this)
 - Per-order parcel size from Shopify metafields
 - Multi-parcel orders
+- Label re-printing after courier confirms (label from `created` status is sufficient)
