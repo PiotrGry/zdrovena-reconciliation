@@ -187,9 +187,18 @@ jobs:
 
       - name: Seed staging inbox with test invoices
         env:
-          AZURE_STORAGE_ACCOUNT_URL: ${{ secrets.AZURE_STAGING_STORAGE_ACCOUNT_URL }}
           AZURE_STORAGE_CONTAINER: zdrovena-files-staging
+          AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
         run: |
+          # Resolve storage account URL dynamically — prod and staging share one account.
+          # Avoids requiring a separate AZURE_STAGING_STORAGE_ACCOUNT_URL secret.
+          STORAGE_URL=$(az storage account list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "[0].primaryEndpoints.blob" \
+            -o tsv)
+          echo "Storage URL: $STORAGE_URL"
+          export AZURE_STORAGE_ACCOUNT_URL="$STORAGE_URL"
+
           NOW=$(date -u +"%Y-%m")
           YEAR=${NOW%-*}
           MONTH_NUM=$(date -u +"%m" | sed 's/^0//')
