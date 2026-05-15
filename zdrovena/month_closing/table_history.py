@@ -22,37 +22,40 @@ def _table_endpoint(url: str) -> str:
 
 
 def append_history_table(storage_conn_or_url: str, entry: dict) -> None:
-    """Append one entry to Azure Table Storage."""
-    try:
-        from azure.data.tables import TableServiceClient
-        from azure.identity import DefaultAzureCredential
+    """Append one entry to Azure Table Storage.
 
-        if storage_conn_or_url.startswith("http"):
-            client = TableServiceClient(
-                endpoint=_table_endpoint(storage_conn_or_url),
-                credential=DefaultAzureCredential(),
-            )
-        else:
-            client = TableServiceClient.from_connection_string(storage_conn_or_url)
+    Exceptions are intentionally NOT caught here — they propagate to
+    close_history.py which has a JSONL fallback.  Swallowing errors here
+    would cause close_history.py to skip the fallback and silently lose
+    the history entry.
+    """
+    from azure.data.tables import TableServiceClient
+    from azure.identity import DefaultAzureCredential
 
-        table = client.create_table_if_not_exists(TABLE_NAME)
+    if storage_conn_or_url.startswith("http"):
+        client = TableServiceClient(
+            endpoint=_table_endpoint(storage_conn_or_url),
+            credential=DefaultAzureCredential(),
+        )
+    else:
+        client = TableServiceClient.from_connection_string(storage_conn_or_url)
 
-        ts = entry.get("ts", "")
-        ts_safe = ts.replace(":", "-").replace(".", "-").replace("+", "-")
-        row_key = f"{entry.get('year', 0):04d}-{entry.get('month', 0):02d}-{ts_safe}"
+    table = client.create_table_if_not_exists(TABLE_NAME)
 
-        entity = {
-            "PartitionKey": PARTITION_KEY,
-            "RowKey": row_key,
-            **{
-                k: (json.dumps(v) if isinstance(v, (list, dict)) else v)
-                for k, v in entry.items()
-                if k not in ("PartitionKey", "RowKey")
-            },
-        }
-        table.upsert_entity(entity)
-    except Exception as exc:
-        logger.warning("Could not append close history to Table Storage: %s", exc)
+    ts = entry.get("ts", "")
+    ts_safe = ts.replace(":", "-").replace(".", "-").replace("+", "-")
+    row_key = f"{entry.get('year', 0):04d}-{entry.get('month', 0):02d}-{ts_safe}"
+
+    entity = {
+        "PartitionKey": PARTITION_KEY,
+        "RowKey": row_key,
+        **{
+            k: (json.dumps(v) if isinstance(v, (list, dict)) else v)
+            for k, v in entry.items()
+            if k not in ("PartitionKey", "RowKey")
+        },
+    }
+    table.upsert_entity(entity)
 
 
 def read_history_table(storage_conn_or_url: str, limit: int = 50) -> list[dict]:
