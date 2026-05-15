@@ -81,8 +81,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - run: pip install --upgrade pip  # CVE-2026-3219, CVE-2026-6357 fixed in pip>=26.1
       - run: pip install -e ".[dev,api,cloud]" pip-audit "bandit[toml]"
-      - run: pip-audit --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-6357  # pip itself, not a runtime dep
+      - run: pip-audit
       - run: bandit -r zdrovena/ -ll -ii
       - name: gitleaks
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
