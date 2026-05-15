@@ -83,7 +83,11 @@ class FakturowniaClient:
         MissingSecretError
             If the token is not found in either location.
         """
-        token = os.environ.get("FAKTUROWNIA_API_TOKEN") or keyring.get_password(service, account)
+        try:
+            keyring_token = keyring.get_password(service, account)
+        except Exception:
+            keyring_token = None
+        token = os.environ.get("FAKTUROWNIA_API_TOKEN") or keyring_token
         if not token:
             raise MissingSecretError(service, account)
         return cls(api_token=token, domain=domain, **kwargs)

@@ -278,8 +278,8 @@ jobs:
           SMOKE_SP_CLIENT_ID: ${{ secrets.SMOKE_SP_CLIENT_ID }}
           SMOKE_SP_CLIENT_SECRET: ${{ secrets.SMOKE_SP_CLIENT_SECRET }}
           # zdrovena-smoke-tester has both viewer and accountant roles — reuse same SP
-          SMOKE_ACCOUNTANT_SP_CLIENT_ID: ${{ secrets.SMOKE_SP_CLIENT_ID }}
-          SMOKE_ACCOUNTANT_SP_CLIENT_SECRET: ${{ secrets.SMOKE_SP_CLIENT_SECRET }}
+          SMOKE_ACCOUNTANT_SP_CLIENT_ID: ${{ secrets.SMOKE_ACCOUNTANT_SP_CLIENT_ID }}
+          SMOKE_ACCOUNTANT_SP_CLIENT_SECRET: ${{ secrets.SMOKE_ACCOUNTANT_SP_CLIENT_SECRET }}
         run: |
           cd scripts/smoke
           npx tsx runner.ts --output report.json
