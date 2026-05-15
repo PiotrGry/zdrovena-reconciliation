@@ -123,6 +123,7 @@ class MonthCloseOrchestrator:
         self.month_dir = BASE_DIR / str(year) / self.month_pl
         self.sales_dir = self.month_dir / "sprzedaz"
         self.costs_dir = self.month_dir / "koszty"
+        self.decl_dir = self.month_dir / "deklaracje"
 
         self.storage = get_storage_service()
         self._blob_prefix = f"faktury/{year}/{self.month_pl}"
@@ -269,6 +270,7 @@ class MonthCloseOrchestrator:
             get_secret=self._get_secret,
             no_browser=self.non_interactive,
             storage=self.storage,
+            out_fn=self.out.plain,
         )
         pf = checker.run()
         self.report.bank_statement_found = pf.bank_statement_found
@@ -297,6 +299,7 @@ class MonthCloseOrchestrator:
         self.out.step(1, "Creating folder structure")
         self.sales_dir.mkdir(parents=True, exist_ok=True)
         self.costs_dir.mkdir(parents=True, exist_ok=True)
+        self.decl_dir.mkdir(parents=True, exist_ok=True)
         logger.info("Folders ready: %s", self.month_dir)
         checker = getattr(self, "_preflight_checker", None)
         if checker is not None:
@@ -365,7 +368,9 @@ class MonthCloseOrchestrator:
         missing = [
             rpt
             for rpt in FAKTUROWNIA_REPORTS
-            if not (self.month_dir / rpt["dest_name"]).exists()
+            if not (self.decl_dir / rpt["dest_name"]).exists()
+            and not (self.month_dir / rpt["dest_name"]).exists()
+            and not self._blob_file_exists(f"{self._blob_prefix}/deklaracje", rpt["dest_name"])
             and not self._blob_file_exists(self._blob_prefix, rpt["dest_name"])
         ]
         for rpt in FAKTUROWNIA_REPORTS:
@@ -379,18 +384,26 @@ class MonthCloseOrchestrator:
                     missing,
                     self.date_from,
                     self.date_to,
-                    self.month_dir,
+                    self.decl_dir,
                 )
                 for rpt_cfg, path in downloaded:
                     self.out.ok(f"{rpt_cfg['name']}: downloaded → {path.name}")
                     missing = [r for r in missing if r["name"] != rpt_cfg["name"]]
-                    self._upload_to_blob(path, self._blob_prefix)
+                    self._upload_to_blob(path, f"{self._blob_prefix}/deklaracje")
             except Exception as exc:
                 logger.warning("Playwright report download failed: %s", exc)
                 self.out.warn(f"Auto-download failed: {exc}")
 
+        # Move any JPK/VAT files sitting in month_dir root → deklaracje/
+        for rpt in FAKTUROWNIA_REPORTS:
+            src = self.month_dir / rpt["dest_name"]
+            dst = self.decl_dir / rpt["dest_name"]
+            if src.exists() and not dst.exists():
+                import shutil as _shutil
+                _shutil.move(str(src), str(dst))
+
         for rpt in missing:
-            self.out.warn(f"{rpt['name']}: MISSING — {self.month_dir / rpt['dest_name']}")
+            self.out.warn(f"{rpt['name']}: MISSING — {self.decl_dir / rpt['dest_name']}")
 
         if not missing:
             pass  # all found
