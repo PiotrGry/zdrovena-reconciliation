@@ -1,0 +1,8 @@
+# CVE-2024-23342 — python-ecdsa: Minerva timing side-channel attack
+# Affected: ecdsa 0.19.2 (transitive dep via python-jose[cryptography])
+# Fix version: none available as of 2026-05-15
+# Impact: LOW — Minerva attack requires measuring many local signing operations
+#         with nanosecond precision; not exploitable via remote API calls.
+# Action: monitor for ecdsa update; consider replacing python-jose with PyJWT
+#         in a future refactor (tracked in TODOS.md).
+CVE-2024-23342
