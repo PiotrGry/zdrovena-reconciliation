@@ -187,17 +187,12 @@ jobs:
 
       - name: Seed staging inbox with test invoices
         env:
-          AZURE_STORAGE_CONTAINER: zdrovena-files-staging
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
         run: |
-          # Resolve storage account URL dynamically — prod and staging share one account.
-          # Avoids requiring a separate AZURE_STAGING_STORAGE_ACCOUNT_URL secret.
-          STORAGE_URL=$(az storage account list \
+          ACCOUNT=$(az storage account list \
             --resource-group "$AZURE_RESOURCE_GROUP" \
-            --query "[0].primaryEndpoints.blob" \
-            -o tsv)
-          echo "Storage URL: $STORAGE_URL"
-          export AZURE_STORAGE_ACCOUNT_URL="$STORAGE_URL"
+            --query "[0].name" -o tsv)
+          echo "Storage account: $ACCOUNT"
 
           NOW=$(date -u +"%Y-%m")
           YEAR=${NOW%-*}
@@ -205,10 +200,38 @@ jobs:
           PREV_MONTH=$(( MONTH_NUM == 1 ? 12 : MONTH_NUM - 1 ))
           PREV_YEAR=$(( MONTH_NUM == 1 ? YEAR - 1 : YEAR ))
           echo "Seeding staging inbox for ${PREV_YEAR}/${PREV_MONTH}..."
-          python3 scripts/seed-local-storage.py \
-            --year "$PREV_YEAR" \
-            --month "$PREV_MONTH" \
-            --clear
+
+          # Clear existing inbox files
+          az storage blob delete-batch \
+            --account-name "$ACCOUNT" \
+            --source zdrovena-files-staging \
+            --pattern "faktury/inbox/*" \
+            --auth-mode login 2>/dev/null || true
+
+          # Generate fake files and upload via az CLI (uses OIDC token directly)
+          TMPDIR=$(mktemp -d)
+          FAKE_PDF="%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF"
+          FAKE_XML='<?xml version="1.0" encoding="UTF-8"?><root><test>seed data</test></root>'
+
+          if [ "$PREV_MONTH" -eq 12 ]; then NEXT_MONTH=1; NEXT_YEAR=$((PREV_YEAR+1)); else NEXT_MONTH=$((PREV_MONTH+1)); NEXT_YEAR=$PREV_YEAR; fi
+          BANK_DATE=$(printf "%04d%02d01" "$NEXT_YEAR" "$NEXT_MONTH")
+          MONTH_PAD=$(printf "%02d" "$PREV_MONTH")
+
+          printf "$FAKE_PDF" > "$TMPDIR/Wyciag_na_zadanie_${BANK_DATE}001.pdf"
+          printf "$FAKE_PDF" > "$TMPDIR/invoice-12345-${PREV_YEAR}${MONTH_PAD}15.pdf"
+          printf "$FAKE_PDF" > "$TMPDIR/3849995102.pdf"
+          printf "$FAKE_XML" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01-jpk_fa.xml"
+          printf "$FAKE_XML" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01-jpkv7m.xml"
+          printf "$FAKE_PDF" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01_wykaz_sprzedazy.pdf"
+
+          az storage blob upload-batch \
+            --account-name "$ACCOUNT" \
+            --destination zdrovena-files-staging \
+            --destination-path "faktury/inbox" \
+            --source "$TMPDIR" \
+            --auth-mode login
+          rm -rf "$TMPDIR"
+          echo "Seeded 6 files to zdrovena-files-staging/faktury/inbox/"
 
   # ── 5. Smoke test suite ────────────────────────────────────────────────────
   smoke:
