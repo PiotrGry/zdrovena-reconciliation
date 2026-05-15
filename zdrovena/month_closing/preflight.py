@@ -269,6 +269,23 @@ class PreflightChecker:
                         self.result.matches.append((vendor_cfg, tmp))
                         print(f"  │  ✅ {name}: found {fname} (from blob)")
                         return True
+            # Exact file not found — try glob fallback before giving up.
+            # Handles the case where the PDF is present but with a slightly
+            # different name than what Zoho returned (e.g. manual upload with
+            # a different invoice ID suffix).
+            if glob_pat:
+                glob_matches = sorted(
+                    [b for b in blob_files if fnmatch.fnmatch(Path(b.key).name, glob_pat)],
+                    key=lambda b: b.last_modified,
+                    reverse=True,
+                )
+                if glob_matches:
+                    newest = glob_matches[0]
+                    tmp = self._download_blob_to_tmp(newest.key)
+                    if tmp:
+                        self.result.matches.append((vendor_cfg, tmp))
+                        print(f"  │  ✅ {name}: found {Path(newest.key).name} (glob fallback)")
+                        return True
             print(f"  │  ⚠️  {name}: expected {', '.join(expected_files)} — not in blob inbox/")
             if email_urls:
                 for url in email_urls:

@@ -8,8 +8,8 @@ COPY pyproject.toml README.md ./
 # Copy source
 COPY zdrovena/ zdrovena/
 
-# Install api + cloud extras only (no dev/test dependencies)
-RUN pip install --no-cache-dir -e ".[api,cloud]"
+# Install api + cloud + ksef extras (no dev/test dependencies)
+RUN pip install --no-cache-dir -e ".[api,cloud,ksef]"
 
 ENV APP_ENV=prod
 EXPOSE 8000

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +19,44 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
+logger = logging.getLogger("zdrovena.api.main")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # type: ignore[type-arg]
+    """Startup check: verify Key Vault is reachable before accepting traffic.
+
+    Only runs when AZURE_KEYVAULT_URL is set AND AZURE_AUTH_DISABLED is not
+    true (i.e. production / staging). Exits with code 1 on failure so the
+    Container App orchestrator can restart and surface the error in logs.
+    """
+    keyvault_url = os.environ.get("AZURE_KEYVAULT_URL")
+    auth_disabled = os.environ.get("AZURE_AUTH_DISABLED", "").lower() in ("1", "true", "yes")
+
+    if keyvault_url and not auth_disabled:
+        try:
+            from zdrovena.common._keyvault import ping_keyvault
+
+            ping_keyvault(keyvault_url)
+            logger.info("Key Vault reachable: %s", keyvault_url)
+        except Exception as exc:
+            logger.critical(
+                "Cannot reach Azure Key Vault at startup: %s — %s. "
+                "Secrets (Fakturownia, Zoho, KSeF) will be unavailable. Shutting down.",
+                keyvault_url,
+                exc,
+            )
+            sys.exit(1)
+    elif auth_disabled:
+        logger.info("Key Vault ping skipped — AZURE_AUTH_DISABLED=true (local dev).")
+    else:
+        logger.info("AZURE_KEYVAULT_URL not set — Key Vault disabled.")
+
+    yield  # app runs
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Zdrovena Reconciliation API",
     version="2.0.0",
     description=(

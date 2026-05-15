@@ -143,12 +143,6 @@ class VendorConfig:
 
 EXPECTED_VENDORS: list[VendorConfig] = [
     VendorConfig(name="Shopify", pattern="shopify", email="billing@shopify.com"),
-    VendorConfig(
-        name="BaseLinker",
-        pattern="baselinker",
-        email="bok@baselinker.com",
-        link_re=r'https://panel[^"<>\s]+baselinker\.com/payment/printout\.php\?invoice=[^"<>\s]+',
-    ),
     VendorConfig(name="Allegro", pattern="allegro", email="allegro"),
     VendorConfig(name="PayU", pattern="payu", email="payu"),
     VendorConfig(name="InPost", pattern="inpost", email="inpost"),

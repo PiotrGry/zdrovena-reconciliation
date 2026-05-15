@@ -44,6 +44,11 @@ let cachedViewerToken: string | null | undefined;
 let cachedAccountantToken: string | null | undefined;
 async function getViewerToken(): Promise<string | null> {
   if (cachedViewerToken !== undefined) return cachedViewerToken;
+  // Pre-fetched token (e.g. from `az account get-access-token`) takes priority
+  if (process.env.SMOKE_VIEWER_TOKEN) {
+    cachedViewerToken = process.env.SMOKE_VIEWER_TOKEN;
+    return cachedViewerToken;
+  }
   const tenant = process.env.AZURE_TENANT_ID?.trim();
   const clientId = process.env.SMOKE_SP_CLIENT_ID?.trim();
   const clientSecret = process.env.SMOKE_SP_CLIENT_SECRET;
@@ -73,6 +78,11 @@ async function getViewerToken(): Promise<string | null> {
 
 async function getAccountantToken(): Promise<string | null> {
   if (cachedAccountantToken !== undefined) return cachedAccountantToken;
+  // Pre-fetched token (e.g. from `az account get-access-token`) takes priority
+  if (process.env.SMOKE_ACCOUNTANT_TOKEN) {
+    cachedAccountantToken = process.env.SMOKE_ACCOUNTANT_TOKEN;
+    return cachedAccountantToken;
+  }
   const tenant = process.env.AZURE_TENANT_ID?.trim();
   const clientId = process.env.SMOKE_ACCOUNTANT_SP_CLIENT_ID?.trim();
   const clientSecret = process.env.SMOKE_ACCOUNTANT_SP_CLIENT_SECRET;

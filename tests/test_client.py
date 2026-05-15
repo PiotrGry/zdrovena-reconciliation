@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -37,35 +36,35 @@ class TestClientInit:
 
 
 class TestFromKeyring:
-    @patch("zdrovena.common.client.keyring.get_password", return_value="my_token")
-    def test_success(self, mock_keyring):
+    @patch("zdrovena.common.client.get_secret", return_value="my_token")
+    def test_success(self, mock_get_secret):
         c = FakturowniaClient.from_keyring()
         assert c.api_token == "my_token"
-        mock_keyring.assert_called_once()
+        mock_get_secret.assert_called_once_with("fakturownia_api_token")
 
-    @patch("zdrovena.common.client.keyring.get_password", return_value=None)
-    def test_missing_token_raises(self, mock_keyring):
+    @patch(
+        "zdrovena.common.client.get_secret",
+        side_effect=MissingSecretError("fakturownia_api_token", "humio"),
+    )
+    def test_missing_token_raises(self, mock_get_secret):
         with pytest.raises(MissingSecretError, match="fakturownia_api_token"):
             FakturowniaClient.from_keyring()
 
-    @patch.dict(os.environ, {"FAKTUROWNIA_API_TOKEN": "env_token"})
-    @patch("zdrovena.common.client.keyring.get_password", return_value=None)
-    def test_env_var_takes_precedence(self, mock_keyring):
+    @patch("zdrovena.common.client.get_secret", return_value="env_token")
+    def test_env_var_takes_precedence(self, mock_get_secret):
         c = FakturowniaClient.from_keyring()
         assert c.api_token == "env_token"
 
-    @patch.dict(os.environ, {}, clear=True)
-    @patch("zdrovena.common.client.keyring.get_password", return_value="kr_token")
-    def test_keyring_fallback(self, mock_keyring):
-        # Ensure env var is not set
-        os.environ.pop("FAKTUROWNIA_API_TOKEN", None)
+    @patch("zdrovena.common.client.get_secret", return_value="kr_token")
+    def test_keyring_fallback(self, mock_get_secret):
         c = FakturowniaClient.from_keyring()
         assert c.api_token == "kr_token"
 
-    @patch.dict(os.environ, {}, clear=True)
-    @patch("zdrovena.common.client.keyring.get_password", return_value=None)
-    def test_neither_env_nor_keyring(self, mock_keyring):
-        os.environ.pop("FAKTUROWNIA_API_TOKEN", None)
+    @patch(
+        "zdrovena.common.client.get_secret",
+        side_effect=MissingSecretError("fakturownia_api_token", "humio"),
+    )
+    def test_neither_env_nor_keyring(self, mock_get_secret):
         with pytest.raises(MissingSecretError):
             FakturowniaClient.from_keyring()
 
