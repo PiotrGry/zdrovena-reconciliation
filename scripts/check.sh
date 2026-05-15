@@ -99,6 +99,42 @@ $PYTEST_CMD tests/ -q --tb=short \
   --cov-report=term-missing \
   && ok "tests passed" || fail "tests failed"
 
+step "pip-audit — zależności Python"
+# Użyj uv run żeby skanować tylko pakiety projektu (nie globalny Python)
+if command -v uv >/dev/null 2>&1 && [ -d "$REPO_ROOT/.venv" ]; then
+  PIPAPI_PYTHON_LOCATION="$REPO_ROOT/.venv/bin/python3" uv run pip-audit --local 2>&1 \
+    && ok "pip-audit" || fail "pip-audit: znaleziono podatności — uruchom: uv lock --upgrade-package <pkg>"
+elif command -v pip-audit >/dev/null 2>&1; then
+  pip-audit --local 2>&1 && ok "pip-audit" || fail "pip-audit: znaleziono podatności"
+else
+  echo -e "${SKIP} pip-audit nie znaleziony — uruchom: uv add --dev pip-audit"
+fi
+
+step "gitleaks — skanowanie sekretów"
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks detect --no-banner -q && ok "gitleaks" || fail "gitleaks: wykryto sekrety w kodzie"
+else
+  echo -e "${SKIP} gitleaks nie znaleziony — zainstaluj: https://github.com/gitleaks/gitleaks"
+fi
+
+step "trivy — podatności w zależnościach"
+if command -v trivy >/dev/null 2>&1; then
+  trivy fs --severity HIGH,CRITICAL --quiet --exit-code 1 . && ok "trivy" || fail "trivy: podatności HIGH/CRITICAL w zależnościach"
+else
+  echo -e "${SKIP} trivy nie znaleziony — zainstaluj: https://aquasecurity.github.io/trivy"
+fi
+
+step "checkov — IaC security scan"
+if command -v checkov >/dev/null 2>&1 || docker image inspect ghcr.io/bridgecrewio/checkov:latest &>/dev/null 2>&1; then
+  CHECKOV_CMD="checkov"
+  if ! command -v checkov >/dev/null 2>&1; then
+    CHECKOV_CMD="docker run --rm -v $(pwd):/github/workspace -w /github/workspace ghcr.io/bridgecrewio/checkov:latest"
+  fi
+  $CHECKOV_CMD -d infra/terraform --quiet 2>&1 | grep -E "Passed|Failed|Error" | tail -3 && ok "checkov" || fail "checkov: problemy z IaC"
+else
+  echo -e "${SKIP} checkov nie znaleziony — zainstaluj: pip install checkov"
+fi
+
 step "Frontend lint (ESLint)"
 FRONTEND_DIR="$REPO_ROOT/frontend"
 if [ -d "$FRONTEND_DIR/node_modules" ]; then
