@@ -42,7 +42,10 @@ class TestFromKeyring:
         assert c.api_token == "my_token"
         mock_get_secret.assert_called_once_with("fakturownia_api_token")
 
-    @patch("zdrovena.common.client.get_secret", side_effect=MissingSecretError("fakturownia_api_token", "humio"))
+    @patch(
+        "zdrovena.common.client.get_secret",
+        side_effect=MissingSecretError("fakturownia_api_token", "humio"),
+    )
     def test_missing_token_raises(self, mock_get_secret):
         with pytest.raises(MissingSecretError, match="fakturownia_api_token"):
             FakturowniaClient.from_keyring()
@@ -57,7 +60,10 @@ class TestFromKeyring:
         c = FakturowniaClient.from_keyring()
         assert c.api_token == "kr_token"
 
-    @patch("zdrovena.common.client.get_secret", side_effect=MissingSecretError("fakturownia_api_token", "humio"))
+    @patch(
+        "zdrovena.common.client.get_secret",
+        side_effect=MissingSecretError("fakturownia_api_token", "humio"),
+    )
     def test_neither_env_nor_keyring(self, mock_get_secret):
         with pytest.raises(MissingSecretError):
             FakturowniaClient.from_keyring()
