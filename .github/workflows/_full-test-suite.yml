@@ -224,6 +224,16 @@ jobs:
           echo "$FAKE_XML" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01-jpkv7m.xml"
           echo "$FAKE_PDF" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01_wykaz_sprzedazy.pdf"
 
+          # Diagnose: show which principal is logged in and what roles it has
+          echo "=== az account show ==="
+          az account show --query "{name:name, user:user, tenantId:tenantId}" -o json
+          PRINCIPAL_ID=$(az account show --query "user.name" -o tsv)
+          echo "=== role assignments for $PRINCIPAL_ID on $ACCOUNT ==="
+          az role assignment list \
+            --assignee "$PRINCIPAL_ID" \
+            --scope "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.Storage/storageAccounts/$ACCOUNT" \
+            --query "[].{role:roleDefinitionName}" -o table 2>&1 || true
+
           az storage blob upload-batch \
             --account-name "$ACCOUNT" \
             --destination zdrovena-files-staging \
