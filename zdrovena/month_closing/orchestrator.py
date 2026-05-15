@@ -279,13 +279,18 @@ class MonthCloseOrchestrator:
         if blockers:
             self.out.blocker_box(blockers)
             self.out.plain()
-            self.out.plain("  Place missing files in: inbox/")
-            self.out.plain(
-                f"  Then rerun:  zdrovena close {self.year}-{self.month:02d}"
-                f"{' --dry-run' if self.dry_run else ''}"
-            )
-            self.out.plain()
-            raise SystemExit(1)
+            if self.ignore_warnings:
+                self.out.warn("Proceeding despite missing files (ignore_warnings=True)")
+                for b in blockers:
+                    self.report.warnings.append(b.strip())
+            else:
+                self.out.plain("  Place missing files in: inbox/")
+                self.out.plain(
+                    f"  Then rerun:  zdrovena close {self.year}-{self.month:02d}"
+                    f"{' --dry-run' if self.dry_run else ''}"
+                )
+                self.out.plain()
+                raise SystemExit(1)
         self._mark_step_done("Pre-flight")
 
     def _step_1_create_folders(self) -> None:
