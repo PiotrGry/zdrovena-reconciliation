@@ -40,16 +40,51 @@ def list_files(
     storage: StorageDep,
     principal: Annotated[Principal, Depends(require_viewer_or_above)],
     prefix: Annotated[str, Query(description="Key prefix filter")] = "",
+    flat: Annotated[bool, Query(description="Return all files recursively without virtual folders")] = False,
 ) -> list[dict]:
-    """List files in storage under an optional prefix."""
-    return [
-        {
-            "key": f.key,
-            "size": f.size,
-            "last_modified": f.last_modified.isoformat(),
-        }
-        for f in storage.list_files(prefix)
-    ]
+    """List files in storage under an optional prefix.
+
+    By default returns virtual folder entries for subdirectories so the
+    frontend can navigate the tree one level at a time.  Pass ``flat=true``
+    to get the old behaviour (every blob, no folder entries).
+    """
+    # Normalize prefix: strip leading slash, ensure trailing slash for tree walk
+    prefix = prefix.lstrip("/")
+    dir_prefix = (prefix.rstrip("/") + "/") if prefix else ""
+
+    all_files = storage.list_files(prefix)
+    if flat:
+        return [
+            {"key": f.key, "size": f.size, "last_modified": f.last_modified.isoformat()}
+            for f in all_files
+        ]
+
+    result: list[dict] = []
+    seen_dirs: set[str] = set()
+    prefix_len = len(dir_prefix)
+
+    for f in all_files:
+        relative = f.key[prefix_len:]
+        slash = relative.find("/")
+        if slash != -1:
+            dir_key = dir_prefix + relative[: slash + 1]
+            if dir_key not in seen_dirs:
+                seen_dirs.add(dir_key)
+                result.append({
+                    "key": dir_key,
+                    "is_directory": True,
+                    "size": 0,
+                    "last_modified": f.last_modified.isoformat(),
+                })
+        else:
+            result.append({
+                "key": f.key,
+                "is_directory": False,
+                "size": f.size,
+                "last_modified": f.last_modified.isoformat(),
+            })
+
+    return result
 
 
 @router.get(
