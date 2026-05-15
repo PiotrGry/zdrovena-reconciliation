@@ -144,7 +144,7 @@ def get_close_state(
 
     Read-only — accessible to viewer role and above (D3 decision from eng review).
     """
-    month_pl = POLISH_MONTHS[month - 1]
+    month_pl = POLISH_MONTHS[month]
     month_dir = BASE_DIR / str(year) / month_pl
     storage = get_storage_service()
     blob_key = f"faktury/{year}/{month_pl}/.state.json"
