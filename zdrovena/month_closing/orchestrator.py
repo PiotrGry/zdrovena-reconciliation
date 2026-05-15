@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import calendar
 import logging
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -756,10 +758,26 @@ class MonthCloseOrchestrator:
         month_pl = POLISH_MONTHS[self.month].capitalize()
         subject = f"{COMPANY_BRAND} – Dokumenty księgowe – {month_pl} {self.year}"
         body = self._build_email_body()
-        attachments = [self.report.zip_path] if self.report.zip_path else []
-        svc.send_report(
-            to_email=ACCOUNTANT_EMAIL, subject=subject, body=body, attachments=attachments
-        )
+
+        # If zip_path is a blob key (not a local file), download it to a temp file
+        tmp_dir: str | None = None
+        zip_to_attach = self.report.zip_path
+        if self.report.zip_path and not self.report.zip_path.exists():
+            tmp_dir = tempfile.mkdtemp()
+            tmp_zip = Path(tmp_dir) / self.report.zip_path.name
+            self.storage.download(str(self.report.zip_path), tmp_zip)
+            zip_to_attach = tmp_zip
+            self.out.info(f"Downloaded blob ZIP to temp: {tmp_zip}")
+
+        attachments = [zip_to_attach] if zip_to_attach else []
+        try:
+            svc.send_report(
+                to_email=ACCOUNTANT_EMAIL, subject=subject, body=body, attachments=attachments
+            )
+        finally:
+            if tmp_dir:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
         self.report.email_sent = True
         self.out.ok(f"Email sent → {ACCOUNTANT_EMAIL}")
         self._mark_step_done("Email")
