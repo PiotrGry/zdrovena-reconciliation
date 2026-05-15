@@ -32,6 +32,8 @@ fi
 
 # Frontend (always native — Vite HMR doesn't work well in Docker)
 cd "$ROOT/frontend"
+# Ensure auth is disabled for local dev (file is gitignored)
+grep -q "VITE_AUTH_DISABLED" .env.local 2>/dev/null || echo "VITE_AUTH_DISABLED=true" >> .env.local
 npm run dev &
 FRONTEND_PID=$!
 
