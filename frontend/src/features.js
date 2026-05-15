@@ -1,7 +1,7 @@
 // Feature flags — ustaw na true żeby włączyć widok/funkcję
 export const FEATURES = {
     orders: false,
-    products: true,
+    products: false,
     users: false,
 
     // KPI cards in FilesView

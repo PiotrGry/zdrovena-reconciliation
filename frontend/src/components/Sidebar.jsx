@@ -39,8 +39,6 @@ export default function Sidebar({ page, onNavigate }) {
             </NavGroup>
 
             <NavGroup label={T.nav_accounting}>
-                <NavItem iconName="invoice" label={T.nav_invoices_sales} page="sales" current={page} onNavigate={onNavigate} />
-                <NavItem iconName="archive" label={T.nav_invoices_cost} page="costs" current={page} onNavigate={onNavigate} />
                 {canClose && (
                     <NavItem iconName="zap" label={T.nav_close} page="close" current={page} onNavigate={onNavigate} />
                 )}
