@@ -112,7 +112,7 @@ fi
 
 step "gitleaks — skanowanie sekretów"
 if command -v gitleaks >/dev/null 2>&1; then
-  gitleaks detect --no-banner -q && ok "gitleaks" || fail "gitleaks: wykryto sekrety w kodzie"
+  gitleaks detect --no-banner 2>&1 | tail -1 && ok "gitleaks" || fail "gitleaks: wykryto sekrety w kodzie"
 else
   echo -e "${SKIP} gitleaks nie znaleziony — zainstaluj: https://github.com/gitleaks/gitleaks"
 fi
