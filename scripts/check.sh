@@ -99,4 +99,19 @@ $PYTEST_CMD tests/ -q --tb=short \
   --cov-report=term-missing \
   && ok "tests passed" || fail "tests failed"
 
+step "Frontend lint (ESLint)"
+FRONTEND_DIR="$REPO_ROOT/frontend"
+if [ -d "$FRONTEND_DIR/node_modules" ]; then
+  (cd "$FRONTEND_DIR" && npm run lint 2>&1) && ok "eslint" || fail "eslint failed — run: cd frontend && npm run lint"
+else
+  echo -e "${SKIP} frontend/node_modules missing — run 'cd frontend && npm install' first"
+fi
+
+step "Frontend TypeScript build"
+if [ -d "$FRONTEND_DIR/node_modules" ]; then
+  (cd "$FRONTEND_DIR" && npm run build 2>&1 | tail -5) && ok "vite build" || fail "frontend build failed — run: cd frontend && npm run build"
+else
+  echo -e "${SKIP} frontend/node_modules missing — skipping build"
+fi
+
 echo -e "\n${GREEN}All checks passed — safe to push.${NC}"
