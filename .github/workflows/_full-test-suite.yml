@@ -188,10 +188,9 @@ jobs:
       - name: Seed staging inbox with test invoices
         env:
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          AZURE_STORAGE_ACCOUNT: zdrovenafiles
         run: |
-          ACCOUNT=$(az storage account list \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --query "[0].name" -o tsv)
+          ACCOUNT="$AZURE_STORAGE_ACCOUNT"
           echo "Storage account: $ACCOUNT"
 
           NOW=$(date -u +"%Y-%m")
