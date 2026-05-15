@@ -11,13 +11,11 @@ Provides:
 from __future__ import annotations
 
 import logging
-import os
 import re
 import time
 from pathlib import Path
 from typing import Any
 
-import keyring
 import requests
 
 from zdrovena.common.config import (
@@ -27,11 +25,11 @@ from zdrovena.common.config import (
     DEFAULT_RETRY_COUNT,
     DEFAULT_RETRY_DELAY,
     DEFAULT_TIMEOUT,
-    KEYCHAIN_ACCOUNT,
     KEYCHAIN_SERVICE,
 )
-from zdrovena.common.exceptions import ApiResponseFormatError, MissingSecretError
+from zdrovena.common.exceptions import ApiResponseFormatError
 from zdrovena.common.retry import retry_request
+from zdrovena.common.secrets import get_secret
 
 logger = logging.getLogger("zdrovena.common")
 
@@ -68,28 +66,18 @@ class FakturowniaClient:
         *,
         domain: str = DEFAULT_DOMAIN,
         service: str = KEYCHAIN_SERVICE,
-        account: str = KEYCHAIN_ACCOUNT,
         **kwargs: Any,
     ) -> FakturowniaClient:
-        """
-        Create a client using the API token from env or macOS Keychain.
+        """Create a client using the API token from env, Keychain, or Key Vault.
 
-        Resolution order:
-          1. ``FAKTUROWNIA_API_TOKEN`` environment variable
-          2. Keychain via ``keyring``
+        Delegates to get_secret() which resolves: env var → keyring → Azure Key Vault.
 
         Raises
         ------
         MissingSecretError
-            If the token is not found in either location.
+            If the token is not found in any location.
         """
-        try:
-            keyring_token = keyring.get_password(service, account)
-        except Exception:
-            keyring_token = None
-        token = os.environ.get("FAKTUROWNIA_API_TOKEN") or keyring_token
-        if not token:
-            raise MissingSecretError(service, account)
+        token = get_secret(service)
         return cls(api_token=token, domain=domain, **kwargs)
 
     # ── Low-level request with retry ─────────────────────────────────────────
