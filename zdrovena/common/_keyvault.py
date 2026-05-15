@@ -53,7 +53,7 @@ def get_keyvault_secret(vault_url: str, service: str) -> str | None:
     Only successful lookups are cached — failures are always retried.
     """
     try:
-        from azure.keyvault.secrets import SecretClient  # noqa: F401 — import guard
+        from azure.keyvault.secrets import SecretClient
     except ImportError:
         logger.debug("azure-keyvault-secrets not installed — skipping Key Vault lookup")
         return None
