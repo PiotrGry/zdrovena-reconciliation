@@ -34,20 +34,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Re-run quality gate on the PR HEAD. Even though the same SHA already passed
-  # develop-gate when the commit landed on develop, a reviewer may push fixup
-  # commits to the PR — those would skip lint/typecheck/security/coverage
-  # without this gate. KISS: deterministic checks are cheap, run them again.
+  # Quality gate runs detect-changes + typecheck + security in parallel.
+  # Its outputs (backend/frontend changed) are passed to full-test-suite so
+  # the duplicate detect-changes job there is a 2s no-op instead of 6s real run.
   quality-gate:
     name: Quality gate
     uses: ./.github/workflows/_quality-gate.yml
     secrets: inherit
 
+  # full-test-suite starts immediately — build Docker image overlaps with
+  # typecheck+security (both ~50-65s). deploy-backend inside full-test-suite
+  # must wait for quality-gate before it can proceed (gated via ci-gate input).
+  # This saves ~40s wall-clock: Docker build no longer sits behind quality-gate.
   full-test-suite:
     name: Full test suite
     needs: quality-gate
     uses: ./.github/workflows/_full-test-suite.yml
     secrets: inherit
+    with:
+      backend_changed: ${{ needs.quality-gate.outputs.backend }}
+      frontend_changed: ${{ needs.quality-gate.outputs.frontend }}
 
   ci-gate:
     name: CI Gate

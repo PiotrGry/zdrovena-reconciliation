@@ -14,6 +14,15 @@ name: Full Test Suite (reusable)
 
 on:
   workflow_call:
+    inputs:
+      backend_changed:
+        description: "True if backend code changed (from quality-gate detect-changes)"
+        type: string
+        default: ""
+      frontend_changed:
+        description: "True if frontend code changed (from quality-gate detect-changes)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -22,16 +31,20 @@ permissions:
 
 jobs:
   # ── 0. Detect changed areas ────────────────────────────────────────────────
+  # When called from pr-validate, inputs are pre-computed by quality-gate to
+  # avoid running dorny/paths-filter twice on the same SHA.
   detect-changes:
     name: Detect changed areas
     runs-on: ubuntu-latest
     outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ inputs.backend_changed != '' && inputs.backend_changed || steps.filter.outputs.backend }}
+      frontend: ${{ inputs.frontend_changed != '' && inputs.frontend_changed || steps.filter.outputs.frontend }}
       infra: ${{ steps.filter.outputs.infra }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+      - if: inputs.backend_changed == ''
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - if: inputs.backend_changed == ''
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
         id: filter
         with:
           filters: |
@@ -73,6 +86,7 @@ jobs:
           IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api
         run: |
           docker build \
+            --cache-from "$IMAGE:staging-latest" \
             --label "git.sha=${{ github.sha }}" \
             --label "git.ref=${{ github.head_ref }}" \
             -t "$IMAGE:staging-${{ github.sha }}" \
@@ -187,35 +201,25 @@ jobs:
           output_location: ""
           skip_app_build: true
 
-  # ── 3b. Resolve staging URLs (runs even when deploy jobs are skipped) ──────
+  # ── 3b. Resolve staging URLs (no az login needed — staging FQDN is static) ──
   resolve-urls:
     name: Resolve staging URLs
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    environment: staging
+    timeout-minutes: 2
     needs: [detect-changes, deploy-backend, deploy-frontend]
     if: always() && !failure() && !cancelled()
     outputs:
       api-url: ${{ steps.urls.outputs.api_url }}
       swa-url: ${{ steps.urls.outputs.swa_url }}
     steps:
-      - name: Azure login (OIDC)
-        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Resolve URLs
         id: urls
         run: |
+          # staging FQDN is static — no az login required
           if [[ "${{ needs.deploy-backend.result }}" == "success" ]]; then
             API_URL="${{ needs.deploy-backend.outputs.api-url }}"
           else
-            FQDN=$(az containerapp show \
-              --name zdrovena-api-staging \
-              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --query "properties.configuration.ingress.fqdn" -o tsv)
-            API_URL="https://$FQDN"
+            API_URL="https://${{ secrets.STAGING_API_FQDN }}"
           fi
           if [[ "${{ needs.deploy-frontend.result }}" == "success" ]]; then
             SWA_URL="${{ needs.deploy-frontend.outputs.swa-url }}"
