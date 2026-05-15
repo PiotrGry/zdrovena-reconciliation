@@ -169,9 +169,55 @@ const closeStateHasValidStructure: SmokeTest = {
   },
 };
 
+/**
+ * Full production flow — no dry_run, ignore_warnings=true.
+ * Sends a real email. Validates the complete pipeline runs end-to-end on staging.
+ * Requires seeded inbox files (seed-staging CI step).
+ */
+const closeFullFlowSendsEmail: SmokeTest = {
+  name: "business.close_full_flow_sends_email",
+  category: "business",
+  async run(ctx: TestContext): Promise<TestResult> {
+    const t0 = ms();
+    const token = await ctx.getAccountantToken();
+    if (!token) {
+      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+    }
+    const now = new Date();
+    const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    const month = now.getMonth() === 0 ? 12 : now.getMonth();
+    const res = await ctx.fetch(`${ctx.apiUrl}/api/close`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ year, month, dry_run: false, ignore_warnings: true }),
+      timeoutMs: 180_000,
+    });
+    if (res.status !== 200) {
+      const text = await res.text().catch(() => "");
+      return {
+        name: this.name, category: this.category, status: "FAIL",
+        duration_ms: ms() - t0,
+        evidence: `HTTP ${res.status}: ${text.slice(0, 200)}`,
+        error: `Expected 200, got ${res.status} — pipeline crashed or preflight blocked`,
+      };
+    }
+    const body = await res.json() as Record<string, unknown>;
+    const emailSent = body.email_sent === true;
+    return {
+      name: this.name,
+      category: this.category,
+      status: emailSent ? "PASS" : "FAIL",
+      duration_ms: ms() - t0,
+      evidence: `sales=${body.sales_invoice_count}, cost=${body.cost_invoice_count}, email_sent=${body.email_sent}, warnings=${JSON.stringify(body.warnings).slice(0, 100)}`,
+      error: !emailSent ? `Email not sent — check zoho-smtp-password in Key Vault or pipeline errors: ${JSON.stringify(body.errors).slice(0, 200)}` : undefined,
+    };
+  },
+};
+
 export const tests: SmokeTest[] = [
   closeDryRunDoesNotCrash,
   closeResponseHasRequiredFields,
   closePreflightBlockersAreMeaningful,
   closeStateHasValidStructure,
+  closeFullFlowSendsEmail,
 ];
