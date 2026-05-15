@@ -3,10 +3,9 @@ name: Develop — Fast Gate
 # Triggers:
 #  - push to develop: runs lint, typecheck, unit tests, security, infra checks.
 #  - pull_request → develop: same gate, validates contributions (incl. Dependabot)
-#    before they land. No paths filter on PR — internal detect-changes job in
-#    _quality-gate.yml handles per-area skipping, so the workflow always reports
-#    a status (avoids "no checks reported" gap that blocks branch protection /
-#    auto-merge for non-code PRs like dependabot.yml or workflow tweaks).
+#    before they land. Same paths filter as push — docs/infra-only PRs skip the
+#    workflow entirely. Branch protection on develop must use "required status
+#    checks" with "allow skipped" so docs-only PRs are not blocked.
 # No deploy, no staging. Target: under 5 minutes.
 
 on:
@@ -24,6 +23,16 @@ on:
       - ".github/workflows/_quality-gate.yml"
   pull_request:
     branches: [develop]
+    paths:
+      - "zdrovena/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "Dockerfile"
+      - "e2e/**"
+      - "frontend/**"
+      - ".github/workflows/develop-gate.yml"
+      - ".github/workflows/_quality-gate.yml"
   workflow_dispatch:
 
 permissions:

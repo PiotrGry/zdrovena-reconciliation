@@ -290,44 +290,6 @@ terraform plan
 terraform apply
 ```
 
-### GitHub Secrets (wymagane)
-
-| Secret | Opis |
-|--------|------|
-| `AZURE_CLIENT_ID` | Client ID SP `zdrovena-github-actions` (OIDC login) |
-| `AZURE_TENANT_ID` | ID tenanta Entra ID |
-| `AZURE_SUBSCRIPTION_ID` | ID subskrypcji Azure |
-| `AZURE_API_CLIENT_ID` | Client ID App Registration `zdrovena-api` (JWT audience) |
-| `ACR_LOGIN_SERVER` | URL Container Registry |
-| `SWA_DEPLOYMENT_TOKEN` | Token deploymentu Static Web Apps |
-
-### Terraform
-
-```bash
-cd infra/terraform
-cp terraform.tfvars.template terraform.tfvars
-# uzupełnij terraform.tfvars
-terraform init -backend-config=backend.hcl
-terraform plan
-terraform apply
-```
-
----
-
-## Sekrety CLI (Keychain)
-
-Wszystkie sekrety CLI przechowywane przez `keyring` (macOS Keychain). Konto: `humio`.
-
-| Keychain | Co | Jak uzyskać |
-|----------|----|------------|
-| `fakturownia_api_token` | Token API Fakturownia | zdrovena.fakturownia.pl → Ustawienia → API |
-| `fakturownia_login` | Login webowy Fakturownia | e-mail loginu do Fakturownia UI |
-| `fakturownia_password` | Hasło webowe Fakturownia | hasło do Fakturownia UI |
-| `zoho_smtp_password` | Hasło SMTP Zoho | hasło konta Zoho |
-| `zoho_client_id` | Zoho OAuth Client ID | api-console.zoho.eu → Self Client |
-| `zoho_client_secret` | Zoho OAuth Client Secret | api-console.zoho.eu → Self Client |
-| `zoho_refresh_token` | Zoho OAuth Refresh Token | `zdrovena setup zoho` |
-
 ---
 
 ## Testy
@@ -416,13 +378,6 @@ Available report kinds: `vat-sales` (default), `income`, `expenses`, `unpaid`,
 
 Output defaults to `~/Downloads/report_<kind>_<year>-<month>.pdf`.
 
-### Report credentials
-
-| Service (Keychain)         | What                      |
-|----------------------------|---------------------------|
-| `fakturownia_login`        | Fakturownia web login     |
-| `fakturownia_password`     | Fakturownia web password  |
-
 ## Month-close pipeline (`zdrovena close`)
 
 8-step automated pipeline:
@@ -455,40 +410,14 @@ headless runs.
 
 ## Credentials
 
-All secrets are stored via `keyring` (macOS Keychain, Linux SecretService, etc.). Use the built-in setup wizard:
+All credentials are stored locally via `keyring` (macOS Keychain, Linux SecretService). Use the built-in setup wizard:
 
 ```bash
-zdrovena setup                # interactive wizard — prompts for all secrets
-zdrovena setup --check        # verify which secrets are configured
-zdrovena setup zoho           # Zoho Mail OAuth flow (grant code → refresh token)
-zdrovena setup gads           # Google Ads OAuth flow (browser → token exchange)
+zdrovena setup                # interactive wizard
+zdrovena setup --check        # verify what is configured
+zdrovena setup zoho           # Zoho Mail OAuth flow
+zdrovena setup gads           # Google Ads OAuth flow
 ```
-
-### Required secrets
-
-| Service (Keychain)         | What                    | How to get |
-|----------------------------|-------------------------|------------|
-| `fakturownia_api_token`    | Fakturownia API token   | zdrovena.fakturownia.pl → Settings → API |
-| `fakturownia_login`        | Fakturownia web login   | Email used to log in to Fakturownia UI |
-| `fakturownia_password`     | Fakturownia web password| Password for the Fakturownia UI account |
-| `zoho_smtp_password`       | Zoho SMTP password      | Your Zoho email password |
-| `zoho_client_id`           | Zoho OAuth Client ID    | api-console.zoho.eu → Self Client |
-| `zoho_client_secret`       | Zoho OAuth Client Secret| api-console.zoho.eu → Self Client |
-| `zoho_refresh_token`       | Zoho OAuth Refresh Token| `zdrovena setup zoho` |
-
-### Optional secrets
-
-| Service (Keychain)         | What                    | How to get |
-|----------------------------|-------------------------|------------|
-| `ksef_certificate`         | KSeF X.509 cert (.crt)  | Wizard imports file → base64 → Keychain |
-| `ksef_private_key`         | KSeF private key (.key) | Wizard imports file → base64 → Keychain |
-| `ksef_key_password`        | KSeF key passphrase     | `zdrovena setup` |
-| `gads_developer_token`     | Google Ads dev token    | Google Ads → API Center |
-| `gads_client_id`           | Google Ads OAuth ID     | Google Cloud Console → Credentials |
-| `gads_client_secret`       | Google Ads OAuth Secret | Google Cloud Console → Credentials |
-| `gads_refresh_token`       | Google Ads refresh token| `zdrovena setup gads` |
-
-All secrets use Keychain account `humio`.
 
 ## Optional dependencies
 
