@@ -84,42 +84,37 @@ def _jwks_uri() -> str:
 def _validate_token(token: str) -> Principal:
     """Validate a JWT against Entra ID JWKS and return Principal."""
     try:
-        from jose import JWTError, jwt
-        from jose.backends import RSAKey  # noqa: F401 — ensures rsa support present
+        import jwt as _jwt
+        from jwt import InvalidTokenError, PyJWKClient
     except ImportError as exc:
         raise RuntimeError(
-            "python-jose not installed. Install with: pip install zdrovena-reconciliation[api]"
+            "PyJWT not installed. Install with: pip install zdrovena-reconciliation[api]"
         ) from exc
 
     try:
-        import json as _json
-        import urllib.request
-
-        with urllib.request.urlopen(_jwks_uri(), timeout=5) as resp:  # nosec B310 — URL from OIDC config, not user input
-            jwks = _json.loads(resp.read())
+        jwks_client = PyJWKClient(_jwks_uri(), cache_keys=True, timeout=5)
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
     except Exception as exc:
-        logger.error("Failed to fetch JWKS: %s", exc)
+        logger.error("Failed to fetch JWKS or find signing key: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Auth service unavailable",
         ) from exc
 
-    # python-jose's `audience` argument requires a single string at runtime
-    # (despite type stubs claiming Optional[str|list]). To accept both v1-style
-    # aud=<guid> and v2-style aud=api://<guid> tokens we skip the built-in
-    # check and validate the audience claim manually below.
-    # Read AZURE_API_AUDIENCE; fall back to AZURE_CLIENT_ID for backwards
-    # compatibility during the rename rollout, but prefer the new name —
-    # AZURE_CLIENT_ID is reserved by azure-identity for managed identity client_id.
+    # Accept both v1 (aud=<guid>) and v2 (aud=api://<guid>) tokens — validate manually.
+    # AZURE_API_AUDIENCE preferred; AZURE_CLIENT_ID kept for backwards compatibility
+    # (azure-identity reserves AZURE_CLIENT_ID for managed identity, hence the rename).
     client_id = os.environ.get("AZURE_API_AUDIENCE") or os.environ.get("AZURE_CLIENT_ID", "")
+    tenant_id = os.environ.get("AZURE_TENANT_ID", "")
+
     try:
-        claims = jwt.decode(
+        claims = _jwt.decode(
             token,
-            jwks,
+            signing_key.key,
             algorithms=["RS256"],
-            options={"verify_exp": True, "verify_aud": False},
+            options={"verify_aud": False},  # audience validated manually below
         )
-    except JWTError as exc:
+    except InvalidTokenError as exc:
         logger.warning("JWT decode failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -127,6 +122,22 @@ def _validate_token(token: str) -> Principal:
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
+    # Issuer validation — reject tokens from other tenants (code-review finding)
+    if tenant_id:
+        valid_issuers = {
+            f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+            f"https://sts.windows.net/{tenant_id}/",
+        }
+        token_iss = claims.get("iss", "")
+        if token_iss not in valid_issuers:
+            logger.warning("Token issuer mismatch: got %r", token_iss)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token issuer",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    # Audience validation — reject tokens not intended for this API
     if client_id:
         token_aud = claims.get("aud")
         if token_aud not in (client_id, f"api://{client_id}"):
