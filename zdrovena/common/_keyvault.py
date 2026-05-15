@@ -90,4 +90,4 @@ def ping_keyvault(vault_url: str) -> None:
     client: object = _get_client(vault_url)
     # list_properties_of_secrets returns a paged iterator — fetching the first
     # page is enough to verify auth + network without reading any secret values.
-    next(iter(client.list_properties_of_secrets(max_results=1)), None)  # type: ignore[attr-defined]
+    next(iter(client.list_properties_of_secrets()), None)  # type: ignore[attr-defined]
