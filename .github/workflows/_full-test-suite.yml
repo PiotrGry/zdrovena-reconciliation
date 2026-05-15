@@ -210,19 +210,19 @@ jobs:
 
           # Generate fake files and upload via az CLI (uses OIDC token directly)
           TMPDIR=$(mktemp -d)
-          FAKE_PDF="%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF"
-          FAKE_XML='<?xml version="1.0" encoding="UTF-8"?><root><test>seed data</test></root>'
+          FAKE_PDF='%PDF-1.4 seed'
+          FAKE_XML='<?xml version="1.0" encoding="UTF-8"?><root><test>seed</test></root>'
 
           if [ "$PREV_MONTH" -eq 12 ]; then NEXT_MONTH=1; NEXT_YEAR=$((PREV_YEAR+1)); else NEXT_MONTH=$((PREV_MONTH+1)); NEXT_YEAR=$PREV_YEAR; fi
           BANK_DATE=$(printf "%04d%02d01" "$NEXT_YEAR" "$NEXT_MONTH")
           MONTH_PAD=$(printf "%02d" "$PREV_MONTH")
 
-          printf "$FAKE_PDF" > "$TMPDIR/Wyciag_na_zadanie_${BANK_DATE}001.pdf"
-          printf "$FAKE_PDF" > "$TMPDIR/invoice-12345-${PREV_YEAR}${MONTH_PAD}15.pdf"
-          printf "$FAKE_PDF" > "$TMPDIR/3849995102.pdf"
-          printf "$FAKE_XML" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01-jpk_fa.xml"
-          printf "$FAKE_XML" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01-jpkv7m.xml"
-          printf "$FAKE_PDF" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01_wykaz_sprzedazy.pdf"
+          echo "$FAKE_PDF" > "$TMPDIR/Wyciag_na_zadanie_${BANK_DATE}001.pdf"
+          echo "$FAKE_PDF" > "$TMPDIR/invoice-12345-${PREV_YEAR}${MONTH_PAD}15.pdf"
+          echo "$FAKE_PDF" > "$TMPDIR/3849995102.pdf"
+          echo "$FAKE_XML" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01-jpk_fa.xml"
+          echo "$FAKE_XML" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01-jpkv7m.xml"
+          echo "$FAKE_PDF" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01_wykaz_sprzedazy.pdf"
 
           az storage blob upload-batch \
             --account-name "$ACCOUNT" \
