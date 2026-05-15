@@ -224,15 +224,17 @@ jobs:
           echo "$FAKE_XML" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01-jpkv7m.xml"
           echo "$FAKE_PDF" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01_wykaz_sprzedazy.pdf"
 
-          # Diagnose: show which principal is logged in and what roles it has
-          echo "=== az account show ==="
-          az account show --query "{name:name, user:user, tenantId:tenantId}" -o json
-          PRINCIPAL_ID=$(az account show --query "user.name" -o tsv)
-          echo "=== role assignments for $PRINCIPAL_ID on $ACCOUNT ==="
+          # Diagnose: resolve object ID of logged-in SP and check blob role
+          CLIENT_ID=$(az account show --query "user.name" -o tsv)
+          SUB_ID=$(az account show --query "id" -o tsv)
+          OBJECT_ID=$(az ad sp show --id "$CLIENT_ID" --query "id" -o tsv 2>/dev/null || echo "LOOKUP_FAILED")
+          echo "=== principal object ID: $OBJECT_ID ==="
+          echo "=== expected object ID: 1b5be27c-6ea7-426f-af8b-9ac8d765b485 ==="
+          echo "=== MATCH: $([ "$OBJECT_ID" = "1b5be27c-6ea7-426f-af8b-9ac8d765b485" ] && echo YES || echo NO) ==="
           az role assignment list \
-            --assignee "$PRINCIPAL_ID" \
-            --scope "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.Storage/storageAccounts/$ACCOUNT" \
-            --query "[].{role:roleDefinitionName}" -o table 2>&1 || true
+            --assignee "$OBJECT_ID" \
+            --scope "/subscriptions/$SUB_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.Storage/storageAccounts/$ACCOUNT" \
+            --query "[].roleDefinitionName" -o tsv 2>&1 || true
 
           az storage blob upload-batch \
             --account-name "$ACCOUNT" \
