@@ -67,7 +67,7 @@ resource "azurerm_role_assignment" "github_acr_push" {
 # Required for seed-staging CI step to upload test invoice files to blob storage.
 # Contributor on RG does not grant data-plane blob access (Azure RBAC split).
 resource "azurerm_role_assignment" "github_staging_blob" {
-  scope                = azurerm_storage_container.files_staging.resource_manager_id
+  scope                = azurerm_storage_account.storage.id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = azurerm_user_assigned_identity.github_actions.principal_id
 }
