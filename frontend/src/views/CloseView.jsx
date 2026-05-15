@@ -1,356 +1,67 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useAuth } from '../auth'
 import { useT } from '../lang'
-import { PageHead } from '../components/PageHead'
-import { Icon } from '../components/Icon'
-import { Pill } from '../components/Pill'
-import { PIPELINE_STEPS, MONTHS_PL } from '../data'
+import { CloseHero } from './close/CloseHero'
+import { DocChecklist } from './close/DocChecklist'
+import { RunControls } from './close/RunControls'
+import { RunPanel } from './close/RunPanel'
+import { ResultPanel } from './close/ResultPanel'
+import { CloseHistoryTable } from './close/CloseHistoryTable'
+import { MONTHS_PL } from '../data'
 
-const STEP_EST_MS = [2000, 1000, 5000, 8000, 12000, 2000, 4000, 3000]
-
-function stepStateClass(state) {
-    if (state === 'running') return 'running'
-    if (state === 'done') return 'done'
-    if (state === 'error') return 'error'
-    return 'pending'
-}
-
-function ResultSummary({ result, T }) {
-    if (!result) return null
-    return (
-        <div className="card">
-            <div className="card-head">
-                <span className="card-title"><Icon name="check" size={14} /> {T.close_result}</span>
-            </div>
-            <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', fontSize: 13 }}>
-                    <span><strong>{result.sales_invoice_count}</strong> {T.close_sales_count}</span>
-                    <span><strong>{result.cost_invoice_count}</strong> {T.close_cost_count}</span>
-                    <span><strong>{result.sales_gross_total}</strong> brutto</span>
-                    <Pill kind={result.email_sent ? 'ok' : 'default'}>
-                        {result.email_sent ? T.close_email_sent : T.close_email_pending}
-                    </Pill>
-                </div>
-                {result.warnings?.length > 0 && (
-                    <div>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--warning)', marginBottom: 4 }}>
-                            ⚠ {T.close_warnings} ({result.warnings.length})
-                        </div>
-                        {result.warnings.map((w, i) => (
-                            <div key={i} style={{ fontSize: 12, color: 'var(--text-2)', paddingLeft: 12 }}>· {w}</div>
-                        ))}
-                    </div>
-                )}
-                {result.errors?.length > 0 && (
-                    <div>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--err, #e53e3e)', marginBottom: 4 }}>
-                            ✖ {T.close_errors_label} ({result.errors.length})
-                        </div>
-                        {result.errors.map((e, i) => (
-                            <div key={i} style={{ fontSize: 12, color: 'var(--text-2)', paddingLeft: 12 }}>· {e}</div>
-                        ))}
-                    </div>
-                )}
-            </div>
-        </div>
-    )
-}
-
-export function CloseRunner({ year, month, dryRun, preCompleted = [], onDone }) {
+/**
+ * Zamknięcie miesiąca — inline single-page layout.
+ *
+ * Sekwencja sekcji (od góry):
+ *   1. CloseHero — duży tytuł miesiąca + status + ostatnie zamknięcie
+ *   2. DocChecklist — 6 wymaganych dokumentów + collapsible inbox
+ *   3. RunControls — wybór miesiąca, dry-run, vendorzy, CTA
+ *   4. RunPanel — kroki + logi side-by-side (tylko running/error/done)
+ *   5. ResultPanel — metryki wyniku (tylko done)
+ *   6. CloseHistoryTable — historia ostatnich zamknięć
+ */
+export default function CloseView() {
+    useT() // lang context needed for child components
     const { getToken } = useAuth()
-    const { t, lang } = useT()
-    const T = t[lang]
-    const [states, setStates] = useState(() =>
-        PIPELINE_STEPS.map(s => preCompleted.includes(s.key) ? 'done' : 'pending')
-    )
-    const [logs, setLogs] = useState(() =>
-        preCompleted.map(k => {
-            const step = PIPELINE_STEPS.find(s => s.key === k)
-            return step ? { ts: '—', msg: `✓ ${step.title} (checkpoint)`, kind: 'ok' } : null
-        }).filter(Boolean)
-    )
-    const [status, setStatus] = useState('running')
-    const [result, setResult] = useState(null)
-    const abortRef = useRef(null)
-    const animStoppedRef = useRef(false)
 
-    const addLog = (msg, kind = 'info') =>
-        setLogs(prev => [...prev, { ts: new Date().toLocaleTimeString('pl-PL'), msg, kind }])
+    // Domyślnie poprzedni miesiąc (ten do zamknięcia)
+    const now = new Date()
+    const defaultMonth = now.getMonth() === 0 ? 12 : now.getMonth()
+    const defaultYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()
 
-    const run = useCallback(async () => {
-        abortRef.current = new AbortController()
-        animStoppedRef.current = false
-        addLog('Uruchamianie pipeline…', 'muted')
-
-        // UX animation runs concurrently with the API call
-        const animate = async () => {
-            for (let i = 0; i < PIPELINE_STEPS.length; i++) {
-                if (animStoppedRef.current) break
-                if (preCompleted.includes(PIPELINE_STEPS[i].key)) continue
-                setStates(prev => prev.map((s, idx) => idx === i ? 'running' : s))
-                await new Promise(r => setTimeout(r, STEP_EST_MS[i] * 0.4))
-                if (!animStoppedRef.current) {
-                    setStates(prev => prev.map((s, idx) => idx === i ? 'done' : s))
-                }
-            }
-        }
-        animate()
-
-        try {
-            const token = await getToken()
-            const res = await fetch('/api/close', {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ year, month, dry_run: dryRun }),
-                signal: abortRef.current.signal,
-            })
-
-            animStoppedRef.current = true
-
-            if (!res.ok) {
-                const body = await res.json().catch(() => ({}))
-                const detail = body.detail
-                // 422 — pre-flight blockers: {blockers: [...], log_lines: [...]}
-                if (res.status === 422 && detail?.blockers) {
-                    setStates(prev => prev.map(s => s === 'running' ? 'error' : s))
-                    detail.log_lines?.forEach(line => addLog(line, 'info'))
-                    addLog('── Brakujące dokumenty ──', 'err')
-                    detail.blockers.forEach(d => addLog(`  • ${d}`, 'err'))
-                    setStatus('error')
-                    onDone?.('error', null)
-                    return
-                }
-                throw new Error(Array.isArray(detail) ? detail.join(', ') : (detail ?? `HTTP ${res.status}`))
-            }
-
-            const data = await res.json()
-
-            // Show full CLI output in log panel
-            data.log_lines?.forEach(line => addLog(line, 'info'))
-
-            // Reconcile actual completed steps from API response
-            const allCompleted = new Set([...(preCompleted ?? []), ...(data.steps_completed ?? [])])
-            setStates(PIPELINE_STEPS.map(s => {
-                if (allCompleted.has(s.key)) return 'done'
-                if (data.has_critical_errors) return 'error'
-                return 'pending'
-            }))
-
-            setResult(data)
-            addLog(
-                `Pipeline zakończony. Faktury: ${data.sales_invoice_count}, brutto: ${data.sales_gross_total}`,
-                data.has_critical_errors ? 'err' : 'ok'
-            )
-
-            const finalStatus = data.has_critical_errors ? 'error' : 'done'
-            setStatus(finalStatus)
-            onDone?.(finalStatus, data)
-        } catch (e) {
-            animStoppedRef.current = true
-            if (e.name === 'AbortError') {
-                setStates(prev => prev.map(s => s === 'running' ? 'pending' : s))
-                addLog('Pipeline przerwany.', 'muted')
-                setStatus('ready')
-                onDone?.('ready', null)
-            } else {
-                setStates(prev => prev.map(s => s === 'running' ? 'error' : s))
-                addLog(`Błąd: ${e.message}`, 'err')
-                setStatus('error')
-                onDone?.('error', null)
-            }
-        }
-    }, [year, month, dryRun, getToken, onDone, preCompleted])
-
-    const abort = () => abortRef.current?.abort()
-
-    const started = useRef(false)
-    if (!started.current) { started.current = true; run() }
-
-    return (
-        <div className="close-body">
-            <div className="card">
-                <div className="card-head">
-                    <span className="card-title"><Icon name="play" size={14} /> Kroki pipeline</span>
-                </div>
-                <div className="steps" style={{ padding: '4px 16px 12px' }}>
-                    {PIPELINE_STEPS.map((step, i) => (
-                        <div key={step.n} className="step" data-state={stepStateClass(states[i])}>
-                            <div className="step-num">{states[i] === 'done' ? <Icon name="check" size={11} /> : step.n}</div>
-                            <div>
-                                <div className="step-title">{step.title}</div>
-                            </div>
-                            <div className="step-duration">{states[i] === 'running' ? step.est : states[i] === 'done' ? '✓' : step.est}</div>
-                        </div>
-                    ))}
-                </div>
-                {status === 'running' && (
-                    <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)' }}>
-                        <button className="btn btn-ghost btn-sm" onClick={abort}>
-                            <Icon name="x" size={13} /> Przerwij
-                        </button>
-                    </div>
-                )}
-            </div>
-
-            {result && <ResultSummary result={result} T={T} />}
-
-            <div className="card log-card">
-                <div className="card-head">
-                    <span className="card-title"><Icon name="eye" size={13} /> Logi</span>
-                    <span className="card-sub">{logs.length} wpisów</span>
-                </div>
-                <div className="log-body">
-                    {logs.map((l, i) => (
-                        <div key={i} className={`log-line ${l.kind}`}>
-                            <span className="log-time">{l.ts}</span>
-                            <span>{l.msg}</span>
-                        </div>
-                    ))}
-                </div>
-            </div>
-        </div>
-    )
-}
-
-export function CloseModal({ open, onClose, onDone: onDoneExternal }) {
-    const { t, lang } = useT()
-    const { getToken } = useAuth()
-    const T = t[lang]
+    const [year, setYear] = useState(defaultYear)
+    const [month, setMonth] = useState(defaultMonth)
     const [dryRun, setDryRun] = useState(true)
     const [running, setRunning] = useState(false)
     const [status, setStatus] = useState('ready')
     const [preCompleted, setPreCompleted] = useState([])
-    const [year, setYear] = useState(() => new Date().getFullYear())
-    const [month, setMonth] = useState(() => new Date().getMonth() + 1)
+    const [ignoredVendors, setIgnoredVendors] = useState([])
+    const [inboxReady, setInboxReady] = useState(null) // null=loading, true=ok, false=missing
+    const [hasResult, setHasResult] = useState(false)
+    const [resultData, setResultData] = useState(null)
+    const [runProgress, setRunProgress] = useState(0)
+    const [runKey, setRunKey] = useState(0)
+    const [runDryRun, setRunDryRun] = useState(true) // dry setting dla bieżącego runu (nie zmienia checkboxa)
+    const [historyKey, setHistoryKey] = useState(0)
+    const [lastClose, setLastClose] = useState(null)
 
-    const years = [new Date().getFullYear() - 1, new Date().getFullYear()]
+    const yearOptions = [defaultYear - 1, defaultYear, defaultYear + 1]
+        .filter(y => y <= now.getFullYear())
 
+    const toggleVendor = useCallback((v) => {
+        setIgnoredVendors(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v])
+    }, [])
+
+    // Zmiana miesiąca/roku resetuje stan biegu i wyniku
     useEffect(() => {
-        if (!open) return
-        const fetchState = async () => {
-            try {
-                const token = await getToken()
-                const res = await fetch(
-                    `/api/close/state?year=${year}&month=${month}`,
-                    { headers: { Authorization: `Bearer ${token}` } }
-                )
-                if (res.ok) {
-                    const data = await res.json()
-                    setPreCompleted(data.completed_steps ?? [])
-                }
-            } catch {
-                // brak state — nie blokuj
-            }
-        }
-        fetchState()
-    }, [open, year, month, getToken])
+        setInboxReady(null)
+        setRunning(false)
+        setStatus('ready')
+        setHasResult(false)
+        setResultData(null)
+    }, [month, year])
 
-    useEffect(() => {
-        if (!open) { setRunning(false); setStatus('ready') }
-    }, [open])
-
-    if (!open) return null
-
-    const start = () => { setStatus('ready'); setRunning(true) }
-    // On error: keep runner visible so user can read logs — don't tear it down.
-    // User must explicitly click "Spróbuj ponownie" or "Zamknij" to proceed.
-    const done = (s) => { setStatus(s); if (s !== 'error' && s !== 'done') setRunning(false); onDoneExternal?.(s) }
-
-    return (
-        <div className="modal-backdrop open">
-            <div className="modal" style={{ width: '92vw' }}>
-                <div className="modal-head">
-                    <div className="modal-eyebrow">{T.close_step} · {MONTHS_PL[month - 1]} {year}</div>
-                    <h2 className="modal-title">{T.close_title}</h2>
-                </div>
-                <div className="modal-body" style={{ padding: '18px 26px' }}>
-                    {!running ? (
-                        <>
-                            {status === 'ready' && (
-                                <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
-                                    <label style={{ fontSize: 13, color: 'var(--text-2)' }}>{T.close_month}</label>
-                                    <select
-                                        className="filter-btn"
-                                        value={month}
-                                        onChange={e => setMonth(Number(e.target.value))}
-                                        style={{ padding: '4px 8px' }}
-                                    >
-                                        {MONTHS_PL.map((m, i) => (
-                                            <option key={i + 1} value={i + 1}>{m}</option>
-                                        ))}
-                                    </select>
-                                    <select
-                                        className="filter-btn"
-                                        value={year}
-                                        onChange={e => setYear(Number(e.target.value))}
-                                        style={{ padding: '4px 8px' }}
-                                    >
-                                        {years.map(y => <option key={y} value={y}>{y}</option>)}
-                                    </select>
-                                </div>
-                            )}
-                            <div className="steps">
-                                {preCompleted.length > 0 && (
-                                    <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                                        <Icon name="check" size={12} /> {preCompleted.length} z {PIPELINE_STEPS.length} kroków ukończonych z poprzedniego runu (checkpoint)
-                                    </div>
-                                )}
-                                {PIPELINE_STEPS.map(step => (
-                                    <div key={step.n} className="step" data-state={preCompleted.includes(step.key) ? 'done' : 'pending'}>
-                                        <div className="step-num">{preCompleted.includes(step.key) ? <Icon name="check" size={11} /> : step.n}</div>
-                                        <div>
-                                            <div className="step-title">{step.title}</div>
-                                        </div>
-                                        <div className="step-duration">{preCompleted.includes(step.key) ? '✓' : step.est}</div>
-                                    </div>
-                                ))}
-                            </div>
-                        </>
-                    ) : (
-                        <CloseRunner
-                            year={year}
-                            month={month}
-                            dryRun={dryRun}
-                            preCompleted={preCompleted}
-                            onDone={done}
-                        />
-                    )}
-                </div>
-                <div className="modal-foot">
-                    <label className="dry-toggle">
-                        <input type="checkbox" checked={dryRun} onChange={e => setDryRun(e.target.checked)} disabled={running} />
-                        {T.close_dryrun}
-                    </label>
-                    <div style={{ display: 'flex', gap: 10 }}>
-                        <button className="btn btn-ghost" onClick={onClose}>Zamknij</button>
-                        {!running && status !== 'done' && (
-                            <button className="btn btn-primary" onClick={start}>
-                                <Icon name="play" size={14} /> {T.close_run}
-                            </button>
-                        )}
-                        {running && status === 'error' && (
-                            <button className="btn btn-ghost" onClick={() => { setRunning(false); setStatus('ready') }}>
-                                ↩ Spróbuj ponownie
-                            </button>
-                        )}
-                    </div>
-                </div>
-            </div>
-        </div>
-    )
-}
-
-export default function CloseView() {
-    const { t, lang } = useT()
-    const { getToken } = useAuth()
-    const T = t[lang]
-    const [open, setOpen] = useState(false)
-    const [lastStatus, setLastStatus] = useState('ready')
-    const [completedSteps, setCompletedSteps] = useState([])
-
-    const year = new Date().getFullYear()
-    const month = new Date().getMonth() + 1
-
+    // Załaduj checkpoint state dla wybranego miesiąca
     const loadState = useCallback(async () => {
         try {
             const token = await getToken()
@@ -359,82 +70,133 @@ export default function CloseView() {
             })
             if (res.ok) {
                 const data = await res.json()
-                setCompletedSteps(data.completed_steps ?? [])
+                setPreCompleted(data.completed_steps ?? [])
             }
         } catch {
-            // ignore — non-blocking
+            /* ignore */
         }
     }, [getToken, year, month])
 
     useEffect(() => { loadState() }, [loadState])
 
-    const statusClass = {
-        ready: 'state-ready',
-        running: 'state-running',
-        done: 'state-done',
-        error: 'state-error',
-    }[lastStatus] ?? 'state-ready'
+    // Załaduj informacje o ostatnim zamknięciu (do hero)
+    useEffect(() => {
+        let cancelled = false
+        const loadLast = async () => {
+            try {
+                const token = await getToken()
+                const res = await fetch('/api/close/history?limit=1', {
+                    headers: { Authorization: `Bearer ${token}` },
+                })
+                if (!res.ok) return
+                const data = await res.json()
+                if (cancelled || !data?.length) return
+                const h = data[0]
+                setLastClose({
+                    ts: h.ts,
+                    monthName: h.month_name ?? MONTHS_PL[(h.month ?? 1) - 1],
+                    year: h.year,
+                    status: h.status,
+                })
+            } catch {
+                /* ignore */
+            }
+        }
+        loadLast()
+        return () => { cancelled = true }
+    }, [getToken, historyKey])
 
-    const statusLabel = {
-        ready: T.close_status_ready,
-        running: T.close_status_running,
-        done: T.close_status_done,
-        error: T.close_status_error,
-    }[lastStatus] ?? ''
+    // Decyzja: czy CTA jest aktywne i jaki jest powód blokady
+    const canRun = inboxReady === true && !running
+    const runReason = running ? null
+        : inboxReady === null ? 'Sprawdzam dokumenty…'
+        : inboxReady === false ? 'Uzupełnij brakujące dokumenty w checklist powyżej'
+        : null
 
-    const handleDone = s => {
-        setLastStatus(s)
+    // Status pochodny dla hero (uwzględnia inboxReady)
+    const heroStatus = running
+        ? 'running'
+        : status === 'error'
+            ? 'error'
+            : status === 'done'
+                ? 'done'
+                : !inboxReady
+                    ? 'blocked'
+                    : 'ready'
+
+    const start = (forceDry = null) => {
+        // forceDry overrides checkbox (e.g. "Sprawdź dry-run") without changing dryRun state
+        setRunDryRun(forceDry ?? dryRun)
+        setStatus('ready')
+        setHasResult(false)
+        setResultData(null)
+        setRunProgress(0)
+        setRunning(true)
+        setRunKey(k => k + 1)
+    }
+
+    const handleDone = (s, data) => {
+        setStatus(s)
+        setRunning(false)
+        if (s === 'done' || s === 'error') {
+            setHasResult(true)
+            setResultData(data)
+            setHistoryKey(k => k + 1) // odśwież historię zawsze po zakończeniu
+        }
         if (s === 'done') loadState()
     }
 
+
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gap)' }}>
-            <PageHead
-                title={T.close_title}
-                sub={T.close_sub}
-                actions={
-                    <button className="btn btn-primary" onClick={() => setOpen(true)}>
-                        <Icon name="zap" size={14} /> {T.close_run}
-                    </button>
-                }
+        <div className="close-view">
+            <CloseHero
+                year={year}
+                month={month}
+                status={heroStatus}
+                progress={running ? runProgress : null}
+                lastClose={lastClose}
+                isDryRun={running || hasResult ? runDryRun : dryRun}
             />
 
-            <div className="close-status-bar">
-                <div className="close-state">
-                    <span className={`state-badge ${statusClass}`}>{statusLabel}</span>
-                    <span className="close-summary">
-                        Pipeline 8-stopniowy · {MONTHS_PL[month - 1]} {year}
-                    </span>
-                </div>
-                {completedSteps.length > 0 && (
-                    <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-                        {completedSteps.length} / {PIPELINE_STEPS.length} kroków ukończonych
-                    </span>
-                )}
-            </div>
+            <DocChecklist onStatusChange={setInboxReady} />
 
-            <div className="card">
-                <div className="card-head">
-                    <span className="card-title"><Icon name="play" size={14} /> Kroki pipeline</span>
-                </div>
-                <div className="steps" style={{ padding: '4px 16px 12px' }}>
-                    {PIPELINE_STEPS.map(step => (
-                        <div key={step.n} className="step" data-state={completedSteps.includes(step.key) ? 'done' : 'pending'}>
-                            <div className="step-num">
-                                {completedSteps.includes(step.key) ? <Icon name="check" size={11} /> : step.n}
-                            </div>
-                            <div>
-                                <div className="step-title">{step.title}</div>
-                            </div>
-                            <div className="step-duration">
-                                {completedSteps.includes(step.key) ? '✓' : step.est}
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
+            <RunControls
+                year={year}
+                month={month}
+                onYearChange={setYear}
+                onMonthChange={setMonth}
+                yearOptions={yearOptions}
+                dryRun={dryRun}
+                onDryRunChange={setDryRun}
+                ignoredVendors={ignoredVendors}
+                onToggleVendor={toggleVendor}
+                canRun={canRun}
+                runReason={runReason}
+                running={running}
+                hasResult={hasResult}
+                preCompleted={preCompleted}
+                onRun={() => start()}
+                onDryCheck={() => start(true)}
+            />
 
-            <CloseModal open={open} onClose={() => setOpen(false)} onDone={handleDone} />
+            {(running || hasResult) && (
+                <RunPanel
+                    key={runKey}
+                    year={year}
+                    month={month}
+                    dryRun={runDryRun}
+                    preCompleted={preCompleted}
+                    ignoredVendors={ignoredVendors}
+                    onProgressChange={setRunProgress}
+                    onDone={handleDone}
+                />
+            )}
+
+            {hasResult && status === 'done' && resultData && (
+                <ResultPanel result={resultData} />
+            )}
+
+            <CloseHistoryTable refreshKey={historyKey} />
         </div>
     )
 }

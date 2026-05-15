@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -290,3 +290,164 @@ class TestPrincipal:
     def test_require_role_passes_for_any_matching(self):
         p = Principal(sub="x", email="x@x.com", roles=["zdrovena-accountant"])
         p.require_role("zdrovena-admin", "zdrovena-accountant")
+
+
+# ── _validate_token unit tests (PyJWT migration) ─────────────────────────────
+
+
+class TestValidateToken:
+    """Coverage for _validate_token — issuer, audience, JWKS errors."""
+
+    def _make_token(self, payload: dict, key=None):
+        """Build a signed RS256 JWT using a fresh RSA key."""
+        import jwt
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        if key is None:
+            key = rsa.generate_private_key(
+                public_exponent=65537, key_size=2048, backend=default_backend()
+            )
+        token = jwt.encode(payload, key, algorithm="RS256")
+        return token, key
+
+    def test_jwks_fetch_failure_returns_503(self, monkeypatch):
+        from zdrovena.api.auth import _validate_token
+
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "false")
+        monkeypatch.setenv("AZURE_TENANT_ID", "test-tenant")
+
+        with patch(
+            "jwt.PyJWKClient.get_signing_key_from_jwt", side_effect=Exception("network error")
+        ):
+            from fastapi import HTTPException
+
+            with pytest.raises(HTTPException) as exc:
+                _validate_token("dummy.token.here")
+            assert exc.value.status_code == 503
+
+    def test_invalid_token_returns_401(self, monkeypatch):
+        from zdrovena.api.auth import _validate_token
+
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "false")
+        monkeypatch.setenv("AZURE_TENANT_ID", "test-tenant")
+        monkeypatch.setenv("AZURE_API_AUDIENCE", "my-api")
+
+        import jwt
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        key = rsa.generate_private_key(65537, 2048, default_backend())
+        token = jwt.encode({"sub": "user"}, key, algorithm="RS256")
+        signing_key_mock = MagicMock()
+        signing_key_mock.key = key.public_key()
+
+        with patch("jwt.PyJWKClient.get_signing_key_from_jwt", return_value=signing_key_mock):
+            from fastapi import HTTPException
+
+            # Token has no iss — should fail issuer check
+            with pytest.raises(HTTPException) as exc:
+                _validate_token(token)
+            assert exc.value.status_code == 401
+
+    def test_wrong_issuer_returns_401(self, monkeypatch):
+        from zdrovena.api.auth import _validate_token
+
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "false")
+        monkeypatch.setenv("AZURE_TENANT_ID", "correct-tenant")
+        monkeypatch.setenv("AZURE_API_AUDIENCE", "my-api")
+
+        import time
+
+        import jwt
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        key = rsa.generate_private_key(65537, 2048, default_backend())
+        token = jwt.encode(
+            {
+                "sub": "user",
+                "iss": "https://evil.com/wrong-tenant",
+                "aud": "my-api",
+                "exp": int(time.time()) + 3600,
+            },
+            key,
+            algorithm="RS256",
+        )
+        signing_key_mock = MagicMock()
+        signing_key_mock.key = key.public_key()
+
+        with patch("jwt.PyJWKClient.get_signing_key_from_jwt", return_value=signing_key_mock):
+            from fastapi import HTTPException
+
+            with pytest.raises(HTTPException) as exc:
+                _validate_token(token)
+            assert exc.value.status_code == 401
+
+    def test_wrong_audience_returns_401(self, monkeypatch):
+        from zdrovena.api.auth import _validate_token
+
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "false")
+        monkeypatch.setenv("AZURE_TENANT_ID", "my-tenant")
+        monkeypatch.setenv("AZURE_API_AUDIENCE", "my-api")
+
+        import time
+
+        import jwt
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        key = rsa.generate_private_key(65537, 2048, default_backend())
+        token = jwt.encode(
+            {
+                "sub": "user",
+                "iss": "https://login.microsoftonline.com/my-tenant/v2.0",
+                "aud": "wrong-api",
+                "exp": int(time.time()) + 3600,
+            },
+            key,
+            algorithm="RS256",
+        )
+        signing_key_mock = MagicMock()
+        signing_key_mock.key = key.public_key()
+
+        with patch("jwt.PyJWKClient.get_signing_key_from_jwt", return_value=signing_key_mock):
+            from fastapi import HTTPException
+
+            with pytest.raises(HTTPException) as exc:
+                _validate_token(token)
+            assert exc.value.status_code == 401
+
+    def test_valid_token_returns_principal(self, monkeypatch):
+        from zdrovena.api.auth import _validate_token
+
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "false")
+        monkeypatch.setenv("AZURE_TENANT_ID", "my-tenant")
+        monkeypatch.setenv("AZURE_API_AUDIENCE", "my-api")
+
+        import time
+
+        import jwt
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        key = rsa.generate_private_key(65537, 2048, default_backend())
+        token = jwt.encode(
+            {
+                "sub": "abc123",
+                "preferred_username": "user@example.com",
+                "iss": "https://login.microsoftonline.com/my-tenant/v2.0",
+                "aud": "my-api",
+                "exp": int(time.time()) + 3600,
+                "roles": ["zdrovena-admin"],
+            },
+            key,
+            algorithm="RS256",
+        )
+        signing_key_mock = MagicMock()
+        signing_key_mock.key = key.public_key()
+
+        with patch("jwt.PyJWKClient.get_signing_key_from_jwt", return_value=signing_key_mock):
+            principal = _validate_token(token)
+            assert principal.email == "user@example.com"
+            assert "zdrovena-admin" in principal.roles

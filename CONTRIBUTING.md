@@ -1,5 +1,33 @@
 # Contributing
 
+## Local setup
+
+### Pre-commit hooks (required for code quality)
+
+Lint and formatting checks run **locally before you commit**, not in CI. This keeps your PR unblocked and catches issues early.
+
+1. Install pre-commit:
+   ```bash
+   pip install pre-commit
+   ```
+
+2. Install the git hooks:
+   ```bash
+   pre-commit install
+   ```
+
+3. Run checks before committing (automatic after install):
+   ```bash
+   pre-commit run --all-files
+   ```
+
+Checks that run locally:
+- **Python**: ruff (linting + formatting)
+- **Python**: pyright (type checking)
+- **Frontend**: eslint (linting) + prettier (formatting)
+
+If pre-commit fails, it will show you the issues. Most are auto-fixable — run the commands again after fixes are made.
+
 ## Branching strategy
 
 ```
@@ -41,35 +69,79 @@ footer bumps major. Semantic release runs automatically on merge to `main`.
 
 ## Quality gate
 
-Every PR must pass:
+### Local (automatic on push)
+
+When you `git push`, a pre-push hook runs all tests automatically:
 
 ```bash
-# Lint
+git push  # ← pytest fires here, blocks push if tests fail
+```
+
+This saves time — no waiting for CI feedback on unit tests.
+
+To install the hook (one-time per developer):
+```bash
+pre-commit install --hook-type pre-push
+```
+
+### CI (after push to develop / on PR to main)
+
+The GitHub Actions quality gate is now faster (no unit tests):
+
+```bash
+# Lint + format
 ruff check . && ruff format --check .
 
 # Type check
 pyright
 
-# Tests (≥80% coverage)
-pytest --cov=zdrovena --cov-fail-under=80
-
-# Security
-pip-audit && bandit -r zdrovena -ll
+# Security (SAST)
+bandit -r zdrovena/ -ll -ii -q
+pip-audit
+gitleaks
+trivy
 ```
 
-After the Node.js migration (Phase 2), these swap to `eslint`, `tsc`, `vitest`, `npm audit`.
+### Manual full check (optional)
+
+To run all checks manually before pushing:
+
+```bash
+bash scripts/check.sh
+```
+
+This includes lint + typecheck + full test suite + security.
+
+**Staging gate (PR → main):** runs TypeScript smoke tests + Playwright E2E against a real staging deployment. This is the final quality gate before production.
+
+The frontend has its own lint gate (`cd frontend && npm run lint`) run via pre-commit.
+
+## Local dev
+
+```bash
+bash dev.sh
+```
+
+This starts the FastAPI backend (`AZURE_AUTH_DISABLED=true`, port 8000) and the Vite frontend (port 5173) together. API docs are at http://localhost:8000/docs.
+
+Set `AZURE_AUTH_DISABLED=true` to skip JWT validation locally — all requests are treated as `zdrovena-admin`.
 
 ## Roles
 
-The app has three roles: `viewer`, `accountant`, `admin`.
+The app has three roles: `zdrovena-viewer`, `zdrovena-accountant`, `zdrovena-admin`.
 
-- **viewer** — read-only access (dashboard, invoices, files)
-- **accountant** — can trigger month-close pipeline
-- **admin** — full access including user management
+- **zdrovena-viewer** — read-only access (dashboard, invoices, files)
+- **zdrovena-accountant** — can trigger month-close pipeline + download
+- **zdrovena-admin** — full access including user management
 
 When adding a new endpoint, decide the minimum required role and use the appropriate
-`require_*` dependency from `zdrovena/api/auth.py`. Read-only endpoints should be
-`viewer` or higher — never lock a GET behind `accountant` unless it triggers side effects.
+dependency from `zdrovena/api/auth.py`:
+
+- `require_viewer_or_above` — read-only endpoints
+- `require_accountant_or_admin` — write/close operations
+- `require_admin` — admin-only operations
+
+Never lock a GET endpoint behind `require_accountant_or_admin` unless it triggers side effects.
 
 ## Secrets
 

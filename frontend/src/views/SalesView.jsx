@@ -94,7 +94,7 @@ export default function SalesView() {
             </div>
 
             {error && (
-                <div className="card" style={{ padding: '16px', color: 'var(--err, #e53e3e)', fontSize: 13 }}>
+                <div className="card banner banner-err" style={{ padding: 16 }}>
                     {error}
                 </div>
             )}

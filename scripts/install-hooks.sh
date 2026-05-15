@@ -20,6 +20,19 @@ EOF
 
 install_hook "pre-push"
 
+# Also run staging CI validation if az is logged in
+cat > "$HOOKS_DIR/pre-push" << EOF
+#!/usr/bin/env bash
+# git hook: pre-push — auto-installed by scripts/install-hooks.sh
+"$SCRIPT_DIR/check.sh" || exit 1
+# Validate staging CI permissions if az is logged in (prevents wasted CI runs)
+if az account show &>/dev/null 2>&1; then
+  "$SCRIPT_DIR/validate-staging-ci.sh" || exit 1
+fi
+EOF
+chmod +x "$HOOKS_DIR/pre-push"
+
 echo ""
-echo "Hook zainstalowany. Przy każdym 'git push' uruchomi scripts/check.sh."
+echo "Hooks zainstalowane:"
+echo "  pre-push → scripts/check.sh + scripts/validate-staging-ci.sh (jeśli az zalogowany)"
 echo "Aby pominąć jednorazowo: git push --no-verify"

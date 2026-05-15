@@ -55,12 +55,37 @@ resource "azurerm_federated_identity_credential" "github_main" {
   subject                   = "repo:${var.github_owner}/${var.github_repo}:ref:refs/heads/main"
 }
 
+resource "azurerm_federated_identity_credential" "github_staging_env" {
+  name                      = "github-staging-env"
+  user_assigned_identity_id = azurerm_user_assigned_identity.github_actions.id
+  audience                  = ["api://AzureADTokenExchange"]
+  issuer                    = "https://token.actions.githubusercontent.com"
+  subject                   = "repo:${var.github_owner}/${var.github_repo}:environment:staging"
+}
+
+resource "azurerm_federated_identity_credential" "github_develop" {
+  name                      = "github-develop"
+  user_assigned_identity_id = azurerm_user_assigned_identity.github_actions.id
+  audience                  = ["api://AzureADTokenExchange"]
+  issuer                    = "https://token.actions.githubusercontent.com"
+  subject                   = "repo:${var.github_owner}/${var.github_repo}:ref:refs/heads/develop"
+}
+
 # ── RBAC: GitHub Actions → AcrPush ────────────────────────────────────────────
 
 resource "azurerm_role_assignment" "github_acr_push" {
   scope                = azurerm_container_registry.acr.id
   role_definition_name = "AcrPush"
-  principal_id         = azurerm_user_assigned_identity.github_actions.principal_id
+  principal_id         = "5df64963-8e53-4df1-a8a8-0a51d6b42440"
+}
+
+# ── RBAC: GitHub Actions → Storage Blob Data Contributor on staging container ──
+# Required for seed-staging CI step to upload test invoice files to blob storage.
+# Contributor on RG does not grant data-plane blob access (Azure RBAC split).
+resource "azurerm_role_assignment" "github_staging_blob" {
+  scope                = azurerm_storage_account.storage.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = "5df64963-8e53-4df1-a8a8-0a51d6b42440"
 }
 
 # ── RBAC: GitHub Actions → Contributor on RG (to update Container App) ────────
@@ -69,5 +94,5 @@ resource "azurerm_role_assignment" "github_acr_push" {
 resource "azurerm_role_assignment" "github_rg_contributor" {
   scope                = azurerm_resource_group.rg.id
   role_definition_name = "Contributor"
-  principal_id         = azurerm_user_assigned_identity.github_actions.principal_id
+  principal_id         = "5df64963-8e53-4df1-a8a8-0a51d6b42440"
 }

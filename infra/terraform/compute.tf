@@ -14,6 +14,7 @@ module "api_prod" {
   storage_account_url          = "https://${azurerm_storage_account.storage.name}.blob.core.windows.net"
   storage_container_name       = azurerm_storage_container.files.name
   storage_container_id         = azurerm_storage_container.files.id
+  storage_account_id           = azurerm_storage_account.storage.id
   key_vault_id                 = azurerm_key_vault.kv.id
   key_vault_url                = azurerm_key_vault.kv.vault_uri
   azure_tenant_id              = var.azure_tenant_id
@@ -38,6 +39,7 @@ module "api_staging" {
   storage_account_url          = "https://${azurerm_storage_account.storage.name}.blob.core.windows.net"
   storage_container_name       = azurerm_storage_container.files_staging.name
   storage_container_id         = azurerm_storage_container.files_staging.id
+  storage_account_id           = azurerm_storage_account.storage.id
   key_vault_id                 = azurerm_key_vault.kv.id
   key_vault_url                = azurerm_key_vault.kv.vault_uri
   azure_tenant_id              = var.azure_tenant_id
