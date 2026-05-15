@@ -10,7 +10,7 @@ const REQUIRED_DOCS = [
     { key: 'gads',    label: 'Google Ads',         hint: '0XXXXXXXXX.pdf',              match: f => /^\d{10}\.pdf$/i.test(f) },
     { key: 'pko',     label: 'Wyciąg PKO BP',      hint: 'Wyciag_na_zadanie_*.pdf',     match: f => /^wyciag_na_zadanie_/i.test(f) },
     { key: 'jpk_fa',  label: 'JPK_FA',             hint: 'zdrovena-...-jpk_fa.xml',     match: f => /jpk.?fa/i.test(f),  link: 'https://zdrovena.fakturownia.pl/reports/jpk_fa?kind=jpk_fa&query_date_kind=transaction_date&form_variant=4' },
-    { key: 'jpk_v7m', label: 'JPK_V7M',            hint: 'zdrovena-...-jpkv7m.xml',     match: f => /jpkv7m/i.test(f),   link: 'https://zdrovena.fakturownia.pl/accounting/app/reports/jpk_vat' },
+    { key: 'jpk_v7m', label: 'JPK_V7M',            hint: 'zdrovena-...-jpkv7m.xml',     match: f => /jpk.?v7/i.test(f),  link: 'https://zdrovena.fakturownia.pl/accounting/app/reports/jpk_vat' },
     { key: 'vat',     label: 'Wykaz sprzedaży VAT', hint: 'zdrovena-YYYY-MM-DD_*.pdf',  match: f => /^zdrovena-\d{4}-\d{2}-\d{2}_/i.test(f), link: 'https://zdrovena.fakturownia.pl/reports/income_tax_records' },
 ]
 
