@@ -66,6 +66,8 @@ resource "azurerm_subnet" "container_apps" {
 # ── Subnet: Private Endpoints ──────────────────────────────────────────────────
 
 resource "azurerm_subnet" "private_endpoints" {
+  #checkov:skip=CKV2_AZURE_31: Private endpoints subnet — NSG not applicable. Private endpoints
+  # use their own network policies; the security boundary is the container_apps NSG.
   count                = var.enable_private_network ? 1 : 0
   name                 = "private-endpoints-subnet"
   resource_group_name  = azurerm_resource_group.rg.name

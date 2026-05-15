@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import calendar
 import logging
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -57,7 +59,7 @@ from zdrovena.month_closing.invoice_date_check import (
 from zdrovena.month_closing.ksef import KSeFClient
 from zdrovena.month_closing.preflight import PreflightChecker
 from zdrovena.month_closing.state import PipelineState
-from zdrovena.month_closing.zip_service import create_month_archive
+from zdrovena.month_closing.zip_service import create_month_archive, create_month_archive_from_blob
 from zdrovena.month_closing.zoho_mail import ZohoMailClient
 
 logger = logging.getLogger("zdrovena.month_closing.orchestrator")
@@ -123,12 +125,12 @@ class MonthCloseOrchestrator:
         self.costs_dir = self.month_dir / "koszty"
 
         self.storage = get_storage_service()
-        _blob_prefix = f"faktury/{year}/{self.month_pl}"
+        self._blob_prefix = f"faktury/{year}/{self.month_pl}"
         self.report = CloseReport()
         self.state = PipelineState(
             self.month_dir,
             storage=self.storage,
-            blob_key=f"{_blob_prefix}/.state.json",
+            blob_key=f"{self._blob_prefix}/.state.json",
         )
         self.out = ConsoleReporter()
 
@@ -139,9 +141,41 @@ class MonthCloseOrchestrator:
     def _skip_if_done(self, step_name: str) -> bool:
         if self.state.is_done(step_name):
             self.out.skip(f"{step_name} (already done — skipping)")
-            self.report.steps_completed.append(step_name)
+            # Do NOT add to report.steps_completed — checkpoint steps are tracked
+            # separately via state.completed_steps. report.steps_completed contains
+            # only steps completed IN THIS run so history counts are accurate.
             return True
         return False
+
+    def _upload_to_blob(self, local_path: Path, blob_dir_key: str) -> None:
+        """Upload a single local file to blob storage. No-op in dry_run."""
+        if self.dry_run or not local_path.exists():
+            return
+        try:
+            key = f"{blob_dir_key}/{local_path.name}"
+            self.storage.upload(local_path, key)
+            logger.debug("Uploaded to blob: %s", key)
+        except Exception as exc:
+            logger.warning("Blob upload failed for %s: %s", local_path.name, exc)
+
+    def _upload_dir_to_blob(self, local_dir: Path, blob_dir_key: str) -> None:
+        """Upload all files in a directory to blob storage. No-op in dry_run."""
+        if self.dry_run or not local_dir.exists():
+            return
+        for f in local_dir.iterdir():
+            if f.is_file():
+                self._upload_to_blob(f, blob_dir_key)
+
+    def _blob_file_exists(self, blob_dir_key: str, filename: str) -> bool:
+        """Check if a file exists in blob storage under the given prefix."""
+        try:
+            blobs = self.storage.list_files(blob_dir_key + "/")
+            return any(
+                b.key.endswith(f"/{filename}") or b.key == f"{blob_dir_key}/{filename}"
+                for b in blobs
+            )
+        except Exception:
+            return False
 
     def _mark_step_done(self, step_name: str) -> None:
         self.report.steps_completed.append(step_name)
@@ -234,6 +268,7 @@ class MonthCloseOrchestrator:
             dry_run=self.dry_run,
             get_secret=self._get_secret,
             no_browser=self.non_interactive,
+            storage=self.storage,
         )
         pf = checker.run()
         self.report.bank_statement_found = pf.bank_statement_found
@@ -261,8 +296,11 @@ class MonthCloseOrchestrator:
         checker = getattr(self, "_preflight_checker", None)
         if checker is not None:
             checker.copy_to_folders(self.month_dir, self.costs_dir)
+            # Upload pre-flight files to blob for production persistence
+            self._upload_dir_to_blob(self.month_dir, self._blob_prefix)
+            self._upload_dir_to_blob(self.costs_dir, f"{self._blob_prefix}/koszty")
         self._mark_step_done("Folder structure")
-        self.out.ok(str(self.month_dir))
+        self.out.ok(f"{self.month_dir} → blob:{self._blob_prefix}")
 
     def _step_2_sales_invoices(self) -> None:
         self.out.step(2, "Downloading sales invoices (Fakturownia)")
@@ -311,13 +349,19 @@ class MonthCloseOrchestrator:
 
         saved = client.download_all_pdfs(invoices, self.sales_dir, dry_run=self.dry_run)
         self.report.sales_pdfs_downloaded = len(saved)
+        blob_sales = f"{self._blob_prefix}/sprzedaz"
+        for pdf_path in saved:
+            self._upload_to_blob(pdf_path, blob_sales)
         self._mark_step_done("Sales invoices")
 
     def _step_3_jpk_reports(self) -> None:
         self.out.step(3, "Verifying JPK and VAT reports")
 
         missing = [
-            rpt for rpt in FAKTUROWNIA_REPORTS if not (self.month_dir / rpt["dest_name"]).exists()
+            rpt
+            for rpt in FAKTUROWNIA_REPORTS
+            if not (self.month_dir / rpt["dest_name"]).exists()
+            and not self._blob_file_exists(self._blob_prefix, rpt["dest_name"])
         ]
         for rpt in FAKTUROWNIA_REPORTS:
             if rpt not in missing:
@@ -335,6 +379,7 @@ class MonthCloseOrchestrator:
                 for rpt_cfg, path in downloaded:
                     self.out.ok(f"{rpt_cfg['name']}: downloaded → {path.name}")
                     missing = [r for r in missing if r["name"] != rpt_cfg["name"]]
+                    self._upload_to_blob(path, self._blob_prefix)
             except Exception as exc:
                 logger.warning("Playwright report download failed: %s", exc)
                 self.out.warn(f"Auto-download failed: {exc}")
@@ -343,12 +388,19 @@ class MonthCloseOrchestrator:
             self.out.warn(f"{rpt['name']}: MISSING — {self.month_dir / rpt['dest_name']}")
 
         if not missing:
-            self._mark_step_done("JPK & VAT reports")
-        else:
-            raise RuntimeError(
-                f"JPK/VAT reports incomplete: {', '.join(r['name'] for r in missing)}. "
-                "Download from Fakturownia UI and place in the month folder."
+            pass  # all found
+        elif self.dry_run:
+            self.out.warn(
+                f"dry_run: {len(missing)} JPK report(s) not yet in month folder — OK for simulation"
             )
+        else:
+            msg = (
+                f"JPK/VAT reports incomplete: {', '.join(r['name'] for r in missing)}. "
+                "Download from Fakturownia UI and upload via Inbox."
+            )
+            self.report.warnings.append(msg)
+            self.out.warn(msg)
+        self._mark_step_done("JPK & VAT reports")
 
     def _step_4_cost_invoices(self) -> None:
         self.out.step(4, "Collecting cost invoices")
@@ -393,12 +445,13 @@ class MonthCloseOrchestrator:
             if missing_in_fakt:
                 for knum in sorted(missing_in_fakt):
                     self.out.item(f"❌ KSeF invoice NOT in Fakturownia: {knum}")
-                raise RuntimeError(
+                msg = (
                     f"{len(missing_in_fakt)} KSeF invoice(s) missing in Fakturownia: "
                     f"{', '.join(sorted(missing_in_fakt))}. "
-                    "Fakturownia auto-fetches every 15 min — wait and retry, or "
-                    "click 'Pobierz faktury z KSeF' in Fakturownia UI."
+                    "Fakturownia auto-fetches every 15 min — click 'Pobierz faktury z KSeF' to sync."
                 )
+                self.report.warnings.append(msg)
+                self.out.warn(msg)
             self.out.item(
                 f"✅ KSeF cross-check: all {len(ksef_numbers)} invoice(s) found in Fakturownia"
             )
@@ -597,11 +650,12 @@ class MonthCloseOrchestrator:
 
         self.out.section_end("Result:")
         if final_missing:
-            raise RuntimeError(
-                f"Missing cost vendors: {', '.join(final_missing)}. "
-                "All expected vendors must be accounted for before proceeding."
-            )
+            msg = f"Brak faktur kosztowych: {', '.join(final_missing)}. Uzupełnij lub pomiń w kolejnym miesiącu."
+            self.report.warnings.append(msg)
+            self.report.cost_missing_vendors = list(final_missing)
+            self.out.warn(msg)
         self.out.detail("✅ All expected vendors accounted for!")
+        self._upload_dir_to_blob(self.costs_dir, f"{self._blob_prefix}/koszty")
         self._mark_step_done("Cost invoices")
 
     def _step_5_bank_statement(self) -> None:
@@ -613,6 +667,21 @@ class MonthCloseOrchestrator:
             and ("wyciag" in f.name.lower() or "pko" in f.name.lower())
             and f.suffix.lower() == ".pdf"
         ]
+        # Also check blob for files uploaded in step 1 (from preflight)
+        if not pko_files and not self.report.bank_statement_found:
+            try:
+                blob_files = self.storage.list_files(self._blob_prefix + "/")
+                pko_blobs = [
+                    b
+                    for b in blob_files
+                    if ("wyciag" in b.key.lower() or "pko" in b.key.lower())
+                    and b.key.lower().endswith(".pdf")
+                ]
+                if pko_blobs:
+                    pko_files = [Path(pko_blobs[0].key)]
+            except Exception:
+                pass
+
         if pko_files:
             self.report.bank_statement_found = True
             self.out.ok(f"Bank statement found: {pko_files[0].name}")
@@ -620,10 +689,9 @@ class MonthCloseOrchestrator:
             self.out.ok("Bank statement (found in pre-flight)")
         else:
             self.report.bank_statement_found = False
-            raise RuntimeError(
-                f"Bank statement (PKO BP) for {self.year}-{self.month:02d} not found. "
-                f"Download from iPKO and place in {self.month_dir}"
-            )
+            msg = f"Wyciąg PKO BP za {self.year}-{self.month:02d} nie znaleziony. Pobierz z iPKO i wgraj do Inbox."
+            self.report.warnings.append(msg)
+            self.out.warn(msg)
         self._mark_step_done("Bank statement check")
 
     def _check_warnings_gate(self) -> None:
@@ -640,16 +708,11 @@ class MonthCloseOrchestrator:
         for w in self.report.warnings:
             self.out.detail(f"• {w}")
 
-        if self.ignore_warnings:
-            self.out.warn(
-                "--ignore-warnings: continuing to ZIP despite warnings. "
-                "Email sending is still blocked."
-            )
-            return
-
-        raise RuntimeError(
-            f"Aborting: {len(self.report.warnings)} warning(s) detected. "
-            "Fix all issues or rerun with --ignore-warnings."
+        # Warnings never block ZIP — they only block email (checked in step 7).
+        # Pipeline always completes with a report so the accountant sees full picture.
+        self.out.warn(
+            f"{len(self.report.warnings)} warning(s) — ZIP will be created. "
+            "Email is blocked until warnings are resolved."
         )
 
     def _step_6_zip_archive(self) -> None:
@@ -659,17 +722,23 @@ class MonthCloseOrchestrator:
             self.out.info(f"[DRY-RUN] Would create: {zip_name}")
             self._mark_step_done("ZIP archive (dry-run)")
             return
-        zip_path = create_month_archive(self.month_dir, self.month_pl, self.year)
-        self.report.zip_path = zip_path
-        self.out.ok(zip_path.name)
-        # Upload ZIP to Blob Storage
-        blob_zip_key = f"faktury/{self.year}/{self.month_pl}/{zip_path.name}"
         try:
-            self.storage.upload(zip_path, blob_zip_key)
-            self.out.ok(f"ZIP uploaded to blob → {blob_zip_key}")
+            blob_zip_key, count = create_month_archive_from_blob(
+                self.storage, self._blob_prefix, self.month_pl, self.year
+            )
+            self.report.zip_path = Path(blob_zip_key)
+            self.out.ok(f"ZIP created from blob → {blob_zip_key} ({count} files)")
         except Exception as exc:
-            logger.warning("Could not upload ZIP to blob: %s", exc)
-            self.report.warnings.append(f"ZIP blob upload failed: {exc}")
+            logger.warning("Blob ZIP failed, falling back to local: %s", exc)
+            zip_path = create_month_archive(self.month_dir, self.month_pl, self.year)
+            self.report.zip_path = zip_path
+            blob_zip_key = f"{self._blob_prefix}/{zip_path.name}"
+            try:
+                self.storage.upload(zip_path, blob_zip_key)
+                self.out.ok(f"ZIP uploaded to blob → {blob_zip_key}")
+            except Exception as upload_exc:
+                logger.warning("Could not upload ZIP to blob: %s", upload_exc)
+                self.report.warnings.append(f"ZIP blob upload failed: {upload_exc}")
         self._mark_step_done("ZIP archive")
 
     def _step_7_email(self) -> None:
@@ -689,10 +758,26 @@ class MonthCloseOrchestrator:
         month_pl = POLISH_MONTHS[self.month].capitalize()
         subject = f"{COMPANY_BRAND} – Dokumenty księgowe – {month_pl} {self.year}"
         body = self._build_email_body()
-        attachments = [self.report.zip_path] if self.report.zip_path else []
-        svc.send_report(
-            to_email=ACCOUNTANT_EMAIL, subject=subject, body=body, attachments=attachments
-        )
+
+        # If zip_path is a blob key (not a local file), download it to a temp file
+        tmp_dir: str | None = None
+        zip_to_attach = self.report.zip_path
+        if self.report.zip_path and not self.report.zip_path.exists():
+            tmp_dir = tempfile.mkdtemp()
+            tmp_zip = Path(tmp_dir) / self.report.zip_path.name
+            self.storage.download(str(self.report.zip_path), tmp_zip)
+            zip_to_attach = tmp_zip
+            self.out.info(f"Downloaded blob ZIP to temp: {tmp_zip}")
+
+        attachments = [zip_to_attach] if zip_to_attach else []
+        try:
+            svc.send_report(
+                to_email=ACCOUNTANT_EMAIL, subject=subject, body=body, attachments=attachments
+            )
+        finally:
+            if tmp_dir:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
         self.report.email_sent = True
         self.out.ok(f"Email sent → {ACCOUNTANT_EMAIL}")
         self._mark_step_done("Email")

@@ -41,6 +41,7 @@ function fetchWithTimeout(url: string, opts: RequestInit & { timeoutMs?: number 
 
 // Lazy-cached viewer access token — fetched once on first call, reused for the run.
 let cachedViewerToken: string | null | undefined;
+let cachedAccountantToken: string | null | undefined;
 async function getViewerToken(): Promise<string | null> {
   if (cachedViewerToken !== undefined) return cachedViewerToken;
   const tenant = process.env.AZURE_TENANT_ID?.trim();
@@ -70,6 +71,32 @@ async function getViewerToken(): Promise<string | null> {
   return cachedViewerToken;
 }
 
+async function getAccountantToken(): Promise<string | null> {
+  if (cachedAccountantToken !== undefined) return cachedAccountantToken;
+  const tenant = process.env.AZURE_TENANT_ID?.trim();
+  const clientId = process.env.SMOKE_ACCOUNTANT_SP_CLIENT_ID?.trim();
+  const clientSecret = process.env.SMOKE_ACCOUNTANT_SP_CLIENT_SECRET;
+  const apiClientId = process.env.AZURE_API_CLIENT_ID?.trim();
+  if (!tenant || !clientId || !clientSecret || !apiClientId) {
+    cachedAccountantToken = null;
+    return null;
+  }
+  const body = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope: `api://${apiClientId}/.default`,
+  });
+  const res = await fetchWithTimeout(
+    `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
+    { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body, timeoutMs: 10_000 },
+  );
+  if (!res.ok) { cachedAccountantToken = null; return null; }
+  const json = await res.json() as { access_token?: string };
+  cachedAccountantToken = json.access_token ?? null;
+  return cachedAccountantToken;
+}
+
 const ctx: TestContext = {
   apiUrl: process.env.API_URL ?? "http://localhost:8000",
   swaUrl: process.env.SWA_URL ?? "http://localhost:5173",
@@ -79,9 +106,12 @@ const ctx: TestContext = {
   azureSubscriptionId: process.env.AZURE_SUBSCRIPTION_ID ?? "",
   smokeSpClientId: process.env.SMOKE_SP_CLIENT_ID ?? "",
   smokeSpClientSecret: process.env.SMOKE_SP_CLIENT_SECRET ?? "",
+  smokeAccountantSpClientId: process.env.SMOKE_ACCOUNTANT_SP_CLIENT_ID ?? "",
+  smokeAccountantSpClientSecret: process.env.SMOKE_ACCOUNTANT_SP_CLIENT_SECRET ?? "",
   verbose,
   fetch: fetchWithTimeout,
   getViewerToken,
+  getAccountantToken,
 };
 
 // ── Run tests ──────────────────────────────────────────────────────────────

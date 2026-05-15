@@ -15,6 +15,8 @@ import logging
 import re
 import sys
 
+from zdrovena.common.storage import get_storage_service
+
 
 def _parse_month(value: str) -> tuple[int, int]:
     match = re.fullmatch(r"(\d{4})-(\d{2})", value)
@@ -131,6 +133,7 @@ def _run(args: argparse.Namespace) -> None:
             dry_run=True,
             get_secret=_get_secret,
             no_browser=no_browser,
+            storage=get_storage_service(),
         )
         result = checker.run()
     except KeyboardInterrupt:

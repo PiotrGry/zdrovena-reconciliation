@@ -1,0 +1,12 @@
+title = "zdrovena-reconciliation gitleaks config"
+
+[allowlist]
+description = "Known safe values — public development keys, not real credentials"
+
+regexes = [
+    # Azurite (Azure Storage Emulator) well-known public development key.
+    # Published by Microsoft in official docs: https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azurite
+    # AccountName=devstoreaccount1, same key for every Azurite install worldwide.
+    # This key only works against the local emulator — useless for real Azure.
+    "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
+]

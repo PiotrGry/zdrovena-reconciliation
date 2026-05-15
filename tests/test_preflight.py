@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -231,3 +232,185 @@ class TestCheckVendors:
 
         assert any(v.name == "TestVendor" for v, _ in checker.result.matches)
         assert not any(v.name == "TestVendor" for v in checker.result.missing_vendors)
+
+
+# ── Blob storage fallback tests ───────────────────────────────────────────────
+
+
+def _make_blob_file(key: str, size: int = 1000):
+    bf = MagicMock()
+    bf.key = key
+    bf.size = size
+    bf.last_modified = datetime(2025, 6, 15, tzinfo=timezone.utc)
+    return bf
+
+
+def _make_checker_with_storage(tmp_path: Path, storage: MagicMock) -> PreflightChecker:
+    return PreflightChecker(
+        year=2025,
+        month=6,
+        month_dir=tmp_path / "month",
+        date_from="2025-06-01",
+        date_to="2025-06-30",
+        cost_date_to="2025-07-15",
+        dry_run=True,
+        get_secret=MagicMock(return_value=None),
+        storage=storage,
+    )
+
+
+class TestBlobFallbackVendors:
+    def test_vendor_found_in_blob_via_glob(self, tmp_path):
+        from zdrovena.month_closing.config import VendorConfig
+
+        storage = MagicMock()
+        blob = _make_blob_file("faktury/inbox/vendor_invoice.pdf")
+        storage.list_files.return_value = [blob]
+        storage.download.side_effect = lambda key, path: path.write_bytes(b"%PDF")
+
+        checker = _make_checker_with_storage(tmp_path, storage)
+        vendor = VendorConfig(
+            name="TestVendor", pattern="testvendor", download_glob="vendor_invoice.pdf"
+        )
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", tmp_path / "nonexistent"):
+            checker._check_vendors([vendor])
+
+        assert any(v.name == "TestVendor" for v, _ in checker.result.matches)
+        assert not any(v.name == "TestVendor" for v in checker.result.missing_vendors)
+
+    def test_vendor_not_in_blob_marks_missing(self, tmp_path):
+        from zdrovena.month_closing.config import VendorConfig
+
+        storage = MagicMock()
+        storage.list_files.return_value = []
+
+        checker = _make_checker_with_storage(tmp_path, storage)
+        vendor = VendorConfig(
+            name="TestVendor", pattern="testvendor", download_glob="vendor_invoice.pdf"
+        )
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", tmp_path / "nonexistent"):
+            checker._check_vendors([vendor])
+
+        assert any(v.name == "TestVendor" for v in checker.result.missing_vendors)
+
+    def test_no_storage_and_no_watch_dir_marks_missing(self, tmp_path):
+        from zdrovena.month_closing.config import VendorConfig
+
+        checker = _make_checker(tmp_path)  # no storage
+        vendor = VendorConfig(
+            name="TestVendor", pattern="testvendor", download_glob="vendor_invoice.pdf"
+        )
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", tmp_path / "nonexistent"):
+            checker._check_vendors([vendor])
+
+        assert any(v.name == "TestVendor" for v in checker.result.missing_vendors)
+
+
+class TestBlobFallbackBankStatement:
+    def test_bank_statement_found_in_blob(self, tmp_path):
+        storage = MagicMock()
+        # Month 6 → next month is July → filename contains 20250701
+        blob = _make_blob_file("faktury/inbox/Wyciag_na_zadanie_20250701001.pdf")
+        storage.list_files.return_value = [blob]
+        storage.download.side_effect = lambda key, path: path.write_bytes(b"%PDF")
+
+        checker = _make_checker_with_storage(tmp_path, storage)
+        checker.month_dir = tmp_path / "nonexistent_month"
+
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", tmp_path / "nonexistent"):
+            checker._check_bank_statement()
+
+        assert checker.result.bank_statement_found is True
+        assert any("PKO BP" in str(v) for v, _ in checker.result.matches)
+
+    def test_bank_statement_wrong_month_not_found(self, tmp_path):
+        storage = MagicMock()
+        # June filename instead of July — wrong month for closing month=6
+        blob = _make_blob_file("faktury/inbox/Wyciag_na_zadanie_20250601001.pdf")
+        storage.list_files.return_value = [blob]
+
+        checker = _make_checker_with_storage(tmp_path, storage)
+        checker.month_dir = tmp_path / "nonexistent_month"
+
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", tmp_path / "nonexistent"):
+            checker._check_bank_statement()
+
+        assert checker.result.bank_statement_found is False
+
+
+class TestCopyToFoldersBlobMoveSemantics:
+    def test_blob_deleted_after_copy(self, tmp_path):
+        from zdrovena.month_closing.config import VendorConfig
+
+        storage = MagicMock()
+        checker = _make_checker_with_storage(tmp_path, storage)
+        checker.dry_run = False
+
+        tmp_file = tmp_path / "tmp_vendor.pdf"
+        tmp_file.write_bytes(b"%PDF")
+        blob_key = "faktury/inbox/vendor_invoice.pdf"
+        checker._blob_downloads = [(blob_key, tmp_file)]
+
+        month_dir = tmp_path / "month"
+        costs_dir = tmp_path / "costs"
+        month_dir.mkdir()
+        costs_dir.mkdir()
+
+        vendor = VendorConfig(name="TestVendor", pattern="testvendor")
+        checker.result.matches.append((vendor, tmp_file))
+        checker.copy_to_folders(month_dir, costs_dir)
+
+        storage.delete.assert_called_once_with(blob_key)
+        assert not tmp_file.exists()
+
+    def test_blob_cleaned_when_dest_already_exists(self, tmp_path):
+        from zdrovena.month_closing.config import VendorConfig
+
+        storage = MagicMock()
+        checker = _make_checker_with_storage(tmp_path, storage)
+        checker.dry_run = False
+
+        tmp_file = tmp_path / "tmp_vendor.pdf"
+        tmp_file.write_bytes(b"%PDF")
+        blob_key = "faktury/inbox/vendor_invoice.pdf"
+        checker._blob_downloads = [(blob_key, tmp_file)]
+
+        month_dir = tmp_path / "month"
+        costs_dir = tmp_path / "costs"
+        month_dir.mkdir()
+        costs_dir.mkdir()
+
+        # Pre-create dest so copy is skipped
+        dest = costs_dir / f"TestVendor_{tmp_file.name}"
+        dest.write_bytes(b"%PDF existing")
+
+        vendor = VendorConfig(name="TestVendor", pattern="testvendor")
+        checker.result.matches.append((vendor, tmp_file))
+        checker.copy_to_folders(month_dir, costs_dir)
+
+        # Blob and tmp should be cleaned up even when copy is skipped
+        storage.delete.assert_called_once_with(blob_key)
+        assert not tmp_file.exists()
+
+    def test_local_file_not_deleted(self, tmp_path):
+        from zdrovena.month_closing.config import VendorConfig
+
+        storage = MagicMock()
+        checker = _make_checker_with_storage(tmp_path, storage)
+        checker.dry_run = False
+
+        # Local file (not in _blob_downloads)
+        local_file = tmp_path / "local_invoice.pdf"
+        local_file.write_bytes(b"%PDF")
+
+        month_dir = tmp_path / "month"
+        costs_dir = tmp_path / "costs"
+        month_dir.mkdir()
+        costs_dir.mkdir()
+
+        vendor = VendorConfig(name="TestVendor", pattern="testvendor")
+        checker.result.matches.append((vendor, local_file))
+        checker.copy_to_folders(month_dir, costs_dir)
+
+        storage.delete.assert_not_called()
+        assert local_file.exists()

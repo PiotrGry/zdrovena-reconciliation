@@ -36,13 +36,13 @@ def _make_orchestrator(
 
 
 class TestWarningsGate:
-    def test_strict_mode_raises(self):
-        """Default (strict): warnings gate should abort the pipeline."""
+    def test_strict_mode_warns_not_raises(self):
+        """Warnings gate no longer raises — pipeline always continues to ZIP.
+        Email is blocked separately in step 7."""
         orch = _make_orchestrator(ignore_warnings=False)
         orch.report.warnings.append("Missing JPK_V7M")
-
-        with pytest.raises(RuntimeError, match="warning"):
-            orch._check_warnings_gate()
+        orch._check_warnings_gate()  # must NOT raise
+        assert len(orch.report.warnings) == 1
 
     def test_ignore_warnings_continues(self):
         """With --ignore-warnings, gate should NOT raise."""
@@ -183,7 +183,9 @@ class TestStepTracking:
         orch.state = MagicMock()
         orch.state.is_done.return_value = True
         assert orch._skip_if_done("Foo") is True
-        assert "Foo" in orch.report.steps_completed
+        # Checkpoint steps are NOT added to report.steps_completed — only freshly
+        # completed steps are tracked there so history counts are accurate.
+        assert "Foo" not in orch.report.steps_completed
 
     def test_skip_if_done_returns_false_when_not_done(self):
         orch = _make_orchestrator()
@@ -262,12 +264,13 @@ class TestStep5BankStatement:
         orch.report.bank_statement_found = True
         orch._step_5_bank_statement()  # should not raise
 
-    def test_no_file_raises(self, tmp_path):
+    def test_no_file_adds_warning(self, tmp_path):
+        """Missing bank statement is now a warning, not a crash."""
         orch = _make_orchestrator()
         orch.month_dir = tmp_path
         orch.report.bank_statement_found = False
-        with pytest.raises(RuntimeError, match="Bank statement"):
-            orch._step_5_bank_statement()
+        orch._step_5_bank_statement()
+        assert any("PKO" in w or "Wyciąg" in w for w in orch.report.warnings)
 
 
 # ── _step_6_zip_archive ──────────────────────────────────────────────────────
@@ -280,16 +283,21 @@ class TestStep6ZipArchive:
         assert orch.report.zip_path is None
         assert any("ZIP archive" in s for s in orch.report.steps_completed)
 
-    @patch("zdrovena.month_closing.orchestrator.create_month_archive")
-    def test_live_creates_zip(self, mock_archive, tmp_path):
+    def test_live_creates_zip(self, tmp_path):
+        """ZIP is created from blob storage and zip_path points to blob key."""
+        from unittest.mock import MagicMock, patch
+
         orch = MonthCloseOrchestrator(year=2025, month=6, dry_run=False)
         orch.out = MagicMock()
         orch.month_dir = tmp_path
-        fake_zip = tmp_path / "czerwiec_2025_HUMIO.zip"
-        mock_archive.return_value = fake_zip
-        orch._step_6_zip_archive()
-        assert orch.report.zip_path == fake_zip
-        mock_archive.assert_called_once()
+        blob_key = "faktury/2025/czerwiec/czerwiec_2025_HUMIO.zip"
+        with patch(
+            "zdrovena.month_closing.orchestrator.create_month_archive_from_blob",
+            return_value=(blob_key, 5),
+        ):
+            orch._step_6_zip_archive()
+        assert str(orch.report.zip_path) == blob_key
+        assert any("ZIP archive" in s for s in orch.report.steps_completed)
 
 
 # ── _step_7_email ────────────────────────────────────────────────────────────
@@ -434,17 +442,19 @@ class TestStep3JpkReports:
         orch._step_3_jpk_reports()  # should not raise
         assert any("JPK" in s for s in orch.report.steps_completed)
 
-    def test_missing_reports_dry_run_raises(self, tmp_path):
-        """In non-interactive dry_run, missing reports should raise."""
-        orch = _make_orchestrator(non_interactive=True)
+    def test_missing_reports_dry_run_warns_not_raises(self, tmp_path):
+        """In dry_run, missing reports produce a warning instead of raising.
+        Files may not be copied to month_dir yet (preflight found them in blob inbox).
+        """
+        orch = _make_orchestrator(non_interactive=True)  # dry_run=True by default
         orch.month_dir = tmp_path
         # Don't create any report files — all will be missing
         with patch(
             "zdrovena.month_closing.orchestrator.FAKTUROWNIA_REPORTS",
             [{"name": "JPK_FA", "dest_name": "jpk_fa.pdf"}],
         ):
-            with pytest.raises(RuntimeError, match="JPK"):
-                orch._step_3_jpk_reports()
+            orch._step_3_jpk_reports()  # must NOT raise in dry_run
+            assert any("JPK" in s for s in orch.report.steps_completed)
 
     def test_all_reports_present_passes(self, tmp_path):
         orch = _make_orchestrator()

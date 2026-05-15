@@ -37,6 +37,11 @@ variable "storage_container_id" {
   description = "Storage container Resource Manager ID for RBAC scope"
 }
 
+variable "storage_account_id" {
+  type        = string
+  description = "Storage account Resource Manager ID — used for Table Storage RBAC scope (tables live at account level, not container level)"
+}
+
 variable "key_vault_id" {
   type = string
 }

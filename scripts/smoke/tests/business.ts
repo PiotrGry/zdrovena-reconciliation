@@ -1,55 +1,223 @@
 /**
- * Business logic smoke tests.
- * Placeholder — add tests here as the feature surface grows.
- * Each test should verify a specific business invariant against the staging API.
+ * Business logic smoke tests — verify core pipeline invariants against staging API.
  *
- * To add a new test:
- *   1. Implement the SmokeTest interface
- *   2. Export it in the tests array at the bottom
- *   3. Done — the runner picks it up automatically
+ * Philosophy:
+ *   - 422 on /close = ACCEPTABLE (preflight blockers, files missing in staging)
+ *   - 500 on /close = ALWAYS FAIL (pipeline crashed — would crash on prod too)
+ *   - Tests skip gracefully when accountant SP creds aren't configured
+ *
+ * Required CI secrets for full coverage:
+ *   SMOKE_ACCOUNTANT_SP_CLIENT_ID     — SP with zdrovena-accountant role
+ *   SMOKE_ACCOUNTANT_SP_CLIENT_SECRET
  */
 
 import type { SmokeTest, TestContext, TestResult } from "../types.js";
 
 function ms(): number { return Date.now(); }
 
-/**
- * /close/state must be accessible to viewer role (D3 decision from eng review).
- * Tests the auth change made on 2026-04-24.
- */
-const closeStateViewerAccessible: SmokeTest = {
-  name: "business.close_state_accessible_without_admin",
+const CLOSE_REQUIRED_FIELDS = [
+  "sales_invoice_count",
+  "sales_gross_total",
+  "cost_invoice_count",
+  "bank_statement_found",
+  "warnings",
+  "errors",
+  "steps_completed",
+  "has_critical_errors",
+];
+
+/** POST /close dry_run=true must not crash — 200 or 422 are both acceptable, 500 is not. */
+const closeDryRunDoesNotCrash: SmokeTest = {
+  name: "business.close_dry_run_does_not_crash",
   category: "business",
   async run(ctx: TestContext): Promise<TestResult> {
     const t0 = ms();
-    // Unauthenticated → should return 401 (not 403 or 500)
-    // A 401 means the endpoint exists and auth is working correctly
-    const res = await ctx.fetch(
-      `${ctx.apiUrl}/api/close/state?year=2026&month=4`,
-      { timeoutMs: 8_000 }
-    );
-    // 401 = endpoint exists, requires auth (correct)
-    // 403 = exists but wrong role (acceptable)
-    // 500 = server error (FAIL)
-    // 404 = endpoint missing (FAIL)
-    const ok = res.status === 401 || res.status === 403;
+    const token = await ctx.getAccountantToken();
+    if (!token) {
+      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+    }
+    const now = new Date();
+    const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    const month = now.getMonth() === 0 ? 12 : now.getMonth(); // previous month
+    const res = await ctx.fetch(`${ctx.apiUrl}/api/close`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ year, month, dry_run: true }),
+      timeoutMs: 30_000,
+    });
+    // 200 = pipeline ran clean, 422 = preflight blockers (files missing — normal in staging)
+    const ok = res.status === 200 || res.status === 422;
     return {
       name: this.name,
       category: this.category,
       status: ok ? "PASS" : "FAIL",
       duration_ms: ms() - t0,
-      evidence: `HTTP ${res.status}`,
-      error: !ok ? `Expected 401/403, got ${res.status} — endpoint may be missing or broken` : undefined,
+      evidence: `HTTP ${res.status} for ${year}/${month} dry_run=true`,
+      error: !ok ? `Expected 200 or 422, got ${res.status} — pipeline may have crashed` : undefined,
     };
   },
 };
 
-// Add more business tests here as features ship.
-// Examples of what to add when the dashboard is built:
-//   - GET /dashboard returns 401 unauthenticated (not 404)
-//   - GET /invoices/sales?year=X&month=Y returns 401 unauthenticated
-//   - POST /close returns 401 unauthenticated
+/** When /close dry_run returns 200, the response must have all required CloseResponse fields. */
+const closeResponseHasRequiredFields: SmokeTest = {
+  name: "business.close_response_has_required_fields",
+  category: "business",
+  async run(ctx: TestContext): Promise<TestResult> {
+    const t0 = ms();
+    const token = await ctx.getAccountantToken();
+    if (!token) {
+      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+    }
+    const now = new Date();
+    const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    const month = now.getMonth() === 0 ? 12 : now.getMonth();
+    const res = await ctx.fetch(`${ctx.apiUrl}/api/close`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ year, month, dry_run: true }),
+      timeoutMs: 30_000,
+    });
+    if (res.status === 422) {
+      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "422 preflight blockers — files missing in staging (expected)" };
+    }
+    if (res.status !== 200) {
+      return { name: this.name, category: this.category, status: "FAIL", duration_ms: ms() - t0, evidence: `HTTP ${res.status}`, error: `Expected 200, got ${res.status}` };
+    }
+    const body = await res.json() as Record<string, unknown>;
+    const missing = CLOSE_REQUIRED_FIELDS.filter((f) => !(f in body));
+    const ok = missing.length === 0;
+    return {
+      name: this.name,
+      category: this.category,
+      status: ok ? "PASS" : "FAIL",
+      duration_ms: ms() - t0,
+      evidence: ok ? `all ${CLOSE_REQUIRED_FIELDS.length} fields present` : `missing: ${missing.join(", ")}`,
+      error: !ok ? `CloseResponse missing fields: ${missing.join(", ")} — API contract broken` : undefined,
+    };
+  },
+};
+
+/** When /close returns 422, the blockers must be non-empty human-readable strings. */
+const closePreflightBlockersAreMeaningful: SmokeTest = {
+  name: "business.close_preflight_blockers_are_meaningful",
+  category: "business",
+  async run(ctx: TestContext): Promise<TestResult> {
+    const t0 = ms();
+    const token = await ctx.getAccountantToken();
+    if (!token) {
+      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+    }
+    const now = new Date();
+    const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    const month = now.getMonth() === 0 ? 12 : now.getMonth();
+    const res = await ctx.fetch(`${ctx.apiUrl}/api/close`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ year, month, dry_run: true }),
+      timeoutMs: 30_000,
+    });
+    if (res.status === 200) {
+      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "200 — pipeline ran clean, no blockers to check" };
+    }
+    if (res.status !== 422) {
+      return { name: this.name, category: this.category, status: "FAIL", duration_ms: ms() - t0, evidence: `HTTP ${res.status}`, error: `Unexpected status ${res.status}` };
+    }
+    const body = await res.json() as { detail?: { blockers?: unknown[] } };
+    const blockers = body?.detail?.blockers ?? [];
+    const ok = Array.isArray(blockers) && blockers.length > 0 && blockers.every((b) => typeof b === "string" && b.length > 5);
+    return {
+      name: this.name,
+      category: this.category,
+      status: ok ? "PASS" : "FAIL",
+      duration_ms: ms() - t0,
+      evidence: `${blockers.length} blockers: ${JSON.stringify(blockers).slice(0, 120)}`,
+      error: !ok ? "Blockers are empty or malformed — error messages may be broken" : undefined,
+    };
+  },
+};
+
+/** GET /close/state must return valid structure for viewer role. */
+const closeStateHasValidStructure: SmokeTest = {
+  name: "business.close_state_has_valid_structure",
+  category: "business",
+  async run(ctx: TestContext): Promise<TestResult> {
+    const t0 = ms();
+    const token = await ctx.getViewerToken();
+    if (!token) {
+      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_SP_* not configured" };
+    }
+    const now = new Date();
+    const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    const month = now.getMonth() === 0 ? 12 : now.getMonth();
+    const res = await ctx.fetch(`${ctx.apiUrl}/api/close/state?year=${year}&month=${month}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeoutMs: 8_000,
+    });
+    if (res.status !== 200) {
+      return { name: this.name, category: this.category, status: "FAIL", duration_ms: ms() - t0, evidence: `HTTP ${res.status}`, error: `Expected 200, got ${res.status}` };
+    }
+    const body = await res.json() as Record<string, unknown>;
+    const ok = "completed_steps" in body && Array.isArray(body.completed_steps);
+    return {
+      name: this.name,
+      category: this.category,
+      status: ok ? "PASS" : "FAIL",
+      duration_ms: ms() - t0,
+      evidence: ok ? `completed_steps: ${JSON.stringify(body.completed_steps)}` : `missing completed_steps field`,
+      error: !ok ? "CloseStateResponse structure broken — completed_steps missing" : undefined,
+    };
+  },
+};
+
+/**
+ * Full production flow — no dry_run, ignore_warnings=true.
+ * Sends a real email. Validates the complete pipeline runs end-to-end on staging.
+ * Requires seeded inbox files (seed-staging CI step).
+ */
+const closeFullFlowSendsEmail: SmokeTest = {
+  name: "business.close_full_flow_sends_email",
+  category: "business",
+  async run(ctx: TestContext): Promise<TestResult> {
+    const t0 = ms();
+    const token = await ctx.getAccountantToken();
+    if (!token) {
+      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+    }
+    const now = new Date();
+    const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    const month = now.getMonth() === 0 ? 12 : now.getMonth();
+    const res = await ctx.fetch(`${ctx.apiUrl}/api/close`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ year, month, dry_run: false, ignore_warnings: true }),
+      timeoutMs: 180_000,
+    });
+    if (res.status !== 200) {
+      const text = await res.text().catch(() => "");
+      return {
+        name: this.name, category: this.category, status: "FAIL",
+        duration_ms: ms() - t0,
+        evidence: `HTTP ${res.status}: ${text.slice(0, 200)}`,
+        error: `Expected 200, got ${res.status} — pipeline crashed or preflight blocked`,
+      };
+    }
+    const body = await res.json() as Record<string, unknown>;
+    const emailSent = body.email_sent === true;
+    return {
+      name: this.name,
+      category: this.category,
+      status: emailSent ? "PASS" : "FAIL",
+      duration_ms: ms() - t0,
+      evidence: `sales=${body.sales_invoice_count}, cost=${body.cost_invoice_count}, email_sent=${body.email_sent}, warnings=${JSON.stringify(body.warnings).slice(0, 100)}`,
+      error: !emailSent ? `Email not sent — check zoho-smtp-password in Key Vault or pipeline errors: ${JSON.stringify(body.errors).slice(0, 200)}` : undefined,
+    };
+  },
+};
 
 export const tests: SmokeTest[] = [
-  closeStateViewerAccessible,
+  closeDryRunDoesNotCrash,
+  closeResponseHasRequiredFields,
+  closePreflightBlockersAreMeaningful,
+  closeStateHasValidStructure,
+  closeFullFlowSendsEmail,
 ];

@@ -1,0 +1,12 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY pyproject.toml README.md ./
+COPY zdrovena/ zdrovena/
+
+# Install api + cloud + dev dependencies
+RUN pip install --no-cache-dir -e ".[api,cloud,ksef,dev]"
+
+# zdrovena/ is overridden by volume mount in docker-compose.yml for hot reload
+CMD ["uvicorn", "zdrovena.api.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
