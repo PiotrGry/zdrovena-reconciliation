@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Literal, overload
 
 try:
     import keyring
@@ -27,6 +28,14 @@ from zdrovena.common.config import KEYCHAIN_ACCOUNT
 from zdrovena.common.exceptions import MissingSecretError
 
 logger = logging.getLogger("zdrovena.common.secrets")
+
+
+@overload
+def get_secret(service: str, required: Literal[True] = ...) -> str: ...
+
+
+@overload
+def get_secret(service: str, required: Literal[False]) -> str | None: ...
 
 
 def get_secret(service: str, required: bool = True) -> str | None:

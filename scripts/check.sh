@@ -74,12 +74,11 @@ else
 fi
 
 step "Pyright type check"
-# Pyright jest wolny (cold start ~30s) — domyślnie pomijany w hooku.
-# Włącz przez: CHECK_TYPECHECK=1 git push  lub  bash scripts/check.sh --typecheck
-if [[ "${CHECK_TYPECHECK:-0}" == "1" || "${1:-}" == "--typecheck" ]]; then
-  $PYRIGHT_CMD && ok "pyright" || fail "pyright failed"
+# Pomiń tylko gdy CHECK_TYPECHECK=0 (opt-out). Domyślnie zawsze biegnie.
+if [[ "${CHECK_TYPECHECK:-1}" == "0" ]]; then
+  echo -e "${SKIP} pyright pominięty (CHECK_TYPECHECK=0)"
 else
-  echo -e "${SKIP} pyright pominięty (użyj CHECK_TYPECHECK=1 aby włączyć)"
+  $PYRIGHT_CMD && ok "pyright" || fail "pyright failed"
 fi
 
 step "bandit — SAST (Python source)"

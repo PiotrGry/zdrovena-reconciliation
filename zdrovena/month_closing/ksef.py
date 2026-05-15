@@ -39,7 +39,7 @@ try:
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ec, rsa
     from lxml import etree  # type: ignore[attr-defined]
-    from signxml import methods
+    from signxml import methods  # type: ignore[import-untyped]
     from signxml.xades import XAdESSigner  # type: ignore[attr-defined]
 
     _KSEF_DEPS_AVAILABLE = True
