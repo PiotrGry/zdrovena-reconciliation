@@ -40,21 +40,33 @@ if [[ -z "${SWA_URL:-}" ]]; then
     --query "[0].defaultHostname" -o tsv 2>/dev/null | sed 's|^|https://|') || SWA_URL=""
 fi
 
-# ── Check required secrets ─────────────────────────────────────────────────
-MISSING=()
-[[ -z "${AZURE_TENANT_ID:-}" ]]               && MISSING+=("AZURE_TENANT_ID")
-[[ -z "${AZURE_API_CLIENT_ID:-}" ]]           && MISSING+=("AZURE_API_CLIENT_ID")
-[[ -z "${SMOKE_SP_CLIENT_ID:-}" ]]            && MISSING+=("SMOKE_SP_CLIENT_ID")
-[[ -z "${SMOKE_SP_CLIENT_SECRET:-}" ]]        && MISSING+=("SMOKE_SP_CLIENT_SECRET")
-[[ -z "${SMOKE_ACCOUNTANT_SP_CLIENT_ID:-}" ]] && MISSING+=("SMOKE_ACCOUNTANT_SP_CLIENT_ID")
-[[ -z "${SMOKE_ACCOUNTANT_SP_CLIENT_SECRET:-}" ]] && MISSING+=("SMOKE_ACCOUNTANT_SP_CLIENT_SECRET")
+# ── Auth: SP secrets or az CLI fallback ───────────────────────────────────
+MISSING_INFRA=()
+[[ -z "${AZURE_TENANT_ID:-}" ]]     && MISSING_INFRA+=("AZURE_TENANT_ID")
+[[ -z "${AZURE_API_CLIENT_ID:-}" ]] && MISSING_INFRA+=("AZURE_API_CLIENT_ID")
 
-if [[ ${#MISSING[@]} -gt 0 ]]; then
-  echo "✗ Missing secrets in .env.smoke:"
-  for v in "${MISSING[@]}"; do echo "  $v"; done
+if [[ ${#MISSING_INFRA[@]} -gt 0 ]]; then
+  echo "✗ Missing required values in .env.smoke:"
+  for v in "${MISSING_INFRA[@]}"; do echo "  $v"; done
   echo ""
-  echo "  Copy scripts/.env.smoke.example → .env.smoke and fill in values."
+  echo "  Copy scripts/.env.smoke.example → .env.smoke and fill in AZURE_TENANT_ID / AZURE_API_CLIENT_ID."
   exit 1
+fi
+
+# If SP client secrets are missing, fall back to az CLI (az login)
+if [[ -z "${SMOKE_SP_CLIENT_SECRET:-}" ]] || [[ -z "${SMOKE_ACCOUNTANT_SP_CLIENT_SECRET:-}" ]]; then
+  echo "▶ No SP client secrets — using az CLI token (az login)..."
+  AZ_TOKEN=$(az account get-access-token \
+    --resource "api://${AZURE_API_CLIENT_ID}" \
+    --query accessToken -o tsv 2>/dev/null) || true
+  if [[ -z "$AZ_TOKEN" ]]; then
+    echo "✗ az CLI token failed. Run: az login"
+    exit 1
+  fi
+  echo "  ✓ Token obtained via az CLI"
+  # Use the same token for both viewer and accountant — your az identity has all roles
+  export SMOKE_VIEWER_TOKEN="$AZ_TOKEN"
+  export SMOKE_ACCOUNTANT_TOKEN="$AZ_TOKEN"
 fi
 
 # ── Run tests ──────────────────────────────────────────────────────────────
