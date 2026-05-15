@@ -316,6 +316,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [resolve-urls, seed-staging]
+    if: always() && needs.resolve-urls.result == 'success' && needs.seed-staging.result == 'success'
     outputs:
       result: ${{ steps.run.outputs.result }}
       report: ${{ steps.run.outputs.report }}
@@ -371,6 +372,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [resolve-urls, seed-staging]
+    if: always() && needs.resolve-urls.result == 'success' && needs.seed-staging.result == 'success'
     outputs:
       result: ${{ steps.run.outputs.result }}
     steps:
