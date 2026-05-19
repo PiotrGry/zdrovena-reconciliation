@@ -560,6 +560,7 @@ class MonthCloseOrchestrator:
                 zt = self.cost_date_to.replace("-", "/")
                 zoho_all_paths: list[Path] = []
 
+                vendor_path_map: dict[str, list[Path]] = {}
                 for vendor_cfg in still_missing:
                     email_pattern = vendor_cfg.email or vendor_cfg.pattern
                     result = zoho.search_and_download_vendor(
@@ -574,7 +575,9 @@ class MonthCloseOrchestrator:
                     if result["found"]:
                         found_vendors[vendor_cfg.name] = "Zoho Mail"
                         total_cost_files += result["downloaded"]
-                        zoho_all_paths.extend(result.get("saved_paths", []))
+                        paths = result.get("saved_paths", [])
+                        zoho_all_paths.extend(paths)
+                        vendor_path_map[vendor_cfg.name] = list(paths)
                         self.out.item(
                             f"✅ {vendor_cfg.name}: {result['downloaded']} PDF(s) from email"
                         )
@@ -631,9 +634,11 @@ class MonthCloseOrchestrator:
                     accepted, rejected, unverified = validate_invoice_dates(
                         zoho_all_paths, self.date_from_obj, self.date_to_obj
                     )
+                    removed_paths: set[Path] = set()
                     if rejected:
                         deleted = delete_rejected(rejected)
                         total_cost_files -= len(deleted)
+                        removed_paths.update(deleted)
                         self.out.item(
                             f"🗑  {len(deleted)} PDF(s) rejected "
                             "(wrong date / duplicate / not an invoice)"
@@ -641,6 +646,7 @@ class MonthCloseOrchestrator:
                     if unverified:
                         moved_uv = move_unverified(unverified)
                         total_cost_files -= len(moved_uv)
+                        removed_paths.update(moved_uv)
                         for p in moved_uv:
                             self.out.item(f"📁 {p.name} → _manual_check/")
                     if accepted:
@@ -648,6 +654,16 @@ class MonthCloseOrchestrator:
                             f"✅ {len(accepted)} PDF(s) confirmed within "
                             f"{self.date_from} – {self.date_to}"
                         )
+                    # If ALL of a vendor's PDFs were rejected/moved, un-mark it as found
+                    # so it shows up in final_missing and blocks email until resolved.
+                    if removed_paths:
+                        for vname, vpaths in vendor_path_map.items():
+                            if vpaths and all(p in removed_paths for p in vpaths):
+                                del found_vendors[vname]
+                                self.out.warn(
+                                    f"{vname}: all downloaded PDFs failed date check "
+                                    "— will appear in missing vendors"
+                                )
             else:
                 logger.info("Zoho OAuth not configured — skipping Phase 3")
                 self.out.item("⏭  Zoho Mail not configured (run setup_zoho_oauth.py)")
