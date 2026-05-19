@@ -92,7 +92,9 @@ def _append_draft(storage: Any, record: dict[str, Any]) -> None:
             pass
         storage.upload(_DRAFTS_KEY, io.BytesIO(existing + line.encode()))
     except Exception as exc:
-        logger.error("Failed to persist draft record for order %s: %s", record.get("shopify_order_id"), exc)
+        logger.error(
+            "Failed to persist draft record for order %s: %s", record.get("shopify_order_id"), exc
+        )
 
 
 def _read_drafts(storage: Any) -> list[dict[str, Any]]:
@@ -158,7 +160,9 @@ def _create_draft(order: dict[str, Any], storage: Any) -> None:
 
             inpost_service = _pick_inpost_service(title)
             record["service"] = (
-                "inpost_locker_standard" if inpost_service == "paczkomat" else "inpost_courier_standard"
+                "inpost_locker_standard"
+                if inpost_service == "paczkomat"
+                else "inpost_courier_standard"
             )
 
             if inpost_service == "paczkomat":
@@ -213,7 +217,9 @@ def _create_draft(order: dict[str, Any], storage: Any) -> None:
             service_id = get_secret("apaczka_service_id")
             client_a = ApaczkaClient(app_id, app_secret, service_id, storage)
 
-            street = f"{shipping_addr.get('address1', '')} {shipping_addr.get('address2', '')}".strip()
+            street = (
+                f"{shipping_addr.get('address1', '')} {shipping_addr.get('address2', '')}".strip()
+            )
             result = client_a.create_shipment(
                 receiver_name=customer_name,
                 receiver_firstname=first_name,
@@ -234,8 +240,7 @@ def _create_draft(order: dict[str, Any], storage: Any) -> None:
 
     except Exception as exc:
         logger.error(
-            "Shipping draft creation failed for order %s (%s): %s",
-            order_number, courier, exc
+            "Shipping draft creation failed for order %s (%s): %s", order_number, courier, exc
         )
         record["error"] = str(exc)
 
@@ -264,10 +269,14 @@ async def shopify_order_created(
     if webhook_secret:
         if not sig_header:
             logger.warning("Shopify webhook received without HMAC header — rejected")
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing signature")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing signature"
+            )
         if not _verify_shopify_hmac(raw_body, sig_header, webhook_secret):
             logger.warning("Shopify webhook HMAC mismatch — rejected")
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature"
+            )
     else:
         logger.warning("shopify-webhook-secret not configured — skipping HMAC validation")
 

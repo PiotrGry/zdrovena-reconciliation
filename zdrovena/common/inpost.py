@@ -126,9 +126,7 @@ class InPostClient:
 
     # ── Dispatch order (kurier only) ──────────────────────────────────────────
 
-    def create_dispatch_order(
-        self, shipment_id: str, sender: dict[str, str]
-    ) -> dict[str, Any]:
+    def create_dispatch_order(self, shipment_id: str, sender: dict[str, str]) -> dict[str, Any]:
         url = f"{_BASE}/v1/organizations/{self._org_id}/dispatch_orders"
         payload = {
             "shipments": [shipment_id],
@@ -145,9 +143,7 @@ class InPostClient:
         }
         resp = self._session.post(url, json=payload, timeout=_TIMEOUT)
         if not resp.ok:
-            raise InPostError(
-                f"InPost dispatch order failed {resp.status_code}: {resp.text[:300]}"
-            )
+            raise InPostError(f"InPost dispatch order failed {resp.status_code}: {resp.text[:300]}")
         data = resp.json()
         logger.info("InPost dispatch order created: id=%s", data.get("id"))
         return data
@@ -158,7 +154,5 @@ class InPostClient:
         url = f"{_BASE}/v1/shipments/{shipment_id}/label"
         resp = self._session.get(url, timeout=_TIMEOUT)
         if not resp.ok:
-            raise InPostError(
-                f"InPost label fetch failed {resp.status_code}: {resp.text[:200]}"
-            )
+            raise InPostError(f"InPost label fetch failed {resp.status_code}: {resp.text[:200]}")
         return resp.content
