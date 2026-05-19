@@ -412,6 +412,7 @@ def validate_invoice_dates(
     saved_paths: list[Path],
     month_start: date,
     month_end: date,
+    strict: bool = True,
 ) -> tuple[list[Path], list[Path], list[Path]]:
     accepted: list[Path] = []
     rejected: list[Path] = []
@@ -437,7 +438,11 @@ def validate_invoice_dates(
             seen_invoice_numbers[inv_num] = pdf_path
         issue_date = extract_issue_date(pdf_path, text)
         if issue_date is None:
-            unverified.append(pdf_path)
+            if strict:
+                unverified.append(pdf_path)
+            else:
+                # Date unreadable but file came from Zoho (already date-filtered) — accept.
+                accepted.append(pdf_path)
         elif month_start <= issue_date <= month_end:
             accepted.append(pdf_path)
         else:
