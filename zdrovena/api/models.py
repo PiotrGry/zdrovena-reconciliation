@@ -35,6 +35,7 @@ class CloseResponse(BaseModel):
     ksef_count: int
     bank_statement_found: bool
     zip_path: str | None  # Path → str
+    zip_files: list[str] | None = None
     email_sent: bool
     warnings: list[str]
     errors: list[str]
@@ -55,6 +56,7 @@ class CloseResponse(BaseModel):
             ksef_count=report.ksef_count,
             bank_statement_found=report.bank_statement_found,
             zip_path=str(report.zip_path) if report.zip_path else None,
+            zip_files=report.zip_files,
             email_sent=report.email_sent,
             warnings=report.warnings,
             errors=report.errors,

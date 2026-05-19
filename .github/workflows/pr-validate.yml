@@ -20,6 +20,7 @@ on:
       - "frontend/**"
       - ".github/workflows/pr-validate.yml"
       - ".github/workflows/_full-test-suite.yml"
+      - ".github/workflows/_quality-gate.yml"
       # infra/** intentionally omitted — terraform.yml runs plan for those
   workflow_dispatch:
 

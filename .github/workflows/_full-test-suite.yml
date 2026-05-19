@@ -47,15 +47,34 @@ jobs:
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
         id: filter
         with:
-          filters: |
-            backend:
-              - 'zdrovena/**'
-              - 'pyproject.toml'
-              - 'Dockerfile'
-            frontend:
-              - 'frontend/**'
-            infra:
-              - 'infra/**'
+          filters: .github/path-filters.yml
+
+  # ── W. Warm up staging Container App ─────────────────────────────────────
+  # Runs in parallel with build — ensures staging is at min 1 replica so smoke
+  # tests don't hit a cold-start 503 when backend didn't change (deploy skipped).
+  warm-staging:
+    name: Warm up staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: staging
+    needs: detect-changes
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Scale to min 1 replica
+        run: |
+          az containerapp update \
+            --name zdrovena-api-staging \
+            --resource-group zdrovena-rg \
+            --min-replicas 1 \
+            --max-replicas 3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Wait for health
+        run: bash scripts/ci/wait-containerapp.sh zdrovena-api-staging zdrovena-rg 12 10
 
   # ── 1. Build and push staging image ───────────────────────────────────────
   build:
@@ -235,8 +254,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: staging
-    needs: [resolve-urls]
-    if: always() && needs.resolve-urls.result == 'success'
+    needs: [resolve-urls, warm-staging]
+    if: always() && needs.resolve-urls.result == 'success' && needs.warm-staging.result != 'failure'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -298,8 +317,6 @@ jobs:
           SUB_ID=$(az account show --query "id" -o tsv)
           OBJECT_ID=$(az ad sp show --id "$CLIENT_ID" --query "id" -o tsv 2>/dev/null || echo "LOOKUP_FAILED")
           echo "=== principal object ID: $OBJECT_ID ==="
-          echo "=== expected object ID: 1b5be27c-6ea7-426f-af8b-9ac8d765b485 ==="
-          echo "=== MATCH: $([ "$OBJECT_ID" = "1b5be27c-6ea7-426f-af8b-9ac8d765b485" ] && echo YES || echo NO) ==="
           az role assignment list \
             --assignee "$OBJECT_ID" \
             --scope "/subscriptions/$SUB_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.Storage/storageAccounts/$ACCOUNT" \

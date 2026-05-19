@@ -36,6 +36,7 @@ class TestCloseReportContract:
         "ksef_count": int,
         "bank_statement_found": bool,
         "zip_path": (Path, type(None)),
+        "zip_files": (list, type(None)),
         "email_sent": bool,
         "warnings": list,
         "errors": list,

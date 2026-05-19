@@ -45,8 +45,8 @@ def create_month_archive(month_dir: Path, month_name_pl: str, year: int) -> Path
 
 def create_month_archive_from_blob(
     storage, blob_prefix: str, month_name_pl: str, year: int
-) -> tuple[str, int]:
-    """Create ZIP from blob storage and upload it back. Returns (blob_key, file_count).
+) -> tuple[str, int, list[str]]:
+    """Create ZIP from blob storage and upload it back. Returns (blob_key, file_count, file_list).
 
     Reads all files from `blob_prefix/` via storage.stream(), builds ZIP in memory,
     uploads to `blob_prefix/{zip_name}`. No local filesystem writes needed.
@@ -58,6 +58,7 @@ def create_month_archive_from_blob(
     blobs = storage.list_files(blob_prefix + "/")
     buf = BytesIO()
     count = 0
+    included_files: list[str] = []
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for blob in sorted(blobs, key=lambda b: b.key):
@@ -69,10 +70,11 @@ def create_month_archive_from_blob(
                 continue
             content = b"".join(storage.stream(blob.key))
             zf.writestr(filename, content)
+            included_files.append(filename)
             count += 1
 
     buf.seek(0)
     storage.upload_stream(buf, zip_key, "application/zip")
     size_mb = len(buf.getvalue()) / (1024 * 1024)
     logger.info("ZIP created from blob: %s  (%d files, %.2f MB)", zip_name, count, size_mb)
-    return zip_key, count
+    return zip_key, count, included_files

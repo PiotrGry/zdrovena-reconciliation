@@ -1,0 +1,53 @@
+name: Staging keep-alive schedule
+
+# Scale staging to 0 replicas at 22:00 UTC (midnight CEST) Mon–Fri.
+# Staging is warmed back up by the warm-staging job in _full-test-suite.yml
+# at the start of every CI pipeline run.
+
+on:
+  schedule:
+    - cron: "0 22 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "shutdown or warmup"
+        required: true
+        default: shutdown
+        type: choice
+        options: [shutdown, warmup]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  manage-staging:
+    name: ${{ github.event.inputs.action == 'warmup' && 'Warm up staging' || 'Shut down staging' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: staging
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Shut down staging (scale to 0)
+        if: github.event_name == 'schedule' || github.event.inputs.action == 'shutdown'
+        run: |
+          az containerapp update \
+            --name zdrovena-api-staging \
+            --resource-group zdrovena-rg \
+            --min-replicas 0 \
+            --max-replicas 0
+
+      - name: Warm up staging (scale to 1)
+        if: github.event.inputs.action == 'warmup'
+        run: |
+          az containerapp update \
+            --name zdrovena-api-staging \
+            --resource-group zdrovena-rg \
+            --min-replicas 1 \
+            --max-replicas 3

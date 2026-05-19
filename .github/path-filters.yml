@@ -1,0 +1,10 @@
+backend:
+  - 'zdrovena/**'
+  - 'tests/**'
+  - 'scripts/**'
+  - 'pyproject.toml'
+  - 'Dockerfile'
+frontend:
+  - 'frontend/**'
+infra:
+  - 'infra/terraform/**'

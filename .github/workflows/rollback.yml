@@ -18,10 +18,10 @@ permissions:
   contents: read
 
 # Nigdy nie anuluj rollbacku — niech się skończy.
-# WAŻNE: ta sama grupa co prod-deploy.yml + terraform.yml — zapobiega
-# wystartowaniu rollbacku równolegle z deployem (race condition na produkcji).
+# Osobna grupa od production-deploy — rollback musi móc wystartować natychmiast
+# nawet gdy deploy jest w toku (emergency rollback nie może czekać w kolejce).
 concurrency:
-  group: production-deploy
+  group: production-rollback
   cancel-in-progress: false
 
 jobs:

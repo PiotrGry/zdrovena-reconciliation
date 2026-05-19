@@ -287,6 +287,80 @@ const closeOutputStructureIsClean: SmokeTest = {
   },
 };
 
+/**
+ * Full-flow: validate per-vendor source breakdown and ZIP file list.
+ * - FAIL if any cost vendor is missing
+ * - FAIL if temp filenames appear in zip_files
+ * - FAIL if deklaracje/ or koszty/ subfolder absent from zip_files
+ * Requires seeded inbox (seed-staging CI step).
+ */
+const closeDetailedVendorAndZipReport: SmokeTest = {
+  name: "business.close_detailed_vendor_and_zip_report",
+  category: "business",
+  async run(ctx: TestContext): Promise<TestResult> {
+    const t0 = ms();
+    const token = await ctx.getAccountantToken();
+    if (!token) {
+      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+    }
+    const now = new Date();
+    const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    const month = now.getMonth() === 0 ? 12 : now.getMonth();
+    const res = await ctx.fetch(`${ctx.apiUrl}/api/close`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ year, month, dry_run: false, ignore_warnings: true }),
+      timeoutMs: 180_000,
+    });
+    if (res.status !== 200) {
+      const text = await res.text().catch(() => "");
+      return {
+        name: this.name, category: this.category, status: "FAIL",
+        duration_ms: ms() - t0,
+        evidence: `HTTP ${res.status}: ${text.slice(0, 200)}`,
+        error: `Expected 200, got ${res.status}`,
+      };
+    }
+    const body = await res.json() as Record<string, unknown>;
+    const errors: string[] = [];
+
+    const foundVendors = (body.cost_found_vendors as Record<string, string> | undefined) ?? {};
+    const missingVendors = (body.cost_missing_vendors as string[] | undefined) ?? [];
+    const zipFiles = (body.zip_files as string[] | null | undefined) ?? null;
+
+    if (missingVendors.length > 0) {
+      errors.push(`Missing vendors: ${missingVendors.join(", ")}`);
+    }
+
+    const vendorTable = Object.entries(foundVendors)
+      .map(([v, src]) => `  ${v} → ${src}`)
+      .join("\n");
+
+    if (zipFiles !== null) {
+      const tmpFiles = zipFiles.filter(f => /\/tmp[a-z0-9]{6,}\./i.test(f));
+      if (tmpFiles.length > 0) errors.push(`Temp filenames in ZIP: ${tmpFiles.join(", ")}`);
+      if (!zipFiles.some(f => f.includes("deklaracje/"))) errors.push("Missing deklaracje/ in ZIP");
+      if (!zipFiles.some(f => f.includes("koszty/"))) errors.push("Missing koszty/ in ZIP");
+    }
+
+    const evidence = [
+      `vendors (${Object.keys(foundVendors).length} found, ${missingVendors.length} missing):`,
+      vendorTable || "  (none)",
+      `zip_files: ${zipFiles === null ? "null" : `${zipFiles.length} files`}`,
+      zipFiles ? zipFiles.slice(0, 10).join(", ") + (zipFiles.length > 10 ? ` …+${zipFiles.length - 10}` : "") : "",
+    ].filter(Boolean).join("\n");
+
+    return {
+      name: this.name,
+      category: this.category,
+      status: errors.length === 0 ? "PASS" : "FAIL",
+      duration_ms: ms() - t0,
+      evidence,
+      error: errors.length > 0 ? errors.join("; ") : undefined,
+    };
+  },
+};
+
 export const tests: SmokeTest[] = [
   closeDryRunDoesNotCrash,
   closeResponseHasRequiredFields,
@@ -294,4 +368,5 @@ export const tests: SmokeTest[] = [
   closeStateHasValidStructure,
   closeFullFlowSendsEmail,
   closeOutputStructureIsClean,
+  closeDetailedVendorAndZipReport,
 ];
