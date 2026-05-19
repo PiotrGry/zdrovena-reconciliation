@@ -40,7 +40,9 @@ def list_files(
     storage: StorageDep,
     principal: Annotated[Principal, Depends(require_viewer_or_above)],
     prefix: Annotated[str, Query(description="Key prefix filter")] = "",
-    flat: Annotated[bool, Query(description="Return all files recursively without virtual folders")] = False,
+    flat: Annotated[
+        bool, Query(description="Return all files recursively without virtual folders")
+    ] = False,
 ) -> list[dict]:
     """List files in storage under an optional prefix.
 
@@ -70,19 +72,23 @@ def list_files(
             dir_key = dir_prefix + relative[: slash + 1]
             if dir_key not in seen_dirs:
                 seen_dirs.add(dir_key)
-                result.append({
-                    "key": dir_key,
-                    "is_directory": True,
-                    "size": 0,
-                    "last_modified": f.last_modified.isoformat(),
-                })
+                result.append(
+                    {
+                        "key": dir_key,
+                        "is_directory": True,
+                        "size": 0,
+                        "last_modified": f.last_modified.isoformat(),
+                    }
+                )
         else:
-            result.append({
-                "key": f.key,
-                "is_directory": False,
-                "size": f.size,
-                "last_modified": f.last_modified.isoformat(),
-            })
+            result.append(
+                {
+                    "key": f.key,
+                    "is_directory": False,
+                    "size": f.size,
+                    "last_modified": f.last_modified.isoformat(),
+                }
+            )
 
     return result
 

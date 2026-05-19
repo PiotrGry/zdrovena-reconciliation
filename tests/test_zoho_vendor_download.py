@@ -64,7 +64,13 @@ class TestZohoVendorDownload:
         rsps.add(
             rsps.GET,
             f"{API_BASE}/accounts/{ACCOUNT_ID}/folders/FOLDER1/messages/MSG1",
-            json={"data": {"attachments": [{"attachmentName": "HUMIO__519851974.pdf", "attachmentId": "ATT1"}]}},
+            json={
+                "data": {
+                    "attachments": [
+                        {"attachmentName": "HUMIO__519851974.pdf", "attachmentId": "ATT1"}
+                    ]
+                }
+            },
         )
         rsps.add(
             rsps.GET,

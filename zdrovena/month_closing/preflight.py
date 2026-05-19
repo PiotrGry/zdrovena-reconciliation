@@ -120,7 +120,9 @@ class PreflightChecker:
         for vendor_cfg, src_pdf in self.result.matches:
             name = vendor_cfg.name if isinstance(vendor_cfg, VendorConfig) else vendor_cfg["name"]
             dest_name = vendor_cfg.get("dest_name") if isinstance(vendor_cfg, dict) else None
-            blob_filename = Path(tmp_to_blob[src_pdf]).name if src_pdf in tmp_to_blob else src_pdf.name
+            blob_filename = (
+                Path(tmp_to_blob[src_pdf]).name if src_pdf in tmp_to_blob else src_pdf.name
+            )
             if name == "PKO BP":
                 dest_dir = month_dir
                 safe_name = blob_filename
@@ -404,7 +406,9 @@ class PreflightChecker:
                 return
             if pko_downloads:
                 wrong = pko_downloads[0]
-                self._out(f"  └─ ⚠️  Found {wrong.name} but it's not for {self.year}-{self.month:02d}")
+                self._out(
+                    f"  └─ ⚠️  Found {wrong.name} but it's not for {self.year}-{self.month:02d}"
+                )
         elif self._storage:
             blob_files = self._list_blob_inbox()
             pko_blobs = sorted(

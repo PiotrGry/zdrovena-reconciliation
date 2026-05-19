@@ -69,7 +69,9 @@ class TestPipelineState:
         from unittest.mock import MagicMock
 
         storage = MagicMock()
-        state = PipelineState(tmp_path, storage=storage, blob_key="faktury/2026/kwiecien/.state.json")
+        state = PipelineState(
+            tmp_path, storage=storage, blob_key="faktury/2026/kwiecien/.state.json"
+        )
         state.mark_done("step_1")
         state.reset()
 
@@ -97,7 +99,9 @@ class TestPipelineState:
         from unittest.mock import MagicMock
 
         storage = MagicMock()
-        state = PipelineState(tmp_path, storage=storage, blob_key="faktury/2026/kwiecien/.state.json")
+        state = PipelineState(
+            tmp_path, storage=storage, blob_key="faktury/2026/kwiecien/.state.json"
+        )
         state.mark_done("Pre-flight")
 
         assert storage.upload_stream.called
@@ -108,7 +112,9 @@ class TestPipelineState:
 
         storage = MagicMock()
         storage.delete.side_effect = RuntimeError("blob unavailable")
-        state = PipelineState(tmp_path, storage=storage, blob_key="faktury/2026/kwiecien/.state.json")
+        state = PipelineState(
+            tmp_path, storage=storage, blob_key="faktury/2026/kwiecien/.state.json"
+        )
         state.mark_done("step_1")
         state.reset()  # must not raise
 

@@ -30,7 +30,9 @@ def test_closerequest_accepts_all_valid_month_year_combos(year: int, month: int)
     assert req.month == month
 
 
-@given(st.integers(min_value=2020, max_value=2030), st.integers().filter(lambda m: not (1 <= m <= 12)))
+@given(
+    st.integers(min_value=2020, max_value=2030), st.integers().filter(lambda m: not (1 <= m <= 12))
+)
 def test_closerequest_rejects_invalid_month(year: int, month: int) -> None:
     with pytest.raises(ValidationError):
         CloseRequest(year=year, month=month)

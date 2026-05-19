@@ -315,12 +315,15 @@ class TestStep6ZipArchive:
             zf.writestr("koszty/FV001.pdf", b"pdf")
             zf.writestr("sprzedaz/FS001.pdf", b"pdf2")
 
-        with patch(
-            "zdrovena.month_closing.orchestrator.create_month_archive_from_blob",
-            side_effect=RuntimeError("blob unavailable"),
-        ), patch(
-            "zdrovena.month_closing.orchestrator.create_month_archive",
-            return_value=fake_zip,
+        with (
+            patch(
+                "zdrovena.month_closing.orchestrator.create_month_archive_from_blob",
+                side_effect=RuntimeError("blob unavailable"),
+            ),
+            patch(
+                "zdrovena.month_closing.orchestrator.create_month_archive",
+                return_value=fake_zip,
+            ),
         ):
             orch._step_6_zip_archive()
 
