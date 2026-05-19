@@ -631,8 +631,10 @@ class MonthCloseOrchestrator:
                 # Candidate gate: validate issue dates
                 if zoho_all_paths and not self.dry_run:
                     self.out.section_mid("Candidate gate: verifying invoice issue dates…")
+                    # strict=False: files from Zoho are already date-filtered by the
+                    # search range — if pypdf can't parse the date, trust Zoho and accept.
                     accepted, rejected, unverified = validate_invoice_dates(
-                        zoho_all_paths, self.date_from_obj, self.date_to_obj
+                        zoho_all_paths, self.date_from_obj, self.date_to_obj, strict=False
                     )
                     removed_paths: set[Path] = set()
                     if rejected:
