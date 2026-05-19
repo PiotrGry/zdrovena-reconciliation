@@ -21,11 +21,11 @@ logging.basicConfig(
 
 logger = logging.getLogger("zdrovena.api.main")
 
-# Azure Monitor must be configured at module level — before the ASGI stack is compiled.
-# Calling configure_azure_monitor() or FastAPIInstrumentor.instrument_app() inside
-# lifespan is too late: the middleware chain is already frozen by then.
-_ai_conn_str = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
-if _ai_conn_str:
+# Configure Azure Monitor before app = FastAPI() so the FastAPI instrumentor
+# patches FastAPI.__init__ before our app instance is created.
+# Per official sample: https://github.com/Azure/azure-sdk-for-python/blob/main/
+#   sdk/monitor/azure-monitor-opentelemetry/samples/tracing/http_fastapi.py
+if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
     try:
         from azure.monitor.opentelemetry import configure_azure_monitor
 
@@ -94,16 +94,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
-
-# Instrument the existing app instance for HTTP request tracing.
-# Must run after app = FastAPI(...) but before uvicorn starts serving.
-if _ai_conn_str:
-    try:
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-
-        FastAPIInstrumentor.instrument_app(app)
-    except Exception as exc:
-        logger.warning("FastAPI instrumentation failed (non-fatal): %s", exc)
 
 # SWA's linked backend routes /api/* to this Container App without stripping
 # the /api prefix, so we mount the routers under /api to match what arrives.
