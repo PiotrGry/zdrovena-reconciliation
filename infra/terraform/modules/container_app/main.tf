@@ -87,6 +87,13 @@ resource "azurerm_container_app" "this" {
         value = var.key_vault_url
       }
 
+      env {
+        # Pipeline working directory — avoids writing to non-existent /home/app
+        # (useradd -r system user has no home dir in the container image).
+        name  = "FAKTUROWNIA_BASE_DIR"
+        value = "/tmp/zdrovena"
+      }
+
       dynamic "env" {
         for_each = var.applicationinsights_connection_string != null ? [1] : []
         content {
