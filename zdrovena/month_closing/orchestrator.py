@@ -421,7 +421,8 @@ class MonthCloseOrchestrator:
             )
             self.report.warnings.append(msg)
             self.out.warn(msg)
-        self._mark_step_done("JPK & VAT reports")
+        if not missing or self.dry_run:
+            self._mark_step_done("JPK & VAT reports")
 
     def _step_4_cost_invoices(self) -> None:
         self.out.step(4, "Collecting cost invoices")
