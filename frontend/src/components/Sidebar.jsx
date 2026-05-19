@@ -42,6 +42,9 @@ export default function Sidebar({ page, onNavigate }) {
                 {canClose && (
                     <NavItem iconName="zap" label={T.nav_close} page="close" current={page} onNavigate={onNavigate} />
                 )}
+                {FEATURES.shipping && (
+                    <NavItem iconName="truck" label={T.nav_shipping} page="shipping" current={page} onNavigate={onNavigate} />
+                )}
             </NavGroup>
 
             {(FEATURES.orders || FEATURES.products) && (

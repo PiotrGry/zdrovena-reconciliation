@@ -12,6 +12,7 @@ import ProductsView from './views/ProductsView'
 import OrdersView from './views/OrdersView'
 import UsersView from './views/UsersView'
 import SettingsView from './views/SettingsView'
+import ShippingView from './views/ShippingView'
 import LoginScreen from './views/LoginScreen'
 
 const VIEWS = {
@@ -22,6 +23,7 @@ const VIEWS = {
     ...(FEATURES.products && { products: ProductsView }),
     ...(FEATURES.orders && { orders: OrdersView }),
     ...(FEATURES.users && { users: UsersView }),
+    ...(FEATURES.shipping && { shipping: ShippingView }),
     settings: SettingsView,
 }
 

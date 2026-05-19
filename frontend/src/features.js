@@ -3,6 +3,7 @@ export const FEATURES = {
     orders: false,
     products: false,
     users: false,
+    shipping: true,
 
     // KPI cards in FilesView
     // kpi_files_count  — liczba plików wyliczana live z /api/files (zawsze dostępne)
