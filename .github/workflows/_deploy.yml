@@ -24,10 +24,20 @@ jobs:
       - name: Log in to ACR
         run: az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
 
+      - name: Resolve staging SHA
+        id: staging-sha
+        run: |
+          # Merge commits have a second parent (the source branch, e.g. develop).
+          # The staging image was built from that SHA, not from the merge commit SHA.
+          # For direct pushes (no merge commit) fall back to github.sha.
+          STAGING_SHA=$(git rev-parse HEAD^2 2>/dev/null || echo "${{ github.sha }}")
+          echo "sha=$STAGING_SHA" >> "$GITHUB_OUTPUT"
+          echo "Staging SHA: $STAGING_SHA (github.sha=${{ github.sha }})"
+
       - name: Promote staging image
         env:
           ACR: ${{ secrets.ACR_LOGIN_SERVER }}
-        run: bash scripts/ci/promote-image.sh "$ACR" "${{ github.sha }}"
+        run: bash scripts/ci/promote-image.sh "$ACR" "${{ steps.staging-sha.outputs.sha }}"
 
   deploy-prod:
     name: Deploy to production
