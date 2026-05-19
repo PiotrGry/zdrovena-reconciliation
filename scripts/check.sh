@@ -93,10 +93,14 @@ else
 fi
 
 step "pytest (cov ≥ 80%)"
-$PYTEST_CMD tests/ -q --tb=short \
-  --cov=zdrovena --cov-fail-under=80 \
-  --cov-report=term-missing \
-  && ok "tests passed" || fail "tests failed"
+if [[ "${CHECK_TESTS:-1}" == "0" ]]; then
+  echo -e "${SKIP} pytest pominięty (CHECK_TESTS=0)"
+else
+  $PYTEST_CMD tests/ -q --tb=short \
+    --cov=zdrovena --cov-fail-under=80 \
+    --cov-report=term-missing \
+    && ok "tests passed" || fail "tests failed"
+fi
 
 step "pip-audit — zależności Python"
 # Użyj uv run żeby skanować tylko pakiety projektu (nie globalny Python)
