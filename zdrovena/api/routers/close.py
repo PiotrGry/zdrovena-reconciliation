@@ -47,11 +47,13 @@ def run_close(
     Use ``dry_run=true`` to simulate without writing files or sending email.
     """
     logger.info(
-        "Close requested by %s: %d/%02d dry_run=%s",
+        "Close requested by %s: %d/%02d dry_run=%s ignore_warnings=%s ignore_vendors=%s",
         principal.email,
         req.year,
         req.month,
         req.dry_run,
+        req.ignore_warnings,
+        req.ignore_vendors or [],
     )
     try:
         buf = StringIO()
