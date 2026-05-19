@@ -40,17 +40,7 @@ jobs:
       - id: filter
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
         with:
-          filters: |
-            backend:
-              - 'zdrovena/**'
-              - 'tests/**'
-              - 'scripts/**'
-              - 'pyproject.toml'
-              - 'Dockerfile'
-            frontend:
-              - 'frontend/**'
-            infra:
-              - 'infra/terraform/**'
+          filters: .github/path-filters.yml
 
   typecheck:
     name: Typecheck (Pyright)
@@ -65,7 +55,10 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -e ".[dev,api,cloud,report,ksef,pdf]" pyright
+      - run: ruff check .
+      - run: ruff format --check .
       - run: pyright
+      - run: pytest tests/ -q --tb=short --cov=zdrovena --cov-fail-under=80
 
   security:
     name: Security scan
@@ -89,6 +82,11 @@ jobs:
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ github.run_id }}
+          restore-keys: trivy-db-
       - name: trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -120,3 +118,19 @@ jobs:
           directory: infra/terraform
           quiet: true
           soft_fail: false
+
+  frontend-check:
+    name: Frontend lint + build
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true'
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci && npm run lint && npm run build

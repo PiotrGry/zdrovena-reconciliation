@@ -178,8 +178,12 @@ class ZohoMailClient:
                 logger.error("Failed to process email from %s: %s", vendor_name, exc)
 
         _save_hashes(save_dir, hashes)
+        # found=True only when at least one PDF was actually saved.
+        # Messages found but zero PDFs downloaded (e.g. non-PDF attachment, download
+        # error) must NOT mark the vendor as found — that silently suppresses the
+        # "Brak faktur kosztowych" warning and lets email go out without the invoice.
         return {
-            "found": True,
+            "found": len(all_saved_paths) > 0,
             "downloaded": len(all_saved_paths),
             "manual_note": None,
             "saved_paths": all_saved_paths,

@@ -114,7 +114,7 @@ class TestCreateMonthArchiveFromBlob:
         blob2, data2 = self._make_blob("faktury/2026/kwiecien/FV002.pdf", b"pdf2 content")
         storage = self._make_storage([(blob1, data1), (blob2, data2)])
 
-        key, count = create_month_archive_from_blob(
+        key, count, _ = create_month_archive_from_blob(
             storage, "faktury/2026/kwiecien", "kwiecien", 2026
         )
 
@@ -129,7 +129,7 @@ class TestCreateMonthArchiveFromBlob:
         blob_zip, _ = self._make_blob("faktury/2026/kwiecien/old.zip", b"zip")
         storage = self._make_storage([(blob_pdf, b"pdf"), (blob_zip, b"zip")])
 
-        _, count = create_month_archive_from_blob(
+        _, count, _files = create_month_archive_from_blob(
             storage, "faktury/2026/kwiecien", "kwiecien", 2026
         )
 
@@ -142,7 +142,7 @@ class TestCreateMonthArchiveFromBlob:
         blob_state, _ = self._make_blob("faktury/2026/kwiecien/.state.json", b"{}")
         storage = self._make_storage([(blob_pdf, b"pdf"), (blob_state, b"{}")])
 
-        _, count = create_month_archive_from_blob(
+        _, count, _files = create_month_archive_from_blob(
             storage, "faktury/2026/kwiecien", "kwiecien", 2026
         )
 
@@ -153,7 +153,7 @@ class TestCreateMonthArchiveFromBlob:
 
         storage = MagicMock()
         storage.list_files.return_value = []
-        _, count = create_month_archive_from_blob(
+        _, count, _files = create_month_archive_from_blob(
             storage, "faktury/2026/kwiecien", "kwiecien", 2026
         )
         assert count == 0

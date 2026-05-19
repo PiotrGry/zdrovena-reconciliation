@@ -63,3 +63,59 @@ class TestPipelineState:
         steps = state.completed_steps
         steps.append("fake")
         assert "fake" not in state.completed_steps
+
+    def test_reset_with_blob_storage(self, tmp_path):
+        """reset() deletes blob checkpoint when storage is provided."""
+        from unittest.mock import MagicMock
+
+        storage = MagicMock()
+        state = PipelineState(
+            tmp_path, storage=storage, blob_key="faktury/2026/kwiecien/.state.json"
+        )
+        state.mark_done("step_1")
+        state.reset()
+
+        storage.delete.assert_called_once_with("faktury/2026/kwiecien/.state.json")
+        assert state.completed_steps == []
+
+    def test_load_from_blob(self, tmp_path):
+        """_load() reads from blob storage when available."""
+        import json
+        from unittest.mock import MagicMock
+
+        payload = json.dumps({"completed_steps": ["Pre-flight", "ZIP archive"]})
+        blob_key = "faktury/2026/kwiecien/.state.json"
+
+        storage = MagicMock()
+        storage.exists.return_value = True
+        storage.download.side_effect = lambda key, dest: dest.write_text(payload)
+
+        state = PipelineState(tmp_path, storage=storage, blob_key=blob_key)
+        assert "Pre-flight" in state.completed_steps
+        assert "ZIP archive" in state.completed_steps
+
+    def test_save_mirrors_to_blob(self, tmp_path):
+        """mark_done() syncs to blob storage when configured."""
+        from unittest.mock import MagicMock
+
+        storage = MagicMock()
+        state = PipelineState(
+            tmp_path, storage=storage, blob_key="faktury/2026/kwiecien/.state.json"
+        )
+        state.mark_done("Pre-flight")
+
+        assert storage.upload_stream.called
+
+    def test_reset_blob_delete_failure_is_silent(self, tmp_path):
+        """reset() continues even if blob delete fails — just logs a warning."""
+        from unittest.mock import MagicMock
+
+        storage = MagicMock()
+        storage.delete.side_effect = RuntimeError("blob unavailable")
+        state = PipelineState(
+            tmp_path, storage=storage, blob_key="faktury/2026/kwiecien/.state.json"
+        )
+        state.mark_done("step_1")
+        state.reset()  # must not raise
+
+        assert state.completed_steps == []

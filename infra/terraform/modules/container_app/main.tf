@@ -86,6 +86,14 @@ resource "azurerm_container_app" "this" {
         name  = "AZURE_KEYVAULT_URL"
         value = var.key_vault_url
       }
+
+      dynamic "env" {
+        for_each = var.applicationinsights_connection_string != null ? [1] : []
+        content {
+          name  = "APPLICATIONINSIGHTS_CONNECTION_STRING"
+          value = var.applicationinsights_connection_string
+        }
+      }
     }
   }
 }

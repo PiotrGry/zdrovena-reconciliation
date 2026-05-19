@@ -83,3 +83,9 @@ variable "memory" {
 variable "tags" {
   type = map(string)
 }
+
+variable "applicationinsights_connection_string" {
+  type        = string
+  default     = null
+  description = "Azure Application Insights connection string for distributed tracing and logging"
+}

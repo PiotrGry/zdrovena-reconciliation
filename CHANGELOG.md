@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v2.6.0 (2026-05-19)
+
+### Added
+
+- **ci**: Shared path filters (`.github/path-filters.yml`) — backend, frontend, infra changes each trigger the right jobs only.
+- **ci**: Frontend lint + build gate added to quality-gate workflow; catches broken builds before staging deploy.
+- **ci**: Ruff + pytest added to `typecheck` CI job; coverage threshold enforced at 80% in CI.
+- **ci**: Playwright, Trivy, and Docker BuildKit caches — pipeline is meaningfully faster on repeat runs.
+- **ci**: `staging-schedule.yml` — staging scales to 0 overnight (Mon–Fri 22:00 UTC) and warms up at the start of each full-test run.
+- **ci**: `release-validation.yml` — nightly + on-demand workflow runs the full smoke suite including `closeDetailedVendorAndZipReport`.
+- **ci**: Smoke credentials moved to Azure Key Vault (`zdrovenakv`); CI fetches them at runtime via managed identity — no raw secrets in GitHub.
+- **cd**: Auto-rollback in `_deploy.yml` — post-deploy smoke test retries 3× then rolls back to the previous revision and fires a webhook notification.
+- **cd**: CalVer release via `gh release create` replaces python-semantic-release.
+- **cd**: PR validate simplified — only quality-gate runs (~1 min vs ~15 min); full suite already ran at develop-gate time.
+- **monitoring**: Application Insights wired into Container Apps (staging + prod) via Terraform; connection string injected as env var.
+- **monitoring**: `prod-health.yml` — cron every 5 min, curls `/health`, fires webhook on failure.
+- **tests**: `test_close_property.py` — 12 Hypothesis property-based tests for CloseRequest, vendor matching, and date-range logic.
+- **tests**: `test_api_contract.py` — CloseResponse schema pinned; breaking API change = red CI.
+- **tests**: `test_zoho_vendor_download.py` — Zoho Mail vendor download mocked with `responses` library; covers happy path, no-mail, and strict=False PDF edge cases.
+- **e2e**: `close-flow.spec.ts` — authenticated end-to-end journey: list sales invoices → dry-run close → verify CloseResponse schema.
+- **orchestrator**: `zip_files` field added to `CloseReport` and `CloseResponse` — lists every file packed into the monthly ZIP archive.
+
+### Fixed
+
+- **orchestrator**: JPK step is no longer marked "done" in checkpoint state when reports are missing — prevents resume from skipping an incomplete step.
+- **api**: `close.py` uses `get_storage_service()` consistently on all paths (success + error) for storage write consistency.
+- **ci**: `ruff` added to dev dependencies so CI `typecheck` job can find the binary.
+- **tests**: `casefold()` replaces `lower()` in vendor matching — fixes Unicode edge case (µ/Μ/μ) found by Hypothesis.
+- **iac**: Terraform `security.tf` role assignments use symbolic identity reference instead of hardcoded GUID — restores dependency edge for recreation scenarios.
+- **repo**: macOS SMB delete-marker artifacts (`.smbdelete*`) removed from source control and added to `.gitignore`.
+
 ## v2.3.0 (2026-05-14)
 
 ### Added

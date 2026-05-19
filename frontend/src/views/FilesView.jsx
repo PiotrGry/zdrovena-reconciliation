@@ -181,7 +181,7 @@ export default function FilesView() {
     }
   };
 
-  const segments = prefix ? prefix.split("/") : [];
+  const segments = prefix ? prefix.replace(/\/$/, "").split("/") : [];
 
   const folders = items.filter(
     (i) =>
@@ -447,9 +447,7 @@ export default function FilesView() {
               {!loading &&
                 folders.map((folder) => {
                   const n = getName(folder);
-                  const subPrefix = prefix
-                    ? `${prefix}/${n.replace(/\/$/, "")}`
-                    : n.replace(/\/$/, "");
+                  const subPrefix = getKey(folder).replace(/\/$/, "");
                   return (
                     <tr key={getKey(folder)}>
                       <td>

@@ -13,9 +13,9 @@ SHA="${2:?Podaj git SHA}"
 
 IMAGE="$ACR/zdrovena-api"
 
-docker pull "$IMAGE:staging-latest"
-docker tag  "$IMAGE:staging-latest" "$IMAGE:$SHA"
-docker tag  "$IMAGE:staging-latest" "$IMAGE:latest"
+docker pull "$IMAGE:staging-$SHA"
+docker tag  "$IMAGE:staging-$SHA" "$IMAGE:$SHA"
+docker tag  "$IMAGE:staging-$SHA" "$IMAGE:latest"
 docker push "$IMAGE:$SHA"
 docker push "$IMAGE:latest"
 

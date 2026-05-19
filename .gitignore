@@ -1,3 +1,6 @@
+# macOS SMB filesystem artifacts
+.smbdelete*
+
 # Python
 __pycache__/
 *.py[cod]

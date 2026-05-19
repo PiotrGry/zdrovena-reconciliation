@@ -92,11 +92,15 @@ else
   echo -e "${SKIP} bandit not found — skipping (pip install bandit[toml])"
 fi
 
-step "pytest (cov ≥ 34%)"
-$PYTEST_CMD tests/ -q --tb=short \
-  --cov=zdrovena --cov-fail-under=80 \
-  --cov-report=term-missing \
-  && ok "tests passed" || fail "tests failed"
+step "pytest (cov ≥ 80%)"
+if [[ "${CHECK_TESTS:-1}" == "0" ]]; then
+  echo -e "${SKIP} pytest pominięty (CHECK_TESTS=0)"
+else
+  $PYTEST_CMD tests/ -q --tb=short \
+    --cov=zdrovena --cov-fail-under=80 \
+    --cov-report=term-missing \
+    && ok "tests passed" || fail "tests failed"
+fi
 
 step "pip-audit — zależności Python"
 # Użyj uv run żeby skanować tylko pakiety projektu (nie globalny Python)
@@ -121,6 +125,13 @@ if command -v trivy >/dev/null 2>&1; then
   trivy fs --severity HIGH,CRITICAL --quiet --exit-code 1 . && ok "trivy" || fail "trivy: podatności HIGH/CRITICAL w zależnościach"
 else
   echo -e "${SKIP} trivy nie znaleziony — zainstaluj: https://aquasecurity.github.io/trivy"
+fi
+
+step "terraform fmt — IaC formatting"
+if command -v terraform >/dev/null 2>&1 && [ -d "$REPO_ROOT/infra/terraform" ]; then
+  terraform fmt -check -recursive "$REPO_ROOT/infra/terraform" && ok "terraform fmt" || fail "terraform fmt: uruchom 'terraform fmt -recursive infra/terraform'"
+else
+  echo -e "${SKIP} terraform not found — skipping fmt check"
 fi
 
 step "checkov — IaC security scan"

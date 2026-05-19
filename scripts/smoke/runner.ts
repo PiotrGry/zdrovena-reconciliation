@@ -28,6 +28,9 @@ const args = process.argv.slice(2);
 const verbose = args.includes("--verbose");
 const outputArg = args.find((a) => a.startsWith("--output"));
 const outputFile = outputArg ? outputArg.split("=")[1] ?? args[args.indexOf(outputArg) + 1] : null;
+const excludeArg = args.find((a) => a.startsWith("--exclude-test="));
+const excludedTests = new Set(excludeArg ? excludeArg.slice("--exclude-test=".length).split(",").map((s) => s.trim()) : []);
+const TESTS = excludedTests.size > 0 ? ALL_TESTS.filter((t) => !excludedTests.has(t.name)) : ALL_TESTS;
 
 // ── Build context ──────────────────────────────────────────────────────────
 function fetchWithTimeout(url: string, opts: RequestInit & { timeoutMs?: number } = {}): Promise<Response> {
@@ -129,12 +132,12 @@ async function run(): Promise<void> {
   const startMs = Date.now();
   const results: TestResult[] = [];
 
-  console.log(`\nSmoke test suite — ${ALL_TESTS.length} tests`);
+  console.log(`\nSmoke test suite — ${TESTS.length} tests${excludedTests.size > 0 ? ` (${excludedTests.size} excluded)` : ""}`);
   console.log(`API:     ${ctx.apiUrl}`);
   console.log(`SWA:     ${ctx.swaUrl}`);
   console.log("─".repeat(60));
 
-  for (const test of ALL_TESTS) {
+  for (const test of TESTS) {
     const t0 = Date.now();
     let result: TestResult;
     try {
