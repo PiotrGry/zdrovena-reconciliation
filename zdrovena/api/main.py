@@ -24,12 +24,23 @@ logger = logging.getLogger("zdrovena.api.main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[type-arg]
-    """Startup check: verify Key Vault is reachable before accepting traffic.
+    """Startup: wire Azure Monitor telemetry, then verify Key Vault is reachable.
 
-    Only runs when AZURE_KEYVAULT_URL is set AND AZURE_AUTH_DISABLED is not
-    true (i.e. production / staging). Exits with code 1 on failure so the
-    Container App orchestrator can restart and surface the error in logs.
+    Azure Monitor only activates when APPLICATIONINSIGHTS_CONNECTION_STRING is set.
+    Key Vault ping only runs when AZURE_KEYVAULT_URL is set AND AZURE_AUTH_DISABLED
+    is not true (i.e. production / staging). Exits with code 1 on KV failure so
+    the Container App orchestrator can restart and surface the error in logs.
     """
+    ai_conn_str = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    if ai_conn_str:
+        try:
+            from azure.monitor.opentelemetry import configure_azure_monitor
+
+            configure_azure_monitor()
+            logger.info("Azure Monitor OpenTelemetry configured.")
+        except Exception as exc:
+            logger.warning("Azure Monitor configuration failed (non-fatal): %s", exc)
+
     keyvault_url = os.environ.get("AZURE_KEYVAULT_URL")
     auth_disabled = os.environ.get("AZURE_AUTH_DISABLED", "").lower() in ("1", "true", "yes")
 
