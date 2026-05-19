@@ -489,10 +489,10 @@ class MonthCloseOrchestrator:
         for vendor_cfg in EXPECTED_VENDORS:
             if vendor_cfg.skip:
                 continue
-            pat = vendor_cfg.pattern.lower()
+            pat = vendor_cfg.pattern.casefold()
             for inv in fakt_invoices:
-                buyer = (inv.get("buyer_name") or "").lower()
-                buyer_nip = (inv.get("buyer_tax_no") or "").lower()
+                buyer = (inv.get("buyer_name") or "").casefold()
+                buyer_nip = (inv.get("buyer_tax_no") or "").casefold()
                 if pat in buyer or pat in buyer_nip:
                     source = "Fakturownia (KSeF)" if inv.get("gov_id") else "Fakturownia"
                     if vendor_cfg.name not in found_vendors:

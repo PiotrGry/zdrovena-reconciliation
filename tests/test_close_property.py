@@ -51,8 +51,8 @@ def test_closerequest_rejects_year_before_2020(year: int, month: int) -> None:
 
 
 def _matches(pattern: str, buyer_name: str, buyer_nip: str) -> bool:
-    pat = pattern.lower()
-    return pat in (buyer_name or "").lower() or pat in (buyer_nip or "").lower()
+    pat = pattern.casefold()
+    return pat in (buyer_name or "").casefold() or pat in (buyer_nip or "").casefold()
 
 
 @given(
