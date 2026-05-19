@@ -119,7 +119,7 @@ def run_close(
         ) from exc
 
     append_close_history(
-        orchestrator.storage,
+        get_storage_service(),
         build_history_entry(
             year=req.year,
             month=req.month,
