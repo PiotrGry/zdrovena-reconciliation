@@ -96,3 +96,13 @@ resource "azurerm_role_assignment" "github_rg_contributor" {
   role_definition_name = "Contributor"
   principal_id         = "5df64963-8e53-4df1-a8a8-0a51d6b42440"
 }
+
+# ── RBAC: GitHub Actions → Key Vault Secrets User ─────────────────────────────
+# Required for CI e2e job to fetch smoke-client-id and smoke-client-secret
+# from Key Vault (instead of storing raw credentials as GitHub secrets).
+
+resource "azurerm_role_assignment" "github_kv_secrets_user" {
+  scope                = azurerm_key_vault.kv.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = "5df64963-8e53-4df1-a8a8-0a51d6b42440"
+}
