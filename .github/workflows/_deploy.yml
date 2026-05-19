@@ -174,30 +174,95 @@ jobs:
           output_location: ""
           skip_app_build: true
 
-  # Semantic versioning: tag + GitHub Release
-  #   feat:          → MINOR bump  (2.0.0 → 2.1.0)
-  #   fix:           → PATCH bump  (2.0.0 → 2.0.1)
-  #   feat!/BREAKING → MAJOR bump  (2.0.0 → 3.0.0)
-  #   ci:/chore:/docs: → no bump
-  release:
-    name: Semantic release
+  post-deploy-verify:
+    name: Post-deploy verify + auto-rollback
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [deploy-prod, deploy-frontend]
+    needs: [deploy-prod]
     permissions:
-      contents: write  # push version bump commit, create tag + GitHub Release
       id-token: write
+      contents: read
+    env:
+      PROD_APP: zdrovena-api-prod
+      RG: zdrovena-rg
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Azure login (OIDC)
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Smoke against production (retry 3×)
+        id: smoke
+        continue-on-error: true
+        env:
+          CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
+        run: |
+          FQDN=$(az containerapp show \
+            --name "$PROD_APP" --resource-group "$RG" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          for i in 1 2 3; do
+            echo "=== Smoke attempt $i/3 ==="
+            if bash scripts/ci/smoke-test.sh "https://$FQDN" "$CLIENT_ID"; then
+              exit 0
+            fi
+            [ $i -lt 3 ] && echo "Retrying in 5s..." && sleep 5
+          done
+          exit 1
+
+      - name: Auto-rollback on smoke failure
+        if: steps.smoke.outcome == 'failure'
+        run: |
+          NEW_REV=$(az containerapp revision list \
+            --name "$PROD_APP" --resource-group "$RG" \
+            --query "sort_by(@, &properties.createdTime) | [-1].name" \
+            -o tsv)
+          PREV_REV=$(az containerapp revision list \
+            --name "$PROD_APP" --resource-group "$RG" \
+            --query "sort_by(@, &properties.createdTime) | [-2].name" \
+            -o tsv)
+          echo "Rolling back: $NEW_REV → $PREV_REV"
+          az containerapp revision activate \
+            --name "$PROD_APP" --resource-group "$RG" \
+            --revision "$PREV_REV"
+          az containerapp revision deactivate \
+            --name "$PROD_APP" --resource-group "$RG" \
+            --revision "$NEW_REV"
+
+      - name: Notify on rollback
+        if: steps.smoke.outcome == 'failure'
+        env:
+          NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+        run: |
+          [ -z "$NOTIFY_WEBHOOK_URL" ] && exit 0
+          curl -sf -X POST "$NOTIFY_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{\"text\":\"⚠️ Production auto-rollback triggered for ${{ github.sha }}\"}"
+
+      - name: Fail job after rollback
+        if: steps.smoke.outcome == 'failure'
+        run: exit 1
+
+  release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [post-deploy-verify, deploy-frontend]
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: "3.12"
-
-      - name: Run python-semantic-release
-        uses: python-semantic-release/python-semantic-release@350c48fcb3ffcdfd2e0a235206bc2ecea6b69df0 # v10.5.3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$(date +%Y.%m.%d)-${GITHUB_SHA::7}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes

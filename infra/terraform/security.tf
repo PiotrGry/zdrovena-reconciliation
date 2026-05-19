@@ -76,7 +76,7 @@ resource "azurerm_federated_identity_credential" "github_develop" {
 resource "azurerm_role_assignment" "github_acr_push" {
   scope                = azurerm_container_registry.acr.id
   role_definition_name = "AcrPush"
-  principal_id         = "5df64963-8e53-4df1-a8a8-0a51d6b42440"
+  principal_id         = azurerm_user_assigned_identity.github_actions.principal_id
 }
 
 # ── RBAC: GitHub Actions → Storage Blob Data Contributor on staging container ──
@@ -85,7 +85,7 @@ resource "azurerm_role_assignment" "github_acr_push" {
 resource "azurerm_role_assignment" "github_staging_blob" {
   scope                = azurerm_storage_account.storage.id
   role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = "5df64963-8e53-4df1-a8a8-0a51d6b42440"
+  principal_id         = azurerm_user_assigned_identity.github_actions.principal_id
 }
 
 # ── RBAC: GitHub Actions → Contributor on RG (to update Container App) ────────
@@ -94,5 +94,15 @@ resource "azurerm_role_assignment" "github_staging_blob" {
 resource "azurerm_role_assignment" "github_rg_contributor" {
   scope                = azurerm_resource_group.rg.id
   role_definition_name = "Contributor"
-  principal_id         = "5df64963-8e53-4df1-a8a8-0a51d6b42440"
+  principal_id         = azurerm_user_assigned_identity.github_actions.principal_id
+}
+
+# ── RBAC: GitHub Actions → Key Vault Secrets User ─────────────────────────────
+# Required for CI e2e job to fetch smoke-client-id and smoke-client-secret
+# from Key Vault (instead of storing raw credentials as GitHub secrets).
+
+resource "azurerm_role_assignment" "github_kv_secrets_user" {
+  scope                = azurerm_key_vault.kv.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.github_actions.principal_id
 }

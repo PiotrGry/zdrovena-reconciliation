@@ -1,9 +1,8 @@
 name: PR Validate — develop → main
 
-# Every PR targeting main — runs quality gate + full test suite.
-# Quality gate is re-run here (even though it ran on develop for the same SHA)
-# because reviewers may push fixup commits to the PR. Without re-running,
-# lint/typecheck/security/coverage would not validate the new commits.
+# Every PR targeting main — runs quality gate only (~1 min).
+# Full test suite already ran on develop via develop-gate.yml for the same SHA.
+# Quality gate re-runs here to cover fixup commits pushed directly to the PR branch.
 #
 # Path filtering: Skip for infra-only changes (terraform.yml handles those).
 
@@ -19,7 +18,7 @@ on:
       - "e2e/**"
       - "frontend/**"
       - ".github/workflows/pr-validate.yml"
-      - ".github/workflows/_full-test-suite.yml"
+      - ".github/workflows/_quality-gate.yml"
       # infra/** intentionally omitted — terraform.yml runs plan for those
   workflow_dispatch:
 
@@ -34,19 +33,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Re-run quality gate on the PR HEAD. Even though the same SHA already passed
-  # develop-gate when the commit landed on develop, a reviewer may push fixup
-  # commits to the PR — those would skip lint/typecheck/security/coverage
-  # without this gate. KISS: deterministic checks are cheap, run them again.
   quality-gate:
     name: Quality gate
     uses: ./.github/workflows/_quality-gate.yml
-    secrets: inherit
-
-  full-test-suite:
-    name: Full test suite
-    needs: quality-gate
-    uses: ./.github/workflows/_full-test-suite.yml
     secrets: inherit
 
   ci-gate:
@@ -54,7 +43,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [quality-gate, full-test-suite]
+    needs: [quality-gate]
     steps:
       - name: Check all jobs passed
         run: |

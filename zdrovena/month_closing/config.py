@@ -167,7 +167,7 @@ EXPECTED_VENDORS: list[VendorConfig] = [
         invoice_id_re=r"(?:Invoice|Faktura)[^0-9]*?(\d{10,})",
         invoice_file_tpl="{id}.pdf",
     ),
-    VendorConfig(name="PulsePure", pattern="pulsepure", email="pulsepure"),
+    VendorConfig(name="PulsePure", pattern="pulsepure", email="pulsepureltd@gmail.com"),
     VendorConfig(name="Accounting/Bożena", pattern="ogorzalek", email="ogorzalek"),
 ]
 

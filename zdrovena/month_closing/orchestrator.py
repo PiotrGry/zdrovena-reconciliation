@@ -21,6 +21,7 @@ import calendar
 import logging
 import shutil
 import tempfile
+import zipfile
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -76,6 +77,7 @@ class CloseReport:
     ksef_count: int = 0
     bank_statement_found: bool = False
     zip_path: Path | None = None
+    zip_files: list[str] | None = None
     email_sent: bool = False
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -123,6 +125,7 @@ class MonthCloseOrchestrator:
         self.month_dir = BASE_DIR / str(year) / self.month_pl
         self.sales_dir = self.month_dir / "sprzedaz"
         self.costs_dir = self.month_dir / "koszty"
+        self.decl_dir = self.month_dir / "deklaracje"
 
         self.storage = get_storage_service()
         self._blob_prefix = f"faktury/{year}/{self.month_pl}"
@@ -269,6 +272,7 @@ class MonthCloseOrchestrator:
             get_secret=self._get_secret,
             no_browser=self.non_interactive,
             storage=self.storage,
+            out_fn=self.out.plain,
         )
         pf = checker.run()
         self.report.bank_statement_found = pf.bank_statement_found
@@ -297,6 +301,7 @@ class MonthCloseOrchestrator:
         self.out.step(1, "Creating folder structure")
         self.sales_dir.mkdir(parents=True, exist_ok=True)
         self.costs_dir.mkdir(parents=True, exist_ok=True)
+        self.decl_dir.mkdir(parents=True, exist_ok=True)
         logger.info("Folders ready: %s", self.month_dir)
         checker = getattr(self, "_preflight_checker", None)
         if checker is not None:
@@ -365,7 +370,9 @@ class MonthCloseOrchestrator:
         missing = [
             rpt
             for rpt in FAKTUROWNIA_REPORTS
-            if not (self.month_dir / rpt["dest_name"]).exists()
+            if not (self.decl_dir / rpt["dest_name"]).exists()
+            and not (self.month_dir / rpt["dest_name"]).exists()
+            and not self._blob_file_exists(f"{self._blob_prefix}/deklaracje", rpt["dest_name"])
             and not self._blob_file_exists(self._blob_prefix, rpt["dest_name"])
         ]
         for rpt in FAKTUROWNIA_REPORTS:
@@ -379,18 +386,27 @@ class MonthCloseOrchestrator:
                     missing,
                     self.date_from,
                     self.date_to,
-                    self.month_dir,
+                    self.decl_dir,
                 )
                 for rpt_cfg, path in downloaded:
                     self.out.ok(f"{rpt_cfg['name']}: downloaded → {path.name}")
                     missing = [r for r in missing if r["name"] != rpt_cfg["name"]]
-                    self._upload_to_blob(path, self._blob_prefix)
+                    self._upload_to_blob(path, f"{self._blob_prefix}/deklaracje")
             except Exception as exc:
                 logger.warning("Playwright report download failed: %s", exc)
                 self.out.warn(f"Auto-download failed: {exc}")
 
+        # Move any JPK/VAT files sitting in month_dir root → deklaracje/
+        for rpt in FAKTUROWNIA_REPORTS:
+            src = self.month_dir / rpt["dest_name"]
+            dst = self.decl_dir / rpt["dest_name"]
+            if src.exists() and not dst.exists():
+                import shutil as _shutil
+
+                _shutil.move(str(src), str(dst))
+
         for rpt in missing:
-            self.out.warn(f"{rpt['name']}: MISSING — {self.month_dir / rpt['dest_name']}")
+            self.out.warn(f"{rpt['name']}: MISSING — {self.decl_dir / rpt['dest_name']}")
 
         if not missing:
             pass  # all found
@@ -405,7 +421,8 @@ class MonthCloseOrchestrator:
             )
             self.report.warnings.append(msg)
             self.out.warn(msg)
-        self._mark_step_done("JPK & VAT reports")
+        if not missing or self.dry_run:
+            self._mark_step_done("JPK & VAT reports")
 
     def _step_4_cost_invoices(self) -> None:
         self.out.step(4, "Collecting cost invoices")
@@ -473,10 +490,10 @@ class MonthCloseOrchestrator:
         for vendor_cfg in EXPECTED_VENDORS:
             if vendor_cfg.skip:
                 continue
-            pat = vendor_cfg.pattern.lower()
+            pat = vendor_cfg.pattern.casefold()
             for inv in fakt_invoices:
-                buyer = (inv.get("buyer_name") or "").lower()
-                buyer_nip = (inv.get("buyer_tax_no") or "").lower()
+                buyer = (inv.get("buyer_name") or "").casefold()
+                buyer_nip = (inv.get("buyer_tax_no") or "").casefold()
                 if pat in buyer or pat in buyer_nip:
                     source = "Fakturownia (KSeF)" if inv.get("gov_id") else "Fakturownia"
                     if vendor_cfg.name not in found_vendors:
@@ -547,6 +564,7 @@ class MonthCloseOrchestrator:
                 zt = self.cost_date_to.replace("-", "/")
                 zoho_all_paths: list[Path] = []
 
+                vendor_path_map: dict[str, list[Path]] = {}
                 for vendor_cfg in still_missing:
                     email_pattern = vendor_cfg.email or vendor_cfg.pattern
                     result = zoho.search_and_download_vendor(
@@ -561,7 +579,9 @@ class MonthCloseOrchestrator:
                     if result["found"]:
                         found_vendors[vendor_cfg.name] = "Zoho Mail"
                         total_cost_files += result["downloaded"]
-                        zoho_all_paths.extend(result.get("saved_paths", []))
+                        paths = result.get("saved_paths", [])
+                        zoho_all_paths.extend(paths)
+                        vendor_path_map[vendor_cfg.name] = list(paths)
                         self.out.item(
                             f"✅ {vendor_cfg.name}: {result['downloaded']} PDF(s) from email"
                         )
@@ -615,12 +635,16 @@ class MonthCloseOrchestrator:
                 # Candidate gate: validate issue dates
                 if zoho_all_paths and not self.dry_run:
                     self.out.section_mid("Candidate gate: verifying invoice issue dates…")
+                    # strict=False: files from Zoho are already date-filtered by the
+                    # search range — if pypdf can't parse the date, trust Zoho and accept.
                     accepted, rejected, unverified = validate_invoice_dates(
-                        zoho_all_paths, self.date_from_obj, self.date_to_obj
+                        zoho_all_paths, self.date_from_obj, self.date_to_obj, strict=False
                     )
+                    removed_paths: set[Path] = set()
                     if rejected:
                         deleted = delete_rejected(rejected)
                         total_cost_files -= len(deleted)
+                        removed_paths.update(deleted)
                         self.out.item(
                             f"🗑  {len(deleted)} PDF(s) rejected "
                             "(wrong date / duplicate / not an invoice)"
@@ -628,6 +652,7 @@ class MonthCloseOrchestrator:
                     if unverified:
                         moved_uv = move_unverified(unverified)
                         total_cost_files -= len(moved_uv)
+                        removed_paths.update(moved_uv)
                         for p in moved_uv:
                             self.out.item(f"📁 {p.name} → _manual_check/")
                     if accepted:
@@ -635,6 +660,16 @@ class MonthCloseOrchestrator:
                             f"✅ {len(accepted)} PDF(s) confirmed within "
                             f"{self.date_from} – {self.date_to}"
                         )
+                    # If ALL of a vendor's PDFs were rejected/moved, un-mark it as found
+                    # so it shows up in final_missing and blocks email until resolved.
+                    if removed_paths:
+                        for vname, vpaths in vendor_path_map.items():
+                            if vpaths and all(p in removed_paths for p in vpaths):
+                                del found_vendors[vname]
+                                self.out.warn(
+                                    f"{vname}: all downloaded PDFs failed date check "
+                                    "— will appear in missing vendors"
+                                )
             else:
                 logger.info("Zoho OAuth not configured — skipping Phase 3")
                 self.out.item("⏭  Zoho Mail not configured (run setup_zoho_oauth.py)")
@@ -728,15 +763,18 @@ class MonthCloseOrchestrator:
             self._mark_step_done("ZIP archive (dry-run)")
             return
         try:
-            blob_zip_key, count = create_month_archive_from_blob(
+            blob_zip_key, count, included_files = create_month_archive_from_blob(
                 self.storage, self._blob_prefix, self.month_pl, self.year
             )
             self.report.zip_path = Path(blob_zip_key)
+            self.report.zip_files = included_files
             self.out.ok(f"ZIP created from blob → {blob_zip_key} ({count} files)")
         except Exception as exc:
             logger.warning("Blob ZIP failed, falling back to local: %s", exc)
             zip_path = create_month_archive(self.month_dir, self.month_pl, self.year)
             self.report.zip_path = zip_path
+            with zipfile.ZipFile(zip_path) as zf:
+                self.report.zip_files = zf.namelist()
             blob_zip_key = f"{self._blob_prefix}/{zip_path.name}"
             try:
                 self.storage.upload(zip_path, blob_zip_key)

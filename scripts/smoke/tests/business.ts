@@ -203,13 +203,160 @@ const closeFullFlowSendsEmail: SmokeTest = {
     }
     const body = await res.json() as Record<string, unknown>;
     const emailSent = body.email_sent === true;
+    const missingVendors = (body.cost_missing_vendors as string[] | undefined) ?? [];
+    const warnings = (body.warnings as string[] | undefined) ?? [];
+
+    // Fail if any cost vendor is missing — staging uses real Zoho/KV credentials
+    // so missing vendors indicate a real bug (wrong email pattern, date range, etc.)
+    if (missingVendors.length > 0) {
+      return {
+        name: this.name, category: this.category, status: "FAIL",
+        duration_ms: ms() - t0,
+        evidence: `missing_vendors=${JSON.stringify(missingVendors)}, warnings=${JSON.stringify(warnings).slice(0, 200)}`,
+        error: `Cost vendors missing on staging (real Zoho): ${missingVendors.join(", ")}`,
+      };
+    }
+
     return {
       name: this.name,
       category: this.category,
       status: emailSent ? "PASS" : "FAIL",
       duration_ms: ms() - t0,
-      evidence: `sales=${body.sales_invoice_count}, cost=${body.cost_invoice_count}, email_sent=${body.email_sent}, warnings=${JSON.stringify(body.warnings).slice(0, 100)}`,
+      evidence: `sales=${body.sales_invoice_count}, cost=${body.cost_invoice_count}, email_sent=${body.email_sent}, missing_vendors=${JSON.stringify(missingVendors)}`,
       error: !emailSent ? `Email not sent — check zoho-smtp-password in Key Vault or pipeline errors: ${JSON.stringify(body.errors).slice(0, 200)}` : undefined,
+    };
+  },
+};
+
+/**
+ * Verify blob output structure after a successful close:
+ * - no temp filenames (tmpXXXXXX)
+ * - deklaracje/ subfolder present
+ * - koszty/ has files
+ * Runs only after closeFullFlowSendsEmail would have created output.
+ */
+const closeOutputStructureIsClean: SmokeTest = {
+  name: "business.close_output_structure_is_clean",
+  category: "business",
+  async run(ctx: TestContext): Promise<TestResult> {
+    const t0 = ms();
+    const token = await ctx.getAccountantToken();
+    if (!token) {
+      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+    }
+    const now = new Date();
+    const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    const month = now.getMonth() === 0 ? 12 : now.getMonth();
+    const POLISH_MONTHS: Record<number, string> = {
+      1:"styczeń",2:"luty",3:"marzec",4:"kwiecień",5:"maj",6:"czerwiec",
+      7:"lipiec",8:"sierpień",9:"wrzesień",10:"październik",11:"listopad",12:"grudzień"
+    };
+    const prefix = `faktury/${year}/${POLISH_MONTHS[month]}`;
+    const res = await ctx.fetch(`${ctx.apiUrl}/api/files?prefix=${encodeURIComponent(prefix)}&flat=true`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: `GET /files returned ${res.status} — pipeline may not have run yet` };
+    }
+    const files = await res.json() as Array<{ key: string }>;
+    if (files.length === 0) {
+      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "No output files found — pipeline may not have run" };
+    }
+    const keys = files.map(f => f.key);
+    const errors: string[] = [];
+
+    // No temp filenames
+    const tmpFiles = keys.filter(k => /\/tmp[a-z0-9]{6,}\./i.test(k));
+    if (tmpFiles.length > 0) errors.push(`Temp filenames: ${tmpFiles.join(", ")}`);
+
+    // deklaracje/ subfolder must exist
+    const hasDecl = keys.some(k => k.includes("/deklaracje/"));
+    if (!hasDecl) errors.push("Missing deklaracje/ subfolder (JPK/VAT reports in root)");
+
+    // koszty/ must have files
+    const hasKoszty = keys.some(k => k.includes("/koszty/"));
+    if (!hasKoszty) errors.push("Missing koszty/ subfolder (no cost invoices)");
+
+    return {
+      name: this.name, category: this.category,
+      status: errors.length === 0 ? "PASS" : "FAIL",
+      duration_ms: ms() - t0,
+      evidence: `${keys.length} files, deklaracje=${hasDecl}, koszty=${hasKoszty}, tmp_files=${tmpFiles.length}`,
+      error: errors.length > 0 ? errors.join("; ") : undefined,
+    };
+  },
+};
+
+/**
+ * Full-flow: validate per-vendor source breakdown and ZIP file list.
+ * - FAIL if any cost vendor is missing
+ * - FAIL if temp filenames appear in zip_files
+ * - FAIL if deklaracje/ or koszty/ subfolder absent from zip_files
+ * Requires seeded inbox (seed-staging CI step).
+ */
+const closeDetailedVendorAndZipReport: SmokeTest = {
+  name: "business.close_detailed_vendor_and_zip_report",
+  category: "business",
+  async run(ctx: TestContext): Promise<TestResult> {
+    const t0 = ms();
+    const token = await ctx.getAccountantToken();
+    if (!token) {
+      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+    }
+    const now = new Date();
+    const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    const month = now.getMonth() === 0 ? 12 : now.getMonth();
+    const res = await ctx.fetch(`${ctx.apiUrl}/api/close`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ year, month, dry_run: false, ignore_warnings: true }),
+      timeoutMs: 180_000,
+    });
+    if (res.status !== 200) {
+      const text = await res.text().catch(() => "");
+      return {
+        name: this.name, category: this.category, status: "FAIL",
+        duration_ms: ms() - t0,
+        evidence: `HTTP ${res.status}: ${text.slice(0, 200)}`,
+        error: `Expected 200, got ${res.status}`,
+      };
+    }
+    const body = await res.json() as Record<string, unknown>;
+    const errors: string[] = [];
+
+    const foundVendors = (body.cost_found_vendors as Record<string, string> | undefined) ?? {};
+    const missingVendors = (body.cost_missing_vendors as string[] | undefined) ?? [];
+    const zipFiles = (body.zip_files as string[] | null | undefined) ?? null;
+
+    if (missingVendors.length > 0) {
+      errors.push(`Missing vendors: ${missingVendors.join(", ")}`);
+    }
+
+    const vendorTable = Object.entries(foundVendors)
+      .map(([v, src]) => `  ${v} → ${src}`)
+      .join("\n");
+
+    if (zipFiles !== null) {
+      const tmpFiles = zipFiles.filter(f => /\/tmp[a-z0-9]{6,}\./i.test(f));
+      if (tmpFiles.length > 0) errors.push(`Temp filenames in ZIP: ${tmpFiles.join(", ")}`);
+      if (!zipFiles.some(f => f.includes("deklaracje/"))) errors.push("Missing deklaracje/ in ZIP");
+      if (!zipFiles.some(f => f.includes("koszty/"))) errors.push("Missing koszty/ in ZIP");
+    }
+
+    const evidence = [
+      `vendors (${Object.keys(foundVendors).length} found, ${missingVendors.length} missing):`,
+      vendorTable || "  (none)",
+      `zip_files: ${zipFiles === null ? "null" : `${zipFiles.length} files`}`,
+      zipFiles ? zipFiles.slice(0, 10).join(", ") + (zipFiles.length > 10 ? ` …+${zipFiles.length - 10}` : "") : "",
+    ].filter(Boolean).join("\n");
+
+    return {
+      name: this.name,
+      category: this.category,
+      status: errors.length === 0 ? "PASS" : "FAIL",
+      duration_ms: ms() - t0,
+      evidence,
+      error: errors.length > 0 ? errors.join("; ") : undefined,
     };
   },
 };
@@ -220,4 +367,6 @@ export const tests: SmokeTest[] = [
   closePreflightBlockersAreMeaningful,
   closeStateHasValidStructure,
   closeFullFlowSendsEmail,
+  closeOutputStructureIsClean,
+  closeDetailedVendorAndZipReport,
 ];

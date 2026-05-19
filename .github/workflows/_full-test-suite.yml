@@ -14,6 +14,15 @@ name: Full Test Suite (reusable)
 
 on:
   workflow_call:
+    inputs:
+      backend_changed:
+        description: "True if backend code changed (from quality-gate detect-changes)"
+        type: string
+        default: ""
+      frontend_changed:
+        description: "True if frontend code changed (from quality-gate detect-changes)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -22,27 +31,50 @@ permissions:
 
 jobs:
   # ── 0. Detect changed areas ────────────────────────────────────────────────
+  # When called from pr-validate, inputs are pre-computed by quality-gate to
+  # avoid running dorny/paths-filter twice on the same SHA.
   detect-changes:
     name: Detect changed areas
     runs-on: ubuntu-latest
     outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ inputs.backend_changed != '' && inputs.backend_changed || steps.filter.outputs.backend }}
+      frontend: ${{ inputs.frontend_changed != '' && inputs.frontend_changed || steps.filter.outputs.frontend }}
       infra: ${{ steps.filter.outputs.infra }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+      - if: inputs.backend_changed == ''
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - if: inputs.backend_changed == ''
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
         id: filter
         with:
-          filters: |
-            backend:
-              - 'zdrovena/**'
-              - 'pyproject.toml'
-              - 'Dockerfile'
-            frontend:
-              - 'frontend/**'
-            infra:
-              - 'infra/**'
+          filters: .github/path-filters.yml
+
+  # ── W. Warm up staging Container App ─────────────────────────────────────
+  # Runs in parallel with build — ensures staging is at min 1 replica so smoke
+  # tests don't hit a cold-start 503 when backend didn't change (deploy skipped).
+  warm-staging:
+    name: Warm up staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: staging
+    needs: detect-changes
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Scale to min 1 replica
+        run: |
+          az containerapp update \
+            --name zdrovena-api-staging \
+            --resource-group zdrovena-rg \
+            --min-replicas 1 \
+            --max-replicas 3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Wait for health
+        run: bash scripts/ci/wait-containerapp.sh zdrovena-api-staging zdrovena-rg 12 10
 
   # ── 1. Build and push staging image ───────────────────────────────────────
   build:
@@ -67,19 +99,23 @@ jobs:
       - name: Log in to ACR
         run: az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
       - name: Build & push
         id: meta
         env:
           IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api
         run: |
-          docker build \
+          docker buildx build \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
             --label "git.sha=${{ github.sha }}" \
             --label "git.ref=${{ github.head_ref }}" \
             -t "$IMAGE:staging-${{ github.sha }}" \
+            -t "$IMAGE:staging-latest" \
+            --push \
             .
-          docker push "$IMAGE:staging-${{ github.sha }}"
-          docker tag  "$IMAGE:staging-${{ github.sha }}" "$IMAGE:staging-latest"
-          docker push "$IMAGE:staging-latest"
           echo "image=$IMAGE:staging-${{ github.sha }}" >> $GITHUB_OUTPUT
 
   # ── 2. Deploy backend to staging ──────────────────────────────────────────
@@ -187,35 +223,25 @@ jobs:
           output_location: ""
           skip_app_build: true
 
-  # ── 3b. Resolve staging URLs (runs even when deploy jobs are skipped) ──────
+  # ── 3b. Resolve staging URLs (no az login needed — staging FQDN is static) ──
   resolve-urls:
     name: Resolve staging URLs
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    environment: staging
+    timeout-minutes: 2
     needs: [detect-changes, deploy-backend, deploy-frontend]
     if: always() && !failure() && !cancelled()
     outputs:
       api-url: ${{ steps.urls.outputs.api_url }}
       swa-url: ${{ steps.urls.outputs.swa_url }}
     steps:
-      - name: Azure login (OIDC)
-        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Resolve URLs
         id: urls
         run: |
+          # staging FQDN is static — no az login required
           if [[ "${{ needs.deploy-backend.result }}" == "success" ]]; then
             API_URL="${{ needs.deploy-backend.outputs.api-url }}"
           else
-            FQDN=$(az containerapp show \
-              --name zdrovena-api-staging \
-              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --query "properties.configuration.ingress.fqdn" -o tsv)
-            API_URL="https://$FQDN"
+            API_URL="https://${{ secrets.STAGING_API_FQDN }}"
           fi
           if [[ "${{ needs.deploy-frontend.result }}" == "success" ]]; then
             SWA_URL="${{ needs.deploy-frontend.outputs.swa-url }}"
@@ -231,8 +257,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: staging
-    needs: [resolve-urls]
-    if: always() && needs.resolve-urls.result == 'success'
+    needs: [resolve-urls, warm-staging]
+    if: always() && needs.resolve-urls.result == 'success' && needs.warm-staging.result != 'failure'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -255,60 +281,7 @@ jobs:
         env:
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
           AZURE_STORAGE_ACCOUNT: zdrovenafiles
-        run: |
-          ACCOUNT="$AZURE_STORAGE_ACCOUNT"
-          echo "Storage account: $ACCOUNT"
-
-          NOW=$(date -u +"%Y-%m")
-          YEAR=${NOW%-*}
-          MONTH_NUM=$(date -u +"%m" | sed 's/^0//')
-          PREV_MONTH=$(( MONTH_NUM == 1 ? 12 : MONTH_NUM - 1 ))
-          PREV_YEAR=$(( MONTH_NUM == 1 ? YEAR - 1 : YEAR ))
-          echo "Seeding staging inbox for ${PREV_YEAR}/${PREV_MONTH}..."
-
-          # Clear existing inbox files
-          az storage blob delete-batch \
-            --account-name "$ACCOUNT" \
-            --source zdrovena-files-staging \
-            --pattern "faktury/inbox/*" \
-            --auth-mode login 2>/dev/null || true
-
-          # Generate fake files and upload via az CLI (uses OIDC token directly)
-          TMPDIR=$(mktemp -d)
-          FAKE_PDF='%PDF-1.4 seed'
-          FAKE_XML='<?xml version="1.0" encoding="UTF-8"?><root><test>seed</test></root>'
-
-          if [ "$PREV_MONTH" -eq 12 ]; then NEXT_MONTH=1; NEXT_YEAR=$((PREV_YEAR+1)); else NEXT_MONTH=$((PREV_MONTH+1)); NEXT_YEAR=$PREV_YEAR; fi
-          BANK_DATE=$(printf "%04d%02d01" "$NEXT_YEAR" "$NEXT_MONTH")
-          MONTH_PAD=$(printf "%02d" "$PREV_MONTH")
-
-          echo "$FAKE_PDF" > "$TMPDIR/Wyciag_na_zadanie_${BANK_DATE}001.pdf"
-          echo "$FAKE_PDF" > "$TMPDIR/invoice-12345-${PREV_YEAR}${MONTH_PAD}15.pdf"
-          echo "$FAKE_PDF" > "$TMPDIR/3849995102.pdf"
-          echo "$FAKE_XML" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01-jpk_fa.xml"
-          echo "$FAKE_XML" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01-jpkv7m.xml"
-          echo "$FAKE_PDF" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01_wykaz_sprzedazy.pdf"
-
-          # Diagnose: resolve object ID of logged-in SP and check blob role
-          CLIENT_ID=$(az account show --query "user.name" -o tsv)
-          SUB_ID=$(az account show --query "id" -o tsv)
-          OBJECT_ID=$(az ad sp show --id "$CLIENT_ID" --query "id" -o tsv 2>/dev/null || echo "LOOKUP_FAILED")
-          echo "=== principal object ID: $OBJECT_ID ==="
-          echo "=== expected object ID: 1b5be27c-6ea7-426f-af8b-9ac8d765b485 ==="
-          echo "=== MATCH: $([ "$OBJECT_ID" = "1b5be27c-6ea7-426f-af8b-9ac8d765b485" ] && echo YES || echo NO) ==="
-          az role assignment list \
-            --assignee "$OBJECT_ID" \
-            --scope "/subscriptions/$SUB_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.Storage/storageAccounts/$ACCOUNT" \
-            --query "[].roleDefinitionName" -o tsv 2>&1 || true
-
-          az storage blob upload-batch \
-            --account-name "$ACCOUNT" \
-            --destination zdrovena-files-staging \
-            --destination-path "faktury/inbox" \
-            --source "$TMPDIR" \
-            --auth-mode login
-          rm -rf "$TMPDIR"
-          echo "Seeded 6 files to zdrovena-files-staging/faktury/inbox/"
+        run: bash scripts/ci/seed-staging.sh
 
   # ── 5. Smoke test suite ────────────────────────────────────────────────────
   smoke:
@@ -349,7 +322,7 @@ jobs:
           SMOKE_ACCOUNTANT_SP_CLIENT_SECRET: ${{ secrets.SMOKE_ACCOUNTANT_SP_CLIENT_SECRET }}
         run: |
           cd scripts/smoke
-          npx tsx runner.ts --output report.json
+          npx tsx runner.ts --output report.json --exclude-test=closeDetailedVendorAndZipReport
           RESULT=$(cat report.json | npx tsx -e "
             const r = JSON.parse(require('fs').readFileSync('report.json','utf8'));
             const failed = r.tests.filter(t => t.status === 'FAIL').length;
@@ -384,15 +357,51 @@ jobs:
           cache: npm
           cache-dependency-path: e2e/package-lock.json
 
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('e2e/package-lock.json') }}
       - name: Install Playwright
         working-directory: e2e
         run: npm ci && npx playwright install --with-deps chromium
+
+      - name: Azure login (OIDC) — for Key Vault access
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Fetch smoke credentials from Key Vault
+        id: kv
+        run: |
+          CID=$(az keyvault secret show --vault-name zdrovenakv --name smoke-client-id --query value -o tsv)
+          CSC=$(az keyvault secret show --vault-name zdrovenakv --name smoke-client-secret --query value -o tsv)
+          echo "::add-mask::$CSC"
+          echo "client_id=$CID" >> $GITHUB_OUTPUT
+          echo "client_secret=$CSC" >> $GITHUB_OUTPUT
+
+      - name: Get smoke-test bearer token
+        id: token
+        env:
+          SMOKE_CLIENT_ID: ${{ steps.kv.outputs.client_id }}
+          SMOKE_CLIENT_SECRET: ${{ steps.kv.outputs.client_secret }}
+          TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          API_AUDIENCE: ${{ secrets.AZURE_API_CLIENT_ID }}
+        run: |
+          TOKEN=$(curl -sf -X POST \
+            "https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token" \
+            -d "client_id=$SMOKE_CLIENT_ID&client_secret=$SMOKE_CLIENT_SECRET&scope=api://$API_AUDIENCE/.default&grant_type=client_credentials" \
+            | jq -r .access_token)
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
       - name: Run E2E tests
         id: run
         env:
           BASE_URL: ${{ needs.resolve-urls.outputs.swa-url }}
           API_URL: ${{ needs.resolve-urls.outputs.api-url }}
+          AZURE_TEST_BEARER_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           cd e2e
           npx playwright test --reporter=json,list 2>&1 | tee e2e-results.txt

@@ -85,3 +85,28 @@ class TestConsoleReporter:
         out, buf = reporter
         out.summary_footer(success=False)
         assert "ERRORS" in buf.getvalue()
+
+    def test_item(self, reporter):
+        out, buf = reporter
+        out.item("item message")
+        assert "item message" in buf.getvalue()
+
+    def test_info(self, reporter):
+        out, buf = reporter
+        out.info("informational message")
+        assert "informational message" in buf.getvalue()
+
+    def test_detail(self, reporter):
+        out, buf = reporter
+        out.detail("detail line")
+        assert "detail line" in buf.getvalue()
+
+    def test_section_methods(self, reporter):
+        out, buf = reporter
+        out.section_start("Start section")
+        out.section_mid("Mid section")
+        out.section_end("End section")
+        output = buf.getvalue()
+        assert "Start section" in output
+        assert "Mid section" in output
+        assert "End section" in output

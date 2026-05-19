@@ -232,6 +232,118 @@ zdrovena setup --check                    # sprawdź co skonfigurowane
 - **Storage isolation** — osobne kontenery dla prod (`files`) i staging (`files_staging`)
 - **Network security** — RBAC jako główna bariera (shared_access_key_enabled=false, bypass=AzureServices)
 
+### Monitoring — Log Analytics queries (KQL)
+
+Otwórz: **Azure Portal → Log Analytics Workspace → `zdrovena-law` → Logs**
+
+#### Ostatnie błędy i wyjątki (ostatnia godzina)
+```kql
+exceptions
+| where timestamp > ago(1h)
+| project timestamp, type, outerMessage, severityLevel, operation_Name, cloud_RoleInstance
+| order by timestamp desc
+```
+
+#### Requesty zakończone błędem (5xx)
+```kql
+requests
+| where timestamp > ago(24h) and resultCode >= 500
+| project timestamp, name, resultCode, duration, operation_Id, url
+| order by timestamp desc
+```
+
+#### Najwolniejsze requesty (p95 ostatnie 6h)
+```kql
+requests
+| where timestamp > ago(6h)
+| summarize p95 = percentile(duration, 95), count_ = count() by name
+| where count_ > 5
+| order by p95 desc
+| take 20
+```
+
+#### Logi z pipeline zamknięcia miesiąca
+```kql
+traces
+| where timestamp > ago(7d)
+| where customDimensions["logger"] startswith "zdrovena"
+| where message contains "Close" or message contains "close"
+| project timestamp, message, severityLevel, customDimensions["logger"]
+| order by timestamp desc
+```
+
+#### Error rate per endpoint (ostatnie 24h)
+```kql
+requests
+| where timestamp > ago(24h)
+| summarize
+    total = count(),
+    failed = countif(success == false)
+  by name
+| extend error_pct = round(100.0 * failed / total, 1)
+| where total > 3
+| order by error_pct desc
+```
+
+#### Dependency calls — Storage i Key Vault
+```kql
+dependencies
+| where timestamp > ago(1h)
+| where type in ("Azure blob", "HTTP")
+| project timestamp, name, type, duration, success, resultCode
+| order by duration desc
+| take 50
+```
+
+#### Alert: czy alerty były wyzwolone?
+```kql
+AzureActivity
+| where timestamp > ago(7d)
+| where OperationNameValue == "microsoft.insights/alertrules/activated/action"
+| project TimeGenerated, ResourceGroup, Description = tostring(Properties)
+| order by TimeGenerated desc
+```
+
+### CI/CD pipeline
+
+```
+  push → develop
+       │
+       ▼
+  develop-gate.yml          ← quality gate + full test suite (staging deploy)
+  ├── _quality-gate.yml     ← ruff · pyright · pytest ≥80% · bandit · trivy · gitleaks
+  └── _full-test-suite.yml  ← build Docker → push to ACR → deploy staging → smoke tests
+                                └── post-deploy: auto-rollback on smoke failure
+
+  PR develop → main
+       │
+       ▼
+  pr-validate.yml           ← quality gate only (~1 min); full suite ran at develop-gate stage
+  └── _quality-gate.yml
+
+  merge → main
+       │
+       ▼
+  main-gate.yml
+  └── _deploy.yml           ← promote staging image → deploy prod → post-deploy verify
+       ├── promote-image.sh  ← re-tag staging-{sha} as latest
+       ├── deploy-prod       ← az containerapp update --image
+       ├── post-deploy-verify← smoke 3× retry; auto-rollback on failure + webhook notify
+       ├── deploy-frontend   ← Vite build → SWA upload (parallel to backend)
+       └── release           ← gh release create vYYYY.MM.DD-{sha::7}
+```
+
+**Zabezpieczenia bramki:**
+- Każdy commit do `develop` musi przejść: lint + typy + testy ≥80% + security scan + staging smoke
+- PR do `main` = quality gate (~1 min); staging deploy był już wykonany przy commit do `develop`
+- Merge do `main` = automatyczny deploy produkcyjny bez manual approval
+- Post-deploy smoke (3× retry) z auto-rollbackiem do poprzedniej rewizji Container App
+- `prod-health.yml` — cron co 5 min sprawdza `/health`; powiadomienie webhook przy błędzie
+
+**Auto-rollback:**
+Przy awarii smoke po deployu — `az containerapp revision activate` poprzednia rewizja,
+`az containerapp revision deactivate` nowa rewizja. Czas rollbacku ~15–30 s.
+
 ### Planowane serwisy (rozwój)
 
 #### **Faza 1: Persistence layer (Q2 2026)**
@@ -289,44 +401,6 @@ terraform init -backend-config=backend.hcl
 terraform plan
 terraform apply
 ```
-
-### GitHub Secrets (wymagane)
-
-| Secret | Opis |
-|--------|------|
-| `AZURE_CLIENT_ID` | Client ID SP `zdrovena-github-actions` (OIDC login) |
-| `AZURE_TENANT_ID` | ID tenanta Entra ID |
-| `AZURE_SUBSCRIPTION_ID` | ID subskrypcji Azure |
-| `AZURE_API_CLIENT_ID` | Client ID App Registration `zdrovena-api` (JWT audience) |
-| `ACR_LOGIN_SERVER` | URL Container Registry |
-| `SWA_DEPLOYMENT_TOKEN` | Token deploymentu Static Web Apps |
-
-### Terraform
-
-```bash
-cd infra/terraform
-cp terraform.tfvars.template terraform.tfvars
-# uzupełnij terraform.tfvars
-terraform init -backend-config=backend.hcl
-terraform plan
-terraform apply
-```
-
----
-
-## Sekrety CLI (Keychain)
-
-Wszystkie sekrety CLI przechowywane przez `keyring` (macOS Keychain). Konto: `humio`.
-
-| Keychain | Co | Jak uzyskać |
-|----------|----|------------|
-| `fakturownia_api_token` | Token API Fakturownia | zdrovena.fakturownia.pl → Ustawienia → API |
-| `fakturownia_login` | Login webowy Fakturownia | e-mail loginu do Fakturownia UI |
-| `fakturownia_password` | Hasło webowe Fakturownia | hasło do Fakturownia UI |
-| `zoho_smtp_password` | Hasło SMTP Zoho | hasło konta Zoho |
-| `zoho_client_id` | Zoho OAuth Client ID | api-console.zoho.eu → Self Client |
-| `zoho_client_secret` | Zoho OAuth Client Secret | api-console.zoho.eu → Self Client |
-| `zoho_refresh_token` | Zoho OAuth Refresh Token | `zdrovena setup zoho` |
 
 ---
 
@@ -416,13 +490,6 @@ Available report kinds: `vat-sales` (default), `income`, `expenses`, `unpaid`,
 
 Output defaults to `~/Downloads/report_<kind>_<year>-<month>.pdf`.
 
-### Report credentials
-
-| Service (Keychain)         | What                      |
-|----------------------------|---------------------------|
-| `fakturownia_login`        | Fakturownia web login     |
-| `fakturownia_password`     | Fakturownia web password  |
-
 ## Month-close pipeline (`zdrovena close`)
 
 8-step automated pipeline:
@@ -455,40 +522,14 @@ headless runs.
 
 ## Credentials
 
-All secrets are stored via `keyring` (macOS Keychain, Linux SecretService, etc.). Use the built-in setup wizard:
+All credentials are stored locally via `keyring` (macOS Keychain, Linux SecretService). Use the built-in setup wizard:
 
 ```bash
-zdrovena setup                # interactive wizard — prompts for all secrets
-zdrovena setup --check        # verify which secrets are configured
-zdrovena setup zoho           # Zoho Mail OAuth flow (grant code → refresh token)
-zdrovena setup gads           # Google Ads OAuth flow (browser → token exchange)
+zdrovena setup                # interactive wizard
+zdrovena setup --check        # verify what is configured
+zdrovena setup zoho           # Zoho Mail OAuth flow
+zdrovena setup gads           # Google Ads OAuth flow
 ```
-
-### Required secrets
-
-| Service (Keychain)         | What                    | How to get |
-|----------------------------|-------------------------|------------|
-| `fakturownia_api_token`    | Fakturownia API token   | zdrovena.fakturownia.pl → Settings → API |
-| `fakturownia_login`        | Fakturownia web login   | Email used to log in to Fakturownia UI |
-| `fakturownia_password`     | Fakturownia web password| Password for the Fakturownia UI account |
-| `zoho_smtp_password`       | Zoho SMTP password      | Your Zoho email password |
-| `zoho_client_id`           | Zoho OAuth Client ID    | api-console.zoho.eu → Self Client |
-| `zoho_client_secret`       | Zoho OAuth Client Secret| api-console.zoho.eu → Self Client |
-| `zoho_refresh_token`       | Zoho OAuth Refresh Token| `zdrovena setup zoho` |
-
-### Optional secrets
-
-| Service (Keychain)         | What                    | How to get |
-|----------------------------|-------------------------|------------|
-| `ksef_certificate`         | KSeF X.509 cert (.crt)  | Wizard imports file → base64 → Keychain |
-| `ksef_private_key`         | KSeF private key (.key) | Wizard imports file → base64 → Keychain |
-| `ksef_key_password`        | KSeF key passphrase     | `zdrovena setup` |
-| `gads_developer_token`     | Google Ads dev token    | Google Ads → API Center |
-| `gads_client_id`           | Google Ads OAuth ID     | Google Cloud Console → Credentials |
-| `gads_client_secret`       | Google Ads OAuth Secret | Google Cloud Console → Credentials |
-| `gads_refresh_token`       | Google Ads refresh token| `zdrovena setup gads` |
-
-All secrets use Keychain account `humio`.
 
 ## Optional dependencies
 
