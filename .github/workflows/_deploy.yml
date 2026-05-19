@@ -27,14 +27,11 @@ jobs:
       - name: Resolve staging SHA
         id: staging-sha
         run: |
-          # Merge commits have a second parent (the source branch, e.g. develop).
-          # The staging image was built from that SHA, not from the merge commit SHA.
-          # Use --verify to test existence without capturing unresolvable ref to stdout.
-          if git rev-parse --verify HEAD^2 >/dev/null 2>&1; then
-            STAGING_SHA=$(git rev-parse HEAD^2)
-          else
-            STAGING_SHA="${{ github.sha }}"
-          fi
+          # For merge commits, the staging image was built from the source branch (HEAD^2),
+          # not from the merge commit SHA (github.sha). Read parent SHAs directly from the
+          # commit object — works in shallow clones where parent objects aren't downloaded.
+          SECOND_PARENT=$(git cat-file -p HEAD | awk '/^parent/{n++; if(n==2) print $2}')
+          STAGING_SHA="${SECOND_PARENT:-${{ github.sha }}}"
           echo "sha=$STAGING_SHA" >> "$GITHUB_OUTPUT"
           echo "Staging SHA: $STAGING_SHA (github.sha=${{ github.sha }})"
 
