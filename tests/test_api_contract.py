@@ -6,7 +6,6 @@ Update EXPECTED_FIELDS intentionally when the schema changes.
 
 from __future__ import annotations
 
-from typing import ClassVar
 
 from zdrovena.api.models import CloseResponse
 

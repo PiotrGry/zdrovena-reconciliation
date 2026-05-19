@@ -13,7 +13,7 @@ import calendar
 from datetime import date, timedelta
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
