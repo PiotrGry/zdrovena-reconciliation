@@ -52,6 +52,7 @@ def _make_report(**overrides):
         ksef_count: int = 0
         bank_statement_found: bool = False
         zip_path: Path | None = None
+        zip_files: list | None = None
         email_sent: bool = False
         warnings: list = field(default_factory=list)
         errors: list = field(default_factory=list)

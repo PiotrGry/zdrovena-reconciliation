@@ -21,18 +21,6 @@ on:
       - "frontend/**"
       - ".github/workflows/develop-gate.yml"
       - ".github/workflows/_quality-gate.yml"
-  pull_request:
-    branches: [develop]
-    paths:
-      - "zdrovena/**"
-      - "tests/**"
-      - "scripts/**"
-      - "pyproject.toml"
-      - "Dockerfile"
-      - "e2e/**"
-      - "frontend/**"
-      - ".github/workflows/develop-gate.yml"
-      - ".github/workflows/_quality-gate.yml"
   workflow_dispatch:
 
 permissions:

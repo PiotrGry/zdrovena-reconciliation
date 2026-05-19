@@ -92,7 +92,7 @@ else
   echo -e "${SKIP} bandit not found — skipping (pip install bandit[toml])"
 fi
 
-step "pytest (cov ≥ 34%)"
+step "pytest (cov ≥ 80%)"
 $PYTEST_CMD tests/ -q --tb=short \
   --cov=zdrovena --cov-fail-under=80 \
   --cov-report=term-missing \

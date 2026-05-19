@@ -293,11 +293,41 @@ class TestStep6ZipArchive:
         blob_key = "faktury/2025/czerwiec/czerwiec_2025_HUMIO.zip"
         with patch(
             "zdrovena.month_closing.orchestrator.create_month_archive_from_blob",
-            return_value=(blob_key, 5),
+            return_value=(blob_key, 5, ["koszty/FV001.pdf"]),
         ):
             orch._step_6_zip_archive()
         assert str(orch.report.zip_path) == blob_key
+        assert orch.report.zip_files == ["koszty/FV001.pdf"]
         assert any("ZIP archive" in s for s in orch.report.steps_completed)
+
+    def test_fallback_to_local_zip(self, tmp_path):
+        """When blob ZIP fails, falls back to local ZIP and populates zip_files via namelist."""
+        import zipfile
+        from unittest.mock import MagicMock, patch
+
+        orch = MonthCloseOrchestrator(year=2025, month=6, dry_run=False)
+        orch.out = MagicMock()
+        orch.month_dir = tmp_path
+
+        # Create a real local ZIP that create_month_archive would produce
+        fake_zip = tmp_path / "czerwiec_2025_HUMIO.zip"
+        with zipfile.ZipFile(fake_zip, "w") as zf:
+            zf.writestr("koszty/FV001.pdf", b"pdf")
+            zf.writestr("sprzedaz/FS001.pdf", b"pdf2")
+
+        with patch(
+            "zdrovena.month_closing.orchestrator.create_month_archive_from_blob",
+            side_effect=RuntimeError("blob unavailable"),
+        ), patch(
+            "zdrovena.month_closing.orchestrator.create_month_archive",
+            return_value=fake_zip,
+        ):
+            orch._step_6_zip_archive()
+
+        assert orch.report.zip_path == fake_zip
+        assert orch.report.zip_files is not None
+        assert "koszty/FV001.pdf" in orch.report.zip_files
+        assert "sprzedaz/FS001.pdf" in orch.report.zip_files
 
 
 # ── _step_7_email ────────────────────────────────────────────────────────────

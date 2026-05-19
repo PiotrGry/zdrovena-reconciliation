@@ -21,6 +21,7 @@ import calendar
 import logging
 import shutil
 import tempfile
+import zipfile
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -76,6 +77,7 @@ class CloseReport:
     ksef_count: int = 0
     bank_statement_found: bool = False
     zip_path: Path | None = None
+    zip_files: list[str] | None = None
     email_sent: bool = False
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -759,15 +761,18 @@ class MonthCloseOrchestrator:
             self._mark_step_done("ZIP archive (dry-run)")
             return
         try:
-            blob_zip_key, count = create_month_archive_from_blob(
+            blob_zip_key, count, included_files = create_month_archive_from_blob(
                 self.storage, self._blob_prefix, self.month_pl, self.year
             )
             self.report.zip_path = Path(blob_zip_key)
+            self.report.zip_files = included_files
             self.out.ok(f"ZIP created from blob → {blob_zip_key} ({count} files)")
         except Exception as exc:
             logger.warning("Blob ZIP failed, falling back to local: %s", exc)
             zip_path = create_month_archive(self.month_dir, self.month_pl, self.year)
             self.report.zip_path = zip_path
+            with zipfile.ZipFile(zip_path) as zf:
+                self.report.zip_files = zf.namelist()
             blob_zip_key = f"{self._blob_prefix}/{zip_path.name}"
             try:
                 self.storage.upload(zip_path, blob_zip_key)
