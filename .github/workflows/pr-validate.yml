@@ -1,9 +1,8 @@
 name: PR Validate — develop → main
 
-# Every PR targeting main — runs quality gate + full test suite.
-# Quality gate is re-run here (even though it ran on develop for the same SHA)
-# because reviewers may push fixup commits to the PR. Without re-running,
-# lint/typecheck/security/coverage would not validate the new commits.
+# Every PR targeting main — runs quality gate only (~1 min).
+# Full test suite already ran on develop via develop-gate.yml for the same SHA.
+# Quality gate re-runs here to cover fixup commits pushed directly to the PR branch.
 #
 # Path filtering: Skip for infra-only changes (terraform.yml handles those).
 
@@ -19,7 +18,6 @@ on:
       - "e2e/**"
       - "frontend/**"
       - ".github/workflows/pr-validate.yml"
-      - ".github/workflows/_full-test-suite.yml"
       - ".github/workflows/_quality-gate.yml"
       # infra/** intentionally omitted — terraform.yml runs plan for those
   workflow_dispatch:
@@ -35,33 +33,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Quality gate runs detect-changes + typecheck + security in parallel.
-  # Its outputs (backend/frontend changed) are passed to full-test-suite so
-  # the duplicate detect-changes job there is a 2s no-op instead of 6s real run.
   quality-gate:
     name: Quality gate
     uses: ./.github/workflows/_quality-gate.yml
     secrets: inherit
-
-  # full-test-suite starts immediately — build Docker image overlaps with
-  # typecheck+security (both ~50-65s). deploy-backend inside full-test-suite
-  # must wait for quality-gate before it can proceed (gated via ci-gate input).
-  # This saves ~40s wall-clock: Docker build no longer sits behind quality-gate.
-  full-test-suite:
-    name: Full test suite
-    needs: quality-gate
-    uses: ./.github/workflows/_full-test-suite.yml
-    secrets: inherit
-    with:
-      backend_changed: ${{ needs.quality-gate.outputs.backend }}
-      frontend_changed: ${{ needs.quality-gate.outputs.frontend }}
 
   ci-gate:
     name: CI Gate
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [quality-gate, full-test-suite]
+    needs: [quality-gate]
     steps:
       - name: Check all jobs passed
         run: |
