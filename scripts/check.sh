@@ -127,6 +127,13 @@ else
   echo -e "${SKIP} trivy nie znaleziony — zainstaluj: https://aquasecurity.github.io/trivy"
 fi
 
+step "terraform fmt — IaC formatting"
+if command -v terraform >/dev/null 2>&1 && [ -d "$REPO_ROOT/infra/terraform" ]; then
+  terraform fmt -check -recursive "$REPO_ROOT/infra/terraform" && ok "terraform fmt" || fail "terraform fmt: uruchom 'terraform fmt -recursive infra/terraform'"
+else
+  echo -e "${SKIP} terraform not found — skipping fmt check"
+fi
+
 step "checkov — IaC security scan"
 if command -v checkov >/dev/null 2>&1 || docker image inspect ghcr.io/bridgecrewio/checkov:latest &>/dev/null 2>&1; then
   CHECKOV_CMD="checkov"
