@@ -29,8 +29,12 @@ jobs:
         run: |
           # Merge commits have a second parent (the source branch, e.g. develop).
           # The staging image was built from that SHA, not from the merge commit SHA.
-          # For direct pushes (no merge commit) fall back to github.sha.
-          STAGING_SHA=$(git rev-parse HEAD^2 2>/dev/null || echo "${{ github.sha }}")
+          # Use --verify to test existence without capturing unresolvable ref to stdout.
+          if git rev-parse --verify HEAD^2 >/dev/null 2>&1; then
+            STAGING_SHA=$(git rev-parse HEAD^2)
+          else
+            STAGING_SHA="${{ github.sha }}"
+          fi
           echo "sha=$STAGING_SHA" >> "$GITHUB_OUTPUT"
           echo "Staging SHA: $STAGING_SHA (github.sha=${{ github.sha }})"
 
