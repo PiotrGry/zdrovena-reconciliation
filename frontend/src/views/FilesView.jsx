@@ -199,7 +199,11 @@ export default function FilesView() {
   );
 
   const getKey = (i) => i.key || i.name || "";
-  const getName = (i) => i.name || i.key?.split("/").pop() || "";
+  const getName = (i) => {
+    if (i.name) return i.name;
+    const key = (i.key || "").replace(/\/$/, "");
+    return key.split("/").pop() || "";
+  };
 
   const filtered = files
     .filter((i) => {

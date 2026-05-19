@@ -29,7 +29,7 @@ jobs:
             --name zdrovena-api-prod \
             --resource-group zdrovena-rg \
             --query properties.configuration.ingress.fqdn -o tsv)
-          HTTP=$(curl -sf -o /dev/null -w "%{http_code}" --max-time 10 "https://$FQDN/health")
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://$FQDN/health")
           if [[ "$HTTP" != "200" && "$HTTP" != "401" ]]; then
             echo "FAIL: /health returned $HTTP"
             if [ -n "$NOTIFY_WEBHOOK_URL" ]; then
