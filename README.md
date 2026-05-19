@@ -232,6 +232,78 @@ zdrovena setup --check                    # sprawdź co skonfigurowane
 - **Storage isolation** — osobne kontenery dla prod (`files`) i staging (`files_staging`)
 - **Network security** — RBAC jako główna bariera (shared_access_key_enabled=false, bypass=AzureServices)
 
+### Monitoring — Log Analytics queries (KQL)
+
+Otwórz: **Azure Portal → Log Analytics Workspace → `zdrovena-law` → Logs**
+
+#### Ostatnie błędy i wyjątki (ostatnia godzina)
+```kql
+exceptions
+| where timestamp > ago(1h)
+| project timestamp, type, outerMessage, severityLevel, operation_Name, cloud_RoleInstance
+| order by timestamp desc
+```
+
+#### Requesty zakończone błędem (5xx)
+```kql
+requests
+| where timestamp > ago(24h) and resultCode >= 500
+| project timestamp, name, resultCode, duration, operation_Id, url
+| order by timestamp desc
+```
+
+#### Najwolniejsze requesty (p95 ostatnie 6h)
+```kql
+requests
+| where timestamp > ago(6h)
+| summarize p95 = percentile(duration, 95), count_ = count() by name
+| where count_ > 5
+| order by p95 desc
+| take 20
+```
+
+#### Logi z pipeline zamknięcia miesiąca
+```kql
+traces
+| where timestamp > ago(7d)
+| where customDimensions["logger"] startswith "zdrovena"
+| where message contains "Close" or message contains "close"
+| project timestamp, message, severityLevel, customDimensions["logger"]
+| order by timestamp desc
+```
+
+#### Error rate per endpoint (ostatnie 24h)
+```kql
+requests
+| where timestamp > ago(24h)
+| summarize
+    total = count(),
+    failed = countif(success == false)
+  by name
+| extend error_pct = round(100.0 * failed / total, 1)
+| where total > 3
+| order by error_pct desc
+```
+
+#### Dependency calls — Storage i Key Vault
+```kql
+dependencies
+| where timestamp > ago(1h)
+| where type in ("Azure blob", "HTTP")
+| project timestamp, name, type, duration, success, resultCode
+| order by duration desc
+| take 50
+```
+
+#### Alert: czy alerty były wyzwolone?
+```kql
+AzureActivity
+| where timestamp > ago(7d)
+| where OperationNameValue == "microsoft.insights/alertrules/activated/action"
+| project TimeGenerated, ResourceGroup, Description = tostring(Properties)
+| order by TimeGenerated desc
+```
+
 ### CI/CD pipeline
 
 ```
