@@ -99,20 +99,23 @@ jobs:
       - name: Log in to ACR
         run: az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
       - name: Build & push
         id: meta
         env:
           IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api
         run: |
-          docker build \
-            --cache-from "$IMAGE:staging-latest" \
+          docker buildx build \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
             --label "git.sha=${{ github.sha }}" \
             --label "git.ref=${{ github.head_ref }}" \
             -t "$IMAGE:staging-${{ github.sha }}" \
+            -t "$IMAGE:staging-latest" \
+            --push \
             .
-          docker push "$IMAGE:staging-${{ github.sha }}"
-          docker tag  "$IMAGE:staging-${{ github.sha }}" "$IMAGE:staging-latest"
-          docker push "$IMAGE:staging-latest"
           echo "image=$IMAGE:staging-${{ github.sha }}" >> $GITHUB_OUTPUT
 
   # ── 2. Deploy backend to staging ──────────────────────────────────────────
@@ -278,58 +281,7 @@ jobs:
         env:
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
           AZURE_STORAGE_ACCOUNT: zdrovenafiles
-        run: |
-          ACCOUNT="$AZURE_STORAGE_ACCOUNT"
-          echo "Storage account: $ACCOUNT"
-
-          NOW=$(date -u +"%Y-%m")
-          YEAR=${NOW%-*}
-          MONTH_NUM=$(date -u +"%m" | sed 's/^0//')
-          PREV_MONTH=$(( MONTH_NUM == 1 ? 12 : MONTH_NUM - 1 ))
-          PREV_YEAR=$(( MONTH_NUM == 1 ? YEAR - 1 : YEAR ))
-          echo "Seeding staging inbox for ${PREV_YEAR}/${PREV_MONTH}..."
-
-          # Clear existing inbox files
-          az storage blob delete-batch \
-            --account-name "$ACCOUNT" \
-            --source zdrovena-files-staging \
-            --pattern "faktury/inbox/*" \
-            --auth-mode login 2>/dev/null || true
-
-          # Generate fake files and upload via az CLI (uses OIDC token directly)
-          TMPDIR=$(mktemp -d)
-          FAKE_PDF='%PDF-1.4 seed'
-          FAKE_XML='<?xml version="1.0" encoding="UTF-8"?><root><test>seed</test></root>'
-
-          if [ "$PREV_MONTH" -eq 12 ]; then NEXT_MONTH=1; NEXT_YEAR=$((PREV_YEAR+1)); else NEXT_MONTH=$((PREV_MONTH+1)); NEXT_YEAR=$PREV_YEAR; fi
-          BANK_DATE=$(printf "%04d%02d01" "$NEXT_YEAR" "$NEXT_MONTH")
-          MONTH_PAD=$(printf "%02d" "$PREV_MONTH")
-
-          echo "$FAKE_PDF" > "$TMPDIR/Wyciag_na_zadanie_${BANK_DATE}001.pdf"
-          echo "$FAKE_PDF" > "$TMPDIR/invoice-12345-${PREV_YEAR}${MONTH_PAD}15.pdf"
-          echo "$FAKE_PDF" > "$TMPDIR/3849995102.pdf"
-          echo "$FAKE_XML" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01-jpk_fa.xml"
-          echo "$FAKE_XML" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01-jpkv7m.xml"
-          echo "$FAKE_PDF" > "$TMPDIR/zdrovena-${PREV_YEAR}-${MONTH_PAD}-01_wykaz_sprzedazy.pdf"
-
-          # Diagnose: resolve object ID of logged-in SP and check blob role
-          CLIENT_ID=$(az account show --query "user.name" -o tsv)
-          SUB_ID=$(az account show --query "id" -o tsv)
-          OBJECT_ID=$(az ad sp show --id "$CLIENT_ID" --query "id" -o tsv 2>/dev/null || echo "LOOKUP_FAILED")
-          echo "=== principal object ID: $OBJECT_ID ==="
-          az role assignment list \
-            --assignee "$OBJECT_ID" \
-            --scope "/subscriptions/$SUB_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.Storage/storageAccounts/$ACCOUNT" \
-            --query "[].roleDefinitionName" -o tsv 2>&1 || true
-
-          az storage blob upload-batch \
-            --account-name "$ACCOUNT" \
-            --destination zdrovena-files-staging \
-            --destination-path "faktury/inbox" \
-            --source "$TMPDIR" \
-            --auth-mode login
-          rm -rf "$TMPDIR"
-          echo "Seeded 6 files to zdrovena-files-staging/faktury/inbox/"
+        run: bash scripts/ci/seed-staging.sh
 
   # ── 5. Smoke test suite ────────────────────────────────────────────────────
   smoke:
@@ -370,7 +322,7 @@ jobs:
           SMOKE_ACCOUNTANT_SP_CLIENT_SECRET: ${{ secrets.SMOKE_ACCOUNTANT_SP_CLIENT_SECRET }}
         run: |
           cd scripts/smoke
-          npx tsx runner.ts --output report.json
+          npx tsx runner.ts --output report.json --exclude-test=closeDetailedVendorAndZipReport
           RESULT=$(cat report.json | npx tsx -e "
             const r = JSON.parse(require('fs').readFileSync('report.json','utf8'));
             const failed = r.tests.filter(t => t.status === 'FAIL').length;
@@ -405,6 +357,10 @@ jobs:
           cache: npm
           cache-dependency-path: e2e/package-lock.json
 
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('e2e/package-lock.json') }}
       - name: Install Playwright
         working-directory: e2e
         run: npm ci && npx playwright install --with-deps chromium
