@@ -402,6 +402,7 @@ class MonthCloseOrchestrator:
             dst = self.decl_dir / rpt["dest_name"]
             if src.exists() and not dst.exists():
                 import shutil as _shutil
+
                 _shutil.move(str(src), str(dst))
 
         for rpt in missing:
