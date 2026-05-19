@@ -365,11 +365,27 @@ jobs:
         working-directory: e2e
         run: npm ci && npx playwright install --with-deps chromium
 
+      - name: Get smoke-test bearer token
+        id: token
+        env:
+          SMOKE_CLIENT_ID: ${{ secrets.AZURE_SMOKE_CLIENT_ID }}
+          SMOKE_CLIENT_SECRET: ${{ secrets.AZURE_SMOKE_CLIENT_SECRET }}
+          TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          API_AUDIENCE: ${{ secrets.AZURE_API_CLIENT_ID }}
+        run: |
+          TOKEN=$(curl -sf -X POST \
+            "https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token" \
+            -d "client_id=$SMOKE_CLIENT_ID&client_secret=$SMOKE_CLIENT_SECRET&scope=api://$API_AUDIENCE/.default&grant_type=client_credentials" \
+            | jq -r .access_token)
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+
       - name: Run E2E tests
         id: run
         env:
           BASE_URL: ${{ needs.resolve-urls.outputs.swa-url }}
           API_URL: ${{ needs.resolve-urls.outputs.api-url }}
+          AZURE_TEST_BEARER_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           cd e2e
           npx playwright test --reporter=json,list 2>&1 | tee e2e-results.txt
