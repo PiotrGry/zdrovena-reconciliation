@@ -6,7 +6,6 @@ Update EXPECTED_FIELDS intentionally when the schema changes.
 
 from __future__ import annotations
 
-
 from zdrovena.api.models import CloseResponse
 
 EXPECTED_FIELDS: frozenset[str] = frozenset(
