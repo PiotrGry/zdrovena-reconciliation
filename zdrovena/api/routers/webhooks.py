@@ -100,7 +100,7 @@ def _read_drafts(storage: Any) -> list[dict[str, Any]]:
         buf = io.BytesIO()
         storage.download(_DRAFTS_KEY, buf)
         lines = buf.getvalue().decode().splitlines()
-        records = [json.loads(l) for l in lines if l.strip()]
+        records = [json.loads(ln) for ln in lines if ln.strip()]
         return sorted(records, key=lambda r: r.get("created_at", ""), reverse=True)
     except Exception:
         return []
@@ -273,8 +273,8 @@ async def shopify_order_created(
 
     try:
         order = json.loads(raw_body)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON") from exc
 
     if not order.get("shipping_lines"):
         logger.warning("Order %s has no shipping_lines — skipping draft", order.get("id"))

@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import json
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,7 +16,6 @@ os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 
 from zdrovena.api.main import app
 from zdrovena.api.routers.webhooks import _pick_courier, _verify_shopify_hmac
-
 
 # ── Pure helpers ──────────────────────────────────────────────────────────────
 
