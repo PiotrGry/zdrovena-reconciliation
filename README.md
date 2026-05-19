@@ -232,6 +232,46 @@ zdrovena setup --check                    # sprawdź co skonfigurowane
 - **Storage isolation** — osobne kontenery dla prod (`files`) i staging (`files_staging`)
 - **Network security** — RBAC jako główna bariera (shared_access_key_enabled=false, bypass=AzureServices)
 
+### CI/CD pipeline
+
+```
+  push → develop
+       │
+       ▼
+  develop-gate.yml          ← quality gate + full test suite (staging deploy)
+  ├── _quality-gate.yml     ← ruff · pyright · pytest ≥80% · bandit · trivy · gitleaks
+  └── _full-test-suite.yml  ← build Docker → push to ACR → deploy staging → smoke tests
+                                └── post-deploy: auto-rollback on smoke failure
+
+  PR develop → main
+       │
+       ▼
+  pr-validate.yml           ← quality gate only (~1 min); full suite ran at develop-gate stage
+  └── _quality-gate.yml
+
+  merge → main
+       │
+       ▼
+  main-gate.yml
+  └── _deploy.yml           ← promote staging image → deploy prod → post-deploy verify
+       ├── promote-image.sh  ← re-tag staging-{sha} as latest
+       ├── deploy-prod       ← az containerapp update --image
+       ├── post-deploy-verify← smoke 3× retry; auto-rollback on failure + webhook notify
+       ├── deploy-frontend   ← Vite build → SWA upload (parallel to backend)
+       └── release           ← gh release create vYYYY.MM.DD-{sha::7}
+```
+
+**Zabezpieczenia bramki:**
+- Każdy commit do `develop` musi przejść: lint + typy + testy ≥80% + security scan + staging smoke
+- PR do `main` = quality gate (~1 min); staging deploy był już wykonany przy commit do `develop`
+- Merge do `main` = automatyczny deploy produkcyjny bez manual approval
+- Post-deploy smoke (3× retry) z auto-rollbackiem do poprzedniej rewizji Container App
+- `prod-health.yml` — cron co 5 min sprawdza `/health`; powiadomienie webhook przy błędzie
+
+**Auto-rollback:**
+Przy awarii smoke po deployu — `az containerapp revision activate` poprzednia rewizja,
+`az containerapp revision deactivate` nowa rewizja. Czas rollbacku ~15–30 s.
+
 ### Planowane serwisy (rozwój)
 
 #### **Faza 1: Persistence layer (Q2 2026)**
