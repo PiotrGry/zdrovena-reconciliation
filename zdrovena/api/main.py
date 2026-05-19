@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from zdrovena.api.routers import close, files, invoices
+from zdrovena.api.routers import close, files, invoices, webhooks
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -100,6 +100,7 @@ app.add_middleware(
 app.include_router(close.router, prefix="/api")
 app.include_router(files.router, prefix="/api")
 app.include_router(invoices.router, prefix="/api")
+app.include_router(webhooks.router, prefix="/api")
 
 
 @app.get("/health", tags=["health"])
