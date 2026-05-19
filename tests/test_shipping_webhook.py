@@ -79,6 +79,7 @@ class TestPickCourier:
 @pytest.fixture()
 def client(tmp_path):
     from zdrovena.common.storage import LocalStorageService
+
     storage = LocalStorageService(root=tmp_path / "storage")
     with patch("zdrovena.api.deps._storage_singleton", return_value=storage):
         with TestClient(app, raise_server_exceptions=True) as c:
@@ -86,14 +87,21 @@ def client(tmp_path):
 
 
 _ORDER_NO_SHIPPING = json.dumps({"id": 999, "order_number": 1001}).encode()
-_ORDER_WITH_SHIPPING = json.dumps({
-    "id": 1,
-    "order_number": 1042,
-    "shipping_lines": [{"title": "DPD Kurier"}],
-    "shipping_address": {"first_name": "Jan", "last_name": "Kowalski",
-                         "address1": "Kwiatowa 1", "city": "Warszawa", "zip": "00-001"},
-    "customer": {"email": "jan@example.com", "phone": "500000000"},
-}).encode()
+_ORDER_WITH_SHIPPING = json.dumps(
+    {
+        "id": 1,
+        "order_number": 1042,
+        "shipping_lines": [{"title": "DPD Kurier"}],
+        "shipping_address": {
+            "first_name": "Jan",
+            "last_name": "Kowalski",
+            "address1": "Kwiatowa 1",
+            "city": "Warszawa",
+            "zip": "00-001",
+        },
+        "customer": {"email": "jan@example.com", "phone": "500000000"},
+    }
+).encode()
 
 
 class TestWebhookEndpoint:
