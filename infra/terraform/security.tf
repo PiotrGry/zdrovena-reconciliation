@@ -7,6 +7,7 @@ data "azurerm_client_config" "current" {}
 resource "azurerm_key_vault" "kv" {
   # checkov:skip=CKV_AZURE_42: soft_delete_retention_days=7 enables recovery; purge_protection=false is intentional — terraform destroy would block for 90 days with purge protection enabled
   # checkov:skip=CKV_AZURE_110: purge_protection disabled intentionally (see above)
+  # checkov:skip=CKV_AZURE_109: firewall rules intentionally open — AzureServices bypass does not cover Consumption Container Apps; RBAC (Key Vault Secrets User) is the access boundary
   # checkov:skip=CKV_AZURE_189: public network access required — no VNet/private endpoint in this architecture; access controlled via RBAC (Key Vault Secrets User role)
   # checkov:skip=CKV2_AZURE_32: private endpoint requires VNet not present in this architecture; access controlled via Azure RBAC role assignments
   name                       = "${replace(var.prefix, "-", "")}kv"
