@@ -35,8 +35,12 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     if ai_conn_str:
         try:
             from azure.monitor.opentelemetry import configure_azure_monitor
+            from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
             configure_azure_monitor()
+            # instrument_app() patches the existing instance; configure_azure_monitor()
+            # alone only patches FastAPI.__init__ (new instances), not the already-created app.
+            FastAPIInstrumentor.instrument_app(app)
             logger.info("Azure Monitor OpenTelemetry configured.")
         except Exception as exc:
             logger.warning("Azure Monitor configuration failed (non-fatal): %s", exc)

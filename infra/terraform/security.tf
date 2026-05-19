@@ -7,8 +7,8 @@ data "azurerm_client_config" "current" {}
 resource "azurerm_key_vault" "kv" {
   # checkov:skip=CKV_AZURE_42: soft_delete_retention_days=7 enables recovery; purge_protection=false is intentional — terraform destroy would block for 90 days with purge protection enabled
   # checkov:skip=CKV_AZURE_110: purge_protection disabled intentionally (see above)
-  # checkov:skip=CKV_AZURE_189: public network access required — no VNet/private endpoint in this architecture; access restricted via network_acls bypass=AzureServices
-  # checkov:skip=CKV2_AZURE_32: private endpoint requires VNet not present in this architecture; Container App reaches KV via AzureServices bypass over Azure backbone
+  # checkov:skip=CKV_AZURE_189: public network access required — no VNet/private endpoint in this architecture; access controlled via RBAC (Key Vault Secrets User role)
+  # checkov:skip=CKV2_AZURE_32: private endpoint requires VNet not present in this architecture; access controlled via Azure RBAC role assignments
   name                       = "${replace(var.prefix, "-", "")}kv"
   resource_group_name        = azurerm_resource_group.rg.name
   location                   = azurerm_resource_group.rg.location
@@ -18,14 +18,15 @@ resource "azurerm_key_vault" "kv" {
   purge_protection_enabled   = false
   tags                       = local.tags
 
-  # CKV_AZURE_109 — restrict access to AzureServices only (Container App managed identity)
-  # Terraform operator gets access via ip_rules (allowlist from variables)
-  # When private network is enabled, access is further restricted to VNet subnet
+  # Network access: Allow from all IPs — RBAC (Key Vault Secrets User role) is the
+  # real access boundary. AzureServices bypass does NOT cover Consumption-tier Container
+  # Apps with dynamic egress IPs, causing ForbiddenByFirewall at startup despite valid
+  # RBAC credentials. VNet integration would fix this properly; until then, RBAC-only.
   network_acls {
-    default_action             = "Deny"
+    default_action             = "Allow"
     bypass                     = "AzureServices"
-    ip_rules                   = var.terraform_ip_allowlist
-    virtual_network_subnet_ids = var.enable_private_network ? [azurerm_subnet.container_apps[0].id] : []
+    ip_rules                   = []
+    virtual_network_subnet_ids = []
   }
 
   # Allow Terraform operator (current CLI identity) to manage secrets
