@@ -18,13 +18,14 @@ module "api_prod" {
   key_vault_id                 = azurerm_key_vault.kv.id
   key_vault_url                = azurerm_key_vault.kv.vault_uri
   azure_tenant_id              = var.azure_tenant_id
-  azure_client_id_entra        = var.azure_client_id_entra
-  allowed_origins              = "https://${azurerm_static_web_app.ui.default_host_name}"
-  min_replicas                 = 0
-  max_replicas                 = 2
-  cpu                          = var.container_app_cpu
-  memory                       = var.container_app_memory
-  tags                         = local.tags
+  azure_client_id_entra                 = var.azure_client_id_entra
+  allowed_origins                       = "https://${azurerm_static_web_app.ui.default_host_name}"
+  applicationinsights_connection_string = azurerm_application_insights.ai.connection_string
+  min_replicas                          = 0
+  max_replicas                          = 2
+  cpu                                   = var.container_app_cpu
+  memory                                = var.container_app_memory
+  tags                                  = local.tags
 }
 
 module "api_staging" {
@@ -43,11 +44,12 @@ module "api_staging" {
   key_vault_id                 = azurerm_key_vault.kv.id
   key_vault_url                = azurerm_key_vault.kv.vault_uri
   azure_tenant_id              = var.azure_tenant_id
-  azure_client_id_entra        = var.azure_client_id_entra
-  allowed_origins              = "https://${azurerm_static_web_app.ui.default_host_name}"
-  min_replicas                 = 0
-  max_replicas                 = 1
-  cpu                          = var.container_app_cpu
-  memory                       = var.container_app_memory
-  tags                         = merge(local.tags, { environment = "staging" })
+  azure_client_id_entra                 = var.azure_client_id_entra
+  allowed_origins                       = "https://${azurerm_static_web_app.ui.default_host_name}"
+  applicationinsights_connection_string = azurerm_application_insights.ai.connection_string
+  min_replicas                          = 0
+  max_replicas                          = 1
+  cpu                                   = var.container_app_cpu
+  memory                                = var.container_app_memory
+  tags                                  = merge(local.tags, { environment = "staging" })
 }
