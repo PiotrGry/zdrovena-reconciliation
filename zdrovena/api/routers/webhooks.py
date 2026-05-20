@@ -85,12 +85,12 @@ def _append_draft(storage: Any, record: dict[str, Any]) -> None:
         line = json.dumps(record, ensure_ascii=False) + "\n"
         existing = b""
         try:
-            buf = io.BytesIO()
-            storage.download(_DRAFTS_KEY, buf)
-            existing = buf.getvalue()
+            existing = b"".join(storage.stream(_DRAFTS_KEY))
         except Exception:
             pass
-        storage.upload(_DRAFTS_KEY, io.BytesIO(existing + line.encode()))
+        storage.upload_stream(
+            io.BytesIO(existing + line.encode()), _DRAFTS_KEY, "application/x-ndjson"
+        )
     except Exception as exc:
         logger.error(
             "Failed to persist draft record for order %s: %s", record.get("shopify_order_id"), exc
@@ -99,9 +99,8 @@ def _append_draft(storage: Any, record: dict[str, Any]) -> None:
 
 def _read_drafts(storage: Any) -> list[dict[str, Any]]:
     try:
-        buf = io.BytesIO()
-        storage.download(_DRAFTS_KEY, buf)
-        lines = buf.getvalue().decode().splitlines()
+        raw = b"".join(storage.stream(_DRAFTS_KEY))
+        lines = raw.decode().splitlines()
         records = [json.loads(ln) for ln in lines if ln.strip()]
         return sorted(records, key=lambda r: r.get("created_at", ""), reverse=True)
     except Exception:
