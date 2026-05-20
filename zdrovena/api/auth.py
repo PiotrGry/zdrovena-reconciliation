@@ -22,9 +22,10 @@ Required env vars (production):
                        and hangs trying to fetch a token for it.
 
 App roles:
-  zdrovena-admin       — full access
-  zdrovena-viewer      — read-only (list, download)
-  zdrovena-accountant  — close + download
+  zdrovena-admin        — full access
+  zdrovena-viewer       — read-only (list, download)
+  zdrovena-accountant   — close + download
+  zdrovena-shipment-mgr — execute shipping actions (create drafts, order pickup)
 """
 
 from __future__ import annotations
@@ -205,4 +206,11 @@ def require_viewer_or_above(
     principal: Annotated[Principal, Depends(get_current_principal)],
 ) -> Principal:
     principal.require_role("zdrovena-admin", "zdrovena-accountant", "zdrovena-viewer")
+    return principal
+
+
+def require_shipment_mgr_or_above(
+    principal: Annotated[Principal, Depends(get_current_principal)],
+) -> Principal:
+    principal.require_role("zdrovena-admin", "zdrovena-shipment-mgr")
     return principal

@@ -1,37 +1,57 @@
-"""Close history — append-only log of month-closing runs stored in blob storage."""
+"""Close history — append-only log of month-closing runs.
+
+Production: Azure Table Storage (via table_history.py, table 'closehistory')
+  - Requires AZURE_STORAGE_ACCOUNT_URL or AZURE_STORAGE_CONNECTION_STRING
+  - Write once per month-close; read for dashboard history panel
+
+Local dev / tests: JSON file at ~/.zdrovena/storage/close-history.json
+  - List of entry dicts, appended in order
+  - No Azure credentials required
+"""
 
 from __future__ import annotations
 
 import json
 import logging
 import os
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("zdrovena.month_closing.history")
 
-HISTORY_BLOB_KEY = "faktury/.close_history.jsonl"
+_LOCAL_FILE = Path.home() / ".zdrovena" / "storage" / "close-history.json"
 
 
-def _get_table_connection() -> str | None:
-    """Return Azure Storage connection string or account URL if configured."""
+def _get_conn() -> str | None:
     return os.environ.get("AZURE_STORAGE_CONNECTION_STRING") or os.environ.get(
         "AZURE_STORAGE_ACCOUNT_URL"
     )
 
 
+# ── Local JSON fallback (dev / tests) ─────────────────────────────────────────
+
+
+def _local_load() -> list[dict]:
+    if not _LOCAL_FILE.exists():
+        return []
+    try:
+        return json.loads(_LOCAL_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def _local_save(entries: list[dict]) -> None:
+    _LOCAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _LOCAL_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+
 def append_close_history(storage: Any, entry: dict) -> None:
-    """Append one entry to the history log.
-
-    Tries Azure Table Storage first (if AZURE_STORAGE_CONNECTION_STRING or
-    AZURE_STORAGE_ACCOUNT_URL is set), falls back to JSONL blob.
-
-    Uses download → append → upload for JSONL to avoid concurrent write issues
-    for this low-frequency operation (month-close runs at most once a month per year).
-    """
-    conn = _get_table_connection()
+    """Append one entry to the history log."""
+    conn = _get_conn()
     if conn:
         from zdrovena.month_closing.table_history import append_history_table
 
@@ -39,113 +59,48 @@ def append_close_history(storage: Any, entry: dict) -> None:
             append_history_table(conn, entry)
             return
         except Exception as exc:
-            logger.warning("Table Storage append failed, falling back to JSONL: %s", exc)
+            logger.warning("Table Storage append failed: %s", exc)
+            raise
 
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as f:
-            tmp = Path(f.name)
-
-        # Download existing history (if any)
-        try:
-            storage.download(HISTORY_BLOB_KEY, tmp)
-            existing = tmp.read_text(encoding="utf-8")
-        except Exception:
-            existing = ""
-
-        # Append new entry
-        line = json.dumps(entry, ensure_ascii=False, default=str)
-        new_content = (existing.rstrip("\n") + "\n" + line + "\n").lstrip("\n")
-        tmp.write_text(new_content, encoding="utf-8")
-
-        storage.upload(tmp, HISTORY_BLOB_KEY)
-        tmp.unlink(missing_ok=True)
-    except Exception as exc:
-        logger.warning("Could not append close history: %s", exc)
+    entries = _local_load()
+    entries.append(entry)
+    _local_save(entries)
 
 
 def read_close_history(storage: Any, limit: int = 50) -> list[dict]:
-    """Return last `limit` history entries, newest first.
-
-    Tries Azure Table Storage first (if AZURE_STORAGE_CONNECTION_STRING or
-    AZURE_STORAGE_ACCOUNT_URL is set), falls back to JSONL blob.
-    """
-    conn = _get_table_connection()
+    """Return last `limit` history entries, newest first."""
+    conn = _get_conn()
     if conn:
         from zdrovena.month_closing.table_history import read_history_table
 
         try:
             return read_history_table(conn, limit=limit)
         except Exception as exc:
-            logger.warning("Table Storage read failed, falling back to JSONL: %s", exc)
+            logger.warning("Table Storage read failed: %s", exc)
+            return []
 
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as f:
-            tmp = Path(f.name)
-        storage.download(HISTORY_BLOB_KEY, tmp)
-        lines = [
-            line.strip() for line in tmp.read_text(encoding="utf-8").splitlines() if line.strip()
-        ]
-        tmp.unlink(missing_ok=True)
-        entries = []
-        for line in reversed(lines[-limit:]):
-            try:
-                entries.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return entries
-    except Exception:
-        return []
+    entries = _local_load()
+    return list(reversed(entries[-limit:]))
 
 
 def delete_history_entry(storage: Any, ts: str) -> bool:
-    """Remove one entry by timestamp. Returns True if found and removed.
-
-    Tries Azure Table Storage first (if AZURE_STORAGE_CONNECTION_STRING or
-    AZURE_STORAGE_ACCOUNT_URL is set), falls back to JSONL blob.
-    """
-    conn = _get_table_connection()
+    """Remove one entry by timestamp. Returns True if found and removed."""
+    conn = _get_conn()
     if conn:
         from zdrovena.month_closing.table_history import delete_history_entry_table
 
         try:
             return delete_history_entry_table(conn, ts)
         except Exception as exc:
-            logger.warning("Table Storage delete failed, falling back to JSONL: %s", exc)
-
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as f:
-            tmp = Path(f.name)
-        try:
-            storage.download(HISTORY_BLOB_KEY, tmp)
-            lines = [
-                line.strip()
-                for line in tmp.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-        except Exception:
-            tmp.unlink(missing_ok=True)
+            logger.warning("Table Storage delete failed: %s", exc)
             return False
 
-        kept = []
-        removed = 0
-        for line in lines:
-            try:
-                entry = json.loads(line)
-                if entry.get("ts") == ts:
-                    removed += 1
-                else:
-                    kept.append(line)
-            except json.JSONDecodeError:
-                kept.append(line)
-
-        new_content = "\n".join(kept) + ("\n" if kept else "")
-        tmp.write_text(new_content, encoding="utf-8")
-        storage.upload(tmp, HISTORY_BLOB_KEY)
-        tmp.unlink(missing_ok=True)
-        return removed > 0
-    except Exception as exc:
-        logger.warning("Could not delete history entry %s: %s", ts, exc)
+    entries = _local_load()
+    kept = [e for e in entries if e.get("ts") != ts]
+    if len(kept) == len(entries):
         return False
+    _local_save(kept)
+    return True
 
 
 def build_history_entry(
@@ -173,8 +128,6 @@ def build_history_entry(
         entry["warnings"] = report.warnings
         entry["errors"] = report.errors
 
-        # Combine steps from this run + checkpoint steps (deduplicated, normalized)
-        # This gives the accurate total of steps completed for this month.
         def _norm(s: str) -> str:
             import re
 
