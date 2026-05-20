@@ -19,7 +19,9 @@ function fmtDate(iso) {
 
 function courierLabel(draft) {
     if (draft.courier === 'inpost') {
-        return draft.service === 'inpost_locker_standard' ? 'InPost Paczkomat' : 'InPost Kurier'
+        if (draft.service === 'inpost_locker_standard') return 'InPost Paczkomat'
+        if (draft.service === 'inpost_courier_standard') return 'InPost Kurier'
+        return 'InPost'
     }
     return 'Apaczka'
 }
@@ -39,7 +41,7 @@ function DraftRow({ draft, onPrintLabel }) {
                 onClick={() => setOpen(o => !o)}
                 aria-expanded={open}
             >
-                <span className="mono" style={{ minWidth: 80 }}>{draft.shopify_order_number}</span>
+                <span className="mono" style={{ minWidth: 80 }}>#{draft.shopify_order_number}</span>
                 <span style={{ flex: 1, textAlign: 'left' }}>{draft.customer_name || '—'}</span>
                 <Pill kind={courierPillKind(draft)}>{courierLabel(draft)}</Pill>
                 <span className="mono dim" style={{ minWidth: 130, textAlign: 'right' }}>
@@ -85,7 +87,7 @@ function DraftRow({ draft, onPrintLabel }) {
                                             {draft.tracking_number}
                                         </span>
                                     )
-                                    : <span className="dim">pending</span>}
+                                    : <span className="dim">—</span>}
                             </div>
                         </div>
                         <div>
