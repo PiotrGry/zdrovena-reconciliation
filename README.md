@@ -2,10 +2,9 @@
 
 Wewnętrzny system back-office dla **Zdrovena / HUMIO** — fakturowanie, audyt butelek, zamknięcie miesiąca.
 
-Składa się z trzech warstw:
+Składa się z dwóch warstw:
 - **REST API** (FastAPI) — serwowane przez Azure Container Apps, chronione JWT (Entra ID)
 - **Frontend** (vanilla HTML + MSAL.js) — Azure Static Web Apps, proxy `/api/*` → Container App
-- **CLI** — lokalne narzędzia dla właściciela firmy
 
 ---
 
@@ -21,6 +20,10 @@ Składa się z trzech warstw:
 | `GET` | `/files/{key}` | viewer+ | Pobranie pliku (streaming) |
 | `PUT` | `/files/{key}` | accountant+ | Wgranie pliku |
 | `POST` | `/close` | accountant+ | Uruchomienie pipeline zamknięcia miesiąca |
+| `GET` | `/shipping/drafts` | shipment-mgr+ | Lista projektów wysyłki |
+| `POST` | `/shipping/drafts/{id}/execute` | shipment-mgr+ | Realizuj projekt (retry po błędzie) |
+| `POST` | `/shipping/drafts/{id}/pickup` | shipment-mgr+ | Zamów podjazd kuriera InPost |
+| `PATCH` | `/shipping/drafts/{id}` | shipment-mgr+ | Aktualizuj liczbę paczek |
 
 ### Autentykacja
 
@@ -44,8 +47,10 @@ curl -H "Authorization: Bearer $TOKEN" https://<API_URL>/files
 | Admin | `zdrovena-admin` | Pełny dostęp |
 | Accountant | `zdrovena-accountant` | Pliki (odczyt + zapis) + zamknięcie miesiąca |
 | Viewer | `zdrovena-viewer` | Tylko odczyt plików |
+| Shipment Manager | `zdrovena-shipment-mgr` | Zarządzanie wysyłkami (execute, pickup, aktualizacja paczek) |
 
 Role przypisuje się w: `Azure Portal → Enterprise applications → zdrovena-api → Users and groups`.
+Można przypisywać bezpośrednio do użytkowników lub do **grup Entra ID** — patrz sekcja [Zarządzanie dostępem](#zarządzanie-dostępem-entra-id) poniżej.
 
 ### Przykłady
 
@@ -116,55 +121,82 @@ Przy każdym deploy frontend pobiera `/version.json` i `/api/health`, porównuje
 
 ---
 
-## CLI
+## Zarządzanie dostępem (Entra ID)
 
+### Jak to działa
+
+Aplikacja używa **App Roles** w Azure Entra ID. Rola trafia do tokenu JWT w claimage `roles` i API sprawdza ją przy każdym żądaniu. Role można przypisywać:
+
+- **bezpośrednio do użytkownika** — OK dla 1–2 osób, ale przy większej liczbie trudno zarządzać
+- **do grupy bezpieczeństwa (Security Group)** — zalecane: dodajesz osobę do grupy i automatycznie dostaje odpowiednie uprawnienia
+
+### Aktualna konfiguracja
+
+| Rola | Gdzie przypisana |
+|------|-----------------|
+| `zdrovena-admin` | Bezpośrednio do właściciela |
+| `zdrovena-accountant` | Bezpośrednio do księgowej |
+| `zdrovena-shipment-mgr` | — (nowa rola, brak przypisań) |
+
+Grupy bezpieczeństwa: **brak skonfigurowanych** — wszystkie przypisania są bezpośrednie.
+
+> **Uwaga:** Przypisanie grupy do App Role wymaga licencji **Entra ID P1** (lub P2).
+> Bez licencji P1 w oknie "Users and groups" widzisz tylko opcję dodania użytkownika, nie grupy.
+
+### Jak stworzyć grupę
+
+1. Otwórz: **Azure Portal → Entra ID → Groups → New group**
+2. Wypełnij:
+   - **Group type**: `Security`
+   - **Group name**: np. `zdrovena-shipping-managers`
+   - **Group description**: np. `Dostęp do zarządzania wysyłkami`
+   - **Membership type**: `Assigned` (ręczne dodawanie) lub `Dynamic User` (automatyczne wg reguł)
+3. W sekcji **Members** dodaj od razu pierwszych użytkowników (opcjonalne — można później)
+4. Kliknij **Create**
+
+### Jak dodać użytkownika do grupy
+
+**Opcja A — przez stronę grupy:**
+
+1. **Entra ID → Groups** → kliknij grupę
+2. **Members → Add members** → wyszukaj użytkownika → **Select**
+
+**Opcja B — przez stronę użytkownika:**
+
+1. **Entra ID → Users** → kliknij użytkownika
+2. **Groups → Add memberships** → wybierz grupę → **Select**
+
+**Azure CLI:**
 ```bash
-pip install -e '.[all]'
-playwright install chromium
+# znajdź object ID użytkownika
+az ad user show --id email@domena.pl --query id -o tsv
 
-zdrovena --version                        # 2.0.0
-zdrovena -y 2025 audit                    # pełny audyt FV vs WZ
-zdrovena -y 2025 -m 6 list               # faktury z czerwca
-zdrovena -y 2025 export                   # CSV per miesiąc
-zdrovena -y 2025 summary                  # WZ vs FV (plastik/szkło)
-zdrovena products --active-only           # aktywne produkty
+# znajdź object ID grupy
+az ad group show --group zdrovena-shipping-managers --query id -o tsv
 
-zdrovena -y 2025 -m 2 report              # Wykaz sprzedaży VAT → PDF
-zdrovena -y 2025 -m 2 report -k expenses  # raport kosztów
-
-zdrovena close 2025-06                    # zamknięcie miesiąca
-zdrovena close 2025-06 --dry-run          # symulacja
-zdrovena close 2025-06 --zip --send       # ZIP + wysyłka
-
-zdrovena setup                            # wizard credentiali
-zdrovena setup --check                    # sprawdź co skonfigurowane
+# dodaj użytkownika do grupy
+az ad group member add \
+  --group zdrovena-shipping-managers \
+  --member-id <object-id-usera>
 ```
 
-### Komendy
+### Jak przypisać grupę do roli aplikacji
 
-| Komenda | Opis |
-|---------|------|
-| `audit` | Pełna rekoncyliacja WZ ↔ FV z kontrolami §2/§7/§8/§10 |
-| `list` | Lista faktur sprzedaży z liczbą butelek |
-| `export` | Export pozycji butelek do CSV per miesiąc |
-| `summary` | Tabela: WZ wysłane vs FV zafakturowane (plastik/szkło) |
-| `products` | Lista produktów Fakturownia (`--active-only`) |
-| `report` | Pobranie raportów Fakturownia jako PDF (Playwright) |
-| `close` | Pipeline zamknięcia miesiąca — preflight → faktury → KSeF → ZIP → e-mail |
-| `setup` | Wizard credentiali i OAuth (`--check`, `zoho`, `gads`) |
+1. Otwórz: **Azure Portal → Entra ID → Enterprise applications → zdrovena-api**
+2. **Users and groups → Add user/group**
+3. Kliknij **None selected** pod Users and groups → wyszukaj **grupę** (np. `zdrovena-shipping-managers`) → **Select**
+4. Kliknij **None selected** pod Select a role → wybierz rolę (np. `zdrovena-shipment-mgr`) → **Select**
+5. **Assign**
 
-### Pipeline zamknięcia miesiąca (`zdrovena close`)
+Po przypisaniu: każdy członek grupy przy następnym logowaniu dostanie token z odpowiednią rolą.
+Token jest cache'owany przez MSAL — żeby rola zadziałała od razu, użytkownik musi wylogować się i zalogować ponownie.
 
-| # | Krok | Źródło |
-|---|------|--------|
-| 0 | Pre-flight — weryfikacja vendorów, wyciągu, raportów | Zoho Mail, lokalny fs |
-| 1 | Tworzenie struktury folderów | — |
-| 2 | Pobieranie faktur sprzedaży | Fakturownia API |
-| 3 | Pobieranie JPK / raportów VAT | Fakturownia API |
-| 4 | Pobieranie faktur kosztowych | KSeF → Fakturownia → Zoho Mail |
-| 5 | Weryfikacja wyciągu bankowego | lokalny fs |
-| 6 | Budowanie archiwum ZIP | — |
-| 7 | Wysyłka e-mail do księgowej | Zoho SMTP |
+### Jak dodać nowego użytkownika (bez grup)
+
+1. **Entra ID → Users → New user** (lub **Invite user** jeśli konto spoza organizacji)
+2. Wypełnij dane; użytkownik dostaje e-mail z linkiem
+3. **Enterprise applications → zdrovena-api → Users and groups → Add user/group**
+4. Wybierz użytkownika + rolę → **Assign**
 
 ---
 
@@ -438,10 +470,10 @@ Pokrycie mierzalnego kodu biznesowego: ≥80%.
 
 | Extra | Pakiety | Używane przez |
 |-------|---------|---------------|
-| `ksef` | cryptography, signxml, lxml | KSeF 2.0 e-invoicing |
-| `pdf` | pypdf, pdf2image | Ekstrakcja dat z PDF |
-| `report` | playwright, playwright-stealth | Pobieranie raportów i Canva |
-| `all` | ksef + pdf + report | wszystko |
+| `ksef` | cryptography, signxml, lxml | KSeF 2.0 e-invoicing (pipeline zamknięcia) |
+| `pdf` | pypdf, pdf2image | Ekstrakcja dat z PDF faktur kosztowych |
+| `api` | fastapi, uvicorn, PyJWT, pypdf | REST API |
+| `cloud` | azure-storage-blob, azure-identity, azure-data-tables, … | produkcja Azure |
 | `dev` | pytest, pytest-cov, responses | testy |
 
 ---
@@ -450,40 +482,36 @@ Pokrycie mierzalnego kodu biznesowego: ≥80%.
 
 ```
 zdrovena/
-├── cli.py                          # entry-point, argparse
 ├── __init__.py                     # wersja pakietu
 ├── common/
 │   ├── client.py                   # FakturowniaClient
 │   ├── storage.py                  # StorageService (Blob / lokalny fs)
+│   ├── shipping_store.py           # ShippingStore (Table Storage / lokalny JSON)
 │   ├── exceptions.py               # hierarchia wyjątków
 │   └── formatting.py               # ANSI, miesiące, to_decimal
 ├── api/
 │   ├── main.py                     # FastAPI app + Azure Monitor setup
-│   ├── auth.py                     # JWT / Entra ID
+│   ├── auth.py                     # JWT / Entra ID, app roles
+│   ├── deps.py                     # FastAPI dependencies (storage, shipping, auth)
 │   ├── models.py                   # CloseRequest, CloseResponse
 │   └── routers/
 │       ├── close.py                # POST /close
 │       ├── files.py                # GET/PUT /files
-│       └── invoices.py             # GET /invoices
-├── audit/
-│   ├── api.py                      # AuditAPI (WZ/FV)
-│   ├── bottles.py                  # BottleReconciler
-│   ├── sections.py                 # sekcje audytu §1–§9
-│   └── commands/
+│       ├── invoices.py             # GET /invoices
+│       └── webhooks.py             # Shopify webhook + shipping drafts
 └── month_closing/
     ├── config.py                   # vendorzy, firma, cfg Zoho/KSeF
     ├── state.py                    # PipelineState (.state.json w blob)
     ├── orchestrator.py             # MonthCloseOrchestrator
     ├── preflight.py                # PreflightChecker
+    ├── close_history.py            # historia zamknięć (Table Storage / lokalny JSON)
+    ├── table_history.py            # Azure Table Storage adapter dla historii
     ├── zoho_mail.py                # Zoho Mail REST
     ├── ksef.py                     # KSeF 2.0 (opcjonalne zależności)
     ├── invoice_date_check.py       # ekstrakcja dat z PDF
     ├── canva_downloader.py         # Playwright: faktury Canva
     ├── email_service.py            # Zoho SMTP
-    ├── zip_service.py              # archiwum ZIP
-    └── commands/
-        ├── close_cmd.py
-        └── setup_cmd.py            # wizard sekretów + OAuth
+    └── zip_service.py              # archiwum ZIP
 tests/                              # pytest
 scripts/                            # CI: quality gate, smoke
 infra/terraform/                    # infrastruktura Azure
