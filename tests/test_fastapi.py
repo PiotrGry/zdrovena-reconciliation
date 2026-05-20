@@ -236,6 +236,13 @@ class TestCloseEndpoint:
         with patch("zdrovena.api.routers.close.MonthCloseOrchestrator") as M:
             instance = M.return_value
             instance.report.errors = ["Brakuje wyciągu bankowego"]
+            instance.report.warnings = []
+            instance.report.steps_completed = []
+            instance.report.sales_invoice_count = 0
+            instance.report.sales_gross_total = "0.00"
+            instance.report.cost_invoice_count = 0
+            instance.report.bank_statement_found = False
+            instance.report.email_sent = False
             instance.execute.side_effect = SystemExit(1)
             resp = c.post("/api/close", json={"year": 2026, "month": 3, "dry_run": True})
         assert resp.status_code == 422

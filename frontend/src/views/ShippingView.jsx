@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../auth'
 import { useT } from '../lang'
 import { PageHead } from '../components/PageHead'
@@ -31,8 +31,20 @@ function courierPillKind(draft) {
     return 'default'
 }
 
-function DraftRow({ draft, onPrintLabel }) {
+function sourcePillKind(source) {
+    if (source === 'allegro') return 'warn'
+    return 'default'
+}
+
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, busy }) {
     const [open, setOpen] = useState(false)
+    const isBusy = busy.has(draft.id)
+    const canPickup = (
+        draft.courier === 'inpost' &&
+        draft.service === 'inpost_courier_standard' &&
+        draft.status === 'created' &&
+        !draft.pickup_ordered
+    )
 
     return (
         <div className={`accordion-row${open ? ' open' : ''}`}>
@@ -43,6 +55,9 @@ function DraftRow({ draft, onPrintLabel }) {
             >
                 <span className="mono" style={{ minWidth: 80 }}>#{draft.shopify_order_number}</span>
                 <span style={{ flex: 1, textAlign: 'left' }}>{draft.customer_name || '—'}</span>
+                {draft.source && draft.source !== 'shopify' && (
+                    <Pill kind={sourcePillKind(draft.source)}>{draft.source}</Pill>
+                )}
                 <Pill kind={courierPillKind(draft)}>{courierLabel(draft)}</Pill>
                 <span className="mono dim" style={{ minWidth: 130, textAlign: 'right' }}>
                     {fmtDate(draft.created_at)}
@@ -64,13 +79,21 @@ function DraftRow({ draft, onPrintLabel }) {
                             </div>
                         </div>
                         <div>
-                            <div className="detail-label">Paczka</div>
-                            <div>
-                                {draft.parcel?.template
-                                    ? `Szablon: ${draft.parcel.template}`
-                                    : draft.parcel?.weight_kg
-                                        ? `Waga: ${draft.parcel.weight_kg} kg`
-                                        : '—'}
+                            <div className="detail-label">Paczki</div>
+                            <div className="count-stepper">
+                                <button
+                                    className="btn-ghost stepper-btn"
+                                    onClick={() => onUpdateCount(draft, Math.max(1, (draft.packages_count ?? 1) - 1))}
+                                    disabled={isBusy || (draft.packages_count ?? 1) <= 1}
+                                    aria-label="Zmniejsz liczbę paczek"
+                                >−</button>
+                                <span className="mono stepper-val">{draft.packages_count ?? 1}</span>
+                                <button
+                                    className="btn-ghost stepper-btn"
+                                    onClick={() => onUpdateCount(draft, Math.min(99, (draft.packages_count ?? 1) + 1))}
+                                    disabled={isBusy || (draft.packages_count ?? 1) >= 99}
+                                    aria-label="Zwiększ liczbę paczek"
+                                >+</button>
                             </div>
                         </div>
                         <div>
@@ -103,17 +126,51 @@ function DraftRow({ draft, onPrintLabel }) {
                         </div>
                     )}
 
-                    {draft.courier_draft_id && draft.status === 'created' && (
-                        <div style={{ marginTop: 12 }}>
+                    <div className="draft-actions">
+                        {draft.status === 'error' && (
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => onExecute(draft)}
+                                disabled={isBusy}
+                            >
+                                {isBusy
+                                    ? <><Icon name="loader" size={13} className="spin" /> Realizowanie…</>
+                                    : <><Icon name="send" size={13} /> Realizuj</>
+                                }
+                            </button>
+                        )}
+
+                        {draft.courier_draft_id && draft.status === 'created' && (
                             <button
                                 className="btn btn-secondary"
                                 onClick={() => onPrintLabel(draft)}
+                                disabled={isBusy}
                             >
-                                <Icon name="printer" size={14} />
+                                <Icon name="printer" size={13} />
                                 Drukuj etykietę
                             </button>
-                        </div>
-                    )}
+                        )}
+
+                        {canPickup && (
+                            <button
+                                className="btn btn-secondary"
+                                onClick={() => onPickup(draft)}
+                                disabled={isBusy}
+                            >
+                                {isBusy
+                                    ? <><Icon name="loader" size={13} className="spin" /> Zamawianie…</>
+                                    : <><Icon name="truck" size={13} /> Zamów podjazd</>
+                                }
+                            </button>
+                        )}
+
+                        {draft.pickup_ordered && (
+                            <span className="pickup-badge">
+                                <Icon name="check" size={12} />
+                                Podjazd zamówiony
+                            </span>
+                        )}
+                    </div>
                 </div>
             )}
         </div>
@@ -129,10 +186,29 @@ export default function ShippingView() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
     const [search, setSearch] = useState('')
+    const [busy, setBusy] = useState(new Set())
+
+    const load = useCallback(async () => {
+        setLoading(true)
+        setError(null)
+        try {
+            const token = await getToken()
+            const res = await fetch('/api/shipping/drafts', {
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+            const data = await res.json()
+            setDrafts(data.drafts ?? [])
+        } catch (e) {
+            setError(e.message)
+        } finally {
+            setLoading(false)
+        }
+    }, [getToken])
 
     useEffect(() => {
         let cancelled = false
-        async function load() {
+        async function run() {
             setLoading(true)
             setError(null)
             try {
@@ -149,9 +225,21 @@ export default function ShippingView() {
                 if (!cancelled) setLoading(false)
             }
         }
-        load()
+        run()
         return () => { cancelled = true }
     }, [getToken])
+
+    function withBusy(draftId, fn) {
+        return async () => {
+            setBusy(s => new Set([...s, draftId]))
+            try {
+                await fn()
+                await load()
+            } finally {
+                setBusy(s => { const n = new Set(s); n.delete(draftId); return n })
+            }
+        }
+    }
 
     async function handlePrintLabel(draft) {
         try {
@@ -166,6 +254,52 @@ export default function ShippingView() {
         } catch (e) {
             alert(`Błąd pobierania etykiety: ${e.message}`)
         }
+    }
+
+    function handleExecute(draft) {
+        return withBusy(draft.id, async () => {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}/execute`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(body.detail || `${res.status}`)
+            }
+        })()
+    }
+
+    function handlePickup(draft) {
+        return withBusy(draft.id, async () => {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}/pickup`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(body.detail || `${res.status}`)
+            }
+        })()
+    }
+
+    function handleUpdateCount(draft, newCount) {
+        return withBusy(draft.id, async () => {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}`, {
+                method: 'PATCH',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ packages_count: newCount }),
+            })
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(body.detail || `${res.status}`)
+            }
+        })()
     }
 
     const filtered = drafts.filter(d => {
@@ -206,6 +340,9 @@ export default function ShippingView() {
                     {errorCount > 0 && (
                         <Pill kind="warn">{errorCount} {T.shipping_errors ?? 'błędów'}</Pill>
                     )}
+                    <button className="btn btn-ghost" onClick={load} disabled={loading} title="Odśwież">
+                        <Icon name="refreshCw" size={14} />
+                    </button>
                 </div>
             </div>
 
@@ -230,7 +367,11 @@ export default function ShippingView() {
                     <DraftRow
                         key={draft.id}
                         draft={draft}
+                        busy={busy}
                         onPrintLabel={handlePrintLabel}
+                        onExecute={handleExecute}
+                        onPickup={handlePickup}
+                        onUpdateCount={handleUpdateCount}
                     />
                 ))}
             </div>

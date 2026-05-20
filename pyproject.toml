@@ -103,9 +103,10 @@ omit = [
     # Integration-tested manually with actual invoices.
     "zdrovena/month_closing/invoice_date_check.py",
 
-    # Azure Table Storage client — requires live Azure credentials.
+    # Azure Table Storage clients — require live Azure credentials.
     # Covered end-to-end on staging/prod; unit mocks would test the SDK, not the code.
     "zdrovena/month_closing/table_history.py",
+    "zdrovena/common/shipping_store.py",
 
     # API startup/wiring — lifespan hooks (Azure Monitor init, KV ping),
     # middleware configuration, router mounting. No business logic here;
