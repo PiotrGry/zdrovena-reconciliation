@@ -153,16 +153,16 @@ def _create_draft(order: dict[str, Any], storage: Any) -> None:
             from zdrovena.common.inpost import InPostClient
             from zdrovena.common.secrets import get_secret
 
-            token = get_secret("inpost_api_token")
-            org_id = get_secret("inpost_organization_id")
-            client = InPostClient(token, org_id)
-
             inpost_service = _pick_inpost_service(title)
             record["service"] = (
                 "inpost_locker_standard"
                 if inpost_service == "paczkomat"
                 else "inpost_courier_standard"
             )
+
+            token = get_secret("inpost_api_token")
+            org_id = get_secret("inpost_organization_id")
+            client = InPostClient(token, org_id)
 
             if inpost_service == "paczkomat":
                 # locker ID: try note_attributes, then parse from title
@@ -211,6 +211,8 @@ def _create_draft(order: dict[str, Any], storage: Any) -> None:
             from zdrovena.common.apaczka import ApaczkaClient
             from zdrovena.common.secrets import get_secret
 
+            record["service"] = "apaczka"
+
             app_id = get_secret("apaczka_app_id")
             app_secret = get_secret("apaczka_app_secret")
             service_id = get_secret("apaczka_service_id")
@@ -234,7 +236,6 @@ def _create_draft(order: dict[str, Any], storage: Any) -> None:
             record["courier_draft_id"] = str(result.get("id", ""))
             record["tracking_number"] = result.get("waybill_number")
             record["status"] = "created"
-            record["service"] = "apaczka"
             record["parcel"]["weight_kg"] = 1.0
 
     except Exception as exc:
