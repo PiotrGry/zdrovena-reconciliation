@@ -36,7 +36,7 @@ function sourcePillKind(source) {
     return 'default'
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, busy }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, busy, canManage }) {
     const [open, setOpen] = useState(false)
     const isBusy = busy.has(draft.id)
     const canPickup = (
@@ -80,21 +80,25 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, bus
                         </div>
                         <div>
                             <div className="detail-label">Paczki</div>
-                            <div className="count-stepper">
-                                <button
-                                    className="btn-ghost stepper-btn"
-                                    onClick={() => onUpdateCount(draft, Math.max(1, (draft.packages_count ?? 1) - 1))}
-                                    disabled={isBusy || (draft.packages_count ?? 1) <= 1}
-                                    aria-label="Zmniejsz liczbę paczek"
-                                >−</button>
-                                <span className="mono stepper-val">{draft.packages_count ?? 1}</span>
-                                <button
-                                    className="btn-ghost stepper-btn"
-                                    onClick={() => onUpdateCount(draft, Math.min(99, (draft.packages_count ?? 1) + 1))}
-                                    disabled={isBusy || (draft.packages_count ?? 1) >= 99}
-                                    aria-label="Zwiększ liczbę paczek"
-                                >+</button>
-                            </div>
+                            {canManage ? (
+                                <div className="count-stepper">
+                                    <button
+                                        className="btn-ghost stepper-btn"
+                                        onClick={() => onUpdateCount(draft, Math.max(1, (draft.packages_count ?? 1) - 1))}
+                                        disabled={isBusy || (draft.packages_count ?? 1) <= 1}
+                                        aria-label="Zmniejsz liczbę paczek"
+                                    >−</button>
+                                    <span className="mono stepper-val">{draft.packages_count ?? 1}</span>
+                                    <button
+                                        className="btn-ghost stepper-btn"
+                                        onClick={() => onUpdateCount(draft, Math.min(99, (draft.packages_count ?? 1) + 1))}
+                                        disabled={isBusy || (draft.packages_count ?? 1) >= 99}
+                                        aria-label="Zwiększ liczbę paczek"
+                                    >+</button>
+                                </div>
+                            ) : (
+                                <div className="mono">{draft.packages_count ?? 1}</div>
+                            )}
                         </div>
                         <div>
                             <div className="detail-label">Numer śledzenia</div>
@@ -127,7 +131,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, bus
                     )}
 
                     <div className="draft-actions">
-                        {draft.status === 'error' && (
+                        {canManage && draft.status === 'error' && (
                             <button
                                 className="btn btn-primary"
                                 onClick={() => onExecute(draft)}
@@ -151,7 +155,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, bus
                             </button>
                         )}
 
-                        {canPickup && (
+                        {canManage && canPickup && (
                             <button
                                 className="btn btn-secondary"
                                 onClick={() => onPickup(draft)}
@@ -178,7 +182,8 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, bus
 }
 
 export default function ShippingView() {
-    const { getToken } = useAuth()
+    const { getToken, roles } = useAuth()
+    const canManage = roles.includes('zdrovena-admin') || roles.includes('zdrovena-shipment-mgr')
     const { t, lang } = useT()
     const T = t[lang]
 
@@ -368,6 +373,7 @@ export default function ShippingView() {
                         key={draft.id}
                         draft={draft}
                         busy={busy}
+                        canManage={canManage}
                         onPrintLabel={handlePrintLabel}
                         onExecute={handleExecute}
                         onPickup={handlePickup}
