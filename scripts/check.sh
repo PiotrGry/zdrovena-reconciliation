@@ -103,12 +103,16 @@ else
 fi
 
 step "pip-audit — zależności Python"
+# Ignorowane CVE (transitive deps, brak fix version):
+#   PYSEC-2026-89  — markdown 3.10.2 (via cloudsplaining), najnowsza wersja, brak fixa
+#   PYSEC-2025-183 — pyjwt 2.12.1 (via msal/azure-identity), najnowsza wersja, brak fixa
+_AUDIT_IGNORE="--ignore-vuln PYSEC-2026-89 --ignore-vuln PYSEC-2025-183"
 # Użyj uv run żeby skanować tylko pakiety projektu (nie globalny Python)
 if command -v uv >/dev/null 2>&1 && [ -d "$REPO_ROOT/.venv" ]; then
-  PIPAPI_PYTHON_LOCATION="$REPO_ROOT/.venv/bin/python3" uv run pip-audit --local 2>&1 \
+  PIPAPI_PYTHON_LOCATION="$REPO_ROOT/.venv/bin/python3" uv run pip-audit --local $_AUDIT_IGNORE 2>&1 \
     && ok "pip-audit" || fail "pip-audit: znaleziono podatności — uruchom: uv lock --upgrade-package <pkg>"
 elif command -v pip-audit >/dev/null 2>&1; then
-  pip-audit --local 2>&1 && ok "pip-audit" || fail "pip-audit: znaleziono podatności"
+  pip-audit --local $_AUDIT_IGNORE 2>&1 && ok "pip-audit" || fail "pip-audit: znaleziono podatności"
 else
   echo -e "${SKIP} pip-audit nie znaleziony — uruchom: uv add --dev pip-audit"
 fi
