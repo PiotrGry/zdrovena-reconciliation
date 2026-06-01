@@ -126,9 +126,22 @@ class InPostClient:
 
     # ── Dispatch order (kurier only) ──────────────────────────────────────────
 
-    def create_dispatch_order(self, shipment_id: str, sender: dict[str, str]) -> dict[str, Any]:
+    def create_dispatch_order(
+        self,
+        shipment_id: str,
+        sender: dict[str, str],
+        *,
+        pickup_date: str | None = None,
+        pickup_from: str | None = None,
+        pickup_to: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a dispatch order (courier pickup).
+
+        pickup_date: YYYY-MM-DD, pickup_from/pickup_to: HH:MM (min 2h window).
+        If omitted, InPost picks the next available slot.
+        """
         url = f"{_BASE}/v1/organizations/{self._org_id}/dispatch_orders"
-        payload = {
+        payload: dict[str, Any] = {
             "shipments": [shipment_id],
             "address": {
                 "name": sender.get("name", ""),
@@ -141,6 +154,12 @@ class InPostClient:
                 "country_code": "PL",
             },
         }
+        if pickup_date:
+            payload["pickup_date"] = pickup_date
+        if pickup_from:
+            payload["pickup_from"] = pickup_from
+        if pickup_to:
+            payload["pickup_to"] = pickup_to
         resp = self._session.post(url, json=payload, timeout=_TIMEOUT)
         if not resp.ok:
             raise InPostError(f"InPost dispatch order failed {resp.status_code}: {resp.text[:300]}")

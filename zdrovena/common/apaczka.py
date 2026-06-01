@@ -110,7 +110,20 @@ class ApaczkaClient:
         width_cm: float = 20.0,
         height_cm: float = 15.0,
         depth_cm: float = 30.0,
+        pickup_date: str | None = None,
+        pickup_from: str | None = None,
+        pickup_to: str | None = None,
     ) -> dict[str, Any]:
+        """pickup_date: YYYY-MM-DD, pickup_from/pickup_to: HH:MM.
+        Available slots from Apaczka pickup_hours endpoint (today + 3 biz days).
+        """
+        options: dict[str, Any] = {"pickup_type": "courier"}
+        if pickup_date:
+            options["pickup"] = {
+                "date": pickup_date,
+                **({"hours_from": pickup_from} if pickup_from else {}),
+                **({"hours_to": pickup_to} if pickup_to else {}),
+            }
         data = {
             "service_id": self._service_id,
             "order_id": reference,
@@ -147,7 +160,7 @@ class ApaczkaClient:
                     "depth": depth_cm,
                 }
             ],
-            "options": {"pickup_type": "courier"},
+            "options": options,
         }
         result = self._call("order_send", data)
         order_id = result.get("response", {}).get("id")
