@@ -72,7 +72,7 @@ def read_history_table(storage_conn_or_url: str, limit: int = 50) -> list[dict]:
         else:
             client = TableServiceClient.from_connection_string(storage_conn_or_url)
 
-        table = client.get_table_client(TABLE_NAME)
+        table = client.create_table_if_not_exists(TABLE_NAME)
 
         entities = list(
             table.query_entities(

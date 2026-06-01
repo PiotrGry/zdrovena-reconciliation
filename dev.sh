@@ -22,9 +22,9 @@ else
   source "$ROOT/.venv/bin/activate"
   [ -f "$ROOT/.env.local" ] && source "$ROOT/.env.local"
   AZURE_AUTH_DISABLED=true \
-  uvicorn zdrovena.api.main:app --reload --port 8000 &
+    uvicorn zdrovena.api.main:app --reload --port 8000 &
   BACKEND_PID=$!
-  trap "kill $BACKEND_PID 2>/dev/null; exit" INT TERM
+  trap 'kill $BACKEND_PID 2>/dev/null; exit' INT TERM
   echo "API: http://localhost:8000"
   wait
   exit 0
@@ -33,7 +33,7 @@ fi
 # Frontend (always native — Vite HMR doesn't work well in Docker)
 cd "$ROOT/frontend"
 # Ensure auth is disabled for local dev (file is gitignored)
-grep -q "VITE_AUTH_DISABLED" .env.local 2>/dev/null || echo "VITE_AUTH_DISABLED=true" >> .env.local
+grep -q "VITE_AUTH_DISABLED" .env.local 2>/dev/null || echo "VITE_AUTH_DISABLED=true" >>.env.local
 npm run dev &
 FRONTEND_PID=$!
 
@@ -42,5 +42,5 @@ echo ""
 echo "Ctrl+C to stop frontend (Docker services keep running)"
 echo "To stop everything: docker compose down"
 
-trap "kill $FRONTEND_PID 2>/dev/null; exit" INT TERM
+trap 'kill $FRONTEND_PID 2>/dev/null; exit' INT TERM
 wait
