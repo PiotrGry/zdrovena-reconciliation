@@ -82,7 +82,14 @@ def _pick_inpost_service(title: str) -> str:
 # ── Courier execution helpers ─────────────────────────────────────────────────
 
 
-def _run_inpost(draft: dict[str, Any], sender: dict[str, str]) -> dict[str, Any]:
+def _run_inpost(
+    draft: dict[str, Any],
+    sender: dict[str, str],
+    *,
+    pickup_date: str | None = None,
+    pickup_from: str | None = None,
+    pickup_to: str | None = None,
+) -> dict[str, Any]:
     """Create or recreate InPost shipment from stored draft fields. Returns patch dict."""
     from zdrovena.common.inpost import InPostClient
 
@@ -98,6 +105,7 @@ def _run_inpost(draft: dict[str, Any], sender: dict[str, str]) -> dict[str, Any]
     reference = str(draft.get("shopify_order_number", ""))
     inpost_service = "paczkomat" if draft.get("service") == "inpost_locker_standard" else "kurier"
 
+    pickup_ordered = False
     if inpost_service == "paczkomat":
         result = client.create_paczkomat_shipment(
             receiver_first_name=first_name,
@@ -121,20 +129,35 @@ def _run_inpost(draft: dict[str, Any], sender: dict[str, str]) -> dict[str, Any]
             sender=sender,
             reference=reference,
         )
-        try:
-            client.create_dispatch_order(str(result["id"]), sender)
-        except Exception as exc:
-            logger.warning("InPost dispatch order failed for %s: %s", reference, exc)
+
+    # Both paczkomat (drzwi→paczkomat) and kurier use dispatch_order for sender pickup
+    try:
+        client.create_dispatch_order(
+            str(result["id"]), sender,
+            pickup_date=pickup_date, pickup_from=pickup_from, pickup_to=pickup_to,
+        )
+        pickup_ordered = True
+    except Exception as exc:
+        logger.warning("InPost dispatch order failed for %s: %s", reference, exc)
 
     return {
         "courier_draft_id": str(result.get("id", "")),
         "tracking_number": result.get("tracking_number"),
         "status": "created",
+        "pickup_ordered": pickup_ordered,
         "error": None,
     }
 
 
-def _run_apaczka(draft: dict[str, Any], sender: dict[str, str], storage: Any) -> dict[str, Any]:
+def _run_apaczka(
+    draft: dict[str, Any],
+    sender: dict[str, str],
+    storage: Any,
+    *,
+    pickup_date: str | None = None,
+    pickup_from: str | None = None,
+    pickup_to: str | None = None,
+) -> dict[str, Any]:
     """Create or recreate Apaczka shipment from stored draft fields. Returns patch dict."""
     from zdrovena.common.apaczka import ApaczkaClient
 
@@ -157,6 +180,9 @@ def _run_apaczka(draft: dict[str, Any], sender: dict[str, str], storage: Any) ->
         receiver_zip=addr.get("post_code", ""),
         sender=sender,
         reference=str(draft.get("shopify_order_number", "")),
+        pickup_date=pickup_date,
+        pickup_from=pickup_from,
+        pickup_to=pickup_to,
     )
     return {
         "courier_draft_id": str(result.get("id", "")),
@@ -167,6 +193,13 @@ def _run_apaczka(draft: dict[str, Any], sender: dict[str, str], storage: Any) ->
 
 
 # ── Background task: create draft on Shopify webhook ─────────────────────────
+
+
+def _calc_packages(total_qty: int) -> int:
+    """Calculate number of physical packages: fill 3-packs first, then remainder in one box."""
+    boxes_3 = total_qty // 3
+    rest = total_qty % 3
+    return boxes_3 + (1 if rest > 0 else 0)
 
 
 def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage: Any) -> None:
@@ -186,6 +219,24 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
     courier = _pick_courier(order)
     inpost_service = _pick_inpost_service(title) if courier == "inpost" else None
 
+    total_qty = sum(item.get("quantity", 1) for item in (order.get("line_items") or []))
+    total_qty = max(total_qty, 1)
+    packages_count = _calc_packages(total_qty)
+
+    note_attrs = {a["name"]: a["value"] for a in (order.get("note_attributes") or [])}
+    locker_id = (
+        note_attrs.get("PickupPointId")
+        or note_attrs.get("inpost_locker_id")
+        or note_attrs.get("paczkomat_id")
+        or note_attrs.get("locker_id")
+        or shipping_addr.get("address2", "")
+    ) if inpost_service == "paczkomat" else ""
+
+    if courier == "inpost":
+        service = "inpost_locker_standard" if inpost_service == "paczkomat" else "inpost_courier_standard"
+    else:
+        service = "apaczka"
+
     record: dict[str, Any] = {
         "id": str(uuid.uuid4()),
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -194,18 +245,23 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
         "shopify_order_number": str(order_number),
         "customer_name": customer_name,
         "courier": courier,
-        "service": None,
+        "service": service,
         "tracking_number": None,
         "courier_draft_id": None,
-        "status": "error",
-        "packages_count": 1,
+        "status": "pending",
+        "packages_count": packages_count,
+        "total_qty": total_qty,
+        "order_items": [
+            {"name": item.get("name") or item.get("title", ""), "quantity": item.get("quantity", 1)}
+            for item in (order.get("line_items") or [])
+        ],
         "pickup_ordered": False,
         "receiver": {
             "first_name": first_name,
             "last_name": last_name,
             "email": email,
             "phone": phone,
-            "locker_id": "",
+            "locker_id": locker_id,
         },
         "shipping_address": {
             "street": f"{shipping_addr.get('address1', '')} {shipping_addr.get('address2', '')}".strip(),
@@ -215,100 +271,6 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
         "parcel": {"template": "small", "weight_kg": None},
         "error": None,
     }
-
-    # Set service before API calls so it's always persisted even on credential error
-    if courier == "inpost":
-        record["service"] = (
-            "inpost_locker_standard" if inpost_service == "paczkomat" else "inpost_courier_standard"
-        )
-    else:
-        record["service"] = "apaczka"
-
-    try:
-        sender = _get_sender()
-
-        if courier == "inpost":
-            from zdrovena.common.inpost import InPostClient
-
-            token = get_secret("inpost_api_token")
-            org_id = get_secret("inpost_organization_id")
-            client = InPostClient(token, org_id)
-
-            if inpost_service == "paczkomat":
-                note_attrs = {a["name"]: a["value"] for a in (order.get("note_attributes") or [])}
-                locker_id = (
-                    note_attrs.get("inpost_locker_id")
-                    or note_attrs.get("paczkomat_id")
-                    or note_attrs.get("locker_id")
-                    or shipping_addr.get("address2", "")
-                )
-                record["receiver"]["locker_id"] = locker_id
-                result = client.create_paczkomat_shipment(
-                    receiver_first_name=first_name,
-                    receiver_last_name=last_name,
-                    receiver_email=email,
-                    receiver_phone=phone,
-                    target_point=locker_id,
-                    reference=str(order_number),
-                )
-            else:
-                street = shipping_addr.get("address1", "")
-                building = shipping_addr.get("address2", "")
-                result = client.create_kurier_shipment(
-                    receiver_first_name=first_name,
-                    receiver_last_name=last_name,
-                    receiver_email=email,
-                    receiver_phone=phone,
-                    receiver_street=street,
-                    receiver_building_number=building or "1",
-                    receiver_city=shipping_addr.get("city", ""),
-                    receiver_post_code=shipping_addr.get("zip", ""),
-                    sender=sender,
-                    reference=str(order_number),
-                )
-                try:
-                    client.create_dispatch_order(str(result["id"]), sender)
-                    record["pickup_ordered"] = True
-                except Exception as exc:
-                    logger.warning("InPost dispatch order failed for %s: %s", order_number, exc)
-
-            record["courier_draft_id"] = str(result.get("id", ""))
-            record["tracking_number"] = result.get("tracking_number")
-            record["status"] = "created"
-
-        else:  # apaczka
-            from zdrovena.common.apaczka import ApaczkaClient
-
-            app_id = get_secret("apaczka_app_id")
-            app_secret = get_secret("apaczka_app_secret")
-            service_id = get_secret("apaczka_service_id")
-            client_a = ApaczkaClient(app_id, app_secret, service_id, storage)
-
-            street = (
-                f"{shipping_addr.get('address1', '')} {shipping_addr.get('address2', '')}".strip()
-            )
-            result = client_a.create_shipment(
-                receiver_name=customer_name,
-                receiver_firstname=first_name,
-                receiver_lastname=last_name,
-                receiver_email=email,
-                receiver_phone=phone,
-                receiver_address=street,
-                receiver_city=shipping_addr.get("city", ""),
-                receiver_zip=shipping_addr.get("zip", ""),
-                sender=sender,
-                reference=str(order_number),
-            )
-            record["courier_draft_id"] = str(result.get("id", ""))
-            record["tracking_number"] = result.get("waybill_number")
-            record["status"] = "created"
-            record["parcel"]["weight_kg"] = 1.0
-
-    except Exception as exc:
-        logger.error(
-            "Shipping draft creation failed for order %s (%s): %s", order_number, courier, exc
-        )
-        record["error"] = str(exc)
 
     shipping_store.upsert_draft(record)
 
@@ -394,20 +356,25 @@ def execute_draft(
     shipping_store: ShippingStoreDep,
     storage: StorageDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+    pickup_date: str | None = Body(None),
+    pickup_from: str | None = Body(None),
+    pickup_to: str | None = Body(None),
 ) -> dict[str, Any]:
     draft = shipping_store.get_draft(draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
     if draft.get("status") == "created":
-        raise HTTPException(status_code=409, detail="Draft already executed")
+        raise HTTPException(status_code=409, detail="Draft already executed — use pickup endpoint to order collection")
+
+    pickup_schedule = {"pickup_date": pickup_date, "pickup_from": pickup_from, "pickup_to": pickup_to}
 
     try:
         sender = _get_sender()
         courier = draft.get("courier", "apaczka")
         if courier == "inpost":
-            patch = _run_inpost(draft, sender)
+            patch = _run_inpost(draft, sender, **pickup_schedule)
         else:
-            patch = _run_apaczka(draft, sender, storage)
+            patch = _run_apaczka(draft, sender, storage, **pickup_schedule)
     except Exception as exc:
         logger.error("execute_draft failed for %s: %s", draft_id, exc)
         shipping_store.update_draft(draft_id, {"status": "error", "error": str(exc)})
@@ -435,6 +402,9 @@ def order_pickup(
     draft_id: str,
     shipping_store: ShippingStoreDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+    pickup_date: str | None = Body(None),
+    pickup_from: str | None = Body(None),
+    pickup_to: str | None = Body(None),
 ) -> dict[str, Any]:
     draft = shipping_store.get_draft(draft_id)
     if not draft:
@@ -457,7 +427,10 @@ def order_pickup(
         org_id = get_secret("inpost_organization_id")
         client = InPostClient(token, org_id)
         sender = _get_sender()
-        client.create_dispatch_order(courier_draft_id, sender)
+        client.create_dispatch_order(
+            courier_draft_id, sender,
+            pickup_date=pickup_date, pickup_from=pickup_from, pickup_to=pickup_to,
+        )
     except Exception as exc:
         logger.error("order_pickup failed for draft %s: %s", draft_id, exc)
         raise HTTPException(status_code=502, detail=f"InPost dispatch error: {exc}") from exc
@@ -471,23 +444,44 @@ def order_pickup(
 
 @router.patch(
     "/shipping/drafts/{draft_id}",
-    summary="Update draft metadata (packages_count)",
+    summary="Update draft metadata (packages_count, service, locker_id)",
     responses={
         403: {"description": "Insufficient role"},
         404: {"description": "Draft not found"},
+        400: {"description": "Invalid service for courier"},
     },
 )
 def update_draft(
     draft_id: str,
     shipping_store: ShippingStoreDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
-    packages_count: int = Body(..., ge=1, le=99, embed=True),
+    packages_count: int | None = Body(None, ge=1, le=99),
+    service: str | None = Body(None),
+    locker_id: str | None = Body(None),
 ) -> dict[str, Any]:
     draft = shipping_store.get_draft(draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
-    shipping_store.update_draft(draft_id, {"packages_count": packages_count})
-    return {"draft_id": draft_id, "packages_count": packages_count}
+
+    patch: dict[str, Any] = {}
+    if packages_count is not None:
+        patch["packages_count"] = packages_count
+    if service is not None:
+        valid = {"inpost_locker_standard", "inpost_courier_standard", "apaczka"}
+        if service not in valid:
+            raise HTTPException(status_code=400, detail=f"Unknown service: {service}")
+        if draft.get("courier") == "inpost" and service == "apaczka":
+            raise HTTPException(status_code=400, detail="Cannot switch InPost draft to apaczka")
+        patch["service"] = service
+    if locker_id is not None:
+        receiver = dict(draft.get("receiver") or {})
+        receiver["locker_id"] = locker_id
+        patch["receiver"] = receiver
+
+    if patch:
+        shipping_store.update_draft(draft_id, patch)
+    updated = shipping_store.get_draft(draft_id)
+    return updated or {"draft_id": draft_id}
 
 
 # ── Label streaming ───────────────────────────────────────────────────────────
