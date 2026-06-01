@@ -186,7 +186,7 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, onUpdateService, busy, canManage }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateService, busy, canManage }) {
     const [open, setOpen] = useState(false)
     const [pickupModal, setPickupModal] = useState(null) // 'execute' | 'pickup' | null
     const isBusy = busy.has(draft.id)
