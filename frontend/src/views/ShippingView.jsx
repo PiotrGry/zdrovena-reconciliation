@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useAuth } from '../auth'
 import { useT } from '../lang'
 import { PageHead } from '../components/PageHead'
@@ -36,12 +37,162 @@ function sourcePillKind(source) {
     return 'default'
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, busy, canManage }) {
+function packagesBreakdown(totalQty) {
+    const qty = totalQty || 1
+    const b3 = Math.floor(qty / 3)
+    const rest = qty % 3
+    const parts = []
+    if (b3 > 0) parts.push(`${b3}×3-pak`)
+    if (rest === 2) parts.push(`1×2-pak`)
+    if (rest === 1) parts.push(`1×1-pak`)
+    return parts.join(' + ')
+}
+
+function PackagesInfo({ draft }) {
+    const qty = draft.total_qty ?? 1
+    const count = draft.packages_count ?? 1
+    const items = draft.order_items ?? []
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <div>
+                <span className="mono" style={{ fontWeight: 600 }}>{count}</span>
+                <span className="dim"> {count === 1 ? 'paczka' : 'paczki'}</span>
+            </div>
+            <div className="dim" style={{ fontSize: '0.82em' }}>
+                {packagesBreakdown(qty)}
+            </div>
+            {items.length > 0 && (
+                <div style={{ fontSize: '0.82em', marginTop: 2 }}>
+                    {items.map((it, i) => (
+                        <div key={i}>
+                            <span className="mono">{it.quantity}×</span> {it.name}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    )
+}
+
+function InPostServiceToggle({ draft, onUpdateService }) {
+    const isPaczkomat = draft.service === 'inpost_locker_standard'
+    const [lockerId, setLockerId] = useState(draft.receiver?.locker_id || '')
+    const [lockerDirty, setLockerDirty] = useState(false)
+
+    function handleServiceChange(newService) {
+        onUpdateService(draft, { service: newService })
+    }
+
+    function handleLockerSave() {
+        onUpdateService(draft, { locker_id: lockerId })
+        setLockerDirty(false)
+    }
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="detail-label">Metoda dostawy InPost</div>
+            <div style={{ display: 'flex', gap: 4 }}>
+                <button
+                    className={`btn btn-sm ${isPaczkomat ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => !isPaczkomat && handleServiceChange('inpost_locker_standard')}
+                    style={{ fontSize: '0.82em' }}
+                >
+                    <Icon name="package" size={12} /> Paczkomat
+                </button>
+                <button
+                    className={`btn btn-sm ${!isPaczkomat ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => isPaczkomat && handleServiceChange('inpost_courier_standard')}
+                    style={{ fontSize: '0.82em' }}
+                >
+                    <Icon name="truck" size={12} /> Kurier
+                </button>
+            </div>
+            {isPaczkomat ? (
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                    <input
+                        className="mono"
+                        placeholder="ID paczkomatu (np. WAW123A)"
+                        value={lockerId}
+                        onChange={e => { setLockerId(e.target.value.toUpperCase()); setLockerDirty(true) }}
+                        style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.85em', width: 180 }}
+                    />
+                    {lockerDirty && (
+                        <button className="btn btn-sm btn-secondary" onClick={handleLockerSave} style={{ fontSize: '0.82em' }}>
+                            Zapisz
+                        </button>
+                    )}
+                    {draft.shipping_address?.city && (
+                        <span className="dim" style={{ fontSize: '0.85em' }}>{draft.shipping_address.city}</span>
+                    )}
+                </div>
+            ) : (
+                <div style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>
+                    {draft.shipping_address?.street}<br />
+                    {draft.shipping_address?.post_code} {draft.shipping_address?.city}
+                </div>
+            )}
+        </div>
+    )
+}
+
+function PickupScheduleModal({ onConfirm, onCancel, title }) {
+    const today = new Date().toISOString().slice(0, 10)
+    const [date, setDate] = useState(today)
+    const [from, setFrom] = useState('09:00')
+    const [to, setTo] = useState('14:00')
+
+    return createPortal(
+        <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}>
+            <div style={{
+                background: 'var(--bg)', border: '1px solid var(--border)',
+                borderRadius: 8, padding: 24, minWidth: 300, display: 'flex', flexDirection: 'column', gap: 16,
+            }}>
+                <div style={{ fontWeight: 600 }}>{title}</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>Data podjazdu</label>
+                    <input type="date" value={date} min={today}
+                        onChange={e => setDate(e.target.value)}
+                        style={{ padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.9em' }}
+                    />
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>Od</label>
+                        <input type="time" value={from} onChange={e => setFrom(e.target.value)}
+                            style={{ padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.9em' }}
+                        />
+                    </div>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>Do</label>
+                        <input type="time" value={to} onChange={e => setTo(e.target.value)}
+                            style={{ padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.9em' }}
+                        />
+                    </div>
+                </div>
+                <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>Minimalne okno: 2 godziny</div>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                    <button className="btn btn-ghost" onClick={onCancel}>Anuluj</button>
+                    <button className="btn btn-primary"
+                        onClick={() => onConfirm({ pickup_date: date, pickup_from: from, pickup_to: to })}>
+                        Potwierdź
+                    </button>
+                </div>
+            </div>
+        </div>,
+        document.body
+    )
+}
+
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, onUpdateService, busy, canManage }) {
     const [open, setOpen] = useState(false)
+    const [pickupModal, setPickupModal] = useState(null) // 'execute' | 'pickup' | null
     const isBusy = busy.has(draft.id)
+    const needsPickupSchedule = draft.courier === 'inpost'
     const canPickup = (
-        draft.courier === 'inpost' &&
-        draft.service === 'inpost_courier_standard' &&
+        needsPickupSchedule &&
         draft.status === 'created' &&
         !draft.pickup_ordered
     )
@@ -62,8 +213,8 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, bus
                 <span className="mono dim" style={{ minWidth: 130, textAlign: 'right' }}>
                     {fmtDate(draft.created_at)}
                 </span>
-                <Pill kind={draft.status === 'created' ? 'ok' : 'warn'}>
-                    {draft.status === 'created' ? 'created' : 'error'}
+                <Pill kind={draft.status === 'created' ? 'ok' : draft.status === 'pending' ? 'default' : 'warn'}>
+                    {draft.status}
                 </Pill>
                 <Icon name={open ? 'chevronUp' : 'chevronDown'} size={14} className="icon" />
             </button>
@@ -72,33 +223,36 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, bus
                 <div className="accordion-body">
                     <div className="detail-grid">
                         <div>
-                            <div className="detail-label">Adres dostawy</div>
-                            <div>
-                                {draft.shipping_address?.street}<br />
-                                {draft.shipping_address?.post_code} {draft.shipping_address?.city}
-                            </div>
+                            {canManage && draft.courier === 'inpost' && (draft.status === 'pending' || draft.status === 'error') ? (
+                                <InPostServiceToggle draft={draft} onUpdateService={onUpdateService} />
+                            ) : (
+                                <>
+                                    <div className="detail-label">
+                                        {draft.service === 'inpost_locker_standard' ? 'Paczkomat' : 'Adres dostawy'}
+                                    </div>
+                                    {draft.service === 'inpost_locker_standard' ? (
+                                        <div>
+                                            <span className="mono">{draft.receiver?.locker_id || '—'}</span>
+                                            {draft.shipping_address?.city && (
+                                                <span className="dim"> · {draft.shipping_address.city}</span>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div>
+                                            {draft.shipping_address?.street}<br />
+                                            {draft.shipping_address?.post_code} {draft.shipping_address?.city}
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </div>
+                        <div>
+                            <div className="detail-label">Telefon</div>
+                            <div className="mono">{draft.receiver?.phone || '—'}</div>
                         </div>
                         <div>
                             <div className="detail-label">Paczki</div>
-                            {canManage ? (
-                                <div className="count-stepper">
-                                    <button
-                                        className="btn-ghost stepper-btn"
-                                        onClick={() => onUpdateCount(draft, Math.max(1, (draft.packages_count ?? 1) - 1))}
-                                        disabled={isBusy || (draft.packages_count ?? 1) <= 1}
-                                        aria-label="Zmniejsz liczbę paczek"
-                                    >−</button>
-                                    <span className="mono stepper-val">{draft.packages_count ?? 1}</span>
-                                    <button
-                                        className="btn-ghost stepper-btn"
-                                        onClick={() => onUpdateCount(draft, Math.min(99, (draft.packages_count ?? 1) + 1))}
-                                        disabled={isBusy || (draft.packages_count ?? 1) >= 99}
-                                        aria-label="Zwiększ liczbę paczek"
-                                    >+</button>
-                                </div>
-                            ) : (
-                                <div className="mono">{draft.packages_count ?? 1}</div>
-                            )}
+                            <PackagesInfo draft={draft} />
                         </div>
                         <div>
                             <div className="detail-label">Numer śledzenia</div>
@@ -131,10 +285,13 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, bus
                     )}
 
                     <div className="draft-actions">
-                        {canManage && draft.status === 'error' && (
+                        {canManage && (draft.status === 'pending' || draft.status === 'error') && (
                             <button
                                 className="btn btn-primary"
-                                onClick={() => onExecute(draft)}
+                                onClick={() => needsPickupSchedule
+                                    ? setPickupModal('execute')
+                                    : onExecute(draft, null)
+                                }
                                 disabled={isBusy}
                             >
                                 {isBusy
@@ -158,7 +315,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, bus
                         {canManage && canPickup && (
                             <button
                                 className="btn btn-secondary"
-                                onClick={() => onPickup(draft)}
+                                onClick={() => setPickupModal('pickup')}
                                 disabled={isBusy}
                             >
                                 {isBusy
@@ -175,6 +332,18 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateCount, bus
                             </span>
                         )}
                     </div>
+
+                    {pickupModal && (
+                        <PickupScheduleModal
+                            title={pickupModal === 'execute' ? 'Zaplanuj podjazd kuriera' : 'Zamów podjazd kuriera'}
+                            onCancel={() => setPickupModal(null)}
+                            onConfirm={schedule => {
+                                setPickupModal(null)
+                                if (pickupModal === 'execute') onExecute(draft, schedule)
+                                else onPickup(draft, schedule)
+                            }}
+                        />
+                    )}
                 </div>
             )}
         </div>
@@ -261,12 +430,13 @@ export default function ShippingView() {
         }
     }
 
-    function handleExecute(draft) {
+    function handleExecute(draft, schedule) {
         return withBusy(draft.id, async () => {
             const token = await getToken()
             const res = await fetch(`/api/shipping/drafts/${draft.id}/execute`, {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: schedule ? JSON.stringify(schedule) : null,
             })
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
@@ -275,12 +445,13 @@ export default function ShippingView() {
         })()
     }
 
-    function handlePickup(draft) {
+    function handlePickup(draft, schedule) {
         return withBusy(draft.id, async () => {
             const token = await getToken()
             const res = await fetch(`/api/shipping/drafts/${draft.id}/pickup`, {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: schedule ? JSON.stringify(schedule) : null,
             })
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
@@ -294,11 +465,23 @@ export default function ShippingView() {
             const token = await getToken()
             const res = await fetch(`/api/shipping/drafts/${draft.id}`, {
                 method: 'PATCH',
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                },
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ packages_count: newCount }),
+            })
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(body.detail || `${res.status}`)
+            }
+        })()
+    }
+
+    function handleUpdateService(draft, fields) {
+        return withBusy(draft.id, async () => {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(fields),
             })
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
@@ -378,6 +561,7 @@ export default function ShippingView() {
                         onExecute={handleExecute}
                         onPickup={handlePickup}
                         onUpdateCount={handleUpdateCount}
+                        onUpdateService={handleUpdateService}
                     />
                 ))}
             </div>
