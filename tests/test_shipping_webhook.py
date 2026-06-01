@@ -25,6 +25,7 @@ _FIXTURES = Path(__file__).parent / "fixtures"
 def _load_fixture(name: str) -> dict:
     return json.loads((_FIXTURES / name).read_text(encoding="utf-8"))
 
+
 # ── Pure helpers ──────────────────────────────────────────────────────────────
 
 
@@ -490,7 +491,9 @@ class TestRunInpost:
         assert result["courier_draft_id"] == "ship-1"
         assert result["tracking_number"] == "TRK1"
         assert result["status"] == "created"
-        mock_disp.assert_called_once_with("ship-1", _SENDER, pickup_date=None, pickup_from=None, pickup_to=None)
+        mock_disp.assert_called_once_with(
+            "ship-1", _SENDER, pickup_date=None, pickup_from=None, pickup_to=None
+        )
 
     def test_kurier_dispatch_failure_is_logged_not_raised(self):
         from zdrovena.api.routers.webhooks import _run_inpost
