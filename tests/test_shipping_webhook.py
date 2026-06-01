@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -17,6 +18,12 @@ os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 from zdrovena.api.main import app
 from zdrovena.api.routers.webhooks import _pick_courier, _verify_shopify_hmac
 from zdrovena.common.shipping_store import ShippingStore
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _load_fixture(name: str) -> dict:
+    return json.loads((_FIXTURES / name).read_text(encoding="utf-8"))
 
 # ── Pure helpers ──────────────────────────────────────────────────────────────
 
@@ -483,7 +490,7 @@ class TestRunInpost:
         assert result["courier_draft_id"] == "ship-1"
         assert result["tracking_number"] == "TRK1"
         assert result["status"] == "created"
-        mock_disp.assert_called_once_with("ship-1", _SENDER)
+        mock_disp.assert_called_once_with("ship-1", _SENDER, pickup_date=None, pickup_from=None, pickup_to=None)
 
     def test_kurier_dispatch_failure_is_logged_not_raised(self):
         from zdrovena.api.routers.webhooks import _run_inpost
@@ -546,38 +553,26 @@ class TestCreateDraft:
         from zdrovena.api.routers.webhooks import _create_draft
 
         storage = object()
-        order = {
-            "id": "100",
-            "order_number": 2001,
-            "shipping_lines": [{"title": "InPost Kurier"}],
-            "shipping_address": {
-                "first_name": "Jan",
-                "last_name": "K",
-                "address1": "Kwiatowa 1",
-                "address2": "",
-                "city": "Warszawa",
-                "zip": "00-001",
-                "phone": "600000000",
-            },
-            "customer": {"email": "jan@k.pl"},
-            "email": "jan@k.pl",
-        }
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
-            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as m:
-                with patch("zdrovena.common.inpost.InPostClient.create_dispatch_order"):
-                    m.return_value = {"id": "s-1", "tracking_number": "T001"}
-                    _create_draft(order, store, storage)
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        _create_draft(order, store, storage)
         drafts = store.list_drafts()
         assert len(drafts) == 1
         d = drafts[0]
         assert d["courier"] == "inpost"
         assert d["service"] == "inpost_courier_standard"
-        assert d["status"] == "created"
+        assert d["status"] == "pending"
         assert d["source"] == "shopify"
         assert d["packages_count"] == 1
-        assert d["receiver"]["first_name"] == "Jan"
+        assert d["tracking_number"] is None
+        assert d["courier_draft_id"] is None
+        assert d["shopify_order_number"] == "1002"
+        assert d["receiver"]["first_name"] == "Piotr"
+        assert d["receiver"]["last_name"] == "Nowak"
+        assert d["receiver"]["email"] == "piotr.nowak@example.com"
+        assert d["shipping_address"]["city"] == "Kraków"
+        assert d["shipping_address"]["post_code"] == "30-001"
 
-    def test_error_draft_stored_on_credential_failure(self, store):
+    def test_locker_id_from_address2_fallback(self, store):
         from zdrovena.api.routers.webhooks import _create_draft
 
         storage = object()
@@ -585,6 +580,7 @@ class TestCreateDraft:
             "id": "101",
             "order_number": 2002,
             "shipping_lines": [{"title": "InPost Paczkomat"}],
+            "line_items": [{"quantity": 1}],
             "shipping_address": {
                 "first_name": "Anna",
                 "last_name": "N",
@@ -598,17 +594,13 @@ class TestCreateDraft:
             "email": "",
             "note_attributes": [],
         }
-        with patch(
-            "zdrovena.api.routers.webhooks.get_secret",
-            side_effect=Exception("no creds"),
-        ):
-            _create_draft(order, store, storage)
+        _create_draft(order, store, storage)
         drafts = store.list_drafts()
         assert len(drafts) == 1
         d = drafts[0]
-        assert d["status"] == "error"
+        assert d["status"] == "pending"
         assert d["service"] == "inpost_locker_standard"
-        assert "no creds" in (d["error"] or "")
+        assert d["receiver"]["locker_id"] == "WAW01A"
 
 
 # ── Label endpoint ────────────────────────────────────────────────────────────
@@ -689,33 +681,20 @@ class TestCreateDraftPaczkomat:
         from zdrovena.api.routers.webhooks import _create_draft
 
         storage = object()
-        order = {
-            "id": "200",
-            "order_number": 3001,
-            "shipping_lines": [{"title": "InPost Paczkomat 24"}],
-            "shipping_address": {
-                "first_name": "Ewa",
-                "last_name": "S",
-                "address1": "Lipowa 10",
-                "address2": "WAW123",
-                "city": "Łódź",
-                "zip": "90-001",
-                "phone": "700000000",
-            },
-            "customer": {},
-            "email": "ewa@s.pl",
-            "note_attributes": [],
-        }
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
-            with patch("zdrovena.common.inpost.InPostClient.create_paczkomat_shipment") as m:
-                m.return_value = {"id": "pack-2", "tracking_number": "TRKP2"}
-                _create_draft(order, store, storage)
+        order = _load_fixture("shopify_order_inpost_paczkomat.json")
+        _create_draft(order, store, storage)
         drafts = store.list_drafts()
         assert len(drafts) == 1
         d = drafts[0]
         assert d["service"] == "inpost_locker_standard"
-        assert d["status"] == "created"
-        assert d["receiver"]["locker_id"] == "WAW123"
+        assert d["status"] == "pending"
+        assert d["shopify_order_number"] == "1001"
+        assert d["receiver"]["first_name"] == "Anna"
+        assert d["receiver"]["last_name"] == "Kowalska"
+        assert d["receiver"]["locker_id"] == "WAW123A"
+        assert d["shipping_address"]["city"] == "Warszawa"
+        assert d["tracking_number"] is None
+        assert d["courier_draft_id"] is None
 
 
 class TestCreateDraftApaczka:
@@ -723,33 +702,21 @@ class TestCreateDraftApaczka:
         from zdrovena.api.routers.webhooks import _create_draft
 
         storage = object()
-        order = {
-            "id": "300",
-            "order_number": 4001,
-            "shipping_lines": [{"title": "Wysyłka DPD Express"}],
-            "shipping_address": {
-                "first_name": "Marek",
-                "last_name": "B",
-                "address1": "Sosnowa 7",
-                "address2": "",
-                "city": "Poznań",
-                "zip": "60-001",
-                "phone": "800000000",
-            },
-            "customer": {},
-            "email": "marek@b.pl",
-        }
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
-            with patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as m:
-                m.return_value = {"id": "ap-2", "waybill_number": "WAY002"}
-                _create_draft(order, store, storage)
+        order = _load_fixture("shopify_order_apaczka.json")
+        _create_draft(order, store, storage)
         drafts = store.list_drafts()
         assert len(drafts) == 1
         d = drafts[0]
         assert d["courier"] == "apaczka"
         assert d["service"] == "apaczka"
-        assert d["status"] == "created"
-        assert d["tracking_number"] == "WAY002"
+        assert d["status"] == "pending"
+        assert d["tracking_number"] is None
+        assert d["courier_draft_id"] is None
+        assert d["shopify_order_number"] == "1003"
+        assert d["receiver"]["first_name"] == "Maria"
+        assert d["receiver"]["last_name"] == "Wiśniewska"
+        assert d["receiver"]["email"] == "maria.wisniewska@example.com"
+        assert d["shipping_address"]["city"] == "Gdańsk"
 
 
 class TestExecuteDraftApaczka:
@@ -884,14 +851,16 @@ class TestGetLabelApaczka:
 
 
 class TestCreateDraftDispatchFail:
-    def test_kurier_draft_created_even_when_dispatch_fails(self, store):
+    def test_kurier_draft_pending_no_courier_api_called(self, store):
         from zdrovena.api.routers.webhooks import _create_draft
+        from unittest.mock import MagicMock
 
         storage = object()
         order = {
             "id": "400",
             "order_number": 5001,
             "shipping_lines": [{"title": "InPost Kurier"}],
+            "line_items": [{"quantity": 3}],
             "shipping_address": {
                 "first_name": "Leon",
                 "last_name": "M",
@@ -903,18 +872,14 @@ class TestCreateDraftDispatchFail:
             },
             "customer": {},
             "email": "l@m.pl",
+            "note_attributes": [],
         }
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
-            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as m:
-                with patch(
-                    "zdrovena.common.inpost.InPostClient.create_dispatch_order",
-                    side_effect=Exception("dispatch fail"),
-                ):
-                    m.return_value = {"id": "ship-ok", "tracking_number": "TRKOK"}
-                    _create_draft(order, store, storage)
+        with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_api:
+            _create_draft(order, store, storage)
+            mock_api.assert_not_called()
         drafts = store.list_drafts()
         assert len(drafts) == 1
         d = drafts[0]
-        # shipment created even though dispatch failed
-        assert d["status"] == "created"
-        assert d["pickup_ordered"] is False
+        assert d["status"] == "pending"
+        assert d["packages_count"] == 1
+        assert d["courier_draft_id"] is None

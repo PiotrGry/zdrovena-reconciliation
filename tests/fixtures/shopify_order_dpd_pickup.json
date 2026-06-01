@@ -1,0 +1,539 @@
+{
+  "id": 8025536987483,
+  "admin_graphql_api_id": "gid://shopify/Order/8025536987483",
+  "app_id": 580111,
+  "browser_ip": "194.187.200.248",
+  "buyer_accepts_marketing": true,
+  "cancel_reason": null,
+  "cancelled_at": null,
+  "cart_token": "hWNC8zXhbhsEbtivtZf6o8f8",
+  "checkout_id": 48965541691739,
+  "checkout_token": "593b327f31d6b85ed8c84d73e29d61ce",
+  "client_details": {
+    "accept_language": "pl-PL",
+    "browser_height": null,
+    "browser_ip": "194.187.200.248",
+    "browser_width": null,
+    "session_hash": null,
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0"
+  },
+  "closed_at": "2026-05-14T09:01:44+02:00",
+  "company": null,
+  "confirmation_number": "LA0MYPLPN",
+  "confirmed": true,
+  "contact_email": "userkatr6193@example.com",
+  "created_at": "2026-05-14T08:55:35+02:00",
+  "currency": "PLN",
+  "current_subtotal_price": "85.00",
+  "current_subtotal_price_set": {
+    "shop_money": {
+      "amount": "85.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "85.00",
+      "currency_code": "PLN"
+    }
+  },
+  "current_total_additional_fees_set": null,
+  "current_total_discounts": "0.00",
+  "current_total_discounts_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "current_total_duties_set": null,
+  "current_total_price": "94.99",
+  "current_total_price_set": {
+    "shop_money": {
+      "amount": "94.99",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "94.99",
+      "currency_code": "PLN"
+    }
+  },
+  "current_total_tax": "8.17",
+  "current_total_tax_set": {
+    "shop_money": {
+      "amount": "8.17",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "8.17",
+      "currency_code": "PLN"
+    }
+  },
+  "customer_locale": "pl-PL",
+  "device_id": null,
+  "discount_codes": [],
+  "duties_included": false,
+  "email": "userkatr6193@example.com",
+  "estimated_taxes": false,
+  "financial_status": "paid",
+  "fulfillment_status": "fulfilled",
+  "landing_site": "/products/subskrypcja-miesieczna-wody-humio-30-butelek?se_activity_id=191220777307&syclid=d82n0tlf2svs73fnjou0&utm_campaign=A co powiesz na miesięczną dostawę HUMIO?_191220777307&utm_medium=email&utm_source=shopify_email",
+  "landing_site_ref": null,
+  "location_id": null,
+  "merchant_business_entity_id": "MTkxODc4OTQ5MjEx",
+  "merchant_of_record_app_id": null,
+  "name": "#1555",
+  "note": null,
+  "note_attributes": [
+    {
+      "name": "PickupPointCourier",
+      "value": "DPD"
+    },
+    {
+      "name": "PickupPointName",
+      "value": "DPD Pickup- \"Sklep Żabka\""
+    },
+    {
+      "name": "PickupPointId",
+      "value": "PL72095"
+    },
+    {
+      "name": "PickupPointAddress",
+      "value": "Gostyńska 51"
+    },
+    {
+      "name": "PickupPointPostCode",
+      "value": "63100"
+    },
+    {
+      "name": "PickupPointCity",
+      "value": "Śrem"
+    },
+    {
+      "name": "invoice_requested",
+      "value": "no"
+    },
+    {
+      "name": "customer_email",
+      "value": "userkatr6193@example.com"
+    },
+    {
+      "name": "customer_first_name",
+      "value": "Katarzyna"
+    },
+    {
+      "name": "customer_last_name",
+      "value": "Malinowska"
+    },
+    {
+      "name": "shipping_street",
+      "value": "gostyńska 42a"
+    },
+    {
+      "name": "shipping_postal",
+      "value": "63-100"
+    },
+    {
+      "name": "shipping_city",
+      "value": "śrem"
+    }
+  ],
+  "number": 555,
+  "order_number": 1555,
+  "order_status_url": "https://wodahumio.pl/91878949211/orders/bd57e806edf3800933a7b4e8dce257de/authenticate?key=3d40cd6e58ea9119fcee736488b9b634",
+  "original_total_additional_fees_set": null,
+  "original_total_duties_set": null,
+  "payment_gateway_names": [
+    "shopify_payments"
+  ],
+  "phone": null,
+  "po_number": null,
+  "presentment_currency": "PLN",
+  "processed_at": "2026-05-14T08:55:34+02:00",
+  "reference": null,
+  "referring_site": "https://poczta.wp.pl/",
+  "source_identifier": null,
+  "source_name": "web",
+  "source_url": null,
+  "subtotal_price": "85.00",
+  "subtotal_price_set": {
+    "shop_money": {
+      "amount": "85.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "85.00",
+      "currency_code": "PLN"
+    }
+  },
+  "tags": "",
+  "tax_exempt": false,
+  "tax_lines": [
+    {
+      "price": "6.30",
+      "rate": 0.08,
+      "title": "PL VAT",
+      "price_set": {
+        "shop_money": {
+          "amount": "6.30",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "6.30",
+          "currency_code": "PLN"
+        }
+      },
+      "channel_liable": false
+    },
+    {
+      "price": "1.87",
+      "rate": 0.23,
+      "title": "PL VAT",
+      "price_set": {
+        "shop_money": {
+          "amount": "1.87",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "1.87",
+          "currency_code": "PLN"
+        }
+      },
+      "channel_liable": false
+    }
+  ],
+  "taxes_included": true,
+  "test": false,
+  "token": "bd57e806edf3800933a7b4e8dce257de",
+  "total_cash_rounding_payment_adjustment_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_cash_rounding_refund_adjustment_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_discounts": "0.00",
+  "total_discounts_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_line_items_price": "85.00",
+  "total_line_items_price_set": {
+    "shop_money": {
+      "amount": "85.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "85.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_outstanding": "0.00",
+  "total_price": "94.99",
+  "total_price_set": {
+    "shop_money": {
+      "amount": "94.99",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "94.99",
+      "currency_code": "PLN"
+    }
+  },
+  "total_shipping_price_set": {
+    "shop_money": {
+      "amount": "9.99",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "9.99",
+      "currency_code": "PLN"
+    }
+  },
+  "total_tax": "8.17",
+  "total_tax_set": {
+    "shop_money": {
+      "amount": "8.17",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "8.17",
+      "currency_code": "PLN"
+    }
+  },
+  "total_tip_received": "0.00",
+  "total_weight": 18000,
+  "updated_at": "2026-05-14T09:01:44+02:00",
+  "user_id": null,
+  "billing_address": {
+    "first_name": "Katarzyna",
+    "address1": "gostyńska 42a",
+    "phone": "+48602345678",
+    "city": "śrem",
+    "zip": "63-100",
+    "province": null,
+    "country": "Poland",
+    "last_name": "Malinowska",
+    "address2": null,
+    "company": null,
+    "latitude": 52.0790917,
+    "longitude": 17.0280663,
+    "name": "Magdalena Nowak",
+    "country_code": "PL",
+    "province_code": null
+  },
+  "discount_applications": [],
+  "fulfillments": [
+    {
+      "id": 7021751861595,
+      "admin_graphql_api_id": "gid://shopify/Fulfillment/7021751861595",
+      "created_at": "2026-05-14T09:01:43+02:00",
+      "location_id": 103919485275,
+      "name": "#1555.1",
+      "order_id": 8025536987483,
+      "origin_address": {},
+      "receipt": {},
+      "service": "manual",
+      "shipment_status": null,
+      "status": "success",
+      "tracking_company": "DPD",
+      "tracking_number": "1042818923398U",
+      "tracking_numbers": [
+        "1042818923398U"
+      ],
+      "tracking_url": "https://www.dpdgroup.com/nl/mydpd/my-parcels/incoming",
+      "tracking_urls": [
+        "https://www.dpdgroup.com/nl/mydpd/my-parcels/incoming"
+      ],
+      "updated_at": "2026-05-14T09:01:43+02:00",
+      "line_items": [
+        {
+          "id": 19151383691611,
+          "admin_graphql_api_id": "gid://shopify/LineItem/19151383691611",
+          "attributed_staffs": [],
+          "current_quantity": 1,
+          "fulfillable_quantity": 0,
+          "fulfillment_service": "manual",
+          "fulfillment_status": "fulfilled",
+          "gift_card": false,
+          "grams": 18000,
+          "name": "HUMIO - woda alkaliczna, 12 butelek w szkle",
+          "price": "85.00",
+          "price_set": {
+            "shop_money": {
+              "amount": "85.00",
+              "currency_code": "PLN"
+            },
+            "presentment_money": {
+              "amount": "85.00",
+              "currency_code": "PLN"
+            }
+          },
+          "product_exists": true,
+          "product_id": 9955919233371,
+          "properties": [],
+          "quantity": 1,
+          "requires_shipping": true,
+          "sku": "",
+          "taxable": true,
+          "title": "HUMIO - woda alkaliczna, 12 butelek w szkle",
+          "total_discount": "0.00",
+          "total_discount_set": {
+            "shop_money": {
+              "amount": "0.00",
+              "currency_code": "PLN"
+            },
+            "presentment_money": {
+              "amount": "0.00",
+              "currency_code": "PLN"
+            }
+          },
+          "variant_id": 50800604807515,
+          "variant_inventory_management": "shopify",
+          "variant_title": null,
+          "vendor": "HUMIO ",
+          "tax_lines": [
+            {
+              "channel_liable": false,
+              "price": "6.30",
+              "price_set": {
+                "shop_money": {
+                  "amount": "6.30",
+                  "currency_code": "PLN"
+                },
+                "presentment_money": {
+                  "amount": "6.30",
+                  "currency_code": "PLN"
+                }
+              },
+              "rate": 0.08,
+              "title": "PL VAT"
+            }
+          ],
+          "duties": [],
+          "discount_allocations": []
+        }
+      ]
+    }
+  ],
+  "line_items": [
+    {
+      "id": 19151383691611,
+      "admin_graphql_api_id": "gid://shopify/LineItem/19151383691611",
+      "attributed_staffs": [],
+      "current_quantity": 1,
+      "fulfillable_quantity": 0,
+      "fulfillment_service": "manual",
+      "fulfillment_status": "fulfilled",
+      "gift_card": false,
+      "grams": 18000,
+      "name": "HUMIO - woda alkaliczna, 12 butelek w szkle",
+      "price": "85.00",
+      "price_set": {
+        "shop_money": {
+          "amount": "85.00",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "85.00",
+          "currency_code": "PLN"
+        }
+      },
+      "product_exists": true,
+      "product_id": 9955919233371,
+      "properties": [],
+      "quantity": 1,
+      "requires_shipping": true,
+      "sku": "",
+      "taxable": true,
+      "title": "HUMIO - woda alkaliczna, 12 butelek w szkle",
+      "total_discount": "0.00",
+      "total_discount_set": {
+        "shop_money": {
+          "amount": "0.00",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "0.00",
+          "currency_code": "PLN"
+        }
+      },
+      "variant_id": 50800604807515,
+      "variant_inventory_management": "shopify",
+      "variant_title": null,
+      "vendor": "HUMIO ",
+      "tax_lines": [
+        {
+          "channel_liable": false,
+          "price": "6.30",
+          "price_set": {
+            "shop_money": {
+              "amount": "6.30",
+              "currency_code": "PLN"
+            },
+            "presentment_money": {
+              "amount": "6.30",
+              "currency_code": "PLN"
+            }
+          },
+          "rate": 0.08,
+          "title": "PL VAT"
+        }
+      ],
+      "duties": [],
+      "discount_allocations": []
+    }
+  ],
+  "payment_terms": null,
+  "refunds": [],
+  "shipping_address": {
+    "first_name": "Katarzyna",
+    "address1": "Gostyńska 51",
+    "phone": "+48602345678",
+    "city": "Śrem",
+    "zip": "63-100",
+    "province": "",
+    "country": "Poland",
+    "last_name": "Malinowska",
+    "address2": "",
+    "company": "DPD - DPD Pickup- \"Sklep Żabka\" - PL72095",
+    "latitude": 52.0778907,
+    "longitude": 17.031653,
+    "name": "Magdalena Nowak",
+    "country_code": "PL",
+    "province_code": null
+  },
+  "shipping_lines": [
+    {
+      "id": 6485185495387,
+      "carrier_identifier": "e305c7bfaf6f05f411b2b26c7212d196",
+      "code": "pickup-points:8830:1766599:202",
+      "discounted_price": "9.99",
+      "discounted_price_set": {
+        "shop_money": {
+          "amount": "9.99",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "9.99",
+          "currency_code": "PLN"
+        }
+      },
+      "is_removed": false,
+      "phone": null,
+      "price": "9.99",
+      "price_set": {
+        "shop_money": {
+          "amount": "9.99",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "9.99",
+          "currency_code": "PLN"
+        }
+      },
+      "requested_fulfillment_service_id": null,
+      "source": "Octolize Pick-up Points PRO",
+      "title": "DPD • DPD Pickup- \"Sklep Żabka\" • 0.2 km • PL72095",
+      "tax_lines": [
+        {
+          "channel_liable": false,
+          "price": "1.87",
+          "price_set": {
+            "shop_money": {
+              "amount": "1.87",
+              "currency_code": "PLN"
+            },
+            "presentment_money": {
+              "amount": "1.87",
+              "currency_code": "PLN"
+            }
+          },
+          "rate": 0.23,
+          "title": "PL VAT"
+        }
+      ],
+      "discount_allocations": []
+    }
+  ]
+}
