@@ -133,8 +133,11 @@ def _run_inpost(
     # Both paczkomat (drzwi→paczkomat) and kurier use dispatch_order for sender pickup
     try:
         client.create_dispatch_order(
-            str(result["id"]), sender,
-            pickup_date=pickup_date, pickup_from=pickup_from, pickup_to=pickup_to,
+            str(result["id"]),
+            sender,
+            pickup_date=pickup_date,
+            pickup_from=pickup_from,
+            pickup_to=pickup_to,
         )
         pickup_ordered = True
     except Exception as exc:
@@ -225,15 +228,21 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
 
     note_attrs = {a["name"]: a["value"] for a in (order.get("note_attributes") or [])}
     locker_id = (
-        note_attrs.get("PickupPointId")
-        or note_attrs.get("inpost_locker_id")
-        or note_attrs.get("paczkomat_id")
-        or note_attrs.get("locker_id")
-        or shipping_addr.get("address2", "")
-    ) if inpost_service == "paczkomat" else ""
+        (
+            note_attrs.get("PickupPointId")
+            or note_attrs.get("inpost_locker_id")
+            or note_attrs.get("paczkomat_id")
+            or note_attrs.get("locker_id")
+            or shipping_addr.get("address2", "")
+        )
+        if inpost_service == "paczkomat"
+        else ""
+    )
 
     if courier == "inpost":
-        service = "inpost_locker_standard" if inpost_service == "paczkomat" else "inpost_courier_standard"
+        service = (
+            "inpost_locker_standard" if inpost_service == "paczkomat" else "inpost_courier_standard"
+        )
     else:
         service = "apaczka"
 
@@ -364,9 +373,16 @@ def execute_draft(
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
     if draft.get("status") == "created":
-        raise HTTPException(status_code=409, detail="Draft already executed — use pickup endpoint to order collection")
+        raise HTTPException(
+            status_code=409,
+            detail="Draft already executed — use pickup endpoint to order collection",
+        )
 
-    pickup_schedule = {"pickup_date": pickup_date, "pickup_from": pickup_from, "pickup_to": pickup_to}
+    pickup_schedule = {
+        "pickup_date": pickup_date,
+        "pickup_from": pickup_from,
+        "pickup_to": pickup_to,
+    }
 
     try:
         sender = _get_sender()
@@ -428,8 +444,11 @@ def order_pickup(
         client = InPostClient(token, org_id)
         sender = _get_sender()
         client.create_dispatch_order(
-            courier_draft_id, sender,
-            pickup_date=pickup_date, pickup_from=pickup_from, pickup_to=pickup_to,
+            courier_draft_id,
+            sender,
+            pickup_date=pickup_date,
+            pickup_from=pickup_from,
+            pickup_to=pickup_to,
         )
     except Exception as exc:
         logger.error("order_pickup failed for draft %s: %s", draft_id, exc)
