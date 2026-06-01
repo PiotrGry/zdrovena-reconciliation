@@ -853,7 +853,6 @@ class TestGetLabelApaczka:
 class TestCreateDraftDispatchFail:
     def test_kurier_draft_pending_no_courier_api_called(self, store):
         from zdrovena.api.routers.webhooks import _create_draft
-        from unittest.mock import MagicMock
 
         storage = object()
         order = {
