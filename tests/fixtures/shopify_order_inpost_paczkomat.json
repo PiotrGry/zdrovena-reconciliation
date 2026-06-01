@@ -1,0 +1,360 @@
+{
+  "id": 5678901234001,
+  "admin_graphql_api_id": "gid://shopify/Order/5678901234001",
+  "app_id": 1966818,
+  "browser_ip": "83.25.100.200",
+  "buyer_accepts_marketing": false,
+  "cancel_reason": null,
+  "cancelled_at": null,
+  "cart_token": "abc123def456paczkomat",
+  "checkout_id": 987654001,
+  "checkout_token": "def456paczkomat",
+  "closed_at": null,
+  "company": null,
+  "confirmation_number": "ABCD1234",
+  "confirmed": true,
+  "contact_email": "anna.kowalska@example.com",
+  "created_at": "2026-05-21T10:00:00+02:00",
+  "currency": "PLN",
+  "current_subtotal_price": "69.99",
+  "current_subtotal_price_set": {
+    "shop_money": {
+      "amount": "69.99",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "69.99",
+      "currency_code": "PLN"
+    }
+  },
+  "current_total_additional_fees_set": null,
+  "current_total_discounts": "0.00",
+  "current_total_discounts_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "current_total_duties_set": null,
+  "current_total_price": "79.99",
+  "current_total_price_set": {
+    "shop_money": {
+      "amount": "79.99",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "79.99",
+      "currency_code": "PLN"
+    }
+  },
+  "current_total_tax": "16.10",
+  "current_total_tax_set": {
+    "shop_money": {
+      "amount": "16.10",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "16.10",
+      "currency_code": "PLN"
+    }
+  },
+  "customer_locale": "pl",
+  "device_id": null,
+  "discount_codes": [],
+  "duties_included": false,
+  "email": "anna.kowalska@example.com",
+  "estimated_taxes": false,
+  "financial_status": "paid",
+  "fulfillment_status": null,
+  "landing_site": "/products/suplement",
+  "landing_site_ref": null,
+  "location_id": null,
+  "merchant_business_entity_id": "MTkxODc4OTQ5MjEx",
+  "merchant_of_record_app_id": null,
+  "name": "#1001",
+  "note": null,
+  "note_attributes": [
+    {
+      "name": "PickupPointCourier",
+      "value": "InPost"
+    },
+    {
+      "name": "PickupPointName",
+      "value": "Paczkomat 24/7"
+    },
+    {
+      "name": "PickupPointId",
+      "value": "WAW123A"
+    },
+    {
+      "name": "PickupPointAddress",
+      "value": "ul. Marszałkowska 10"
+    },
+    {
+      "name": "PickupPointPostCode",
+      "value": "00-001"
+    },
+    {
+      "name": "PickupPointCity",
+      "value": "Warszawa"
+    },
+    {
+      "name": "invoice_requested",
+      "value": "no"
+    },
+    {
+      "name": "customer_email",
+      "value": "anna.kowalska@example.com"
+    },
+    {
+      "name": "customer_first_name",
+      "value": "Anna"
+    },
+    {
+      "name": "customer_last_name",
+      "value": "Kowalska"
+    },
+    {
+      "name": "shipping_street",
+      "value": "ul. Kwiatowa 5/3"
+    },
+    {
+      "name": "shipping_postal",
+      "value": "00-001"
+    },
+    {
+      "name": "shipping_city",
+      "value": "Warszawa"
+    }
+  ],
+  "number": 1,
+  "order_number": 1001,
+  "order_status_url": "https://wodahumio.myshopify.com/orders/abc123paczkomat/authenticate?key=token",
+  "original_total_additional_fees_set": null,
+  "original_total_duties_set": null,
+  "payment_gateway_names": [
+    "shopify_payments"
+  ],
+  "phone": null,
+  "po_number": null,
+  "presentment_currency": "PLN",
+  "processed_at": "2026-05-21T10:00:00+02:00",
+  "reference": null,
+  "referring_site": "",
+  "source_identifier": null,
+  "source_name": "web",
+  "source_url": null,
+  "subtotal_price": "69.99",
+  "subtotal_price_set": {
+    "shop_money": {
+      "amount": "69.99",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "69.99",
+      "currency_code": "PLN"
+    }
+  },
+  "tags": "",
+  "tax_exempt": false,
+  "tax_lines": [
+    {
+      "price": "16.10",
+      "rate": 0.23,
+      "title": "VAT",
+      "channel_liable": false
+    }
+  ],
+  "taxes_included": false,
+  "test": false,
+  "token": "abc123paczkomat",
+  "total_cash_rounding_payment_adjustment_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_cash_rounding_refund_adjustment_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_discounts": "0.00",
+  "total_discounts_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_line_items_price": "69.99",
+  "total_line_items_price_set": {
+    "shop_money": {
+      "amount": "69.99",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "69.99",
+      "currency_code": "PLN"
+    }
+  },
+  "total_outstanding": "0.00",
+  "total_price": "79.99",
+  "total_price_set": {
+    "shop_money": {
+      "amount": "79.99",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "79.99",
+      "currency_code": "PLN"
+    }
+  },
+  "total_shipping_price_set": {
+    "shop_money": {
+      "amount": "9.99",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "9.99",
+      "currency_code": "PLN"
+    }
+  },
+  "total_tax": "16.10",
+  "total_tax_set": {
+    "shop_money": {
+      "amount": "16.10",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "16.10",
+      "currency_code": "PLN"
+    }
+  },
+  "total_tip_received": "0.00",
+  "total_weight": 300,
+  "updated_at": "2026-05-21T10:00:00+02:00",
+  "user_id": null,
+  "billing_address": {
+    "first_name": "Anna",
+    "last_name": "Kowalska",
+    "address1": "ul. Kwiatowa 5/3",
+    "address2": null,
+    "city": "Warszawa",
+    "zip": "00-001",
+    "province": null,
+    "country": "Poland",
+    "phone": "+48601111111",
+    "name": "Anna Kowalska",
+    "province_code": null,
+    "country_code": "PL"
+  },
+  "discount_applications": [],
+  "fulfillments": [],
+  "line_items": [
+    {
+      "id": 1111111002,
+      "admin_graphql_api_id": "gid://shopify/LineItem/1111111002",
+      "fulfillable_quantity": 1,
+      "fulfillment_service": "manual",
+      "fulfillment_status": null,
+      "gift_card": false,
+      "grams": 5400,
+      "name": "HUMIO - woda alkaliczna, 12 butelek w szkle",
+      "price": "89.99",
+      "price_set": {
+        "shop_money": {
+          "amount": "89.99",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "89.99",
+          "currency_code": "PLN"
+        }
+      },
+      "product_exists": true,
+      "product_id": 8888888002,
+      "properties": [],
+      "quantity": 1,
+      "requires_shipping": true,
+      "sku": "HUMIO-SZKLO-12-001",
+      "taxable": true,
+      "title": "HUMIO - woda alkaliczna, 12 butelek w szkle",
+      "total_discount": "0.00",
+      "variant_id": 44444444002,
+      "variant_inventory_management": "shopify",
+      "variant_title": null,
+      "vendor": "Humio"
+    }
+  ],
+  "payment_terms": null,
+  "refunds": [],
+  "shipping_address": {
+    "first_name": "Anna",
+    "last_name": "Kowalska",
+    "address1": "ul. Marszałkowska 10",
+    "address2": "",
+    "city": "Warszawa",
+    "zip": "00-001",
+    "province": null,
+    "country": "Poland",
+    "phone": "+48601111111",
+    "name": "Anna Kowalska",
+    "province_code": null,
+    "country_code": "PL",
+    "company": "InPost - Paczkomat 24/7 - WAW123A",
+    "latitude": "52.2297",
+    "longitude": "21.0122"
+  },
+  "shipping_lines": [
+    {
+      "id": 2222222001,
+      "carrier_identifier": null,
+      "code": "pickup-points:1234:5678:910",
+      "discounted_price": "9.99",
+      "discounted_price_set": {
+        "shop_money": {
+          "amount": "9.99",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "9.99",
+          "currency_code": "PLN"
+        }
+      },
+      "phone": null,
+      "price": "9.99",
+      "price_set": {
+        "shop_money": {
+          "amount": "9.99",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "9.99",
+          "currency_code": "PLN"
+        }
+      },
+      "requested_fulfillment_service_id": null,
+      "source": "shopify",
+      "title": "InPost • Paczkomat 24/7 • 1.2 km • WAW123A",
+      "tax_lines": [],
+      "discount_allocations": []
+    }
+  ]
+}
