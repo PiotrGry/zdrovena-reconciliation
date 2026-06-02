@@ -25,6 +25,7 @@ from fastapi.responses import StreamingResponse
 
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, StorageDep
+from zdrovena.audit.bottles import SKIP_RE
 from zdrovena.common.secrets import get_secret
 from zdrovena.common.shipping_store import ShippingStore
 
@@ -222,8 +223,9 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
     courier = _pick_courier(order)
     inpost_service = _pick_inpost_service(title) if courier == "inpost" else None
 
-    total_qty = sum(item.get("quantity", 1) for item in (order.get("line_items") or []))
-    total_qty = max(total_qty, 1)
+    line_items = order.get("line_items") or []
+    product_items = [item for item in line_items if not SKIP_RE.search(item.get("name", ""))]
+    total_qty = max(sum(item.get("quantity", 1) for item in product_items), 1)
     packages_count = _calc_packages(total_qty)
 
     note_attrs = {a["name"]: a["value"] for a in (order.get("note_attributes") or [])}
@@ -262,7 +264,7 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
         "total_qty": total_qty,
         "order_items": [
             {"name": item.get("name") or item.get("title", ""), "quantity": item.get("quantity", 1)}
-            for item in (order.get("line_items") or [])
+            for item in product_items
         ],
         "pickup_ordered": False,
         "receiver": {

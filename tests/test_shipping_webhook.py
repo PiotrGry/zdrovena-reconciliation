@@ -885,3 +885,39 @@ class TestCreateDraftDispatchFail:
         assert d["status"] == "pending"
         assert d["packages_count"] == 1
         assert d["courier_draft_id"] is None
+
+
+class TestCreateDraftKaucjaFilter:
+    def test_kaucja_excluded_from_packages_and_order_items(self, store):
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        storage = object()
+        order = {
+            "id": "500",
+            "order_number": 6001,
+            "shipping_lines": [{"title": "InPost Kurier"}],
+            "line_items": [
+                {"name": "HUMIO woda alkaliczna 6-pak", "quantity": 3},
+                {"name": "Kaucja szklana butelka 6 szt.", "quantity": 3},
+            ],
+            "shipping_address": {
+                "first_name": "Jan",
+                "last_name": "K",
+                "address1": "Lipowa 1",
+                "address2": "",
+                "city": "Warszawa",
+                "zip": "00-001",
+                "phone": "",
+            },
+            "customer": {},
+            "email": "jan@k.pl",
+            "note_attributes": [],
+        }
+        _create_draft(order, store, storage)
+        drafts = store.list_drafts()
+        assert len(drafts) == 1
+        d = drafts[0]
+        assert d["packages_count"] == 1
+        item_names = [i["name"] for i in d["order_items"]]
+        assert all("kaucja" not in n.lower() for n in item_names)
+        assert len(d["order_items"]) == 1
