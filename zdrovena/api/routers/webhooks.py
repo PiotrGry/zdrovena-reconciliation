@@ -16,6 +16,7 @@ import hmac
 import io
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -30,6 +31,7 @@ from zdrovena.common.secrets import get_secret
 from zdrovena.common.shipping_store import ShippingStore
 
 logger = logging.getLogger("zdrovena.api.routers.webhooks")
+_MOCK_COURIER = os.getenv("MOCK_COURIER", "").lower() in ("1", "true", "yes")
 
 router = APIRouter(tags=["shipping"])
 
@@ -120,6 +122,17 @@ def _run_inpost(
     pickup_to: str | None = None,
 ) -> dict[str, Any]:
     """Create or recreate InPost shipment from stored draft fields. Returns patch dict."""
+    if _MOCK_COURIER:
+        ref = draft.get("shopify_order_number", "mock")
+        logger.info("MOCK_COURIER: skipping InPost API for order %s", ref)
+        return {
+            "courier_draft_id": f"mock-inpost-{ref}",
+            "tracking_number": f"MOCK{ref}0000000000",
+            "status": "created",
+            "pickup_ordered": True,
+            "error": None,
+        }
+
     from zdrovena.common.inpost import InPostClient
 
     token = get_secret("inpost_api_token")
@@ -191,6 +204,17 @@ def _run_apaczka(
     pickup_to: str | None = None,
 ) -> dict[str, Any]:
     """Create or recreate Apaczka shipment from stored draft fields. Returns patch dict."""
+    if _MOCK_COURIER:
+        ref = draft.get("shopify_order_number", "mock")
+        logger.info("MOCK_COURIER: skipping Apaczka API for order %s", ref)
+        return {
+            "courier_draft_id": f"mock-apaczka-{ref}",
+            "tracking_number": f"APZ{ref}000000",
+            "status": "created",
+            "pickup_ordered": False,
+            "error": None,
+        }
+
     from zdrovena.common.apaczka import ApaczkaClient
 
     app_id = get_secret("apaczka_app_id")
