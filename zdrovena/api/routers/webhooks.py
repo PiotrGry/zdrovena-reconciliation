@@ -65,6 +65,34 @@ def _get_sender() -> dict[str, str]:
     }
 
 
+# ── SMS notification ─────────────────────────────────────────────────────────
+
+
+def _maybe_send_shipment_sms(draft: dict[str, Any], tracking_number: str) -> None:
+    token = get_secret("smsapi_token", required=False)
+    if not token or not tracking_number:
+        return
+    phone = (draft.get("receiver") or {}).get("phone", "")
+    if not phone:
+        return
+    try:
+        from zdrovena.common.sms_service import send_shipment_sms
+
+        send_shipment_sms(
+            phone=phone,
+            order_number=draft.get("shopify_order_number", ""),
+            tracking=tracking_number,
+            courier=draft.get("courier", ""),
+            token=token,
+        )
+    except Exception as exc:
+        logger.warning(
+            "SMS notification failed for order %s: %s",
+            draft.get("shopify_order_number"),
+            exc,
+        )
+
+
 # ── Routing: decide courier from shipping_lines title ─────────────────────────
 
 
@@ -399,6 +427,8 @@ def execute_draft(
         raise HTTPException(status_code=502, detail=f"Courier API error: {exc}") from exc
 
     shipping_store.update_draft(draft_id, patch)
+    if patch.get("status") == "created":
+        _maybe_send_shipment_sms(draft, patch.get("tracking_number", ""))
     updated = shipping_store.get_draft(draft_id)
     return updated or patch
 
