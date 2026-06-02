@@ -125,7 +125,7 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, selected, onToggleSelect }) {
     const [open, setOpen] = useState(false)
     const [pickupModal, setPickupModal] = useState(null) // 'execute' | 'pickup' | null
     const isBusy = busy.has(draft.id)
@@ -143,6 +143,15 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage })
                 onClick={() => setOpen(o => !o)}
                 aria-expanded={open}
             >
+                {draft.status === 'pending' && onToggleSelect && (
+                    <input
+                        type="checkbox"
+                        checked={selected || false}
+                        onClick={e => e.stopPropagation()}
+                        onChange={() => onToggleSelect(draft.id)}
+                        style={{ marginRight: 4, cursor: 'pointer', accentColor: 'var(--primary, #3b82f6)' }}
+                    />
+                )}
                 <span className="mono" style={{ minWidth: 80 }}>#{draft.shopify_order_number}</span>
                 <span style={{ flex: 1, textAlign: 'left' }}>{draft.customer_name || '—'}</span>
                 {draft.source && draft.source !== 'shopify' && (
@@ -296,6 +305,8 @@ export default function ShippingView() {
     const [error, setError] = useState(null)
     const [search, setSearch] = useState('')
     const [busy, setBusy] = useState(new Set())
+    const [selectedDraftIds, setSelectedDraftIds] = useState(new Set())
+    const [bulkProgress, setBulkProgress] = useState(null)
 
     const load = useCallback(async () => {
         setLoading(true)
@@ -410,6 +421,30 @@ export default function ShippingView() {
         })()
     }
 
+    function handleToggleSelect(id) {
+        setSelectedDraftIds(prev => {
+            const next = new Set(prev)
+            if (next.has(id)) next.delete(id)
+            else next.add(id)
+            return next
+        })
+    }
+
+    async function handleBulkExecute() {
+        const ids = [...selectedDraftIds]
+        setBulkProgress({ done: 0, total: ids.length })
+        for (let i = 0; i < ids.length; i++) {
+            const draft = drafts.find(d => d.id === ids[i])
+            if (draft) {
+                try { await handleExecute(draft) } catch { /* error visible in row */ }
+            }
+            setBulkProgress({ done: i + 1, total: ids.length })
+        }
+        setBulkProgress(null)
+        setSelectedDraftIds(new Set())
+        load()
+    }
+
     const filtered = drafts.filter(d => {
         if (!search) return true
         const q = search.toLowerCase()
@@ -444,6 +479,18 @@ export default function ShippingView() {
                     )}
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {canManage && selectedDraftIds.size > 0 && (
+                        <button
+                            className="btn btn-primary"
+                            style={{ fontSize: '0.85em' }}
+                            onClick={handleBulkExecute}
+                            disabled={bulkProgress !== null}
+                        >
+                            {bulkProgress !== null
+                                ? `Realizuję ${bulkProgress.done}/${bulkProgress.total}…`
+                                : `Realizuj zaznaczone (${selectedDraftIds.size})`}
+                        </button>
+                    )}
                     <span className="mono dim">{drafts.length} {T.shipping_drafts_count ?? 'draftów'}</span>
                     {errorCount > 0 && (
                         <Pill kind="warn">{errorCount} {T.shipping_errors ?? 'błędów'}</Pill>
@@ -481,6 +528,8 @@ export default function ShippingView() {
                         onExecute={handleExecute}
                         onPickup={handlePickup}
                         onUpdateCount={handleUpdateCount}
+                        selected={selectedDraftIds.has(draft.id)}
+                        onToggleSelect={handleToggleSelect}
                     />
                 ))}
             </div>
