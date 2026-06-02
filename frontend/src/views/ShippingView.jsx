@@ -74,67 +74,6 @@ function PackagesInfo({ draft }) {
     )
 }
 
-function InPostServiceToggle({ draft, onUpdateService }) {
-    const isPaczkomat = draft.service === 'inpost_locker_standard'
-    const [lockerId, setLockerId] = useState(draft.receiver?.locker_id || '')
-    const [lockerDirty, setLockerDirty] = useState(false)
-
-    function handleServiceChange(newService) {
-        onUpdateService(draft, { service: newService })
-    }
-
-    function handleLockerSave() {
-        onUpdateService(draft, { locker_id: lockerId })
-        setLockerDirty(false)
-    }
-
-    return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div className="detail-label">Metoda dostawy InPost</div>
-            <div style={{ display: 'flex', gap: 4 }}>
-                <button
-                    className={`btn btn-sm ${isPaczkomat ? 'btn-primary' : 'btn-ghost'}`}
-                    onClick={() => !isPaczkomat && handleServiceChange('inpost_locker_standard')}
-                    style={{ fontSize: '0.82em' }}
-                >
-                    <Icon name="package" size={12} /> Paczkomat
-                </button>
-                <button
-                    className={`btn btn-sm ${!isPaczkomat ? 'btn-primary' : 'btn-ghost'}`}
-                    onClick={() => isPaczkomat && handleServiceChange('inpost_courier_standard')}
-                    style={{ fontSize: '0.82em' }}
-                >
-                    <Icon name="truck" size={12} /> Kurier
-                </button>
-            </div>
-            {isPaczkomat ? (
-                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                    <input
-                        className="mono"
-                        placeholder="ID paczkomatu (np. WAW123A)"
-                        value={lockerId}
-                        onChange={e => { setLockerId(e.target.value.toUpperCase()); setLockerDirty(true) }}
-                        style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.85em', width: 180 }}
-                    />
-                    {lockerDirty && (
-                        <button className="btn btn-sm btn-secondary" onClick={handleLockerSave} style={{ fontSize: '0.82em' }}>
-                            Zapisz
-                        </button>
-                    )}
-                    {draft.shipping_address?.city && (
-                        <span className="dim" style={{ fontSize: '0.85em' }}>{draft.shipping_address.city}</span>
-                    )}
-                </div>
-            ) : (
-                <div style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>
-                    {draft.shipping_address?.street}<br />
-                    {draft.shipping_address?.post_code} {draft.shipping_address?.city}
-                </div>
-            )}
-        </div>
-    )
-}
-
 function PickupScheduleModal({ onConfirm, onCancel, title }) {
     const today = new Date().toISOString().slice(0, 10)
     const [date, setDate] = useState(today)
@@ -186,7 +125,7 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateService, busy, canManage }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage }) {
     const [open, setOpen] = useState(false)
     const [pickupModal, setPickupModal] = useState(null) // 'execute' | 'pickup' | null
     const isBusy = busy.has(draft.id)
@@ -223,10 +162,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateService, b
                 <div className="accordion-body">
                     <div className="detail-grid">
                         <div>
-                            {canManage && draft.courier === 'inpost' && (draft.status === 'pending' || draft.status === 'error') ? (
-                                <InPostServiceToggle draft={draft} onUpdateService={onUpdateService} />
-                            ) : (
-                                <>
+                            <>
                                     <div className="detail-label">
                                         {draft.service === 'inpost_locker_standard' ? 'Paczkomat' : 'Adres dostawy'}
                                     </div>
@@ -243,8 +179,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onUpdateService, b
                                             {draft.shipping_address?.post_code} {draft.shipping_address?.city}
                                         </div>
                                     )}
-                                </>
-                            )}
+                            </>
                         </div>
                         <div>
                             <div className="detail-label">Telefon</div>
@@ -475,21 +410,6 @@ export default function ShippingView() {
         })()
     }
 
-    function handleUpdateService(draft, fields) {
-        return withBusy(draft.id, async () => {
-            const token = await getToken()
-            const res = await fetch(`/api/shipping/drafts/${draft.id}`, {
-                method: 'PATCH',
-                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify(fields),
-            })
-            if (!res.ok) {
-                const body = await res.json().catch(() => ({}))
-                throw new Error(body.detail || `${res.status}`)
-            }
-        })()
-    }
-
     const filtered = drafts.filter(d => {
         if (!search) return true
         const q = search.toLowerCase()
@@ -561,7 +481,6 @@ export default function ShippingView() {
                         onExecute={handleExecute}
                         onPickup={handlePickup}
                         onUpdateCount={handleUpdateCount}
-                        onUpdateService={handleUpdateService}
                     />
                 ))}
             </div>
