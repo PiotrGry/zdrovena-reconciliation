@@ -70,20 +70,19 @@ def _get_sender() -> dict[str, str]:
 # ── SMS notification ─────────────────────────────────────────────────────────
 
 
-def _maybe_send_shipment_sms(draft: dict[str, Any], tracking_number: str) -> None:
+def _maybe_send_new_order_sms(draft: dict[str, Any]) -> None:
     token = get_secret("smsapi_token", required=False)
-    if not token or not tracking_number:
-        return
-    phone = (draft.get("receiver") or {}).get("phone", "")
-    if not phone:
+    notify_phone = get_secret("notify_phone", required=False)
+    if not token or not notify_phone:
         return
     try:
-        from zdrovena.common.sms_service import send_shipment_sms
+        from zdrovena.common.sms_service import send_new_order_sms
 
-        send_shipment_sms(
-            phone=phone,
+        send_new_order_sms(
+            notify_phone=notify_phone,
             order_number=draft.get("shopify_order_number", ""),
-            tracking=tracking_number,
+            customer_name=draft.get("customer_name", ""),
+            packages_count=draft.get("packages_count", 1),
             courier=draft.get("courier", ""),
             token=token,
         )
@@ -336,6 +335,7 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
     }
 
     shipping_store.upsert_draft(record)
+    _maybe_send_new_order_sms(record)
 
 
 # ── Webhook endpoint ──────────────────────────────────────────────────────────
@@ -451,8 +451,6 @@ def execute_draft(
         raise HTTPException(status_code=502, detail=f"Courier API error: {exc}") from exc
 
     shipping_store.update_draft(draft_id, patch)
-    if patch.get("status") == "created":
-        _maybe_send_shipment_sms(draft, patch.get("tracking_number", ""))
     updated = shipping_store.get_draft(draft_id)
     return updated or patch
 
