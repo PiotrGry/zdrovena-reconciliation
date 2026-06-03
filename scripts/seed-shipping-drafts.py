@@ -170,16 +170,11 @@ def seed(store: ShippingStore, clear: bool) -> None:
             store.delete_draft(seed_id)
         print(f"  ✗ usunięto {len(_SEED_IDS)} draftów testowych")
 
-    inserted = 0
     for draft in TEST_DRAFTS:
-        if not clear and store.get_draft(draft["id"]):
-            print(f"  ~ #{draft['shopify_order_number']} już istnieje — pomijam")
-            continue
         store.upsert_draft(draft)
         print(f"  ↑ #{draft['shopify_order_number']} {draft['customer_name']:<22s} [{draft['status']}]")
-        inserted += 1
 
-    print(f"\n✅ {inserted}/{len(TEST_DRAFTS)} draftów testowych dodanych")
+    print(f"\n✅ {len(TEST_DRAFTS)} draftów testowych nadpisanych")
 
 
 def show_status(store: ShippingStore) -> None:
