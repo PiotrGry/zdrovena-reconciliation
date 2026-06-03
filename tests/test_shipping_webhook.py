@@ -565,7 +565,8 @@ class TestCreateDraft:
         assert d["service"] == "inpost_courier_standard"
         assert d["status"] == "pending"
         assert d["source"] == "shopify"
-        assert d["packages_count"] == 1
+        assert d["packages_count"] == 2  # 2 zgrzewki szkła → 2 pudełka
+        assert d["packages_breakdown"] == [{"type": "szkło", "qty": 2}]
         assert d["tracking_number"] is None
         assert d["courier_draft_id"] is None
         assert d["shopify_order_number"] == "1002"
@@ -921,3 +922,110 @@ class TestCreateDraftKaucjaFilter:
         item_names = [i["name"] for i in d["order_items"]]
         assert all("kaucja" not in n.lower() for n in item_names)
         assert len(d["order_items"]) == 1
+
+
+class TestCalcPackages:
+    """Unit tests for the _calc_packages packaging algorithm."""
+
+    def _items(self, *specs):
+        """Build product_items list from (name, qty) tuples."""
+        return [{"name": n, "quantity": q} for n, q in specs]
+
+    def _run(self, *specs):
+        from zdrovena.api.routers.webhooks import _calc_packages
+        items = self._items(*specs)
+        count, breakdown = _calc_packages(items)
+        bd = {b["type"]: b["qty"] for b in breakdown}
+        return count, bd
+
+    # ── Plastik ───────────────────────────────────────────────────────────────
+
+    def test_plastik_3_zgrzewki_one_3pak(self):
+        count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek", 3))
+        assert count == 1
+        assert bd == {"3-pak": 1}
+
+    def test_plastik_6_zgrzewki_two_3pak(self):
+        count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek", 6))
+        assert count == 2
+        assert bd == {"3-pak": 2}
+
+    def test_plastik_5_zgrzewki_3pak_plus_2pak(self):
+        count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek", 5))
+        assert count == 2
+        assert bd == {"3-pak": 1, "2-pak": 1}
+
+    def test_plastik_4_zgrzewki_3pak_plus_1pak(self):
+        count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek", 4))
+        assert count == 2
+        assert bd == {"3-pak": 1, "1-pak": 1}
+
+    def test_plastik_2_zgrzewki_one_2pak(self):
+        count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek", 2))
+        assert count == 1
+        assert bd == {"2-pak": 1}
+
+    def test_plastik_1_zgrzewka_one_1pak(self):
+        count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek", 1))
+        assert count == 1
+        assert bd == {"1-pak": 1}
+
+    def test_plastik_7_zgrzewki_3pak_plus_2pak_plus_2pak(self):
+        count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek", 7))
+        assert count == 3
+        assert bd == {"3-pak": 2, "1-pak": 1}
+
+    # ── Szkło ─────────────────────────────────────────────────────────────────
+
+    def test_szklo_1_zgrzewka_one_box(self):
+        count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek w szkle", 1))
+        assert count == 1
+        assert bd == {"szkło": 1}
+
+    def test_szklo_3_zgrzewki_three_boxes(self):
+        count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek w szkle", 3))
+        assert count == 3
+        assert bd == {"szkło": 3}
+
+    # ── Mieszane ─────────────────────────────────────────────────────────────
+
+    def test_mixed_plastik_and_szklo(self):
+        count, bd = self._run(
+            ("HUMIO - woda alkaliczna, 12 butelek", 3),
+            ("HUMIO - woda alkaliczna, 12 butelek w szkle", 1),
+        )
+        assert count == 2
+        assert bd == {"3-pak": 1, "szkło": 1}
+
+    def test_mixed_multiple_plastik_lines(self):
+        # 2 linie plastiku: 2 + 1 = 3 zgrzewki → 1×3-pak
+        count, bd = self._run(
+            ("HUMIO - woda alkaliczna, 12 butelek", 2),
+            ("HUMIO - woda alkaliczna, 12 butelek", 1),
+        )
+        assert count == 1
+        assert bd == {"3-pak": 1}
+
+    # ── Integracja z _create_draft ────────────────────────────────────────────
+
+    def test_packages_breakdown_stored_in_draft(self, store):
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        order = {
+            "id": "700",
+            "order_number": 8001,
+            "shipping_lines": [{"title": "Apaczka"}],
+            "line_items": [
+                {"name": "HUMIO - woda alkaliczna, 12 butelek", "quantity": 5},
+            ],
+            "shipping_address": {
+                "first_name": "X", "last_name": "Y", "address1": "ul. A 1",
+                "address2": "", "city": "W", "zip": "00-001", "phone": "",
+            },
+            "customer": {}, "email": "x@y.pl", "note_attributes": [],
+        }
+        _create_draft(order, store, object())
+        d = store.list_drafts()[0]
+        assert d["packages_count"] == 2
+        bd = {b["type"]: b["qty"] for b in d["packages_breakdown"]}
+        assert bd == {"3-pak": 1, "2-pak": 1}

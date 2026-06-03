@@ -218,6 +218,77 @@ Fetched once at startup via the existing KV caching layer.
 
 ---
 
+## Packaging Logic
+
+### Product units
+
+| Product type | Unit | Bottles/unit |
+|---|---|---|
+| Plastik (`12 butelek`) | zgrzewka | 12 |
+| Szkło (`12 butelek w szkle`) | zgrzewka | 12 |
+
+Shopify `line_item.quantity` = liczba zgrzewek.
+
+### Box types
+
+| Typ kartonu | Zgrzewki | Zastosowanie |
+|---|---|---|
+| 3-pak | 3 | plastik, pełny karton |
+| 2-pak | 2 | plastik, pełny karton |
+| 1-pak | 1 | plastik, pełny karton |
+| pół-pak | 0.5 | plastik, niepełna zgrzewka |
+| szkło-box | 1 | szkło, zawsze 1 pudełko/zgrzewkę |
+
+### Packing algorithm
+
+**Plastik** — greedy, largest box first:
+```
+remaining = total_plastic_zgrzewki
+while remaining >= 3: use 3-pak, remaining -= 3
+if remaining == 2: use 2-pak
+elif remaining == 1: use 1-pak
+elif remaining > 0: use pół-pak
+```
+
+**Szkło** — jedna zgrzewka = jedno pudełko (bez konsolidacji):
+```
+glass_boxes = total_glass_zgrzewki
+```
+
+**Łącznie:**
+```
+packages_count = plastic_boxes + glass_boxes
+packages_breakdown = [{"type": "3-pak", "qty": N}, ..., {"type": "szkło", "qty": M}]
+```
+
+### Rozpoznawanie szkła
+
+Funkcja `is_glass(name)` z `zdrovena/audit/bottles.py` — zwraca `True` gdy nazwa zawiera `szkle` lub `szkło`.
+
+### Przykłady
+
+| Zamówienie | Wynik |
+|---|---|
+| 3× plastik | 1 karton (3-pak) |
+| 5× plastik | 2 kartony (3-pak + 2-pak) |
+| 6× plastik | 2 kartony (3-pak + 3-pak) |
+| 4× plastik | 2 kartony (3-pak + 1-pak) |
+| 1× szkło | 1 pudełko (szkło) |
+| 3× plastik + 1× szkło | 2 paczki (3-pak + szkło) |
+
+### Draft schema
+
+Pole `packages_breakdown` dodane do rekordu draftu:
+```json
+"packages_count": 2,
+"packages_breakdown": [
+  {"type": "3-pak", "qty": 1},
+  {"type": "szkło", "qty": 1}
+]
+```
+
+---
+
 ## Parcel Dimensions
 
 Default parcel dimensions (used when Shopify order does not carry explicit weight/size):
