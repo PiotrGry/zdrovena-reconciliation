@@ -82,6 +82,7 @@ def _draft(
 
 
 TEST_DRAFTS = [
+    # 3 zgrzewki × 12 butelek = 36 butelek → 1 karton (3 zgrzewki/karton)
     _draft(
         draft_id=_SEED_IDS[0],
         order_number="1110",
@@ -89,13 +90,14 @@ TEST_DRAFTS = [
         courier="inpost",
         service="inpost_courier_standard",
         status="pending",
-        packages_count=2,
-        total_qty=6,
-        order_items=[{"name": "HUMIO - woda alkaliczna, 6-pak", "quantity": 6}],
+        packages_count=1,
+        total_qty=3,
+        order_items=[{"name": "HUMIO - woda alkaliczna, 12 butelek", "quantity": 3}],
         receiver={"first_name": "Marek", "last_name": "Zielinski",
                   "email": "marek@example.com", "phone": "+48601234567", "locker_id": ""},
         shipping_address={"street": "ul. Wierzbowa 12", "city": "Wroclaw", "post_code": "50-001"},
     ),
+    # 1 zgrzewka × 12 butelek w szkle → 1 karton
     _draft(
         draft_id=_SEED_IDS[1],
         order_number="1111",
@@ -104,12 +106,13 @@ TEST_DRAFTS = [
         service="inpost_locker_standard",
         status="pending",
         packages_count=1,
-        total_qty=3,
-        order_items=[{"name": "HUMIO - woda alkaliczna, 3-pak", "quantity": 3}],
+        total_qty=1,
+        order_items=[{"name": "HUMIO - woda alkaliczna, 12 butelek w szkle", "quantity": 1}],
         receiver={"first_name": "Katarzyna", "last_name": "Nowak",
                   "email": "katarzyna@example.com", "phone": "+48602345678", "locker_id": "KRK01M"},
         shipping_address={"street": "", "city": "Krakow", "post_code": "31-001"},
     ),
+    # 6 zgrzewek × 12 butelek = 72 butelki → 2 kartony
     _draft(
         draft_id=_SEED_IDS[2],
         order_number="1112",
@@ -117,13 +120,14 @@ TEST_DRAFTS = [
         courier="apaczka",
         service="apaczka",
         status="pending",
-        packages_count=3,
-        total_qty=9,
-        order_items=[{"name": "HUMIO - woda alkaliczna, 9-pak", "quantity": 9}],
+        packages_count=2,
+        total_qty=6,
+        order_items=[{"name": "HUMIO - woda alkaliczna, 12 butelek", "quantity": 6}],
         receiver={"first_name": "Tomasz", "last_name": "Wisniewski",
                   "email": "tomasz@example.com", "phone": "+48603456789", "locker_id": ""},
         shipping_address={"street": "ul. Lipowa 5", "city": "Gdansk", "post_code": "80-001"},
     ),
+    # 2 zgrzewki → 1 karton (niepełny: 2 zgrzewki w kartonie)
     _draft(
         draft_id=_SEED_IDS[3],
         order_number="1113",
@@ -132,8 +136,8 @@ TEST_DRAFTS = [
         service="inpost_courier_standard",
         status="created",
         packages_count=1,
-        total_qty=3,
-        order_items=[{"name": "HUMIO - woda alkaliczna, 3-pak", "quantity": 3}],
+        total_qty=2,
+        order_items=[{"name": "HUMIO - woda alkaliczna, 12 butelek w szkle", "quantity": 2}],
         receiver={"first_name": "Anna", "last_name": "Kowalska",
                   "email": "anna@example.com", "phone": "+48604567890", "locker_id": ""},
         shipping_address={"street": "ul. Kwiatowa 3", "city": "Warszawa", "post_code": "00-001"},
@@ -141,6 +145,7 @@ TEST_DRAFTS = [
         courier_draft_id="inpost-draft-bb001",
         pickup_ordered=True,
     ),
+    # 3 zgrzewki × 12 butelek w szkle → 1 karton, błąd API
     _draft(
         draft_id=_SEED_IDS[4],
         order_number="1114",
@@ -150,7 +155,7 @@ TEST_DRAFTS = [
         status="error",
         packages_count=1,
         total_qty=3,
-        order_items=[{"name": "HUMIO - woda alkaliczna, 3-pak", "quantity": 3}],
+        order_items=[{"name": "HUMIO - woda alkaliczna, 12 butelek w szkle", "quantity": 3}],
         receiver={"first_name": "Beata", "last_name": "Wojcik",
                   "email": "beata@example.com", "phone": "+48605678901", "locker_id": "WAW99B"},
         shipping_address={"street": "", "city": "Warszawa", "post_code": "02-001"},
