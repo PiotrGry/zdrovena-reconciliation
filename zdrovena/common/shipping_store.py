@@ -163,6 +163,17 @@ class ShippingStore:
         else:
             return self._local_load().get(draft_id)
 
+    def delete_draft(self, draft_id: str) -> None:
+        if self._use_table:
+            try:
+                self._table_client().delete_entity(PARTITION_KEY, draft_id)
+            except Exception:
+                pass
+        else:
+            data = self._local_load()
+            data.pop(draft_id, None)
+            self._local_save(data)
+
     def list_drafts(self, limit: int = 200) -> list[dict[str, Any]]:
         if self._use_table:
             try:
