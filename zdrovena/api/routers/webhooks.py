@@ -26,7 +26,7 @@ from fastapi.responses import StreamingResponse
 
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, StorageDep
-from zdrovena.audit.bottles import SKIP_RE
+from zdrovena.audit.bottles import SKIP_RE, is_glass
 from zdrovena.common.secrets import get_secret
 from zdrovena.common.shipping_store import ShippingStore
 
@@ -250,11 +250,41 @@ def _run_apaczka(
 # ── Background task: create draft on Shopify webhook ─────────────────────────
 
 
-def _calc_packages(total_qty: int) -> int:
-    """Calculate number of physical packages: fill 3-packs first, then remainder in one box."""
-    boxes_3 = total_qty // 3
-    rest = total_qty % 3
-    return boxes_3 + (1 if rest > 0 else 0)
+def _calc_packages(
+    product_items: list[dict[str, Any]],
+) -> tuple[int, list[dict[str, Any]]]:
+    """Return (packages_count, packages_breakdown) for a list of filtered line items.
+
+    Plastik: greedy largest-box-first (3-pak → 2-pak → 1-pak → pół-pak).
+    Szkło: always 1 box per zgrzewka (no consolidation).
+    """
+    plastic_qty = 0
+    glass_qty = 0
+    for item in product_items:
+        qty = item.get("quantity", 1)
+        if is_glass(item.get("name", "")):
+            glass_qty += qty
+        else:
+            plastic_qty += qty
+
+    breakdown: list[dict[str, Any]] = []
+
+    # Plastik — greedy
+    remaining = plastic_qty
+    for box_size, label in ((3, "3-pak"), (2, "2-pak"), (1, "1-pak")):
+        if remaining >= box_size:
+            count = remaining // box_size
+            breakdown.append({"type": label, "qty": count})
+            remaining -= count * box_size
+    if remaining > 0:
+        breakdown.append({"type": "pół-pak", "qty": 1})
+
+    # Szkło — 1 pudełko na zgrzewkę
+    if glass_qty > 0:
+        breakdown.append({"type": "szkło", "qty": glass_qty})
+
+    total = sum(b["qty"] for b in breakdown)
+    return max(total, 1), breakdown
 
 
 def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage: Any) -> None:
@@ -277,7 +307,7 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
     line_items = order.get("line_items") or []
     product_items = [item for item in line_items if not SKIP_RE.search(item.get("name", ""))]
     total_qty = max(sum(item.get("quantity", 1) for item in product_items), 1)
-    packages_count = _calc_packages(total_qty)
+    packages_count, packages_breakdown = _calc_packages(product_items)
 
     note_attrs = {a["name"]: a["value"] for a in (order.get("note_attributes") or [])}
     locker_id = (
@@ -312,6 +342,7 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
         "courier_draft_id": None,
         "status": "pending",
         "packages_count": packages_count,
+        "packages_breakdown": packages_breakdown,
         "total_qty": total_qty,
         "order_items": [
             {"name": item.get("name") or item.get("title", ""), "quantity": item.get("quantity", 1)}

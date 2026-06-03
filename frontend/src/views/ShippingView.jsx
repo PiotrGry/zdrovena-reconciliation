@@ -37,30 +37,24 @@ function sourcePillKind(source) {
     return 'default'
 }
 
-function packagesBreakdown(totalQty) {
-    const qty = totalQty || 1
-    const b3 = Math.floor(qty / 3)
-    const rest = qty % 3
-    const parts = []
-    if (b3 > 0) parts.push(`${b3}×3-pak`)
-    if (rest === 2) parts.push(`1×2-pak`)
-    if (rest === 1) parts.push(`1×1-pak`)
-    return parts.join(' + ')
+function breakdownLabel(breakdown) {
+    if (!breakdown || breakdown.length === 0) return null
+    return breakdown.map(b => `${b.qty}×${b.type}`).join(' + ')
 }
 
 function PackagesInfo({ draft }) {
-    const qty = draft.total_qty ?? 1
     const count = draft.packages_count ?? 1
     const items = draft.order_items ?? []
+    const label = breakdownLabel(draft.packages_breakdown)
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
             <div>
                 <span className="mono" style={{ fontWeight: 600 }}>{count}</span>
                 <span className="dim"> {count === 1 ? 'paczka' : 'paczki'}</span>
             </div>
-            <div className="dim" style={{ fontSize: '0.82em' }}>
-                {packagesBreakdown(qty)}
-            </div>
+            {label && (
+                <div className="dim" style={{ fontSize: '0.82em' }}>{label}</div>
+            )}
             {items.length > 0 && (
                 <div style={{ fontSize: '0.82em', marginTop: 2 }}>
                     {items.map((it, i) => (
