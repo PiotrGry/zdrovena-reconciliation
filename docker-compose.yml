@@ -38,6 +38,7 @@ services:
       - "8000:8000"
     volumes:
       - ./zdrovena:/app/zdrovena
+      - ./scripts:/app/scripts
       - faktury_data:/app/data/faktury
     env_file:
       - path: .env.local
