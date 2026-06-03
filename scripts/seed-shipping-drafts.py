@@ -24,10 +24,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from zdrovena.common.shipping_store import ShippingStore
 
 
+_AZURITE_CONN = (
+    "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;"
+    "AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;"
+    "BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
+    "TableEndpoint=http://127.0.0.1:10002/devstoreaccount1;"
+)
+
+
+def _azurite_running() -> bool:
+    import socket
+    try:
+        socket.create_connection(("127.0.0.1", 10002), timeout=1).close()
+        return True
+    except OSError:
+        return False
+
+
 def make_store() -> ShippingStore:
     conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
     if conn:
         return ShippingStore(connection_string=conn)
+    if _azurite_running():
+        print("  ℹ  Azurite wykryty — używam Table Storage (port 10002)")
+        return ShippingStore(connection_string=_AZURITE_CONN)
     return ShippingStore()
 
 
