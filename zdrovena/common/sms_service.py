@@ -4,8 +4,6 @@ import httpx
 
 SMSAPI_URL = "https://api.smsapi.pl/sms.do"
 
-_INPOST_TRACKING = "https://inpost.pl/sledzenie-przesylek?number={}"
-
 
 def _normalize_phone(phone: str) -> str:
     """Return phone in SMSAPI format: 48XXXXXXXXX (no +, no spaces)."""
@@ -17,24 +15,27 @@ def _normalize_phone(phone: str) -> str:
     return digits
 
 
-def send_shipment_sms(
-    phone: str,
-    order_number: str,
-    tracking: str,
-    courier: str,
-    token: str,
-) -> None:
-    """Send dispatch notification. Raises httpx.HTTPStatusError on API error."""
+def _send(phone: str, message: str, token: str) -> None:
     normalized = _normalize_phone(phone)
     if not normalized:
         return
-    if courier == "inpost":
-        msg = f"Zamowienie #{order_number} wyslane! Sledz: {_INPOST_TRACKING.format(tracking)}"
-    else:
-        msg = f"Zamowienie #{order_number} wyslane! Nr przesylki: {tracking}"
     httpx.post(
         SMSAPI_URL,
         headers={"Authorization": f"Bearer {token}"},
-        data={"format": "json", "to": normalized, "message": msg},
+        data={"format": "json", "to": normalized, "message": message},
         timeout=10,
     ).raise_for_status()
+
+
+def send_new_order_sms(
+    notify_phone: str,
+    order_number: str,
+    customer_name: str,
+    packages_count: int,
+    courier: str,
+    token: str,
+) -> None:
+    """Notify operator that a new order arrived and needs fulfillment."""
+    courier_label = "InPost" if courier == "inpost" else "Apaczka"
+    msg = f"Nowe zam. #{order_number} ({customer_name}) - {packages_count} paczek, {courier_label}. Do realizacji!"
+    _send(notify_phone, msg, token)
