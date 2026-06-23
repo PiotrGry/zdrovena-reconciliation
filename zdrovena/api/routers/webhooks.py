@@ -521,23 +521,27 @@ def order_pickup(
     if not courier_draft_id:
         raise HTTPException(status_code=409, detail="No courier draft ID — execute first")
 
-    try:
-        from zdrovena.common.inpost import InPostClient
+    if _MOCK_COURIER:
+        ref = draft.get("shopify_order_number", "mock")
+        logger.info("MOCK_COURIER: skipping InPost dispatch order for draft %s", ref)
+    else:
+        try:
+            from zdrovena.common.inpost import InPostClient
 
-        token = get_secret("inpost_api_token")
-        org_id = get_secret("inpost_organization_id")
-        client = InPostClient(token, org_id)
-        sender = _get_sender()
-        client.create_dispatch_order(
-            courier_draft_id,
-            sender,
-            pickup_date=pickup_date,
-            pickup_from=pickup_from,
-            pickup_to=pickup_to,
-        )
-    except Exception as exc:
-        logger.error("order_pickup failed for draft %s: %s", draft_id, exc)
-        raise HTTPException(status_code=502, detail=f"InPost dispatch error: {exc}") from exc
+            token = get_secret("inpost_api_token")
+            org_id = get_secret("inpost_organization_id")
+            client = InPostClient(token, org_id)
+            sender = _get_sender()
+            client.create_dispatch_order(
+                courier_draft_id,
+                sender,
+                pickup_date=pickup_date,
+                pickup_from=pickup_from,
+                pickup_to=pickup_to,
+            )
+        except Exception as exc:
+            logger.error("order_pickup failed for draft %s: %s", draft_id, exc)
+            raise HTTPException(status_code=502, detail=f"InPost dispatch error: {exc}") from exc
 
     shipping_store.update_draft(draft_id, {"pickup_ordered": True})
     return {"status": "pickup_ordered", "draft_id": draft_id}
