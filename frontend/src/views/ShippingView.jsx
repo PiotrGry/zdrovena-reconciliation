@@ -97,7 +97,7 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>Pickup date</label>
                     <input type="date" value={date} min={today}
-                        onChange={e => setDate(e.target.value)}
+                        onChange={e => { setDate(e.target.value); e.target.blur() }}
                         style={sel}
                     />
                 </div>
