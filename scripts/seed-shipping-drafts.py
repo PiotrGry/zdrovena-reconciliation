@@ -32,7 +32,15 @@ _AZURITE_CONN = (
 )
 
 
-def _azurite_running() -> bool:
+def _azure_importable() -> bool:
+    try:
+        import azure.data.tables  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _azurite_port_open() -> bool:
     import socket
     try:
         socket.create_connection(("127.0.0.1", 10002), timeout=1).close()
@@ -45,7 +53,14 @@ def make_store() -> ShippingStore:
     conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
     if conn:
         return ShippingStore(connection_string=conn)
-    if _azurite_running():
+    if _azurite_port_open():
+        if not _azure_importable():
+            print(
+                "\n❌  Azurite działa (port 10002) ale brak pakietu azure-data-tables.\n"
+                "   Uruchom seeder wewnątrz kontenera:\n\n"
+                "     docker compose exec api python3 /app/scripts/seed-shipping-drafts.py --clear-all\n"
+            )
+            sys.exit(1)
         print("  ℹ  Azurite wykryty — używam Table Storage (port 10002)")
         return ShippingStore(connection_string=_AZURITE_CONN)
     return ShippingStore()
