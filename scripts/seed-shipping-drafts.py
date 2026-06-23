@@ -2,13 +2,14 @@
 """Seed local / Azurite Table Storage with test shipping drafts.
 
 Usage:
-    python3 scripts/seed-shipping-drafts.py           # dodaje drafty, nie nadpisuje istniejących
-    python3 scripts/seed-shipping-drafts.py --clear   # czyści i wypełnia od nowa
-    python3 scripts/seed-shipping-drafts.py --status  # tylko pokazuje co jest w storage
+    python3 scripts/seed-shipping-drafts.py            # overwrite seed drafts
+    python3 scripts/seed-shipping-drafts.py --clear    # delete seed drafts and re-seed
+    python3 scripts/seed-shipping-drafts.py --clear-all  # wipe all drafts and re-seed
+    python3 scripts/seed-shipping-drafts.py --status   # show current storage state
 
-Env (opcjonalnie):
-    AZURE_STORAGE_CONNECTION_STRING  → Azurite / Azure Table Storage
-    Domyślnie: lokalny JSON w ~/.zdrovena/storage/
+Env:
+    AZURE_STORAGE_CONNECTION_STRING  -> Azurite / Azure Table Storage
+    Default: local JSON at ~/.zdrovena/storage/
 """
 from __future__ import annotations
 
@@ -56,12 +57,12 @@ def make_store() -> ShippingStore:
     if _azurite_port_open():
         if not _azure_importable():
             print(
-                "\n❌  Azurite działa (port 10002) ale brak pakietu azure-data-tables.\n"
-                "   Uruchom seeder wewnątrz kontenera:\n\n"
+                "\n❌  Azurite is running (port 10002) but azure-data-tables is not installed.\n"
+                "   Run the seeder inside the container:\n\n"
                 "     docker compose exec api python3 /app/scripts/seed-shipping-drafts.py --clear-all\n"
             )
             sys.exit(1)
-        print("  ℹ  Azurite wykryty — używam Table Storage (port 10002)")
+        print("  i  Azurite detected — using Table Storage (port 10002)")
         return ShippingStore(connection_string=_AZURITE_CONN)
     return ShippingStore()
 
@@ -203,50 +204,50 @@ def seed(store: ShippingStore, clear: bool) -> None:
     if clear:
         for seed_id in _SEED_IDS:
             store.delete_draft(seed_id)
-        print(f"  ✗ usunięto {len(_SEED_IDS)} draftów testowych")
+        print(f"  x  removed {len(_SEED_IDS)} seed drafts")
 
     for draft in TEST_DRAFTS:
         store.upsert_draft(draft)
         print(f"  ↑ #{draft['shopify_order_number']} {draft['customer_name']:<22s} [{draft['status']}]")
 
-    print(f"\n✅ {len(TEST_DRAFTS)} draftów testowych nadpisanych")
+    print(f"\n✅  {len(TEST_DRAFTS)} seed drafts written")
 
 
 def show_status(store: ShippingStore) -> None:
     drafts = store.list_drafts()
     if not drafts:
-        print("  (brak draftów)")
+        print("  (no drafts)")
         return
     for d in drafts:
         print(f"  #{d['shopify_order_number']:6s}  {d['customer_name']:<22s}  {d['status']:<8s}  {d['courier']}")
-    print(f"\n  Łącznie: {len(drafts)}")
+    print(f"\n  Total: {len(drafts)}")
 
 
 def clear_all(store: ShippingStore) -> None:
     drafts = store.list_drafts(limit=1000)
     for d in drafts:
         store.delete_draft(d["id"])
-    print(f"  ✗ usunięto {len(drafts)} draftów")
+    print(f"  x  removed {len(drafts)} drafts")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Seed test shipping drafts")
-    parser.add_argument("--clear", action="store_true", help="Usuń testowe drafty i dodaj od nowa")
-    parser.add_argument("--clear-all", action="store_true", help="Wyczyść WSZYSTKIE drafty i zacznij od nowa")
-    parser.add_argument("--status", action="store_true", help="Pokaż aktualny stan storage")
+    parser.add_argument("--clear", action="store_true", help="Delete seed drafts then re-seed")
+    parser.add_argument("--clear-all", action="store_true", help="Wipe ALL drafts then re-seed")
+    parser.add_argument("--status", action="store_true", help="Show current storage state")
     args = parser.parse_args()
 
     store = make_store()
 
     if args.status:
-        print("Stan shipping drafts:")
+        print("Shipping drafts status:")
         show_status(store)
         return
 
     if args.clear_all:
-        print("Czyszczę wszystkie drafty...")
+        print("Clearing all drafts...")
         clear_all(store)
-        print("Seedowanie shipping drafts:")
+        print("Seeding shipping drafts:")
         seed(store, clear=False)
         return
 
