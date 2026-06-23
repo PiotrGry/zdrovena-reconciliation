@@ -77,6 +77,8 @@ function addHours(t, hrs) {
 }
 
 function PickupScheduleModal({ onConfirm, onCancel, title }) {
+    const { t, lang } = useT()
+    const T = t[lang]
     const now = new Date()
     const today = now.toISOString().slice(0, 10)
     // Earliest allowed "from" on today: current hour + 2, rounded up to next slot
@@ -120,7 +122,7 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
             <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 24, minWidth: 320, display: 'flex', flexDirection: 'column', gap: 16 }}>
                 <div style={{ fontWeight: 600 }}>{title}</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>Pickup date</label>
+                    <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_pickup_date ?? 'Data podjazdu'}</label>
                     <input type="date" value={date} min={today}
                         onChange={e => { handleDateChange(e.target.value); e.target.blur() }}
                         style={sel}
@@ -128,24 +130,24 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>From</label>
+                        <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_time_from ?? 'Od'}</label>
                         <select value={from} onChange={e => handleFromChange(e.target.value)} style={sel}>
                             {TIME_SLOTS.filter(t => t >= minFrom && t <= '16:00').map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                     </div>
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>To</label>
+                        <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_time_to ?? 'Do'}</label>
                         <select value={to} onChange={e => setTo(e.target.value)} style={sel}>
                             {TIME_SLOTS.filter(t => toMinutes(t) >= toMinutes(from) + 120).map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                     </div>
                 </div>
-                <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>Minimum window: 2 hours</div>
+                <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>{T.sh_min_window ?? 'Minimalne okno: 2 godziny'}</div>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                    <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
+                    <button className="btn btn-ghost" onClick={onCancel}>{T.sh_cancel ?? 'Anuluj'}</button>
                     <button className="btn btn-primary"
                         onClick={() => onConfirm({ pickup_date: date, pickup_from: from, pickup_to: to })}>
-                        Confirm
+                        {T.sh_confirm ?? 'Potwierdź'}
                     </button>
                 </div>
             </div>
@@ -155,6 +157,8 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
 }
 
 function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, selected, onToggleSelect, forceOpen }) {
+    const { t, lang } = useT()
+    const T = t[lang]
     const [open, setOpen] = useState(false)
 
     useEffect(() => {
@@ -204,11 +208,13 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                     {fmtDate(draft.created_at)}
                 </span>
                 <Pill kind={draft.status === 'created' ? 'ok' : draft.status === 'pending' ? 'default' : 'warn'}>
-                    {draft.status}
+                    {draft.status === 'pending' ? (T.sh_status_pending ?? 'oczekujące')
+                        : draft.status === 'created' ? (T.sh_status_created ?? 'nadane')
+                        : (T.sh_status_error ?? 'błąd')}
                 </Pill>
                 {draft.pickup_ordered && (
                     <span style={{ fontSize: '0.72em', padding: '2px 7px', borderRadius: 4, background: 'var(--ok-subtle, #f0fdf4)', color: 'var(--ok, #16a34a)', border: '1px solid var(--ok-border, #86efac)', whiteSpace: 'nowrap' }}>
-                        pickup ✓
+                        {T.sh_pickup_done ?? 'podjazd ✓'}
                     </span>
                 )}
                 <Icon name={open ? 'chevronUp' : 'chevronDown'} size={14} className="icon" />
@@ -549,7 +555,7 @@ export default function ShippingView() {
                 <div className="search">
                     <Icon name="search" size={14} />
                     <input
-                        placeholder="Search by order # or customer…"
+                        placeholder={T.sh_search ?? 'Szukaj po numerze lub kliencie…'}
                         value={search}
                         onChange={e => setSearch(e.target.value)}
                     />
@@ -562,14 +568,14 @@ export default function ShippingView() {
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                     <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
                         style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}>
-                        <option value="all">All statuses</option>
-                        <option value="pending">Pending</option>
-                        <option value="created">Created</option>
-                        <option value="error">Error</option>
+                        <option value="all">{T.sh_filter_all_status ?? 'Wszystkie statusy'}</option>
+                        <option value="pending">{T.sh_status_pending ?? 'oczekujące'}</option>
+                        <option value="created">{T.sh_status_created ?? 'nadane'}</option>
+                        <option value="error">{T.sh_status_error ?? 'błąd'}</option>
                     </select>
                     <select value={filterCourier} onChange={e => setFilterCourier(e.target.value)}
                         style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}>
-                        <option value="all">All couriers</option>
+                        <option value="all">{T.sh_filter_all_courier ?? 'Wszyscy kurierzy'}</option>
                         <option value="inpost">InPost</option>
                         <option value="apaczka">Apaczka</option>
                     </select>
@@ -622,7 +628,7 @@ export default function ShippingView() {
                     )}
                     <button className="btn btn-ghost" onClick={() => setExpandAll(v => !v)} style={{ fontSize: '0.82em', gap: 4 }} title={expandAll ? 'Collapse all' : 'Expand all'}>
                         <Icon name={expandAll ? 'chevronUp' : 'chevronDown'} size={13} />
-                        {expandAll ? 'Zwiń' : 'Rozwiń'}
+                        {expandAll ? (T.sh_collapse ?? 'Zwiń') : (T.sh_expand ?? 'Rozwiń')}
                     </button>
                     <button className="btn btn-ghost" onClick={load} disabled={loading} title="Odśwież">
                         <Icon name="refreshCw" size={14} />
@@ -638,7 +644,9 @@ export default function ShippingView() {
                                 style={{ cursor: 'pointer', accentColor: 'var(--primary, #3b82f6)' }} />
                         </div>
                         <span style={{ fontSize: '0.82em', color: 'var(--text-2)' }}>
-                            {allSelected ? `All ${selectableIds.length} selected` : `Select all ${selectableIds.length} actionable`}
+                            {allSelected
+                                ? `${T.sh_selected_all ?? 'Zaznaczono wszystkie'} (${selectableIds.length})`
+                                : `${T.sh_select_all ?? 'Zaznacz wszystkie'} (${selectableIds.length})`}
                         </span>
                     </div>
                 )}
