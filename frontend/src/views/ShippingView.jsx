@@ -68,49 +68,59 @@ function PackagesInfo({ draft }) {
     )
 }
 
+const TIME_SLOTS = ['07:00','08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00']
+
+function toMinutes(t) { const [h, m] = t.split(':').map(Number); return h * 60 + m }
+function addHours(t, hrs) {
+    const m = toMinutes(t) + hrs * 60
+    return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+}
+
 function PickupScheduleModal({ onConfirm, onCancel, title }) {
     const today = new Date().toISOString().slice(0, 10)
     const [date, setDate] = useState(today)
     const [from, setFrom] = useState('09:00')
     const [to, setTo] = useState('14:00')
 
+    function handleFromChange(val) {
+        setFrom(val)
+        if (toMinutes(to) < toMinutes(val) + 120) setTo(addHours(val, 2))
+    }
+
+    const sel = { padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.9em', cursor: 'pointer' }
+
     return createPortal(
-        <div style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-        }}>
-            <div style={{
-                background: 'var(--bg)', border: '1px solid var(--border)',
-                borderRadius: 8, padding: 24, minWidth: 300, display: 'flex', flexDirection: 'column', gap: 16,
-            }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+            onClick={e => { if (e.target === e.currentTarget) onCancel() }}>
+            <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 24, minWidth: 320, display: 'flex', flexDirection: 'column', gap: 16 }}>
                 <div style={{ fontWeight: 600 }}>{title}</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>Data podjazdu</label>
+                    <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>Pickup date</label>
                     <input type="date" value={date} min={today}
                         onChange={e => setDate(e.target.value)}
-                        style={{ padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.9em' }}
+                        style={sel}
                     />
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>Od</label>
-                        <input type="time" value={from} onChange={e => setFrom(e.target.value)}
-                            style={{ padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.9em' }}
-                        />
+                        <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>From</label>
+                        <select value={from} onChange={e => handleFromChange(e.target.value)} style={sel}>
+                            {TIME_SLOTS.filter(t => t <= '16:00').map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
                     </div>
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>Do</label>
-                        <input type="time" value={to} onChange={e => setTo(e.target.value)}
-                            style={{ padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.9em' }}
-                        />
+                        <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>To</label>
+                        <select value={to} onChange={e => setTo(e.target.value)} style={sel}>
+                            {TIME_SLOTS.filter(t => toMinutes(t) >= toMinutes(from) + 120).map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
                     </div>
                 </div>
-                <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>Minimalne okno: 2 godziny</div>
+                <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>Minimum window: 2 hours</div>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                    <button className="btn btn-ghost" onClick={onCancel}>Anuluj</button>
+                    <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
                     <button className="btn btn-primary"
                         onClick={() => onConfirm({ pickup_date: date, pickup_from: from, pickup_to: to })}>
-                        Potwierdź
+                        Confirm
                     </button>
                 </div>
             </div>
@@ -130,22 +140,31 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
         !draft.pickup_ordered
     )
 
+    const isSelectable = onToggleSelect && (
+        draft.status === 'pending' ||
+        draft.status === 'error' ||
+        (draft.courier === 'inpost' && draft.status === 'created' && !draft.pickup_ordered)
+    )
+
     return (
-        <div className={`accordion-row${open ? ' open' : ''}`}>
+        <div className={`accordion-row${open ? ' open' : ''}`} style={{ display: 'flex', alignItems: 'stretch' }}>
+            <div style={{ width: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {isSelectable ? (
+                    <input
+                        type="checkbox"
+                        checked={selected || false}
+                        onChange={() => onToggleSelect(draft.id)}
+                        style={{ cursor: 'pointer', accentColor: 'var(--primary, #3b82f6)' }}
+                    />
+                ) : <span style={{ width: 16 }} />}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
             <button
                 className="accordion-header"
                 onClick={() => setOpen(o => !o)}
                 aria-expanded={open}
+                style={{ paddingLeft: 0 }}
             >
-                {(draft.status === 'pending' || (draft.courier === 'inpost' && draft.status === 'created' && !draft.pickup_ordered)) && onToggleSelect && (
-                    <input
-                        type="checkbox"
-                        checked={selected || false}
-                        onClick={e => e.stopPropagation()}
-                        onChange={() => onToggleSelect(draft.id)}
-                        style={{ marginRight: 4, cursor: 'pointer', accentColor: 'var(--primary, #3b82f6)' }}
-                    />
-                )}
                 <span className="mono" style={{ minWidth: 80 }}>#{draft.shopify_order_number}</span>
                 <span style={{ flex: 1, textAlign: 'left' }}>{draft.customer_name || '—'}</span>
                 {draft.source && draft.source !== 'shopify' && (
@@ -159,9 +178,9 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                     {draft.status}
                 </Pill>
                 {draft.pickup_ordered && (
-                    <Pill kind="ok" style={{ opacity: 0.75 }}>
-                        <Icon name="truck" size={11} /> pickup
-                    </Pill>
+                    <span style={{ fontSize: '0.72em', padding: '2px 7px', borderRadius: 4, background: 'var(--ok-subtle, #f0fdf4)', color: 'var(--ok, #16a34a)', border: '1px solid var(--ok-border, #86efac)', whiteSpace: 'nowrap' }}>
+                        pickup ✓
+                    </span>
                 )}
                 <Icon name={open ? 'chevronUp' : 'chevronDown'} size={14} className="icon" />
             </button>
@@ -289,6 +308,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                     )}
                 </div>
             )}
+            </div>
         </div>
     )
 }
@@ -303,6 +323,9 @@ export default function ShippingView() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
     const [search, setSearch] = useState('')
+    const [filterStatus, setFilterStatus] = useState('all')
+    const [filterCourier, setFilterCourier] = useState('all')
+    const [filterDateFrom, setFilterDateFrom] = useState('')
     const [busy, setBusy] = useState(new Set())
     const [selectedDraftIds, setSelectedDraftIds] = useState(new Set())
     const [bulkProgress, setBulkProgress] = useState(null)
@@ -461,14 +484,26 @@ export default function ShippingView() {
     }
 
     const filtered = drafts.filter(d => {
-        if (!search) return true
-        const q = search.toLowerCase()
-        return (
-            d.shopify_order_number?.toLowerCase().includes(q) ||
-            d.customer_name?.toLowerCase().includes(q) ||
-            d.courier?.toLowerCase().includes(q)
-        )
+        if (filterStatus !== 'all' && d.status !== filterStatus) return false
+        if (filterCourier !== 'all' && d.courier !== filterCourier) return false
+        if (filterDateFrom && d.created_at?.slice(0, 10) < filterDateFrom) return false
+        if (search) {
+            const q = search.toLowerCase()
+            if (!d.shopify_order_number?.toLowerCase().includes(q) &&
+                !d.customer_name?.toLowerCase().includes(q)) return false
+        }
+        return true
     })
+
+    const selectableIds = filtered
+        .filter(d => d.status === 'pending' || d.status === 'error' ||
+            (d.courier === 'inpost' && d.status === 'created' && !d.pickup_ordered))
+        .map(d => d.id)
+    const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedDraftIds.has(id))
+    function handleSelectAll() {
+        if (allSelected) setSelectedDraftIds(new Set())
+        else setSelectedDraftIds(new Set(selectableIds))
+    }
 
     const errorCount = drafts.filter(d => d.status === 'error').length
 
@@ -480,11 +515,11 @@ export default function ShippingView() {
                 sub={T.shipping_sub ?? 'Drafty przesyłek tworzonych automatycznie przy złożeniu zamówienia Shopify'}
             />
 
-            <div className="toolbar">
+            <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
                 <div className="search">
                     <Icon name="search" size={14} />
                     <input
-                        placeholder="Szukaj po numerze zamówienia lub kliencie…"
+                        placeholder="Search by order # or customer…"
                         value={search}
                         onChange={e => setSearch(e.target.value)}
                     />
@@ -493,6 +528,26 @@ export default function ShippingView() {
                             <Icon name="x" size={12} />
                         </button>
                     )}
+                </div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+                        style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}>
+                        <option value="all">All statuses</option>
+                        <option value="pending">Pending</option>
+                        <option value="created">Created</option>
+                        <option value="error">Error</option>
+                    </select>
+                    <select value={filterCourier} onChange={e => setFilterCourier(e.target.value)}
+                        style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}>
+                        <option value="all">All couriers</option>
+                        <option value="inpost">InPost</option>
+                        <option value="apaczka">Apaczka</option>
+                    </select>
+                    <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
+                        title="From date"
+                        style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: filterDateFrom ? 'var(--text)' : 'var(--text-3)', cursor: 'pointer' }}
+                    />
+                    {filterDateFrom && <button className="btn-ghost" style={{ padding: '0 4px', fontSize: '0.82em' }} onClick={() => setFilterDateFrom('')}><Icon name="x" size={12} /></button>}
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     {canManage && selectedDraftIds.size > 0 && (() => {
@@ -542,6 +597,17 @@ export default function ShippingView() {
             </div>
 
             <div className="card" style={{ padding: 0 }}>
+                {!loading && !error && filtered.length > 0 && selectableIds.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 16px 6px 0', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
+                        <div style={{ width: 40, display: 'flex', justifyContent: 'center' }}>
+                            <input type="checkbox" checked={allSelected} onChange={handleSelectAll}
+                                style={{ cursor: 'pointer', accentColor: 'var(--primary, #3b82f6)' }} />
+                        </div>
+                        <span style={{ fontSize: '0.82em', color: 'var(--text-2)' }}>
+                            {allSelected ? `All ${selectableIds.length} selected` : `Select all ${selectableIds.length} actionable`}
+                        </span>
+                    </div>
+                )}
                 {loading && (
                     <div style={{ padding: 24, textAlign: 'center', color: 'var(--c-text-2)' }}>
                         Ładowanie…
