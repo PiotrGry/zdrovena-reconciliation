@@ -173,7 +173,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
 
     return (
         <div className={`accordion-row${open ? ' open' : ''}`} style={{ display: 'flex', alignItems: 'stretch' }}>
-            <div style={{ width: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 40, flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 11 }}>
                 {isSelectable ? (
                     <input
                         type="checkbox"
