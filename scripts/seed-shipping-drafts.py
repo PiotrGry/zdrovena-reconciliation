@@ -207,9 +207,17 @@ def show_status(store: ShippingStore) -> None:
     print(f"\n  Łącznie: {len(drafts)}")
 
 
+def clear_all(store: ShippingStore) -> None:
+    drafts = store.list_drafts(limit=1000)
+    for d in drafts:
+        store.delete_draft(d["id"])
+    print(f"  ✗ usunięto {len(drafts)} draftów")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Seed test shipping drafts")
     parser.add_argument("--clear", action="store_true", help="Usuń testowe drafty i dodaj od nowa")
+    parser.add_argument("--clear-all", action="store_true", help="Wyczyść WSZYSTKIE drafty i zacznij od nowa")
     parser.add_argument("--status", action="store_true", help="Pokaż aktualny stan storage")
     args = parser.parse_args()
 
@@ -218,6 +226,13 @@ def main() -> None:
     if args.status:
         print("Stan shipping drafts:")
         show_status(store)
+        return
+
+    if args.clear_all:
+        print("Czyszczę wszystkie drafty...")
+        clear_all(store)
+        print("Seedowanie shipping drafts:")
+        seed(store, clear=False)
         return
 
     print("Seedowanie shipping drafts:")
