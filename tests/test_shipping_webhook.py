@@ -336,11 +336,14 @@ class TestOrderPickup:
         resp = client.post("/api/shipping/drafts/nonexistent/pickup")
         assert resp.status_code == 404
 
-    def test_400_for_paczkomat_draft(self, client, store):
+    def test_pickup_allowed_for_paczkomat_draft(self, client, store):
+        # Paczkomat also supports dispatch order (drzwi→paczkomat)
         draft = self._seed_created_kurier(store)
         store.update_draft(draft["id"], {"service": "inpost_locker_standard"})
-        resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
-        assert resp.status_code == 400
+        with patch("zdrovena.common.inpost.InPostClient.create_dispatch_order", return_value={"id": "d-1"}):
+            with patch("zdrovena.api.routers.webhooks.get_secret", return_value="test-value"):
+                resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+        assert resp.status_code == 200
 
     def test_400_for_apaczka_draft(self, client, store):
         draft = self._seed_created_kurier(store)

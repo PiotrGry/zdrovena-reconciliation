@@ -154,8 +154,12 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, selected, onToggleSelect }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, selected, onToggleSelect, forceOpen }) {
     const [open, setOpen] = useState(false)
+
+    useEffect(() => {
+        if (forceOpen !== undefined && forceOpen !== null) setOpen(forceOpen)
+    }, [forceOpen])
     const [pickupModal, setPickupModal] = useState(null) // 'execute' | 'pickup' | null
     const isBusy = busy.has(draft.id)
     const needsPickupSchedule = draft.courier === 'inpost'
@@ -355,6 +359,7 @@ export default function ShippingView() {
     const [selectedDraftIds, setSelectedDraftIds] = useState(new Set())
     const [bulkProgress, setBulkProgress] = useState(null)
     const [bulkPickupModal, setBulkPickupModal] = useState(false)
+    const [expandAll, setExpandAll] = useState(null)
 
     const load = useCallback(async () => {
         setLoading(true)
@@ -615,6 +620,10 @@ export default function ShippingView() {
                     {errorCount > 0 && (
                         <Pill kind="warn">{errorCount} {T.shipping_errors ?? 'błędów'}</Pill>
                     )}
+                    <button className="btn btn-ghost" onClick={() => setExpandAll(v => !v)} style={{ fontSize: '0.82em', gap: 4 }} title={expandAll ? 'Collapse all' : 'Expand all'}>
+                        <Icon name={expandAll ? 'chevronUp' : 'chevronDown'} size={13} />
+                        {expandAll ? 'Zwiń' : 'Rozwiń'}
+                    </button>
                     <button className="btn btn-ghost" onClick={load} disabled={loading} title="Odśwież">
                         <Icon name="refreshCw" size={14} />
                     </button>
@@ -661,6 +670,7 @@ export default function ShippingView() {
                         onUpdateCount={handleUpdateCount}
                         selected={selectedDraftIds.has(draft.id)}
                         onToggleSelect={handleToggleSelect}
+                        forceOpen={expandAll}
                     />
                 ))}
             </div>

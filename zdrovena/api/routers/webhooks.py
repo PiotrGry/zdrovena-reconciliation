@@ -510,8 +510,8 @@ def order_pickup(
     draft = shipping_store.get_draft(draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
-    if draft.get("courier") != "inpost" or draft.get("service") != "inpost_courier_standard":
-        raise HTTPException(status_code=400, detail="Pickup only available for InPost kurier")
+    if draft.get("courier") != "inpost":
+        raise HTTPException(status_code=400, detail="Pickup only available for InPost shipments")
     if draft.get("status") != "created":
         raise HTTPException(status_code=409, detail="Draft must be in 'created' state")
     if draft.get("pickup_ordered"):
