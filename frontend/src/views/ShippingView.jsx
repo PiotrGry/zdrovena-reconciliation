@@ -77,14 +77,39 @@ function addHours(t, hrs) {
 }
 
 function PickupScheduleModal({ onConfirm, onCancel, title }) {
-    const today = new Date().toISOString().slice(0, 10)
+    const now = new Date()
+    const today = now.toISOString().slice(0, 10)
+    // Earliest allowed "from" on today: current hour + 2, rounded up to next slot
+    const minFromToday = addHours(
+        `${String(now.getHours()).padStart(2, '0')}:00`,
+        2
+    )
+
     const [date, setDate] = useState(today)
-    const [from, setFrom] = useState('09:00')
-    const [to, setTo] = useState('14:00')
+    const [from, setFrom] = useState(() => {
+        const first = TIME_SLOTS.find(t => t >= minFromToday && t <= '16:00') || '09:00'
+        return first
+    })
+    const [to, setTo] = useState(() => addHours(
+        TIME_SLOTS.find(t => t >= minFromToday && t <= '16:00') || '09:00', 2
+    ))
+
+    const isToday = date === today
+    const minFrom = isToday ? minFromToday : '07:00'
 
     function handleFromChange(val) {
         setFrom(val)
         if (toMinutes(to) < toMinutes(val) + 120) setTo(addHours(val, 2))
+    }
+
+    function handleDateChange(val) {
+        setDate(val)
+        // When switching to today, ensure from is still valid
+        if (val === today && from < minFromToday) {
+            const first = TIME_SLOTS.find(t => t >= minFromToday && t <= '16:00') || '09:00'
+            setFrom(first)
+            setTo(addHours(first, 2))
+        }
     }
 
     const sel = { padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.9em', cursor: 'pointer' }
@@ -97,7 +122,7 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>Pickup date</label>
                     <input type="date" value={date} min={today}
-                        onChange={e => { setDate(e.target.value); e.target.blur() }}
+                        onChange={e => { handleDateChange(e.target.value); e.target.blur() }}
                         style={sel}
                     />
                 </div>
@@ -105,7 +130,7 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
                         <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>From</label>
                         <select value={from} onChange={e => handleFromChange(e.target.value)} style={sel}>
-                            {TIME_SLOTS.filter(t => t <= '16:00').map(t => <option key={t} value={t}>{t}</option>)}
+                            {TIME_SLOTS.filter(t => t >= minFrom && t <= '16:00').map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                     </div>
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
