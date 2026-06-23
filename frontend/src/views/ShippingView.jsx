@@ -137,7 +137,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                 onClick={() => setOpen(o => !o)}
                 aria-expanded={open}
             >
-                {draft.status === 'pending' && onToggleSelect && (
+                {(draft.status === 'pending' || (draft.courier === 'inpost' && draft.status === 'created' && !draft.pickup_ordered)) && onToggleSelect && (
                     <input
                         type="checkbox"
                         checked={selected || false}
@@ -301,6 +301,7 @@ export default function ShippingView() {
     const [busy, setBusy] = useState(new Set())
     const [selectedDraftIds, setSelectedDraftIds] = useState(new Set())
     const [bulkProgress, setBulkProgress] = useState(null)
+    const [bulkPickupModal, setBulkPickupModal] = useState(false)
 
     const load = useCallback(async () => {
         setLoading(true)
@@ -439,6 +440,21 @@ export default function ShippingView() {
         load()
     }
 
+    async function handleBulkPickup(schedule) {
+        setBulkPickupModal(false)
+        const eligible = [...selectedDraftIds]
+            .map(id => drafts.find(d => d.id === id))
+            .filter(d => d && d.courier === 'inpost' && d.status === 'created' && !d.pickup_ordered)
+        setBulkProgress({ done: 0, total: eligible.length })
+        for (let i = 0; i < eligible.length; i++) {
+            try { await handlePickup(eligible[i], schedule) } catch { /* error visible in row */ }
+            setBulkProgress({ done: i + 1, total: eligible.length })
+        }
+        setBulkProgress(null)
+        setSelectedDraftIds(new Set())
+        load()
+    }
+
     const filtered = drafts.filter(d => {
         if (!search) return true
         const q = search.toLowerCase()
@@ -452,6 +468,7 @@ export default function ShippingView() {
     const errorCount = drafts.filter(d => d.status === 'error').length
 
     return (
+        <>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gap)' }}>
             <PageHead
                 title={T.shipping_title ?? 'Wysyłki'}
@@ -473,18 +490,42 @@ export default function ShippingView() {
                     )}
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    {canManage && selectedDraftIds.size > 0 && (
-                        <button
-                            className="btn btn-primary"
-                            style={{ fontSize: '0.85em' }}
-                            onClick={handleBulkExecute}
-                            disabled={bulkProgress !== null}
-                        >
-                            {bulkProgress !== null
-                                ? `Realizuję ${bulkProgress.done}/${bulkProgress.total}…`
-                                : `Realizuj zaznaczone (${selectedDraftIds.size})`}
-                        </button>
-                    )}
+                    {canManage && selectedDraftIds.size > 0 && (() => {
+                        const pendingSelected = [...selectedDraftIds].filter(id => {
+                            const d = drafts.find(x => x.id === id)
+                            return d && (d.status === 'pending' || d.status === 'error')
+                        })
+                        const pickupSelected = [...selectedDraftIds].filter(id => {
+                            const d = drafts.find(x => x.id === id)
+                            return d && d.courier === 'inpost' && d.status === 'created' && !d.pickup_ordered
+                        })
+                        return (<>
+                            {pendingSelected.length > 0 && (
+                                <button
+                                    className="btn btn-primary"
+                                    style={{ fontSize: '0.85em' }}
+                                    onClick={handleBulkExecute}
+                                    disabled={bulkProgress !== null}
+                                >
+                                    {bulkProgress !== null
+                                        ? `Realizuję ${bulkProgress.done}/${bulkProgress.total}…`
+                                        : `Realizuj zaznaczone (${pendingSelected.length})`}
+                                </button>
+                            )}
+                            {pickupSelected.length > 0 && (
+                                <button
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.85em' }}
+                                    onClick={() => setBulkPickupModal(true)}
+                                    disabled={bulkProgress !== null}
+                                >
+                                    {bulkProgress !== null
+                                        ? `Podjazd ${bulkProgress.done}/${bulkProgress.total}…`
+                                        : `Zamów podjazd (${pickupSelected.length})`}
+                                </button>
+                            )}
+                        </>)
+                    })()}
                     <span className="mono dim">{drafts.length} {T.shipping_drafts_count ?? 'draftów'}</span>
                     {errorCount > 0 && (
                         <Pill kind="warn">{errorCount} {T.shipping_errors ?? 'błędów'}</Pill>
@@ -528,5 +569,13 @@ export default function ShippingView() {
                 ))}
             </div>
         </div>
+        {bulkPickupModal && (
+            <PickupScheduleModal
+                title="Zamów podjazd kuriera (wszystkie zaznaczone)"
+                onConfirm={handleBulkPickup}
+                onCancel={() => setBulkPickupModal(false)}
+            />
+        )}
+        </>
     )
 }
