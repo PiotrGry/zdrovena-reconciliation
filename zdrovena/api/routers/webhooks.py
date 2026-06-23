@@ -128,7 +128,7 @@ def _run_inpost(
             "courier_draft_id": f"mock-inpost-{ref}",
             "tracking_number": f"MOCK{ref}0000000000",
             "status": "created",
-            "pickup_ordered": True,
+            "pickup_ordered": False,
             "error": None,
         }
 
