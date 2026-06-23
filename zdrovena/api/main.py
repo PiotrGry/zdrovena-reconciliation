@@ -17,6 +17,7 @@ from zdrovena.api.routers import close, files, invoices, webhooks
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    force=True,
 )
 
 logger = logging.getLogger("zdrovena.api.main")
