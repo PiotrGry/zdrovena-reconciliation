@@ -158,6 +158,11 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                 <Pill kind={draft.status === 'created' ? 'ok' : draft.status === 'pending' ? 'default' : 'warn'}>
                     {draft.status}
                 </Pill>
+                {draft.pickup_ordered && (
+                    <Pill kind="ok" style={{ opacity: 0.75 }}>
+                        <Icon name="truck" size={11} /> pickup
+                    </Pill>
+                )}
                 <Icon name={open ? 'chevronUp' : 'chevronDown'} size={14} className="icon" />
             </button>
 
