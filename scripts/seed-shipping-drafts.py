@@ -179,7 +179,7 @@ TEST_DRAFTS = [
         shipping_address={"street": "ul. Kwiatowa 3", "city": "Warszawa", "post_code": "00-001"},
         tracking_number="630001234567890201",
         courier_draft_id="inpost-draft-bb001",
-        pickup_ordered=True,
+        pickup_ordered=False,
     ),
     # 3 zgrzewki × 12 butelek w szkle → 1 karton, błąd API
     _draft(
