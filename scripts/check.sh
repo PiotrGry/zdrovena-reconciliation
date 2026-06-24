@@ -106,7 +106,8 @@ step "pip-audit — zależności Python"
 # Ignorowane CVE (transitive deps, brak fix version):
 #   PYSEC-2026-89  — markdown 3.10.2 (via cloudsplaining), najnowsza wersja, brak fixa
 #   PYSEC-2025-183 — pyjwt 2.12.1 (via msal/azure-identity), najnowsza wersja, brak fixa
-_AUDIT_IGNORE="--ignore-vuln PYSEC-2026-89 --ignore-vuln PYSEC-2025-183"
+#   PYSEC-2026-196 — pip 26.1.1, pip itself not upgradeable via uv lock
+_AUDIT_IGNORE="--ignore-vuln PYSEC-2026-89 --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2026-196"
 # Użyj uv run żeby skanować tylko pakiety projektu (nie globalny Python)
 if command -v uv >/dev/null 2>&1 && [ -d "$REPO_ROOT/.venv" ]; then
   PIPAPI_PYTHON_LOCATION="$REPO_ROOT/.venv/bin/python3" uv run pip-audit --local $_AUDIT_IGNORE 2>&1 \
