@@ -108,6 +108,32 @@ function addHours(t, hrs) {
     return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 }
 
+function BulkUpdateModal({ count, onConfirm, onCancel }) {
+    const [value, setValue] = useState(1)
+    const sel = { padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.9em', width: '100%' }
+    return createPortal(
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+            onClick={e => { if (e.target === e.currentTarget) onCancel() }}>
+            <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 24, minWidth: 280, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={{ fontWeight: 600 }}>Aktualizuj liczbę paczek ({count} draftów)</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>Liczba paczek</label>
+                    <input type="number" min={1} max={99} value={value}
+                        onChange={e => setValue(Math.max(1, parseInt(e.target.value) || 1))}
+                        style={sel}
+                        autoFocus
+                    />
+                </div>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                    <button className="btn btn-ghost" onClick={onCancel}>Anuluj</button>
+                    <button className="btn btn-primary" onClick={() => onConfirm(value)}>Zastosuj</button>
+                </div>
+            </div>
+        </div>,
+        document.body
+    )
+}
+
 function PickupScheduleModal({ onConfirm, onCancel, title }) {
     const { t, lang } = useT()
     const T = t[lang]
@@ -413,6 +439,7 @@ export default function ShippingView() {
     const [selectedDraftIds, setSelectedDraftIds] = useState(new Set())
     const [bulkProgress, setBulkProgress] = useState(null)
     const [bulkPickupModal, setBulkPickupModal] = useState(false)
+    const [bulkUpdateModal, setBulkUpdateModal] = useState(false)
     const [expandAll, setExpandAll] = useState(null)
 
     const load = useCallback(async () => {
@@ -552,6 +579,22 @@ export default function ShippingView() {
         load()
     }
 
+    async function handleBulkUpdate(newCount) {
+        setBulkUpdateModal(false)
+        const ids = [...selectedDraftIds]
+        setBulkProgress({ done: 0, total: ids.length })
+        for (let i = 0; i < ids.length; i++) {
+            const draft = drafts.find(d => d.id === ids[i])
+            if (draft) {
+                try { await handleUpdateCount(draft, newCount) } catch { /* error stays in row */ }
+            }
+            setBulkProgress({ done: i + 1, total: ids.length })
+        }
+        setBulkProgress(null)
+        setSelectedDraftIds(new Set())
+        load()
+    }
+
     async function handleBulkPickup(schedule) {
         setBulkPickupModal(false)
         const eligible = [...selectedDraftIds]
@@ -668,6 +711,16 @@ export default function ShippingView() {
                                         : `Zamów podjazd (${pickupSelected.length})`}
                                 </button>
                             )}
+                            <button
+                                className="btn btn-ghost"
+                                style={{ fontSize: '0.85em' }}
+                                onClick={() => setBulkUpdateModal(true)}
+                                disabled={bulkProgress !== null}
+                            >
+                                {bulkProgress !== null
+                                    ? `Aktualizuję ${bulkProgress.done}/${bulkProgress.total}…`
+                                    : `Aktualizuj paczki (${selectedDraftIds.size})`}
+                            </button>
                         </>)
                     })()}
                     <span className="mono dim">{drafts.length} {T.shipping_drafts_count ?? 'draftów'}</span>
@@ -736,6 +789,13 @@ export default function ShippingView() {
                 title="Zamów podjazd kuriera (wszystkie zaznaczone)"
                 onConfirm={handleBulkPickup}
                 onCancel={() => setBulkPickupModal(false)}
+            />
+        )}
+        {bulkUpdateModal && (
+            <BulkUpdateModal
+                count={selectedDraftIds.size}
+                onConfirm={handleBulkUpdate}
+                onCancel={() => setBulkUpdateModal(false)}
             />
         )}
         </>
