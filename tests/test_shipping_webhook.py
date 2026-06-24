@@ -340,7 +340,9 @@ class TestOrderPickup:
         # Paczkomat also supports dispatch order (drzwi→paczkomat)
         draft = self._seed_created_kurier(store)
         store.update_draft(draft["id"], {"service": "inpost_locker_standard"})
-        with patch("zdrovena.common.inpost.InPostClient.create_dispatch_order", return_value={"id": "d-1"}):
+        with patch(
+            "zdrovena.common.inpost.InPostClient.create_dispatch_order", return_value={"id": "d-1"}
+        ):
             with patch("zdrovena.api.routers.webhooks.get_secret", return_value="test-value"):
                 resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
         assert resp.status_code == 200
@@ -936,6 +938,7 @@ class TestCalcPackages:
 
     def _run(self, *specs):
         from zdrovena.api.routers.webhooks import _calc_packages
+
         items = self._items(*specs)
         count, breakdown = _calc_packages(items)
         bd = {b["type"]: b["qty"] for b in breakdown}
@@ -1032,10 +1035,17 @@ class TestCalcPackages:
                 {"name": "HUMIO - woda alkaliczna, 12 butelek", "quantity": 5},
             ],
             "shipping_address": {
-                "first_name": "X", "last_name": "Y", "address1": "ul. A 1",
-                "address2": "", "city": "W", "zip": "00-001", "phone": "",
+                "first_name": "X",
+                "last_name": "Y",
+                "address1": "ul. A 1",
+                "address2": "",
+                "city": "W",
+                "zip": "00-001",
+                "phone": "",
             },
-            "customer": {}, "email": "x@y.pl", "note_attributes": [],
+            "customer": {},
+            "email": "x@y.pl",
+            "note_attributes": [],
         }
         _create_draft(order, store, object())
         d = store.list_drafts()[0]
