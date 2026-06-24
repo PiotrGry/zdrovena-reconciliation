@@ -239,7 +239,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
 
     return (
         <div className={`accordion-row${open ? ' open' : ''}`} style={{ display: 'flex', alignItems: 'stretch' }}>
-            <div style={{ width: 56, flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', gap: 4, paddingTop: 11 }}>
+            <div style={{ width: 56, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 {isSelectable ? (
                     <input
                         type="checkbox"
@@ -759,7 +759,7 @@ export default function ShippingView() {
                 )}
                 {!loading && !error && filtered.length > 0 && selectableIds.length > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 16px 6px 0', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
-                        <div style={{ width: 40, display: 'flex', justifyContent: 'center' }}>
+                        <div style={{ width: 56, flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
                             <input type="checkbox" checked={allSelected} onChange={handleSelectAll}
                                 style={{ cursor: 'pointer', accentColor: 'var(--primary, #3b82f6)' }} />
                         </div>
