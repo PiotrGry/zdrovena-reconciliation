@@ -70,17 +70,6 @@ function Chip({ label, style }) {
     )
 }
 
-function PackagesInfo({ draft }) {
-    const breakdown = draft.packages_breakdown ?? []
-    return (
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            {breakdown.map((b, i) => {
-                const s = _GLASS_TYPES.has(b.type) ? _BOX_STYLE.glass : _BOX_STYLE.plastic
-                return <Chip key={i} label={`${b.qty}×${b.type}`} style={s} />
-            })}
-        </div>
-    )
-}
 
 function MaterialTags({ draft }) {
     const items = draft.order_items ?? []
@@ -290,7 +279,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
 
             {open && (
                 <div className="accordion-body">
-                    <div className="detail-grid">
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: '12px 24px' }}>
                         <div>
                             <div className="detail-label">
                                 {draft.service === 'inpost_locker_standard' ? 'Paczkomat' : 'Adres dostawy'}
@@ -308,29 +297,13 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                                     {draft.shipping_address?.post_code} {draft.shipping_address?.city}
                                 </div>
                             )}
-                        </div>
-                        <div>
-                            <div className="detail-label">Paczki</div>
-                            <div style={{ marginTop: 4 }}>
-                                <MaterialTags draft={draft} />
-                            </div>
-                            {draft.packages_breakdown?.length > 0 && (
-                                <div style={{ marginTop: 6 }}>
-                                    <PackagesInfo draft={draft} />
-                                </div>
-                            )}
-                        </div>
-                        <div>
-                            <div className="detail-label">Numer śledzenia</div>
+                            <div className="detail-label" style={{ marginTop: 10 }}>Numer śledzenia</div>
                             <div>
                                 {draft.tracking_number
                                     ? (
-                                        <span
-                                            className="mono copyable"
-                                            title="Kliknij żeby skopiować"
+                                        <span className="mono copyable" title="Kliknij żeby skopiować"
                                             onClick={() => navigator.clipboard.writeText(draft.tracking_number)}
-                                            style={{ cursor: 'pointer' }}
-                                        >
+                                            style={{ cursor: 'pointer' }}>
                                             {draft.tracking_number}
                                         </span>
                                     )
@@ -338,6 +311,41 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                             </div>
                             <div className="detail-label" style={{ marginTop: 10 }}>ID draftu kuriera</div>
                             <div className="mono dim">{draft.courier_draft_id || '—'}</div>
+                        </div>
+                        <div />
+                        <div>
+                            <div className="detail-label">Paczki</div>
+                            {draft.packages_breakdown?.length > 0 ? (
+                                <table style={{ borderCollapse: 'collapse', width: '100%', marginTop: 6, fontSize: '0.9em' }}>
+                                    <thead>
+                                        <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                                            <th style={{ textAlign: 'left', padding: '3px 12px 3px 0', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Typ</th>
+                                            <th style={{ textAlign: 'center', padding: '3px 12px', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Szt.</th>
+                                            <th style={{ textAlign: 'left', padding: '3px 0', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Materiał</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {draft.packages_breakdown.map((b, i) => {
+                                            const isGlass = _GLASS_TYPES.has(b.type)
+                                            const s = isGlass ? _BOX_STYLE.glass : _BOX_STYLE.plastic
+                                            return (
+                                                <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                                                    <td style={{ padding: '6px 12px 6px 0', fontWeight: 500 }}>
+                                                        <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: s.color, marginRight: 6, flexShrink: 0 }} />
+                                                        {b.type}
+                                                    </td>
+                                                    <td style={{ padding: '6px 12px', textAlign: 'center' }}>
+                                                        <span className="mono" style={{ fontWeight: 600, fontSize: '1em' }}>{b.qty}</span>
+                                                    </td>
+                                                    <td style={{ padding: '6px 0', color: s.color, fontWeight: 500 }}>
+                                                        {isGlass ? 'szkło' : 'plastik'}
+                                                    </td>
+                                                </tr>
+                                            )
+                                        })}
+                                    </tbody>
+                                </table>
+                            ) : <span className="dim">—</span>}
                         </div>
                     </div>
 
