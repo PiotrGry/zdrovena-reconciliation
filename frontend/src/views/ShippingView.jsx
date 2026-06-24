@@ -251,15 +251,15 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                 <button
                     onClick={() => setOpen(o => !o)}
                     aria-expanded={open}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', color: 'var(--text-2)', display: 'flex', alignItems: 'center', borderRadius: 4 }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px 8px', color: 'var(--text-2)', display: 'flex', alignItems: 'center', borderRadius: 4 }}
                 >
-                    <Icon name={open ? 'chevronUp' : 'chevronDown'} size={16} />
+                    <Icon name={open ? 'chevronUp' : 'chevronDown'} size={20} />
                 </button>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
             <div
                 className="accordion-header"
-                style={{ paddingLeft: 0, cursor: 'default', display: 'grid', alignItems: 'center',
+                style={{ padding: '10px 16px 10px 0', cursor: 'default', display: 'grid', alignItems: 'center',
                     gridTemplateColumns: '72px 1fr 170px 120px 130px 130px 88px 76px' }}
             >
                 <span className="mono">#{draft.shopify_order_number}</span>
