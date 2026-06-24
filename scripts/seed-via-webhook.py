@@ -11,6 +11,7 @@ Usage:
 
 Requires the API to be running (docker compose up or DEV_MODE=local bash dev.sh).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -62,8 +63,10 @@ def _order(
 def _item(name: str, qty: int, grams: int = 5400) -> dict:
     return {
         "id": hash(name) & 0xFFFFFF,
-        "name": name, "title": name,
-        "quantity": qty, "grams": grams,
+        "name": name,
+        "title": name,
+        "quantity": qty,
+        "grams": grams,
         "price": "89.99",
         "product_exists": True,
         "requires_shipping": True,
@@ -73,98 +76,219 @@ def _item(name: str, qty: int, grams: int = 5400) -> dict:
 # 15 test orders — mirrors seed-shipping-drafts.py combinations
 ORDERS = [
     # 1110 — InPost Kurier, plastik 1 zgrzewka
-    _order(50001110, 1110, "InPost Kurier",
-           [_item(_P12, 1)],
-           "Marek", "Zielinski", "marek@example.com", "+48601234567",
-           "ul. Wierzbowa 12", "Wroclaw", "50-001"),
-
+    _order(
+        50001110,
+        1110,
+        "InPost Kurier",
+        [_item(_P12, 1)],
+        "Marek",
+        "Zielinski",
+        "marek@example.com",
+        "+48601234567",
+        "ul. Wierzbowa 12",
+        "Wroclaw",
+        "50-001",
+    ),
     # 1111 — InPost Kurier, plastik 3 zgrzewki → 1×3-pak
-    _order(50001111, 1111, "InPost Kurier",
-           [_item(_P12, 3)],
-           "Piotr", "Kowalczyk", "piotr@example.com", "+48602345678",
-           "ul. Lipowa 5", "Gdansk", "80-001"),
-
+    _order(
+        50001111,
+        1111,
+        "InPost Kurier",
+        [_item(_P12, 3)],
+        "Piotr",
+        "Kowalczyk",
+        "piotr@example.com",
+        "+48602345678",
+        "ul. Lipowa 5",
+        "Gdansk",
+        "80-001",
+    ),
     # 1112 — InPost Kurier, plastik 5 zgrzewek → 1×3-pak + 1×2-pak
-    _order(50001112, 1112, "InPost Kurier",
-           [_item(_P12, 5)],
-           "Tomasz", "Wisniewski", "tomasz@example.com", "+48603456789",
-           "ul. Brzozowa 8", "Krakow", "31-100"),
-
+    _order(
+        50001112,
+        1112,
+        "InPost Kurier",
+        [_item(_P12, 5)],
+        "Tomasz",
+        "Wisniewski",
+        "tomasz@example.com",
+        "+48603456789",
+        "ul. Brzozowa 8",
+        "Krakow",
+        "31-100",
+    ),
     # 1113 — InPost Kurier, szkło 1 zgrzewka
-    _order(50001113, 1113, "InPost Kurier",
-           [_item(_G12, 1)],
-           "Anna", "Kowalska", "anna@example.com", "+48604567890",
-           "ul. Kwiatowa 3", "Warszawa", "00-001"),
-
+    _order(
+        50001113,
+        1113,
+        "InPost Kurier",
+        [_item(_G12, 1)],
+        "Anna",
+        "Kowalska",
+        "anna@example.com",
+        "+48604567890",
+        "ul. Kwiatowa 3",
+        "Warszawa",
+        "00-001",
+    ),
     # 1114 — InPost Kurier, mixed 2×plastik + 1×szkło
-    _order(50001114, 1114, "InPost Kurier",
-           [_item(_P12, 2), _item(_G12, 1)],
-           "Beata", "Wojcik", "beata@example.com", "+48605678901",
-           "ul. Prusa 3", "Lublin", "20-001"),
-
+    _order(
+        50001114,
+        1114,
+        "InPost Kurier",
+        [_item(_P12, 2), _item(_G12, 1)],
+        "Beata",
+        "Wojcik",
+        "beata@example.com",
+        "+48605678901",
+        "ul. Prusa 3",
+        "Lublin",
+        "20-001",
+    ),
     # 1115 — InPost Paczkomat, plastik 3 zgrzewki
-    _order(50001115, 1115, "InPost Paczkomat",
-           [_item(_P12, 3)],
-           "Katarzyna", "Nowak", "katarzyna@example.com", "+48606789012",
-           "", "Krakow", "31-001",
-           note_attributes=[{"name": "PickupPointId", "value": "KRK01M"}]),
-
+    _order(
+        50001115,
+        1115,
+        "InPost Paczkomat",
+        [_item(_P12, 3)],
+        "Katarzyna",
+        "Nowak",
+        "katarzyna@example.com",
+        "+48606789012",
+        "",
+        "Krakow",
+        "31-001",
+        note_attributes=[{"name": "PickupPointId", "value": "KRK01M"}],
+    ),
     # 1116 — InPost Paczkomat, szkło 2 zgrzewki
-    _order(50001116, 1116, "InPost Paczkomat",
-           [_item(_G12, 2)],
-           "Michał", "Dąbrowski", "michal@example.com", "+48607890123",
-           "", "Warszawa", "02-001",
-           note_attributes=[{"name": "PickupPointId", "value": "WAW88C"}]),
-
+    _order(
+        50001116,
+        1116,
+        "InPost Paczkomat",
+        [_item(_G12, 2)],
+        "Michał",
+        "Dąbrowski",
+        "michal@example.com",
+        "+48607890123",
+        "",
+        "Warszawa",
+        "02-001",
+        note_attributes=[{"name": "PickupPointId", "value": "WAW88C"}],
+    ),
     # 1117 — InPost Paczkomat, mixed 1×plastik + 2×szkło
-    _order(50001117, 1117, "InPost Paczkomat",
-           [_item(_P12, 1), _item(_G12, 2)],
-           "Zofia", "Maj", "zofia@example.com", "+48608901234",
-           "", "Gdansk", "80-002",
-           note_attributes=[{"name": "PickupPointId", "value": "GDA05B"}]),
-
+    _order(
+        50001117,
+        1117,
+        "InPost Paczkomat",
+        [_item(_P12, 1), _item(_G12, 2)],
+        "Zofia",
+        "Maj",
+        "zofia@example.com",
+        "+48608901234",
+        "",
+        "Gdansk",
+        "80-002",
+        note_attributes=[{"name": "PickupPointId", "value": "GDA05B"}],
+    ),
     # 1118 — Apaczka, plastik 6 zgrzewek → 2×3-pak
-    _order(50001118, 1118, "Apaczka kurier",
-           [_item(_P12, 6)],
-           "Krzysztof", "Lewandowski", "krzysztof@example.com", "+48609012345",
-           "ul. Słoneczna 7", "Poznan", "60-001"),
-
+    _order(
+        50001118,
+        1118,
+        "Apaczka kurier",
+        [_item(_P12, 6)],
+        "Krzysztof",
+        "Lewandowski",
+        "krzysztof@example.com",
+        "+48609012345",
+        "ul. Słoneczna 7",
+        "Poznan",
+        "60-001",
+    ),
     # 1119 — Apaczka, szkło 3 zgrzewki
-    _order(50001119, 1119, "Apaczka kurier",
-           [_item(_G12, 3)],
-           "Aleksandra", "Wójcik", "aleksandra@example.com", "+48610123456",
-           "ul. Różana 2", "Wroclaw", "51-001"),
-
+    _order(
+        50001119,
+        1119,
+        "Apaczka kurier",
+        [_item(_G12, 3)],
+        "Aleksandra",
+        "Wójcik",
+        "aleksandra@example.com",
+        "+48610123456",
+        "ul. Różana 2",
+        "Wroclaw",
+        "51-001",
+    ),
     # 1120 — InPost Kurier, plastik 3 zgrzewki (duplicate — becomes 2nd pending)
-    _order(50001120, 1120, "InPost Kurier",
-           [_item(_P12, 3)],
-           "Paweł", "Kaminski", "pawel@example.com", "+48611234567",
-           "ul. Jagiellońska 4", "Warszawa", "03-001"),
-
+    _order(
+        50001120,
+        1120,
+        "InPost Kurier",
+        [_item(_P12, 3)],
+        "Paweł",
+        "Kaminski",
+        "pawel@example.com",
+        "+48611234567",
+        "ul. Jagiellońska 4",
+        "Warszawa",
+        "03-001",
+    ),
     # 1121 — InPost Kurier, szkło 1 zgrzewka
-    _order(50001121, 1121, "InPost Kurier",
-           [_item(_G12, 1)],
-           "Monika", "Szymanska", "monika@example.com", "+48612345678",
-           "ul. Piękna 9", "Krakow", "31-200"),
-
+    _order(
+        50001121,
+        1121,
+        "InPost Kurier",
+        [_item(_G12, 1)],
+        "Monika",
+        "Szymanska",
+        "monika@example.com",
+        "+48612345678",
+        "ul. Piękna 9",
+        "Krakow",
+        "31-200",
+    ),
     # 1122 — InPost Paczkomat, mixed 3×plastik + 1×szkło
-    _order(50001122, 1122, "InPost Paczkomat",
-           [_item(_P12, 3), _item(_G12, 1)],
-           "Rafał", "Mazur", "rafal@example.com", "+48613456789",
-           "", "Lodz", "90-001",
-           note_attributes=[{"name": "PickupPointId", "value": "LDZ02A"}]),
-
+    _order(
+        50001122,
+        1122,
+        "InPost Paczkomat",
+        [_item(_P12, 3), _item(_G12, 1)],
+        "Rafał",
+        "Mazur",
+        "rafal@example.com",
+        "+48613456789",
+        "",
+        "Lodz",
+        "90-001",
+        note_attributes=[{"name": "PickupPointId", "value": "LDZ02A"}],
+    ),
     # 1123 — Apaczka, plastik 4 zgrzewki → 1×3-pak + 1×1-pak
-    _order(50001123, 1123, "Apaczka kurier",
-           [_item(_P12, 4)],
-           "Magdalena", "Kaczmarek", "magdalena@example.com", "+48614567890",
-           "ul. Mickiewicza 11", "Szczecin", "70-001"),
-
+    _order(
+        50001123,
+        1123,
+        "Apaczka kurier",
+        [_item(_P12, 4)],
+        "Magdalena",
+        "Kaczmarek",
+        "magdalena@example.com",
+        "+48614567890",
+        "ul. Mickiewicza 11",
+        "Szczecin",
+        "70-001",
+    ),
     # 1124 — InPost Kurier, plastik 3 zgrzewki
-    _order(50001124, 1124, "InPost Kurier",
-           [_item(_P12, 3)],
-           "Grzegorz", "Nowakowski", "grzegorz@example.com", "+48615678901",
-           "ul. Parkowa 6", "Bydgoszcz", "85-001"),
+    _order(
+        50001124,
+        1124,
+        "InPost Kurier",
+        [_item(_P12, 3)],
+        "Grzegorz",
+        "Nowakowski",
+        "grzegorz@example.com",
+        "+48615678901",
+        "ul. Parkowa 6",
+        "Bydgoszcz",
+        "85-001",
+    ),
 ]
 
 
@@ -172,7 +296,9 @@ def send(url: str, order: dict, dry_run: bool) -> bool:
     payload = json.dumps(order).encode()
     num = order["order_number"]
     if dry_run:
-        print(f"  [dry-run] #{num} {order['shipping_lines'][0]['title']} — {len(order['line_items'])} line item(s)")
+        print(
+            f"  [dry-run] #{num} {order['shipping_lines'][0]['title']} — {len(order['line_items'])} line item(s)"
+        )
         return True
     req = urllib.request.Request(
         f"{url}/webhooks/shopify/order-created",

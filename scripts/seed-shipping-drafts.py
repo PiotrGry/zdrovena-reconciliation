@@ -11,6 +11,7 @@ Env:
     AZURE_STORAGE_CONNECTION_STRING  -> Azurite / Azure Table Storage
     Default: local JSON at ~/.zdrovena/storage/
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,6 +36,7 @@ _AZURITE_CONN = (
 def _azure_importable() -> bool:
     try:
         import azure.data.tables  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -42,6 +44,7 @@ def _azure_importable() -> bool:
 
 def _azurite_port_open() -> bool:
     import socket
+
     try:
         socket.create_connection(("127.0.0.1", 10002), timeout=1).close()
         return True
@@ -131,6 +134,7 @@ def _draft(
 _P12 = "HUMIO - woda alkaliczna, 12 butelek"
 _G12 = "HUMIO - woda alkaliczna, 12 butelek w szkle"
 
+
 # Breakdown helpers matching _calc_packages algorithm
 def _bd_p(n):
     """Plastic greedy breakdown for n zgrzewki."""
@@ -156,104 +160,328 @@ def _bd_g(n):
         bd.append({"type": "szkło", "qty": r})
     return bd
 
+
 TEST_DRAFTS = [
-    _draft(_SEED_IDS[0], "1110", "Marek Zielinski", "inpost", "inpost_courier_standard", "pending",
-           packages_count=1, total_qty=1, order_items=[{"name": _P12, "quantity": 1}],
-           packages_breakdown=_bd_p(1),
-           receiver={"first_name": "Marek", "last_name": "Zielinski", "email": "marek@example.com", "phone": "+48601234567", "locker_id": ""},
-           shipping_address={"street": "ul. Wierzbowa 12", "city": "Wroclaw", "post_code": "50-001"}),
-
-    _draft(_SEED_IDS[1], "1111", "Piotr Kowalczyk", "inpost", "inpost_courier_standard", "pending",
-           packages_count=1, total_qty=3, order_items=[{"name": _P12, "quantity": 3}],
-           packages_breakdown=_bd_p(3),
-           receiver={"first_name": "Piotr", "last_name": "Kowalczyk", "email": "piotr@example.com", "phone": "+48602345678", "locker_id": ""},
-           shipping_address={"street": "ul. Lipowa 5", "city": "Gdansk", "post_code": "80-001"}),
-
-    _draft(_SEED_IDS[2], "1112", "Tomasz Wisniewski", "inpost", "inpost_courier_standard", "pending",
-           packages_count=2, total_qty=5, order_items=[{"name": _P12, "quantity": 5}],
-           packages_breakdown=_bd_p(5),
-           receiver={"first_name": "Tomasz", "last_name": "Wisniewski", "email": "tomasz@example.com", "phone": "+48603456789", "locker_id": ""},
-           shipping_address={"street": "ul. Brzozowa 8", "city": "Krakow", "post_code": "31-100"}),
-
-    _draft(_SEED_IDS[3], "1113", "Anna Kowalska", "inpost", "inpost_courier_standard", "pending",
-           packages_count=1, total_qty=1, order_items=[{"name": _G12, "quantity": 1}],
-           packages_breakdown=_bd_g(1),
-           receiver={"first_name": "Anna", "last_name": "Kowalska", "email": "anna@example.com", "phone": "+48604567890", "locker_id": ""},
-           shipping_address={"street": "ul. Kwiatowa 3", "city": "Warszawa", "post_code": "00-001"}),
-
-    _draft(_SEED_IDS[4], "1114", "Beata Wojcik", "inpost", "inpost_courier_standard", "pending",
-           packages_count=2, total_qty=3,
-           order_items=[{"name": _P12, "quantity": 2}, {"name": _G12, "quantity": 1}],
-           packages_breakdown=_bd_p(2) + _bd_g(1),
-           receiver={"first_name": "Beata", "last_name": "Wojcik", "email": "beata@example.com", "phone": "+48605678901", "locker_id": ""},
-           shipping_address={"street": "ul. Prusa 3", "city": "Lublin", "post_code": "20-001"}),
-
-    _draft(_SEED_IDS[5], "1115", "Katarzyna Nowak", "inpost", "inpost_locker_standard", "pending",
-           packages_count=1, total_qty=3, order_items=[{"name": _P12, "quantity": 3}],
-           packages_breakdown=_bd_p(3),
-           receiver={"first_name": "Katarzyna", "last_name": "Nowak", "email": "katarzyna@example.com", "phone": "+48606789012", "locker_id": "KRK01M"},
-           shipping_address={"street": "", "city": "Krakow", "post_code": "31-001"}),
-
-    _draft(_SEED_IDS[6], "1116", "Michał Dąbrowski", "inpost", "inpost_locker_standard", "pending",
-           packages_count=1, total_qty=2, order_items=[{"name": _G12, "quantity": 2}],
-           packages_breakdown=_bd_g(2),
-           receiver={"first_name": "Michał", "last_name": "Dąbrowski", "email": "michal@example.com", "phone": "+48607890123", "locker_id": "WAW88C"},
-           shipping_address={"street": "", "city": "Warszawa", "post_code": "02-001"}),
-
-    _draft(_SEED_IDS[7], "1117", "Zofia Maj", "inpost", "inpost_locker_standard", "pending",
-           packages_count=2, total_qty=3,
-           order_items=[{"name": _P12, "quantity": 1}, {"name": _G12, "quantity": 2}],
-           packages_breakdown=_bd_p(1) + _bd_g(2),
-           receiver={"first_name": "Zofia", "last_name": "Maj", "email": "zofia@example.com", "phone": "+48608901234", "locker_id": "GDA05B"},
-           shipping_address={"street": "", "city": "Gdansk", "post_code": "80-002"}),
-
-    _draft(_SEED_IDS[8], "1118", "Krzysztof Lewandowski", "apaczka", "apaczka", "pending",
-           packages_count=2, total_qty=6, order_items=[{"name": _P12, "quantity": 6}],
-           packages_breakdown=_bd_p(6),
-           receiver={"first_name": "Krzysztof", "last_name": "Lewandowski", "email": "krzysztof@example.com", "phone": "+48609012345", "locker_id": ""},
-           shipping_address={"street": "ul. Słoneczna 7", "city": "Poznan", "post_code": "60-001"}),
-
-    _draft(_SEED_IDS[9], "1119", "Aleksandra Wójcik", "apaczka", "apaczka", "pending",
-           packages_count=2, total_qty=3, order_items=[{"name": _G12, "quantity": 3}],
-           packages_breakdown=_bd_g(3),
-           receiver={"first_name": "Aleksandra", "last_name": "Wójcik", "email": "aleksandra@example.com", "phone": "+48610123456", "locker_id": ""},
-           shipping_address={"street": "ul. Różana 2", "city": "Wroclaw", "post_code": "51-001"}),
-
-    _draft(_SEED_IDS[10], "1120", "Paweł Kaminski", "inpost", "inpost_courier_standard", "created",
-           packages_count=1, total_qty=3, order_items=[{"name": _P12, "quantity": 3}],
-           packages_breakdown=_bd_p(3),
-           receiver={"first_name": "Paweł", "last_name": "Kaminski", "email": "pawel@example.com", "phone": "+48611234567", "locker_id": ""},
-           shipping_address={"street": "ul. Jagiellońska 4", "city": "Warszawa", "post_code": "03-001"},
-           tracking_number="630001234567890300", courier_draft_id="mock-inpost-1120", pickup_ordered=False),
-
-    _draft(_SEED_IDS[11], "1121", "Monika Szymanska", "inpost", "inpost_courier_standard", "created",
-           packages_count=1, total_qty=1, order_items=[{"name": _G12, "quantity": 1}],
-           packages_breakdown=_bd_g(1),
-           receiver={"first_name": "Monika", "last_name": "Szymanska", "email": "monika@example.com", "phone": "+48612345678", "locker_id": ""},
-           shipping_address={"street": "ul. Piękna 9", "city": "Krakow", "post_code": "31-200"},
-           tracking_number="630001234567890301", courier_draft_id="mock-inpost-1121", pickup_ordered=True),
-
-    _draft(_SEED_IDS[12], "1122", "Rafał Mazur", "inpost", "inpost_locker_standard", "created",
-           packages_count=2, total_qty=4,
-           order_items=[{"name": _P12, "quantity": 3}, {"name": _G12, "quantity": 1}],
-           packages_breakdown=_bd_p(3) + _bd_g(1),
-           receiver={"first_name": "Rafał", "last_name": "Mazur", "email": "rafal@example.com", "phone": "+48613456789", "locker_id": "LDZ02A"},
-           shipping_address={"street": "", "city": "Lodz", "post_code": "90-001"},
-           tracking_number="630001234567890302", courier_draft_id="mock-inpost-1122", pickup_ordered=False),
-
-    _draft(_SEED_IDS[13], "1123", "Magdalena Kaczmarek", "apaczka", "apaczka", "created",
-           packages_count=2, total_qty=4, order_items=[{"name": _P12, "quantity": 4}],
-           packages_breakdown=_bd_p(4),
-           receiver={"first_name": "Magdalena", "last_name": "Kaczmarek", "email": "magdalena@example.com", "phone": "+48614567890", "locker_id": ""},
-           shipping_address={"street": "ul. Mickiewicza 11", "city": "Szczecin", "post_code": "70-001"},
-           tracking_number="APZ11230000000", courier_draft_id="apaczka-draft-1123"),
-
-    _draft(_SEED_IDS[14], "1124", "Grzegorz Nowakowski", "inpost", "inpost_courier_standard", "error",
-           packages_count=1, total_qty=3, order_items=[{"name": _P12, "quantity": 3}],
-           packages_breakdown=_bd_p(3),
-           receiver={"first_name": "Grzegorz", "last_name": "Nowakowski", "email": "grzegorz@example.com", "phone": "+48615678901", "locker_id": ""},
-           shipping_address={"street": "ul. Parkowa 6", "city": "Bydgoszcz", "post_code": "85-001"},
-           error="InPost API 401: invalid token — check inpost_api_token in Key Vault"),
+    _draft(
+        _SEED_IDS[0],
+        "1110",
+        "Marek Zielinski",
+        "inpost",
+        "inpost_courier_standard",
+        "pending",
+        packages_count=1,
+        total_qty=1,
+        order_items=[{"name": _P12, "quantity": 1}],
+        packages_breakdown=_bd_p(1),
+        receiver={
+            "first_name": "Marek",
+            "last_name": "Zielinski",
+            "email": "marek@example.com",
+            "phone": "+48601234567",
+            "locker_id": "",
+        },
+        shipping_address={"street": "ul. Wierzbowa 12", "city": "Wroclaw", "post_code": "50-001"},
+    ),
+    _draft(
+        _SEED_IDS[1],
+        "1111",
+        "Piotr Kowalczyk",
+        "inpost",
+        "inpost_courier_standard",
+        "pending",
+        packages_count=1,
+        total_qty=3,
+        order_items=[{"name": _P12, "quantity": 3}],
+        packages_breakdown=_bd_p(3),
+        receiver={
+            "first_name": "Piotr",
+            "last_name": "Kowalczyk",
+            "email": "piotr@example.com",
+            "phone": "+48602345678",
+            "locker_id": "",
+        },
+        shipping_address={"street": "ul. Lipowa 5", "city": "Gdansk", "post_code": "80-001"},
+    ),
+    _draft(
+        _SEED_IDS[2],
+        "1112",
+        "Tomasz Wisniewski",
+        "inpost",
+        "inpost_courier_standard",
+        "pending",
+        packages_count=2,
+        total_qty=5,
+        order_items=[{"name": _P12, "quantity": 5}],
+        packages_breakdown=_bd_p(5),
+        receiver={
+            "first_name": "Tomasz",
+            "last_name": "Wisniewski",
+            "email": "tomasz@example.com",
+            "phone": "+48603456789",
+            "locker_id": "",
+        },
+        shipping_address={"street": "ul. Brzozowa 8", "city": "Krakow", "post_code": "31-100"},
+    ),
+    _draft(
+        _SEED_IDS[3],
+        "1113",
+        "Anna Kowalska",
+        "inpost",
+        "inpost_courier_standard",
+        "pending",
+        packages_count=1,
+        total_qty=1,
+        order_items=[{"name": _G12, "quantity": 1}],
+        packages_breakdown=_bd_g(1),
+        receiver={
+            "first_name": "Anna",
+            "last_name": "Kowalska",
+            "email": "anna@example.com",
+            "phone": "+48604567890",
+            "locker_id": "",
+        },
+        shipping_address={"street": "ul. Kwiatowa 3", "city": "Warszawa", "post_code": "00-001"},
+    ),
+    _draft(
+        _SEED_IDS[4],
+        "1114",
+        "Beata Wojcik",
+        "inpost",
+        "inpost_courier_standard",
+        "pending",
+        packages_count=2,
+        total_qty=3,
+        order_items=[{"name": _P12, "quantity": 2}, {"name": _G12, "quantity": 1}],
+        packages_breakdown=_bd_p(2) + _bd_g(1),
+        receiver={
+            "first_name": "Beata",
+            "last_name": "Wojcik",
+            "email": "beata@example.com",
+            "phone": "+48605678901",
+            "locker_id": "",
+        },
+        shipping_address={"street": "ul. Prusa 3", "city": "Lublin", "post_code": "20-001"},
+    ),
+    _draft(
+        _SEED_IDS[5],
+        "1115",
+        "Katarzyna Nowak",
+        "inpost",
+        "inpost_locker_standard",
+        "pending",
+        packages_count=1,
+        total_qty=3,
+        order_items=[{"name": _P12, "quantity": 3}],
+        packages_breakdown=_bd_p(3),
+        receiver={
+            "first_name": "Katarzyna",
+            "last_name": "Nowak",
+            "email": "katarzyna@example.com",
+            "phone": "+48606789012",
+            "locker_id": "KRK01M",
+        },
+        shipping_address={"street": "", "city": "Krakow", "post_code": "31-001"},
+    ),
+    _draft(
+        _SEED_IDS[6],
+        "1116",
+        "Michał Dąbrowski",
+        "inpost",
+        "inpost_locker_standard",
+        "pending",
+        packages_count=1,
+        total_qty=2,
+        order_items=[{"name": _G12, "quantity": 2}],
+        packages_breakdown=_bd_g(2),
+        receiver={
+            "first_name": "Michał",
+            "last_name": "Dąbrowski",
+            "email": "michal@example.com",
+            "phone": "+48607890123",
+            "locker_id": "WAW88C",
+        },
+        shipping_address={"street": "", "city": "Warszawa", "post_code": "02-001"},
+    ),
+    _draft(
+        _SEED_IDS[7],
+        "1117",
+        "Zofia Maj",
+        "inpost",
+        "inpost_locker_standard",
+        "pending",
+        packages_count=2,
+        total_qty=3,
+        order_items=[{"name": _P12, "quantity": 1}, {"name": _G12, "quantity": 2}],
+        packages_breakdown=_bd_p(1) + _bd_g(2),
+        receiver={
+            "first_name": "Zofia",
+            "last_name": "Maj",
+            "email": "zofia@example.com",
+            "phone": "+48608901234",
+            "locker_id": "GDA05B",
+        },
+        shipping_address={"street": "", "city": "Gdansk", "post_code": "80-002"},
+    ),
+    _draft(
+        _SEED_IDS[8],
+        "1118",
+        "Krzysztof Lewandowski",
+        "apaczka",
+        "apaczka",
+        "pending",
+        packages_count=2,
+        total_qty=6,
+        order_items=[{"name": _P12, "quantity": 6}],
+        packages_breakdown=_bd_p(6),
+        receiver={
+            "first_name": "Krzysztof",
+            "last_name": "Lewandowski",
+            "email": "krzysztof@example.com",
+            "phone": "+48609012345",
+            "locker_id": "",
+        },
+        shipping_address={"street": "ul. Słoneczna 7", "city": "Poznan", "post_code": "60-001"},
+    ),
+    _draft(
+        _SEED_IDS[9],
+        "1119",
+        "Aleksandra Wójcik",
+        "apaczka",
+        "apaczka",
+        "pending",
+        packages_count=2,
+        total_qty=3,
+        order_items=[{"name": _G12, "quantity": 3}],
+        packages_breakdown=_bd_g(3),
+        receiver={
+            "first_name": "Aleksandra",
+            "last_name": "Wójcik",
+            "email": "aleksandra@example.com",
+            "phone": "+48610123456",
+            "locker_id": "",
+        },
+        shipping_address={"street": "ul. Różana 2", "city": "Wroclaw", "post_code": "51-001"},
+    ),
+    _draft(
+        _SEED_IDS[10],
+        "1120",
+        "Paweł Kaminski",
+        "inpost",
+        "inpost_courier_standard",
+        "created",
+        packages_count=1,
+        total_qty=3,
+        order_items=[{"name": _P12, "quantity": 3}],
+        packages_breakdown=_bd_p(3),
+        receiver={
+            "first_name": "Paweł",
+            "last_name": "Kaminski",
+            "email": "pawel@example.com",
+            "phone": "+48611234567",
+            "locker_id": "",
+        },
+        shipping_address={
+            "street": "ul. Jagiellońska 4",
+            "city": "Warszawa",
+            "post_code": "03-001",
+        },
+        tracking_number="630001234567890300",
+        courier_draft_id="mock-inpost-1120",
+        pickup_ordered=False,
+    ),
+    _draft(
+        _SEED_IDS[11],
+        "1121",
+        "Monika Szymanska",
+        "inpost",
+        "inpost_courier_standard",
+        "created",
+        packages_count=1,
+        total_qty=1,
+        order_items=[{"name": _G12, "quantity": 1}],
+        packages_breakdown=_bd_g(1),
+        receiver={
+            "first_name": "Monika",
+            "last_name": "Szymanska",
+            "email": "monika@example.com",
+            "phone": "+48612345678",
+            "locker_id": "",
+        },
+        shipping_address={"street": "ul. Piękna 9", "city": "Krakow", "post_code": "31-200"},
+        tracking_number="630001234567890301",
+        courier_draft_id="mock-inpost-1121",
+        pickup_ordered=True,
+    ),
+    _draft(
+        _SEED_IDS[12],
+        "1122",
+        "Rafał Mazur",
+        "inpost",
+        "inpost_locker_standard",
+        "created",
+        packages_count=2,
+        total_qty=4,
+        order_items=[{"name": _P12, "quantity": 3}, {"name": _G12, "quantity": 1}],
+        packages_breakdown=_bd_p(3) + _bd_g(1),
+        receiver={
+            "first_name": "Rafał",
+            "last_name": "Mazur",
+            "email": "rafal@example.com",
+            "phone": "+48613456789",
+            "locker_id": "LDZ02A",
+        },
+        shipping_address={"street": "", "city": "Lodz", "post_code": "90-001"},
+        tracking_number="630001234567890302",
+        courier_draft_id="mock-inpost-1122",
+        pickup_ordered=False,
+    ),
+    _draft(
+        _SEED_IDS[13],
+        "1123",
+        "Magdalena Kaczmarek",
+        "apaczka",
+        "apaczka",
+        "created",
+        packages_count=2,
+        total_qty=4,
+        order_items=[{"name": _P12, "quantity": 4}],
+        packages_breakdown=_bd_p(4),
+        receiver={
+            "first_name": "Magdalena",
+            "last_name": "Kaczmarek",
+            "email": "magdalena@example.com",
+            "phone": "+48614567890",
+            "locker_id": "",
+        },
+        shipping_address={
+            "street": "ul. Mickiewicza 11",
+            "city": "Szczecin",
+            "post_code": "70-001",
+        },
+        tracking_number="APZ11230000000",
+        courier_draft_id="apaczka-draft-1123",
+    ),
+    _draft(
+        _SEED_IDS[14],
+        "1124",
+        "Grzegorz Nowakowski",
+        "inpost",
+        "inpost_courier_standard",
+        "error",
+        packages_count=1,
+        total_qty=3,
+        order_items=[{"name": _P12, "quantity": 3}],
+        packages_breakdown=_bd_p(3),
+        receiver={
+            "first_name": "Grzegorz",
+            "last_name": "Nowakowski",
+            "email": "grzegorz@example.com",
+            "phone": "+48615678901",
+            "locker_id": "",
+        },
+        shipping_address={"street": "ul. Parkowa 6", "city": "Bydgoszcz", "post_code": "85-001"},
+        error="InPost API 401: invalid token — check inpost_api_token in Key Vault",
+    ),
 ]
 
 
@@ -265,7 +493,9 @@ def seed(store: ShippingStore, clear: bool) -> None:
 
     for draft in TEST_DRAFTS:
         store.upsert_draft(draft)
-        print(f"  ↑ #{draft['shopify_order_number']} {draft['customer_name']:<22s} [{draft['status']}]")
+        print(
+            f"  ↑ #{draft['shopify_order_number']} {draft['customer_name']:<22s} [{draft['status']}]"
+        )
 
     print(f"\n✅  {len(TEST_DRAFTS)} seed drafts written")
 
@@ -276,7 +506,9 @@ def show_status(store: ShippingStore) -> None:
         print("  (no drafts)")
         return
     for d in drafts:
-        print(f"  #{d['shopify_order_number']:6s}  {d['customer_name']:<22s}  {d['status']:<8s}  {d['courier']}")
+        print(
+            f"  #{d['shopify_order_number']:6s}  {d['customer_name']:<22s}  {d['status']:<8s}  {d['courier']}"
+        )
     print(f"\n  Total: {len(drafts)}")
 
 
