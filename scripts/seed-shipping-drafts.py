@@ -24,7 +24,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from zdrovena.common.shipping_store import ShippingStore
 
-
 _AZURITE_CONN = (
     "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;"
     "AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;"
@@ -136,17 +135,25 @@ _G12 = "HUMIO - woda alkaliczna, 12 butelek w szkle"
 def _bd_p(n):
     """Plastic greedy breakdown for n zgrzewki."""
     bd, r = [], n
-    for size, t in ((3,"3-pak"),(2,"2-pak"),(1,"1-pak")):
+    for size, t in ((3, "3-pak"), (2, "2-pak"), (1, "1-pak")):
         if r >= size:
-            c = r // size; bd.append({"type": t, "qty": c}); r -= c * size
-    if r > 0: bd.append({"type": "pół-pak", "qty": 1})
+            c = r // size
+            bd.append({"type": t, "qty": c})
+            r -= c * size
+    if r > 0:
+        bd.append({"type": "pół-pak", "qty": 1})
     return bd
+
 
 def _bd_g(n):
     """Glass greedy breakdown for n zgrzewki."""
     bd, r = [], n
-    if r >= 2: c = r // 2; bd.append({"type": "szkło-2pak", "qty": c}); r -= c * 2
-    if r > 0: bd.append({"type": "szkło", "qty": r})
+    if r >= 2:
+        c = r // 2
+        bd.append({"type": "szkło-2pak", "qty": c})
+        r -= c * 2
+    if r > 0:
+        bd.append({"type": "szkło", "qty": r})
     return bd
 
 TEST_DRAFTS = [

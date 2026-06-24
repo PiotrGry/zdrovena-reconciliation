@@ -17,8 +17,8 @@ import argparse
 import json
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 
 _P12 = "HUMIO - woda alkaliczna, 12 butelek"
 _G12 = "HUMIO - woda alkaliczna, 12 butelek w szkle"
