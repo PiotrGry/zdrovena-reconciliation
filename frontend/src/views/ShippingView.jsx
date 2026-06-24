@@ -42,25 +42,45 @@ function breakdownLabel(breakdown) {
     return breakdown.map(b => `${b.qty}×${b.type}`).join(' + ')
 }
 
+function isGlassName(name) {
+    return /szk[lł][eo]/i.test(name || '')
+}
+
+function materialTags(items) {
+    let plastic = 0, glass = 0
+    for (const it of items) {
+        const qty = it.quantity ?? 1
+        if (isGlassName(it.name)) glass += qty
+        else plastic += qty
+    }
+    const tags = []
+    if (plastic > 0) tags.push({ label: 'plastik', count: plastic, color: '#3b82f6', bg: '#eff6ff', border: '#bfdbfe' })
+    if (glass > 0) tags.push({ label: 'szkło', count: glass, color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' })
+    return tags
+}
+
 function PackagesInfo({ draft }) {
     const count = draft.packages_count ?? 1
     const items = draft.order_items ?? []
     const label = breakdownLabel(draft.packages_breakdown)
+    const tags = materialTags(items)
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div>
                 <span className="mono" style={{ fontWeight: 600 }}>{count}</span>
                 <span className="dim"> {count === 1 ? 'paczka' : 'paczki'}</span>
+                {label && <span className="dim" style={{ fontSize: '0.82em', marginLeft: 6 }}>{label}</span>}
             </div>
-            {label && (
-                <div className="dim" style={{ fontSize: '0.82em' }}>{label}</div>
-            )}
-            {items.length > 0 && (
-                <div style={{ fontSize: '0.82em', marginTop: 2 }}>
-                    {items.map((it, i) => (
-                        <div key={i}>
-                            <span className="mono">{it.quantity}×</span> {it.name}
-                        </div>
+            {tags.length > 0 && (
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {tags.map(tag => (
+                        <span key={tag.label} style={{
+                            fontSize: '0.75em', padding: '1px 8px', borderRadius: 10,
+                            background: tag.bg, color: tag.color, border: `1px solid ${tag.border}`,
+                            fontWeight: 500,
+                        }}>
+                            {tag.label} ×{tag.count}
+                        </span>
                     ))}
                 </div>
             )}
