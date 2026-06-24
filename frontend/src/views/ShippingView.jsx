@@ -741,6 +741,22 @@ export default function ShippingView() {
             </div>
 
             <div className="card" style={{ padding: 0 }}>
+                {!loading && !error && filtered.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', borderBottom: '2px solid var(--border-strong)', background: 'var(--surface-2)', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        <div style={{ width: 56, flexShrink: 0 }} />
+                        <div style={{ flex: 1, minWidth: 0, display: 'grid', alignItems: 'center', padding: '7px 16px 7px 0', gap: 12,
+                            gridTemplateColumns: '72px 1fr 170px 120px 130px 130px 88px 76px' }}>
+                            <span>Nr</span>
+                            <span>Klient</span>
+                            <span>Email</span>
+                            <span>Telefon</span>
+                            <span>Kurier</span>
+                            <span>Data</span>
+                            <span>Status</span>
+                            <span>Podjazd</span>
+                        </div>
+                    </div>
+                )}
                 {!loading && !error && filtered.length > 0 && selectableIds.length > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 16px 6px 0', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
                         <div style={{ width: 40, display: 'flex', justifyContent: 'center' }}>
