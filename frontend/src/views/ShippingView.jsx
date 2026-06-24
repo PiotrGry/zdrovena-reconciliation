@@ -269,7 +269,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                 <span className="dim mono" style={{ fontSize: '0.8em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {draft.receiver?.phone || ''}
                 </span>
-                <span><MaterialTags draft={draft} /></span>
+                <span style={{ display: 'flex', gap: 4, flexWrap: 'nowrap', overflow: 'hidden' }}><MaterialTags draft={draft} /></span>
                 <span><Pill kind={courierPillKind(draft)}>{courierLabel(draft)}</Pill></span>
                 <span className="mono dim" style={{ fontSize: '0.85em' }}>{fmtDate(draft.created_at)}</span>
                 <span>
@@ -320,10 +320,6 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                             <div className="mono">{draft.receiver?.phone || '—'}</div>
                         </div>
                         <div>
-                            <div className="detail-label">Paczki</div>
-                            <PackagesInfo draft={draft} />
-                        </div>
-                        <div>
                             <div className="detail-label">Numer śledzenia</div>
                             <div>
                                 {draft.tracking_number
@@ -345,6 +341,13 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                             <div className="mono dim">{draft.courier_draft_id || '—'}</div>
                         </div>
                     </div>
+
+                    {draft.packages_breakdown?.length > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                            <span className="detail-label" style={{ marginBottom: 0 }}>Paczki</span>
+                            <PackagesInfo draft={draft} />
+                        </div>
+                    )}
 
                     {draft.error && (
                         <div className="error-banner" style={{ marginTop: 8 }}>
