@@ -657,7 +657,9 @@ class TestGetLabel:
         assert resp.status_code == 404
 
     def test_400_for_unknown_courier(self, client, store):
+        # Draft with no courier field + invalid query param → 400
         draft = self._seed_created_draft(store)
+        store.update_draft(draft["id"], {"courier": ""})
         resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=unknown")
         assert resp.status_code == 400
 
@@ -976,7 +978,7 @@ class TestCalcPackages:
         assert count == 1
         assert bd == {"1-pak": 1}
 
-    def test_plastik_7_zgrzewki_3pak_plus_2pak_plus_2pak(self):
+    def test_plastik_7_zgrzewki_two_3pak_plus_1pak(self):
         count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek", 7))
         assert count == 3
         assert bd == {"3-pak": 2, "1-pak": 1}
