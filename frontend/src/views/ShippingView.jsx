@@ -71,31 +71,25 @@ function Chip({ label, style }) {
 }
 
 function PackagesInfo({ draft }) {
-    const count = draft.packages_count ?? 1
-    const items = draft.order_items ?? []
     const breakdown = draft.packages_breakdown ?? []
-    const matTags = materialTags(items)
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <div>
-                <span className="mono" style={{ fontWeight: 600 }}>{count}</span>
-                <span className="dim"> {count === 1 ? 'paczka' : 'paczki'}</span>
-            </div>
-            {matTags.length > 0 && (
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                    {matTags.map(tag => (
-                        <Chip key={tag.label} label={`${tag.label} ×${tag.count}`} style={tag} />
-                    ))}
-                </div>
-            )}
-            {breakdown.length > 0 && (
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                    {breakdown.map((b, i) => {
-                        const s = _GLASS_TYPES.has(b.type) ? _BOX_STYLE.glass : _BOX_STYLE.plastic
-                        return <Chip key={i} label={`${b.qty}×${b.type}`} style={s} />
-                    })}
-                </div>
-            )}
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {breakdown.map((b, i) => {
+                const s = _GLASS_TYPES.has(b.type) ? _BOX_STYLE.glass : _BOX_STYLE.plastic
+                return <Chip key={i} label={`${b.qty}×${b.type}`} style={s} />
+            })}
+        </div>
+    )
+}
+
+function MaterialTags({ draft }) {
+    const items = draft.order_items ?? []
+    const tags = materialTags(items)
+    return (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {tags.map(tag => (
+                <Chip key={tag.label} label={`${tag.label} ×${tag.count}`} style={tag} />
+            ))}
         </div>
     )
 }
@@ -260,7 +254,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
             <div
                 className="accordion-header"
                 style={{ padding: '10px 16px 10px 0', cursor: 'default', display: 'grid', alignItems: 'center',
-                    gridTemplateColumns: '72px 1fr 170px 120px 130px 130px 88px 76px' }}
+                    gridTemplateColumns: '72px 1fr 170px 120px 110px 130px 130px 88px 76px' }}
             >
                 <span className="mono">#{draft.shopify_order_number}</span>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -275,6 +269,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                 <span className="dim mono" style={{ fontSize: '0.8em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {draft.receiver?.phone || ''}
                 </span>
+                <span><MaterialTags draft={draft} /></span>
                 <span><Pill kind={courierPillKind(draft)}>{courierLabel(draft)}</Pill></span>
                 <span className="mono dim" style={{ fontSize: '0.85em' }}>{fmtDate(draft.created_at)}</span>
                 <span>
@@ -745,11 +740,12 @@ export default function ShippingView() {
                     <div style={{ display: 'flex', alignItems: 'center', borderBottom: '2px solid var(--border-strong)', background: 'var(--surface-2)', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                         <div style={{ width: 56, flexShrink: 0 }} />
                         <div style={{ flex: 1, minWidth: 0, display: 'grid', alignItems: 'center', padding: '7px 16px 7px 0', gap: 12,
-                            gridTemplateColumns: '72px 1fr 170px 120px 130px 130px 88px 76px' }}>
+                            gridTemplateColumns: '72px 1fr 170px 120px 110px 130px 130px 88px 76px' }}>
                             <span>Nr</span>
                             <span>Klient</span>
                             <span>Email</span>
                             <span>Telefon</span>
+                            <span>Paczki</span>
                             <span>Kurier</span>
                             <span>Data</span>
                             <span>Status</span>
