@@ -292,32 +292,33 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                 <div className="accordion-body">
                     <div className="detail-grid">
                         <div>
-                            <>
-                                    <div className="detail-label">
-                                        {draft.service === 'inpost_locker_standard' ? 'Paczkomat' : 'Adres dostawy'}
-                                    </div>
-                                    {draft.service === 'inpost_locker_standard' ? (
-                                        <div>
-                                            <span className="mono">{draft.receiver?.locker_id || '—'}</span>
-                                            {draft.shipping_address?.city && (
-                                                <span className="dim"> · {draft.shipping_address.city}</span>
-                                            )}
-                                        </div>
-                                    ) : (
-                                        <div>
-                                            {draft.shipping_address?.street}<br />
-                                            {draft.shipping_address?.post_code} {draft.shipping_address?.city}
-                                        </div>
+                            <div className="detail-label">
+                                {draft.service === 'inpost_locker_standard' ? 'Paczkomat' : 'Adres dostawy'}
+                            </div>
+                            {draft.service === 'inpost_locker_standard' ? (
+                                <div>
+                                    <span className="mono">{draft.receiver?.locker_id || '—'}</span>
+                                    {draft.shipping_address?.city && (
+                                        <span className="dim"> · {draft.shipping_address.city}</span>
                                     )}
-                            </>
+                                </div>
+                            ) : (
+                                <div>
+                                    {draft.shipping_address?.street}<br />
+                                    {draft.shipping_address?.post_code} {draft.shipping_address?.city}
+                                </div>
+                            )}
                         </div>
                         <div>
-                            <div className="detail-label">Email</div>
-                            <div>{draft.receiver?.email || '—'}</div>
-                        </div>
-                        <div>
-                            <div className="detail-label">Telefon</div>
-                            <div className="mono">{draft.receiver?.phone || '—'}</div>
+                            <div className="detail-label">Paczki</div>
+                            <div style={{ marginTop: 4 }}>
+                                <MaterialTags draft={draft} />
+                            </div>
+                            {draft.packages_breakdown?.length > 0 && (
+                                <div style={{ marginTop: 6 }}>
+                                    <PackagesInfo draft={draft} />
+                                </div>
+                            )}
                         </div>
                         <div>
                             <div className="detail-label">Numer śledzenia</div>
@@ -335,19 +336,10 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                                     )
                                     : <span className="dim">—</span>}
                             </div>
-                        </div>
-                        <div>
-                            <div className="detail-label">ID draftu kuriera</div>
+                            <div className="detail-label" style={{ marginTop: 10 }}>ID draftu kuriera</div>
                             <div className="mono dim">{draft.courier_draft_id || '—'}</div>
                         </div>
                     </div>
-
-                    {draft.packages_breakdown?.length > 0 && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-                            <span className="detail-label" style={{ marginBottom: 0 }}>Paczki</span>
-                            <PackagesInfo draft={draft} />
-                        </div>
-                    )}
 
                     {draft.error && (
                         <div className="error-banner" style={{ marginTop: 8 }}>
