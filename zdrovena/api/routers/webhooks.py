@@ -279,9 +279,14 @@ def _calc_packages(
     if remaining > 0:
         breakdown.append({"type": "pół-pak", "qty": 1})
 
-    # Szkło — 1 pudełko na zgrzewkę
-    if glass_qty > 0:
-        breakdown.append({"type": "szkło", "qty": glass_qty})
+    # Szkło — greedy: 2-pak first, then single boxes
+    remaining_glass = glass_qty
+    if remaining_glass >= 2:
+        count = remaining_glass // 2
+        breakdown.append({"type": "szkło-2pak", "qty": count})
+        remaining_glass -= count * 2
+    if remaining_glass > 0:
+        breakdown.append({"type": "szkło", "qty": remaining_glass})
 
     total = sum(b["qty"] for b in breakdown)
     return max(total, 1), breakdown

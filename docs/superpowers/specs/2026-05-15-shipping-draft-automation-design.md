@@ -237,7 +237,8 @@ Shopify `line_item.quantity` = liczba zgrzewek.
 | 2-pak | 2 | plastik, pełny karton |
 | 1-pak | 1 | plastik, pełny karton |
 | pół-pak | 0.5 | plastik, niepełna zgrzewka |
-| szkło-box | 1 | szkło, zawsze 1 pudełko/zgrzewkę |
+| szkło | 1 | szkło, 1 pudełko/zgrzewkę |
+| szkło-2pak | 2 | szkło, karton na 2 zgrzewki |
 
 ### Packing algorithm
 
@@ -250,9 +251,10 @@ elif remaining == 1: use 1-pak
 elif remaining > 0: use pół-pak
 ```
 
-**Szkło** — jedna zgrzewka = jedno pudełko (bez konsolidacji):
+**Szkło** — greedy 2-pak first, then single:
 ```
-glass_boxes = total_glass_zgrzewki
+while glass >= 2: use szkło-2pak, glass -= 2
+if glass == 1: use szkło
 ```
 
 **Łącznie:**

@@ -568,8 +568,8 @@ class TestCreateDraft:
         assert d["service"] == "inpost_courier_standard"
         assert d["status"] == "pending"
         assert d["source"] == "shopify"
-        assert d["packages_count"] == 2  # 2 zgrzewki szkła → 2 pudełka
-        assert d["packages_breakdown"] == [{"type": "szkło", "qty": 2}]
+        assert d["packages_count"] == 1  # 2 zgrzewki szkła → 1×szkło-2pak
+        assert d["packages_breakdown"] == [{"type": "szkło-2pak", "qty": 1}]
         assert d["tracking_number"] is None
         assert d["courier_draft_id"] is None
         assert d["shopify_order_number"] == "1002"
@@ -985,10 +985,20 @@ class TestCalcPackages:
         assert count == 1
         assert bd == {"szkło": 1}
 
-    def test_szklo_3_zgrzewki_three_boxes(self):
+    def test_szklo_2_zgrzewki_one_2pak(self):
+        count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek w szkle", 2))
+        assert count == 1
+        assert bd == {"szkło-2pak": 1}
+
+    def test_szklo_3_zgrzewki_2pak_plus_1pak(self):
         count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek w szkle", 3))
-        assert count == 3
-        assert bd == {"szkło": 3}
+        assert count == 2
+        assert bd == {"szkło-2pak": 1, "szkło": 1}
+
+    def test_szklo_4_zgrzewki_two_2pak(self):
+        count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek w szkle", 4))
+        assert count == 2
+        assert bd == {"szkło-2pak": 2}
 
     # ── Mieszane ─────────────────────────────────────────────────────────────
 
