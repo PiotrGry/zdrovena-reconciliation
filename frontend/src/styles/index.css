@@ -2155,27 +2155,37 @@ table.files tbody tr:hover .row-actions {
 
 .accordion-row {
     border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
 }
 .accordion-row:last-child {
     border-bottom: none;
+}
+.accordion-row:nth-child(even) {
+    background: var(--surface);
+}
+.accordion-row:nth-child(odd) {
+    background: var(--bg);
+}
+.accordion-row:hover {
+    background: var(--surface-2) !important;
+}
+.accordion-row.open {
+    background: var(--surface-2) !important;
+    border-left: 3px solid var(--primary, #3b82f6);
 }
 
 .accordion-header {
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 10px 16px;
+    gap: 12px;
+    padding: 13px 16px;
     background: none;
     border: none;
-    cursor: pointer;
+    cursor: default;
     text-align: left;
-    font-size: 13px;
+    font-size: 14px;
     color: var(--text);
-    transition: background 0.1s;
-}
-.accordion-header:hover {
-    background: var(--surface-2);
 }
 .accordion-row.open .accordion-header {
     background: var(--surface-2);
