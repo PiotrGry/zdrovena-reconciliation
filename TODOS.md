@@ -337,3 +337,43 @@ az monitor metrics alert create --name test-alert --resource-group zdrovena-rg \
 - **Priority:** P3
 - **Depends on:** Shipping draft automation (Azure Function) deployed first
 - **Context:** After the shipping Function is live, Application Insights logs are sufficient initially. Add a daily digest (email or Slack) when volume grows beyond ~50 orders/month.
+
+---
+
+## Shipping — Technical Debt (from /review 2026-06-24)
+
+### Webhook idempotency
+- **What:** Shopify retries create duplicate drafts (new UUID per call). Double-execute = double shipment.
+- **Fix:** Check `shopify_order_id` before insert in `_create_draft`; use it as RowKey for idempotent upsert.
+- **Priority:** P1
+- **File:** `zdrovena/api/routers/webhooks.py:373`
+
+### execute_draft race condition (TOCTOU)
+- **What:** Two concurrent execute calls for same draft can both pass the `status != "created"` guard and create two courier shipments.
+- **Fix:** Use ETag/optimistic concurrency in `update_entity` (Azure Table Storage mode="replace" with ETag).
+- **Priority:** P2
+- **File:** `zdrovena/api/routers/webhooks.py:465`
+
+### ShippingStore _deserialize type coercion
+- **What:** Every string from Table Storage is speculatively JSON-parsed. `"null"` → `None`, `"1234567890"` → int. Can corrupt customer names or tracking numbers.
+- **Fix:** Whitelist known dict/list fields (`receiver`, `shipping_address`, `packages_breakdown`, `order_items`) instead of parsing all strings.
+- **Priority:** P2
+- **File:** `zdrovena/common/shipping_store.py:52`
+
+### _table_client() creates new Azure client per operation
+- **What:** Each upsert/update/get spawns a new TableServiceClient + create_table_if_not_exists HTTP call. Unnecessary overhead on every request.
+- **Fix:** Cache the client at class construction time.
+- **Priority:** P3
+- **File:** `zdrovena/common/shipping_store.py:81`
+
+### Missing auth enforcement tests (403 for non-privileged callers)
+- **What:** execute_draft/order_pickup/update_draft have no tests for `zdrovena-viewer` role (should get 403).
+- **Fix:** Add 3-4 tests with non-admin token.
+- **Priority:** P3
+- **File:** `tests/test_shipping_webhook.py`
+
+### Missing SMS notification tests
+- **What:** `_maybe_send_new_order_sms` has zero test coverage — no happy path, no exception-swallowed path.
+- **Fix:** Add `TestSmsNotification` class with 3 test cases.
+- **Priority:** P3
+- **File:** `tests/test_shipping_webhook.py`

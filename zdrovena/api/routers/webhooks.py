@@ -54,10 +54,11 @@ def _get_webhook_secret() -> str | None:
 
 
 def _get_sender() -> dict[str, str]:
+    _name = get_secret("sender_name", required=False) or ""
     return {
-        "name": get_secret("sender_name", required=False) or "",
+        "name": _name,
         "firstname": "",
-        "lastname": get_secret("sender_name", required=False) or "",
+        "lastname": _name,
         "street": get_secret("sender_street", required=False) or "",
         "building_number": "1",
         "city": get_secret("sender_city", required=False) or "",
@@ -256,7 +257,7 @@ def _calc_packages(
     """Return (packages_count, packages_breakdown) for a list of filtered line items.
 
     Plastik: greedy largest-box-first (3-pak → 2-pak → 1-pak → pół-pak).
-    Szkło: always 1 box per zgrzewka (no consolidation).
+    Szkło: greedy 2-pak consolidation (szkło-2pak → szkło for remainder).
     """
     plastic_qty = 0
     glass_qty = 0
@@ -610,7 +611,7 @@ def get_label(
     shipping_store: ShippingStoreDep,
     storage: StorageDep,
     principal: Annotated[Principal, Depends(require_viewer_or_above)],
-    courier: str = Query(..., description="inpost or apaczka"),
+    courier: str = Query(None, description="inpost or apaczka (defaults to draft's courier)"),
 ) -> StreamingResponse:
     draft = shipping_store.get_draft(draft_id)
     if not draft:
@@ -619,6 +620,11 @@ def get_label(
     courier_draft_id = draft.get("courier_draft_id")
     if not courier_draft_id:
         raise HTTPException(status_code=404, detail="No courier draft ID — draft may have failed")
+
+    # Prefer the stored draft courier over the query param (prevents mismatch)
+    courier = draft.get("courier") or courier
+    if courier not in ("inpost", "apaczka"):
+        raise HTTPException(status_code=400, detail="courier must be 'inpost' or 'apaczka'")
 
     try:
         if courier == "inpost":
