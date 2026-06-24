@@ -87,7 +87,8 @@ class ShippingStore:
                 credential=DefaultAzureCredential(),
             )
         else:
-            assert self._connection_string
+            if not self._connection_string:
+                raise RuntimeError("ShippingStore: neither account_url nor connection_string is set")
             svc = TableServiceClient.from_connection_string(self._connection_string)
         return svc.create_table_if_not_exists(TABLE_NAME)
 
