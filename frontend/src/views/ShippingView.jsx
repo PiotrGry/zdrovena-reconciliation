@@ -279,7 +279,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
 
             {open && (
                 <div className="accordion-body">
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: '12px 24px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr', gap: '12px 24px' }}>
                         <div>
                             <div className="detail-label">
                                 {draft.service === 'inpost_locker_standard' ? 'Paczkomat' : 'Adres dostawy'}
@@ -297,22 +297,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                                     {draft.shipping_address?.post_code} {draft.shipping_address?.city}
                                 </div>
                             )}
-                            <div className="detail-label" style={{ marginTop: 10 }}>Numer śledzenia</div>
-                            <div>
-                                {draft.tracking_number
-                                    ? (
-                                        <span className="mono copyable" title="Kliknij żeby skopiować"
-                                            onClick={() => navigator.clipboard.writeText(draft.tracking_number)}
-                                            style={{ cursor: 'pointer' }}>
-                                            {draft.tracking_number}
-                                        </span>
-                                    )
-                                    : <span className="dim">—</span>}
-                            </div>
-                            <div className="detail-label" style={{ marginTop: 10 }}>ID draftu kuriera</div>
-                            <div className="mono dim">{draft.courier_draft_id || '—'}</div>
                         </div>
-                        <div />
                         <div>
                             <div className="detail-label">Paczki</div>
                             {draft.packages_breakdown?.length > 0 ? (
@@ -346,6 +331,22 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                                     </tbody>
                                 </table>
                             ) : <span className="dim">—</span>}
+                        </div>
+                        <div>
+                            <div className="detail-label">Numer śledzenia</div>
+                            <div>
+                                {draft.tracking_number
+                                    ? (
+                                        <span className="mono copyable" title="Kliknij żeby skopiować"
+                                            onClick={() => navigator.clipboard.writeText(draft.tracking_number)}
+                                            style={{ cursor: 'pointer' }}>
+                                            {draft.tracking_number}
+                                        </span>
+                                    )
+                                    : <span className="dim">—</span>}
+                            </div>
+                            <div className="detail-label" style={{ marginTop: 10 }}>ID draftu kuriera</div>
+                            <div className="mono dim">{draft.courier_draft_id || '—'}</div>
                         </div>
                     </div>
 
