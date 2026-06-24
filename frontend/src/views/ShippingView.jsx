@@ -37,9 +37,10 @@ function sourcePillKind(source) {
     return 'default'
 }
 
-function breakdownLabel(breakdown) {
-    if (!breakdown || breakdown.length === 0) return null
-    return breakdown.map(b => `${b.qty}×${b.type}`).join(' + ')
+const _GLASS_TYPES = new Set(['szkło', 'szkło-2pak'])
+const _BOX_STYLE = {
+    plastic: { color: '#3b82f6', bg: '#eff6ff', border: '#bfdbfe' },
+    glass:   { color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' },
 }
 
 function isGlassName(name) {
@@ -54,33 +55,44 @@ function materialTags(items) {
         else plastic += qty
     }
     const tags = []
-    if (plastic > 0) tags.push({ label: 'plastik', count: plastic, color: '#3b82f6', bg: '#eff6ff', border: '#bfdbfe' })
-    if (glass > 0) tags.push({ label: 'szkło', count: glass, color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' })
+    if (plastic > 0) tags.push({ label: 'plastik', count: plastic, ..._BOX_STYLE.plastic })
+    if (glass > 0) tags.push({ label: 'szkło', count: glass, ..._BOX_STYLE.glass })
     return tags
+}
+
+function Chip({ label, style }) {
+    return (
+        <span style={{
+            fontSize: '0.75em', padding: '1px 8px', borderRadius: 10,
+            fontWeight: 500, whiteSpace: 'nowrap',
+            background: style.bg, color: style.color, border: `1px solid ${style.border}`,
+        }}>{label}</span>
+    )
 }
 
 function PackagesInfo({ draft }) {
     const count = draft.packages_count ?? 1
     const items = draft.order_items ?? []
-    const label = breakdownLabel(draft.packages_breakdown)
-    const tags = materialTags(items)
+    const breakdown = draft.packages_breakdown ?? []
+    const matTags = materialTags(items)
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div>
                 <span className="mono" style={{ fontWeight: 600 }}>{count}</span>
                 <span className="dim"> {count === 1 ? 'paczka' : 'paczki'}</span>
-                {label && <span className="dim" style={{ fontSize: '0.82em', marginLeft: 6 }}>{label}</span>}
             </div>
-            {tags.length > 0 && (
+            {breakdown.length > 0 && (
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                    {tags.map(tag => (
-                        <span key={tag.label} style={{
-                            fontSize: '0.75em', padding: '1px 8px', borderRadius: 10,
-                            background: tag.bg, color: tag.color, border: `1px solid ${tag.border}`,
-                            fontWeight: 500,
-                        }}>
-                            {tag.label} ×{tag.count}
-                        </span>
+                    {breakdown.map((b, i) => {
+                        const s = _GLASS_TYPES.has(b.type) ? _BOX_STYLE.glass : _BOX_STYLE.plastic
+                        return <Chip key={i} label={`${b.qty}×${b.type}`} style={s} />
+                    })}
+                </div>
+            )}
+            {matTags.length > 0 && (
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {matTags.map(tag => (
+                        <Chip key={tag.label} label={`${tag.label} ×${tag.count}`} style={tag} />
                     ))}
                 </div>
             )}
