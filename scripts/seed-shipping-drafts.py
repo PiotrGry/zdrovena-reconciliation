@@ -301,7 +301,7 @@ def main() -> None:
         seed(store, clear=False)
         return
 
-    print("Seedowanie shipping drafts:")
+    print("Seeding shipping drafts:")
     seed(store, clear=args.clear)
 
 
