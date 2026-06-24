@@ -239,7 +239,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
 
     return (
         <div className={`accordion-row${open ? ' open' : ''}`} style={{ display: 'flex', alignItems: 'stretch' }}>
-            <div style={{ width: 40, flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 11 }}>
+            <div style={{ width: 56, flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', gap: 4, paddingTop: 9 }}>
                 {isSelectable ? (
                     <input
                         type="checkbox"
@@ -248,6 +248,13 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                         style={{ cursor: 'pointer', accentColor: 'var(--primary, #3b82f6)' }}
                     />
                 ) : <span style={{ width: 16 }} />}
+                <button
+                    onClick={() => setOpen(o => !o)}
+                    aria-expanded={open}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--text-2)', display: 'flex', alignItems: 'center' }}
+                >
+                    <Icon name={open ? 'chevronUp' : 'chevronDown'} size={14} />
+                </button>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
             <div
@@ -279,15 +286,6 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                         {T.sh_pickup_done ?? 'podjazd ✓'}
                     </span>
                 )}
-                <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => setOpen(o => !o)}
-                    aria-expanded={open}
-                    style={{ padding: '2px 8px', fontSize: '0.8em', display: 'flex', alignItems: 'center', gap: 3 }}
-                >
-                    <Icon name={open ? 'chevronUp' : 'chevronDown'} size={12} />
-                    {open ? 'Zwiń' : 'Rozwiń'}
-                </button>
             </div>
 
             {open && (
