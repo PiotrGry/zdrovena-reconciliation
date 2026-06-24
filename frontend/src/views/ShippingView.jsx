@@ -81,19 +81,19 @@ function PackagesInfo({ draft }) {
                 <span className="mono" style={{ fontWeight: 600 }}>{count}</span>
                 <span className="dim"> {count === 1 ? 'paczka' : 'paczki'}</span>
             </div>
+            {matTags.length > 0 && (
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {matTags.map(tag => (
+                        <Chip key={tag.label} label={`${tag.label} ×${tag.count}`} style={tag} />
+                    ))}
+                </div>
+            )}
             {breakdown.length > 0 && (
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                     {breakdown.map((b, i) => {
                         const s = _GLASS_TYPES.has(b.type) ? _BOX_STYLE.glass : _BOX_STYLE.plastic
                         return <Chip key={i} label={`${b.qty}×${b.type}`} style={s} />
                     })}
-                </div>
-            )}
-            {matTags.length > 0 && (
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                    {matTags.map(tag => (
-                        <Chip key={tag.label} label={`${tag.label} ×${tag.count}`} style={tag} />
-                    ))}
                 </div>
             )}
         </div>
@@ -224,14 +224,18 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                 ) : <span style={{ width: 16 }} />}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-            <button
+            <div
                 className="accordion-header"
-                onClick={() => setOpen(o => !o)}
-                aria-expanded={open}
-                style={{ paddingLeft: 0 }}
+                style={{ paddingLeft: 0, cursor: 'default' }}
             >
                 <span className="mono" style={{ minWidth: 80 }}>#{draft.shopify_order_number}</span>
                 <span style={{ flex: 1, textAlign: 'left' }}>{draft.customer_name || '—'}</span>
+                {draft.receiver?.email && (
+                    <span className="dim" style={{ fontSize: '0.8em' }}>{draft.receiver.email}</span>
+                )}
+                {draft.receiver?.phone && (
+                    <span className="dim mono" style={{ fontSize: '0.8em' }}>{draft.receiver.phone}</span>
+                )}
                 {draft.source && draft.source !== 'shopify' && (
                     <Pill kind={sourcePillKind(draft.source)}>{draft.source}</Pill>
                 )}
@@ -249,8 +253,16 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                         {T.sh_pickup_done ?? 'podjazd ✓'}
                     </span>
                 )}
-                <Icon name={open ? 'chevronUp' : 'chevronDown'} size={14} className="icon" />
-            </button>
+                <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setOpen(o => !o)}
+                    aria-expanded={open}
+                    style={{ padding: '2px 8px', fontSize: '0.8em', display: 'flex', alignItems: 'center', gap: 3 }}
+                >
+                    <Icon name={open ? 'chevronUp' : 'chevronDown'} size={12} />
+                    {open ? 'Zwiń' : 'Rozwiń'}
+                </button>
+            </div>
 
             {open && (
                 <div className="accordion-body">
@@ -274,6 +286,10 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                                         </div>
                                     )}
                             </>
+                        </div>
+                        <div>
+                            <div className="detail-label">Email</div>
+                            <div>{draft.receiver?.email || '—'}</div>
                         </div>
                         <div>
                             <div className="detail-label">Telefon</div>
