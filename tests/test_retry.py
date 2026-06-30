@@ -251,3 +251,116 @@ class TestSleepFnInjection:
 
         assert len(calls) == 1
         assert isinstance(calls[0], float)
+
+
+# ── TDD-red: additional retryable status codes ────────────────────────────────
+
+
+def _make_session_returning_status(status: int, headers: dict | None = None):
+    """Build a MagicMock session that raises HTTPError carrying a response
+    with the given status_code so retry_request can inspect it.
+    """
+    session = MagicMock(spec=requests.Session)
+    mock_resp = MagicMock(spec=requests.Response)
+    mock_resp.status_code = status
+    mock_resp.headers = headers or {}
+    exc = requests.HTTPError(f"{status}", response=mock_resp)
+    mock_resp.raise_for_status.side_effect = exc
+    session.request.return_value = mock_resp
+    return session, mock_resp
+
+
+class TestRetryableStatusCodesTDD:
+    """**TDD-red** — _RETRYABLE_STATUS_CODES = {429, 503} today.
+
+    Per audit §7.4: 502 (Bad Gateway), 504 (Gateway Timeout) and 408 (Request
+    Timeout) are universally treated as retryable and must honour Retry-After.
+    These tests fail until retry.py extends the set.
+    """
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="TDD: 502 is not in _RETRYABLE_STATUS_CODES; Retry-After ignored",
+    )
+    def test_502_with_retry_after_is_honoured(self):
+        session, _ = _make_session_returning_status(502, {"Retry-After": "7"})
+        sleeps: list[float] = []
+        with pytest.raises(RuntimeError):
+            retry_request(
+                session,
+                "GET",
+                "https://example.com/api",
+                max_retries=2,
+                initial_delay=1.0,
+                sleep_fn=sleeps.append,
+            )
+        # 7s Retry-After should override initial_delay 1s (±20% jitter)
+        assert len(sleeps) == 1
+        assert 5.6 <= sleeps[0] <= 8.4
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="TDD: 504 is not in _RETRYABLE_STATUS_CODES; Retry-After ignored",
+    )
+    def test_504_with_retry_after_is_honoured(self):
+        session, _ = _make_session_returning_status(504, {"Retry-After": "4"})
+        sleeps: list[float] = []
+        with pytest.raises(RuntimeError):
+            retry_request(
+                session,
+                "GET",
+                "https://example.com/api",
+                max_retries=2,
+                initial_delay=1.0,
+                sleep_fn=sleeps.append,
+            )
+        assert len(sleeps) == 1
+        assert 3.2 <= sleeps[0] <= 4.8
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="TDD: 408 is not in _RETRYABLE_STATUS_CODES; Retry-After ignored",
+    )
+    def test_408_with_retry_after_is_honoured(self):
+        session, _ = _make_session_returning_status(408, {"Retry-After": "3"})
+        sleeps: list[float] = []
+        with pytest.raises(RuntimeError):
+            retry_request(
+                session,
+                "GET",
+                "https://example.com/api",
+                max_retries=2,
+                initial_delay=1.0,
+                sleep_fn=sleeps.append,
+            )
+        assert len(sleeps) == 1
+        assert 2.4 <= sleeps[0] <= 3.6
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="TDD: HTTP-date Retry-After format (RFC 7231) not parsed",
+    )
+    def test_retry_after_http_date_format(self):
+        # "Retry-After: Wed, 21 Oct 2026 07:28:00 GMT" — valid per RFC 7231.
+        # Current code does float("Wed, ...") which raises ValueError and
+        # silently falls back to exponential backoff. The HTTP-date should
+        # produce a positive wait based on the delta from now() (clamped to
+        # initial_delay at minimum).
+        session, _ = _make_session_returning_status(
+            503, {"Retry-After": "Wed, 21 Oct 2099 07:28:00 GMT"}
+        )
+        sleeps: list[float] = []
+        with pytest.raises(RuntimeError):
+            retry_request(
+                session,
+                "GET",
+                "https://example.com/api",
+                max_retries=2,
+                initial_delay=1.0,
+                sleep_fn=sleeps.append,
+            )
+        # The date is far in the future — implementation should clamp to a
+        # sensible upper bound, but the value MUST be significantly larger
+        # than initial_delay=1.0 (proving the header was parsed).
+        assert len(sleeps) == 1
+        assert sleeps[0] >= 5.0
