@@ -448,6 +448,53 @@ class TestUpdateDraft:
         resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"packages_count": 100})
         assert resp.status_code == 422
 
+    def test_reviewed_true_clears_needs_review_status(self, client, store):
+        draft = self._seed_draft(store)
+        store.update_draft(draft["id"], {"status": "needs_review"})
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"reviewed": True})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "pending"
+        updated = store.get_draft(draft["id"])
+        assert updated["status"] == "pending"
+
+    def test_reviewed_true_clears_error_field(self, client, store):
+        draft = self._seed_draft(store)
+        store.update_draft(draft["id"], {"status": "needs_review", "error": "Test error"})
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"reviewed": True})
+        assert resp.status_code == 200
+        assert resp.json()["error"] is None
+        updated = store.get_draft(draft["id"])
+        assert updated["error"] is None
+
+    def test_reviewed_true_ignored_when_not_needs_review(self, client, store):
+        draft = self._seed_draft(store)
+        store.update_draft(draft["id"], {"status": "pending"})
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"reviewed": True})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "pending"
+
+    def test_needs_review_draft_still_blocks_execute(self, client, store):
+        draft = self._seed_draft(store)
+        store.update_draft(draft["id"], {"status": "needs_review"})
+        resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 409
+        assert "requires review" in resp.json()["detail"].lower()
+
+    def test_after_reviewed_execute_not_blocked_by_review(self, client, store):
+        draft = self._seed_draft(store)
+        store.update_draft(draft["id"], {"status": "needs_review"})
+        # First PATCH to mark as reviewed
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"reviewed": True})
+        assert resp.status_code == 200
+        # Now execute should not be blocked by needs_review (no 409 with "review" in message)
+        resp = client.post(
+            f"/api/shipping/drafts/{draft['id']}/execute",
+            json={"pickup_date": "2026-07-05", "pickup_from": "08:00", "pickup_to": "17:00"},
+        )
+        # Should NOT return 409 with "requires review" message
+        if resp.status_code == 409:
+            assert "review" not in resp.json()["detail"].lower()
+
 
 # ── Helper function unit tests ────────────────────────────────────────────────
 
