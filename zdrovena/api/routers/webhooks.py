@@ -94,9 +94,6 @@ def _get_sender() -> dict[str, str]:
 # ── Address / phone parsing helpers ───────────────────────────────────────────
 
 
-
-
-
 # ── SMS notification ─────────────────────────────────────────────────────────
 
 
@@ -517,14 +514,22 @@ async def shopify_order_created(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature"
             )
     else:
-        allow_unsigned = os.getenv("ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS", "").lower() in ("1", "true", "yes")
+        allow_unsigned = os.getenv("ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         if not allow_unsigned:
-            logger.warning("shopify-webhook-secret not configured and unsigned webhooks disabled — rejected")
+            logger.warning(
+                "shopify-webhook-secret not configured and unsigned webhooks disabled — rejected"
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Webhook secret not configured",
             )
-        logger.warning("shopify-webhook-secret not configured — skipping HMAC validation (unsigned webhooks allowed)")
+        logger.warning(
+            "shopify-webhook-secret not configured — skipping HMAC validation (unsigned webhooks allowed)"
+        )
 
     try:
         order = json.loads(raw_body)

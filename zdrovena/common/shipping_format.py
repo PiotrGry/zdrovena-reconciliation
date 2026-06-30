@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import re
 
-_ADDR_RE = re.compile(
-    r"^(.+?)\s+(\d+[A-Za-z]?(?:[/-]\d+)?)(?:\s+.*)?$", re.IGNORECASE
-)
+_ADDR_RE = re.compile(r"^(.+?)\s+(\d+[A-Za-z]?(?:[/-]\d+)?)(?:\s+.*)?$", re.IGNORECASE)
 _PHONE_DIGITS_RE = re.compile(r"\D")
 _LOCKER_ID_RE = re.compile(r"^[A-Z0-9]{3,12}$")
 

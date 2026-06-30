@@ -86,7 +86,9 @@ class ApaczkaClient:
             import io
 
             json_bytes = json.dumps(cache_doc).encode()
-            self._storage.upload_stream(io.BytesIO(json_bytes), _SERVICE_CACHE_KEY, "application/json")  # type: ignore[attr-defined]
+            self._storage.upload_stream(
+                io.BytesIO(json_bytes), _SERVICE_CACHE_KEY, "application/json"
+            )  # type: ignore[attr-defined]
         except Exception as exc:
             logger.warning("Failed to cache Apaczka service_structure: %s", exc)
         return services  # type: ignore[return-value]
