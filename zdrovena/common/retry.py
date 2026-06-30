@@ -17,6 +17,8 @@ import logging
 import random
 import time
 from collections.abc import Callable
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, TypeVar
 
 import requests
@@ -28,7 +30,7 @@ logger = logging.getLogger("zdrovena.common.retry")
 T = TypeVar("T")
 
 # Status codes that trigger a retry with optional Retry-After header
-_RETRYABLE_STATUS_CODES = frozenset({429, 503})
+_RETRYABLE_STATUS_CODES = frozenset({408, 429, 502, 503, 504})
 
 
 def _jittered_delay(base: float, jitter_ratio: float = 0.2) -> float:
@@ -36,6 +38,25 @@ def _jittered_delay(base: float, jitter_ratio: float = 0.2) -> float:
     low = base * (1 - jitter_ratio)
     high = base * (1 + jitter_ratio)
     return random.uniform(low, high)
+
+
+def _parse_retry_after(retry_after_str: str) -> float | None:
+    """Parse Retry-After header.
+
+    Format 1: decimal-int (seconds)
+    Format 2: HTTP-date (RFC 7231) e.g. "Wed, 21 Oct 2026 07:28:00 GMT"
+    Returns seconds to wait, or None if unparseable.
+    """
+    try:
+        return float(retry_after_str)
+    except ValueError:
+        pass
+    try:
+        future = parsedate_to_datetime(retry_after_str)
+        delta = (future - datetime.now(tz=future.tzinfo)).total_seconds()
+        return max(0, delta)
+    except (TypeError, ValueError):
+        return None
 
 
 def retry_request(
@@ -96,17 +117,15 @@ def retry_request(
             )
             if attempt < max_retries:
                 wait = delay
-                # Respect Retry-After header on 429 / 503
                 resp_obj = getattr(exc, "response", None)
                 if resp_obj is not None:
                     status = getattr(resp_obj, "status_code", None)
                     if status in _RETRYABLE_STATUS_CODES:
                         retry_after = resp_obj.headers.get("Retry-After")
                         if retry_after:
-                            try:
-                                wait = max(float(retry_after), wait)
-                            except (ValueError, TypeError):
-                                pass
+                            parsed = _parse_retry_after(retry_after)
+                            if parsed is not None:
+                                wait = max(parsed, wait)
                 wait = _jittered_delay(wait)
                 _sleep(wait)
                 delay *= 2

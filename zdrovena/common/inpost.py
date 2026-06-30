@@ -7,14 +7,101 @@ Secrets: inpost-api-token, inpost-organization-id (Key Vault).
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import requests
 
 logger = logging.getLogger("zdrovena.common.inpost")
 
-_BASE = "https://api-shipx-pl.easypack24.net"
+_BASE = os.environ.get("INPOST_BASE_URL", "https://api-shipx-pl.easypack24.net")
 _TIMEOUT = 15
+
+# Physical dimensions and weights per package type produced by _calc_packages.
+# Dimensions in cm; weight_kg is gross weight of a single box.
+# szkło-2pak = two szkło boxes → same per-box spec, sent as qty=2 in parcels list.
+# paczkomat_template: InPost locker template (A=small/B=medium/C=large); None = too big for any locker.
+# dpd_template / orlen_template: to be filled when those carriers are integrated.
+PARCEL_SPECS: dict[str, dict] = {
+    "3-pak": {
+        "length": 40,
+        "width": 40,
+        "height": 20,
+        "weight_kg": 18.0,
+        "paczkomat_template": "large",
+    },
+    "2-pak": {
+        "length": 40,
+        "width": 30,
+        "height": 20,
+        "weight_kg": 12.0,
+        "paczkomat_template": "large",
+    },
+    "1-pak": {
+        "length": 30,
+        "width": 20,
+        "height": 20,
+        "weight_kg": 6.0,
+        "paczkomat_template": "large",
+    },
+    "pół-pak": {
+        "length": 20,
+        "width": 15,
+        "height": 20,
+        "weight_kg": 3.0,
+        "paczkomat_template": "large",
+    },
+    "szkło": {
+        "length": 30,
+        "width": 30,
+        "height": 20,
+        "weight_kg": 9.0,
+        "paczkomat_template": "large",
+    },
+    "szkło-2pak": {
+        "length": 30,
+        "width": 30,
+        "height": 20,
+        "weight_kg": 9.0,
+        "paczkomat_template": "large",
+    },
+}
+
+# Max package dimensions that fit in the "large" slot of each carrier's locker/automat.
+# Dimensions: height × width × depth (cm), max_weight_kg.
+# ✅ = verified against carrier/aggregator website; ❓ = unverified, use with caution.
+LOCKER_LARGE_SLOT: dict[str, dict] = {
+    "inpost": {
+        "height": 41,
+        "width": 38,
+        "depth": 64,
+        "max_weight_kg": 25,
+        "verified": True,
+    },  # ✅ apaczka.pl / inpost.pl
+    "orlen": {
+        "height": 41,
+        "width": 38,
+        "depth": 60,
+        "max_weight_kg": 20,
+        "verified": True,
+    },  # ✅ apaczka.pl (60×41×38)
+    "dpd_automat": {
+        "height": 50,
+        "width": 44,
+        "depth": 59,
+        "max_weight_kg": 20,
+        "verified": False,
+    },  # ❓ DPD nie publikuje wymiarów skrytki
+    "dpd_punkt": {
+        "height": 64,
+        "width": 41,
+        "depth": 38,
+        "max_weight_kg": 20,
+        "verified": False,
+    },  # ❓ DPD nie publikuje wymiarów skrytki
+}
+
+_DEFAULT_DIMS = PARCEL_SPECS["1-pak"]
 
 
 class InPostError(Exception):
@@ -75,7 +162,7 @@ class InPostClient:
         weight_kg: float = 1.0,
         dimensions: dict[str, float] | None = None,
     ) -> dict[str, Any]:
-        dims = dimensions or {"length": 30, "width": 20, "height": 15}
+        dims = dimensions or _DEFAULT_DIMS
         payload = {
             "service": "inpost_courier_standard",
             "reference": reference,
@@ -166,6 +253,36 @@ class InPostClient:
         data = resp.json()
         logger.info("InPost dispatch order created: id=%s", data.get("id"))
         return data
+
+    # ── Cancel ────────────────────────────────────────────────────────────────
+
+    def cancel_shipment(self, shipment_id: str) -> None:
+        """Cancel a shipment. Only possible while status is created/confirmed."""
+        url = f"{_BASE}/v1/shipments/{shipment_id}"
+        resp = self._session.delete(url, timeout=_TIMEOUT)
+        if not resp.ok:
+            if resp.status_code == 422:
+                raise InPostError(
+                    f"InPost cancel shipment rejected (already dispatched?): {resp.text[:200]}"
+                )
+            raise InPostError(
+                f"InPost cancel shipment failed {resp.status_code}: {resp.text[:200]}"
+            )
+        logger.info("InPost shipment cancelled: id=%s", shipment_id)
+
+    def cancel_dispatch_order(self, dispatch_order_id: str) -> None:
+        """Cancel a dispatch order. Only possible before courier accepts the pickup."""
+        url = f"{_BASE}/v1/organizations/{self._org_id}/dispatch_orders/{dispatch_order_id}"
+        resp = self._session.delete(url, timeout=_TIMEOUT)
+        if not resp.ok:
+            if resp.status_code == 422:
+                raise InPostError(
+                    f"InPost cancel dispatch rejected (already accepted by courier?): {resp.text[:200]}"
+                )
+            raise InPostError(
+                f"InPost cancel dispatch failed {resp.status_code}: {resp.text[:200]}"
+            )
+        logger.info("InPost dispatch order cancelled: id=%s", dispatch_order_id)
 
     # ── Label ─────────────────────────────────────────────────────────────────
 
