@@ -18,12 +18,8 @@ from zdrovena.common.inpost import InPostClient, InPostError
 
 _TOKEN = "tok-test-123"
 _ORG = "org-9"
-_SHIPMENTS_URL = (
-    "https://api-shipx-pl.easypack24.net/v1/organizations/org-9/shipments"
-)
-_DISPATCH_URL = (
-    "https://api-shipx-pl.easypack24.net/v1/organizations/org-9/dispatch_orders"
-)
+_SHIPMENTS_URL = "https://api-shipx-pl.easypack24.net/v1/organizations/org-9/shipments"
+_DISPATCH_URL = "https://api-shipx-pl.easypack24.net/v1/organizations/org-9/dispatch_orders"
 
 
 def _ok_response(json_payload: dict, status: int = 201) -> MagicMock:
@@ -109,33 +105,29 @@ class TestPaczkomatShipment:
 
     def test_4xx_raises_inpost_error(self):
         client = InPostClient(_TOKEN, _ORG)
-        with patch.object(
-            client._session, "post", return_value=_err_response(400, "bad-target")
-        ):
+        with patch.object(client._session, "post", return_value=_err_response(400, "bad-target")):
             with pytest.raises(InPostError, match=r"400.*bad-target"):
                 client.create_paczkomat_shipment(**self._kwargs())
 
     def test_5xx_raises_inpost_error(self):
         client = InPostClient(_TOKEN, _ORG)
-        with patch.object(
-            client._session, "post", return_value=_err_response(503, "down")
-        ):
+        with patch.object(client._session, "post", return_value=_err_response(503, "down")):
             with pytest.raises(InPostError, match=r"503"):
                 client.create_paczkomat_shipment(**self._kwargs())
 
     def test_network_error_propagates(self):
         """ConnectionError from requests must NOT be silently swallowed."""
         client = InPostClient(_TOKEN, _ORG)
-        with patch.object(
-            client._session, "post", side_effect=requests.ConnectionError("refused")
-        ):
+        with patch.object(client._session, "post", side_effect=requests.ConnectionError("refused")):
             with pytest.raises(requests.ConnectionError):
                 client.create_paczkomat_shipment(**self._kwargs())
 
     def test_timeout_argument_is_passed(self):
         """Each call must specify a timeout — never block indefinitely."""
         client = InPostClient(_TOKEN, _ORG)
-        with patch.object(client._session, "post", return_value=_ok_response({"id": "x"})) as mock_post:
+        with patch.object(
+            client._session, "post", return_value=_ok_response({"id": "x"})
+        ) as mock_post:
             client.create_paczkomat_shipment(**self._kwargs())
         assert "timeout" in mock_post.call_args.kwargs
         assert mock_post.call_args.kwargs["timeout"] > 0
@@ -253,9 +245,7 @@ class TestDispatchOrder:
 
     def test_4xx_raises_with_status_in_message(self):
         client = InPostClient(_TOKEN, _ORG)
-        with patch.object(
-            client._session, "post", return_value=_err_response(422, "no-slot")
-        ):
+        with patch.object(client._session, "post", return_value=_err_response(422, "no-slot")):
             with pytest.raises(InPostError, match=r"422.*no-slot"):
                 client.create_dispatch_order("ship-1", _SENDER)
 
@@ -292,8 +282,6 @@ class TestGetLabel:
 
     def test_network_error_propagates(self):
         client = InPostClient(_TOKEN, _ORG)
-        with patch.object(
-            client._session, "get", side_effect=requests.Timeout("slow")
-        ):
+        with patch.object(client._session, "get", side_effect=requests.Timeout("slow")):
             with pytest.raises(requests.Timeout):
                 client.get_label("ship-1")

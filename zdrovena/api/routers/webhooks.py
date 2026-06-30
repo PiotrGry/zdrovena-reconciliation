@@ -447,11 +447,6 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
 
 def _is_duplicate_webhook(webhook_id: str, order_id: str, shipping_store: ShippingStore) -> bool:
     """Return True if this Shopify webhook was already processed (idempotency guard)."""
-    if not webhook_id:
-        return False
-    # Check if a draft for this order already exists and is past 'pending'
-    # This is a lightweight check — a proper processed_webhooks table would be more robust
-    # but requires schema migration. For now we check existing drafts by shopify_order_id.
     try:
         drafts = shipping_store.list_drafts()
         for d in drafts:

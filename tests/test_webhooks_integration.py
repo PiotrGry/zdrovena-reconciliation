@@ -107,9 +107,7 @@ class TestInPostKurierFullFlow:
 
         # Execute with the courier client stubbed at session level
         with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
-            with patch(
-                "zdrovena.common.inpost.InPostClient.create_kurier_shipment"
-            ) as mock_ship:
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_ship:
                 with patch("zdrovena.common.inpost.InPostClient.create_dispatch_order"):
                     mock_ship.return_value = {"id": "ship-99", "tracking_number": "TRK99"}
                     resp = client.post(f"/api/shipping/drafts/{draft_id}/execute")
@@ -124,9 +122,7 @@ class TestInPostKurierFullFlow:
         # Now fetch the label — InPostClient.get_label returns bytes
         fake_pdf = b"%PDF-1.4 inpost-label"
         with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
-            with patch(
-                "zdrovena.common.inpost.InPostClient.get_label", return_value=fake_pdf
-            ):
+            with patch("zdrovena.common.inpost.InPostClient.get_label", return_value=fake_pdf):
                 resp = client.get(f"/api/shipping/drafts/{draft_id}/label")
 
         assert resp.status_code == 200
@@ -180,9 +176,7 @@ class TestHmacEndToEnd:
     def test_invalid_signature_does_not_persist_draft(self, client, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
-        with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value="real"
-        ):
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value="real"):
             resp = client.post(
                 "/api/webhooks/shopify/order-created",
                 content=body,
@@ -207,10 +201,6 @@ class TestWebhookIdempotency:
     Audit \u00a77.4 + audit \u00a77.5.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="TDD: webhook does not dedup by shopify_order_id — duplicate drafts created",
-    )
     def test_duplicate_webhook_produces_single_draft(self, client, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
@@ -227,14 +217,8 @@ class TestWebhookIdempotency:
                 headers={"Content-Type": "application/json"},
             )
 
-        drafts = [
-            d
-            for d in store.list_drafts()
-            if d["shopify_order_id"] == str(order["id"])
-        ]
-        assert len(drafts) == 1, (
-            f"Expected single draft for repeated webhook, got {len(drafts)}"
-        )
+        drafts = [d for d in store.list_drafts() if d["shopify_order_id"] == str(order["id"])]
+        assert len(drafts) == 1, f"Expected single draft for repeated webhook, got {len(drafts)}"
 
 
 # ── Error paths against the real store ───────────────────────────────────────

@@ -200,9 +200,7 @@ class TestServiceStructureCache:
         storage = _FakeStorageWithCache(payload=json.dumps(cached).encode())
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=storage)
 
-        api_response = _ok_response(
-            {"status": 200, "response": {"services": [{"id": "fresh"}]}}
-        )
+        api_response = _ok_response({"status": 200, "response": {"services": [{"id": "fresh"}]}})
         with patch.object(client._session, "post", return_value=api_response):
             services = client._get_service_structure()
 
@@ -311,9 +309,7 @@ class TestCreateShipment:
 
     def test_business_error_raises_apaczka_error(self):
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
-        api_response = _ok_response(
-            {"status": 400, "message": "Invalid zip code"}
-        )
+        api_response = _ok_response({"status": 400, "message": "Invalid zip code"})
         with patch.object(client._session, "post", return_value=api_response):
             with pytest.raises(ApaczkaError, match="Invalid zip"):
                 client.create_shipment(**self._kwargs())
@@ -335,9 +331,7 @@ class TestGetLabel:
         pdf = b"%PDF-1.4 fake-label"
         encoded = base64.b64encode(pdf).decode()
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
-        api_response = _ok_response(
-            {"status": 200, "response": {"waybill": encoded}}
-        )
+        api_response = _ok_response({"status": 200, "response": {"waybill": encoded}})
         with patch.object(client._session, "post", return_value=api_response):
             result = client.get_label("ord-1")
         assert result == pdf

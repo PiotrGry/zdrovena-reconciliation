@@ -131,10 +131,6 @@ class TestPathTraversalProtection:
     keys that escape the configured root. See audit §7.4 and §10.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="TDD: path traversal not blocked — needs key validation in storage.py",
-    )
     def test_upload_rejects_path_traversal(self, tmp_path):
         root = tmp_path / "storage"
         root.mkdir()
@@ -148,10 +144,6 @@ class TestPathTraversalProtection:
         # The file must NOT have landed outside the storage root
         assert not (tmp_path / "escape.bin").exists()
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="TDD: absolute keys not rejected — needs key validation",
-    )
     def test_upload_rejects_absolute_path_key(self, tmp_path):
         svc = LocalStorageService(root=tmp_path / "storage")
         src = tmp_path / "src.bin"
@@ -161,10 +153,6 @@ class TestPathTraversalProtection:
             svc.upload(src, str(forbidden))
         assert not forbidden.exists()
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="TDD: download with traversing key not rejected",
-    )
     def test_download_rejects_path_traversal(self, tmp_path):
         # Storage root must exist so the resolved path '../secret.txt'
         # actually points to a real file outside the root.
@@ -180,10 +168,6 @@ class TestPathTraversalProtection:
         if dest.exists():
             assert dest.read_bytes() != b"SECRET"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="TDD: delete with traversing key not rejected",
-    )
     def test_delete_rejects_path_traversal(self, tmp_path):
         outside = tmp_path / "sibling.txt"
         outside.write_bytes(b"keep me")
