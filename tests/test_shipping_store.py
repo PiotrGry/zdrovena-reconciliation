@@ -83,9 +83,7 @@ class TestUpsertAndGet:
 
     def test_list_drafts_respects_limit(self, store):
         for i in range(5):
-            store.upsert_draft(
-                _draft(f"d-{i}", created_at=f"2026-06-{i+1:02d}T00:00:00+00:00")
-            )
+            store.upsert_draft(_draft(f"d-{i}", created_at=f"2026-06-{i + 1:02d}T00:00:00+00:00"))
         result = store.list_drafts(limit=3)
         assert len(result) == 3
         # Newest first
@@ -161,10 +159,6 @@ class TestShopifyOrderIdempotency:
     upsert_draft de-duplicates on shopify_order_id + courier) — see audit §7.4.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="TDD: idempotent upsert by shopify_order_id not yet implemented",
-    )
     def test_duplicate_shopify_order_id_produces_single_draft(self, store):
         d1 = _draft("uuid-aaa", shopify_order_id="shop-9001")
         d2 = _draft("uuid-bbb", shopify_order_id="shop-9001")
@@ -290,10 +284,6 @@ class TestAtomicWrite:
     A crash mid-write leaves a truncated file. Target: temp file + os.replace.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="TDD: writes are not atomic — partial writes can corrupt the file",
-    )
     def test_write_is_atomic_via_temp_file(self, tmp_path, monkeypatch):
         store_root = tmp_path / "store"
         store = ShippingStore(local_root=store_root)
@@ -317,6 +307,5 @@ class TestAtomicWrite:
         # the live shipping-drafts.json file directly.
         target_writes = [p for p in write_calls if p.name == "shipping-drafts.json"]
         assert target_writes == [], (
-            "shipping-drafts.json was written in-place; expected atomic "
-            "write-to-temp + os.replace"
+            "shipping-drafts.json was written in-place; expected atomic write-to-temp + os.replace"
         )

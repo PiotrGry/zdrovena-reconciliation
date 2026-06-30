@@ -278,10 +278,6 @@ class TestRetryableStatusCodesTDD:
     These tests fail until retry.py extends the set.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="TDD: 502 is not in _RETRYABLE_STATUS_CODES; Retry-After ignored",
-    )
     def test_502_with_retry_after_is_honoured(self):
         session, _ = _make_session_returning_status(502, {"Retry-After": "7"})
         sleeps: list[float] = []
@@ -298,10 +294,6 @@ class TestRetryableStatusCodesTDD:
         assert len(sleeps) == 1
         assert 5.6 <= sleeps[0] <= 8.4
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="TDD: 504 is not in _RETRYABLE_STATUS_CODES; Retry-After ignored",
-    )
     def test_504_with_retry_after_is_honoured(self):
         session, _ = _make_session_returning_status(504, {"Retry-After": "4"})
         sleeps: list[float] = []
@@ -317,10 +309,6 @@ class TestRetryableStatusCodesTDD:
         assert len(sleeps) == 1
         assert 3.2 <= sleeps[0] <= 4.8
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="TDD: 408 is not in _RETRYABLE_STATUS_CODES; Retry-After ignored",
-    )
     def test_408_with_retry_after_is_honoured(self):
         session, _ = _make_session_returning_status(408, {"Retry-After": "3"})
         sleeps: list[float] = []
@@ -336,10 +324,6 @@ class TestRetryableStatusCodesTDD:
         assert len(sleeps) == 1
         assert 2.4 <= sleeps[0] <= 3.6
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="TDD: HTTP-date Retry-After format (RFC 7231) not parsed",
-    )
     def test_retry_after_http_date_format(self):
         # "Retry-After: Wed, 21 Oct 2026 07:28:00 GMT" — valid per RFC 7231.
         # Current code does float("Wed, ...") which raises ValueError and

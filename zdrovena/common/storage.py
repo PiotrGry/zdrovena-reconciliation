@@ -93,8 +93,15 @@ class LocalStorageService:
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or _DEFAULT_ROOT
 
+    def _validate_key(self, key: str) -> Path:
+        resolved = (self.root / key).resolve()
+        root_resolved = self.root.resolve()
+        if not str(resolved).startswith(str(root_resolved) + os.sep) and resolved != root_resolved:
+            raise ValueError(f"Key escapes storage root: {key!r}")
+        return resolved
+
     def upload(self, local_path: Path, key: str) -> None:
-        dest = self.root / key
+        dest = self._validate_key(key)
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(local_path, dest)
         logger.debug("LocalStorage: uploaded %s → %s", local_path, dest)
@@ -102,14 +109,14 @@ class LocalStorageService:
     def upload_stream(
         self, data: BinaryIO, key: str, content_type: str = "application/octet-stream"
     ) -> None:
-        dest = self.root / key
+        dest = self._validate_key(key)
         dest.parent.mkdir(parents=True, exist_ok=True)
         with dest.open("wb") as f:
             shutil.copyfileobj(data, f)
         logger.debug("LocalStorage: upload_stream → %s", dest)
 
     def download(self, key: str, local_path: Path) -> None:
-        src = self.root / key
+        src = self._validate_key(key)
         if not src.exists():
             raise FileNotFoundError(f"Key not found in local storage: {key!r}")
         local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -117,7 +124,7 @@ class LocalStorageService:
 
     def stream(self, key: str, chunk_size: int = 4 * 1024 * 1024) -> Iterator[bytes]:
         """Yield file content in chunks. For local dev/tests only."""
-        path = self.root / key
+        path = self._validate_key(key)
         if not path.exists():
             raise FileNotFoundError(f"Key not found in local storage: {key!r}")
         with path.open("rb") as f:
@@ -146,11 +153,11 @@ class LocalStorageService:
         return results
 
     def delete(self, key: str) -> None:
-        path = self.root / key
+        path = self._validate_key(key)
         path.unlink(missing_ok=True)
 
     def exists(self, key: str) -> bool:
-        return (self.root / key).is_file()
+        return self._validate_key(key).is_file()
 
 
 # ── Azure Blob implementation ─────────────────────────────────────────────────

@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
+from fcntl import LOCK_EX, LOCK_UN, flock
 from pathlib import Path
 from typing import Any
 
@@ -102,18 +104,46 @@ class ShippingStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
+    @property
+    def _lock_file(self) -> Path:
+        path = self._local_root / f".{_LOCAL_FILE_NAME}.lock"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
     def _local_load(self) -> dict[str, Any]:
-        if not self._local_file.exists():
-            return {}
+        lock_fd = os.open(str(self._lock_file), os.O_CREAT | os.O_RDWR)
         try:
-            return json.loads(self._local_file.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
+            flock(lock_fd, LOCK_EX)
+            if not self._local_file.exists():
+                return {}
+            try:
+                return json.loads(self._local_file.read_text(encoding="utf-8"))
+            except Exception:
+                return {}
+        finally:
+            flock(lock_fd, LOCK_UN)
+            os.close(lock_fd)
 
     def _local_save(self, data: dict[str, Any]) -> None:
-        self._local_file.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        lock_fd = os.open(str(self._lock_file), os.O_CREAT | os.O_RDWR)
+        try:
+            flock(lock_fd, LOCK_EX)
+            temp_fd, temp_path = tempfile.mkstemp(
+                dir=str(self._local_root), prefix=".tmp-", suffix=".json"
+            )
+            try:
+                with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                os.replace(temp_path, str(self._local_file))
+            except Exception:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+                raise
+        finally:
+            flock(lock_fd, LOCK_UN)
+            os.close(lock_fd)
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -126,6 +156,11 @@ class ShippingStore:
                 raise
         else:
             data = self._local_load()
+            shopify_order_id = record.get("shopify_order_id")
+            if shopify_order_id:
+                for existing_id, existing_record in list(data.items()):
+                    if existing_record.get("shopify_order_id") == shopify_order_id:
+                        del data[existing_id]
             data[record["id"]] = record
             self._local_save(data)
 
