@@ -1,7 +1,7 @@
 # CHANGELOG
 
 
-## v2.7.0 (2026-06-24)
+## v2.7.0 (2026-06-30)
 
 ### Added
 
@@ -29,6 +29,12 @@
 
 ### Fixed
 
+- **shipping**: Shopify webhook fail-closed security — unsigned webhooks rejected unless `ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS=true` is set; returns 503 if webhook secret not configured and flag not set.
+- **shipping**: Courier routing — only match explicit "inpost" or "paczkomat" keywords; bare "kurier" no longer triggers InPost routing.
+- **shipping**: Polish phone normalization — `normalize_pl_phone()` handles 9-digit, 11-digit (48*), and spaced/hyphenated formats; returns +48XXXXXXXXX.
+- **shipping**: Polish address parsing — `parse_pl_address()` splits street and building number (including letter suffixes like "100A"); graceful fallback.
+- **shipping**: Multi-package handling — drafts with `packages_count > 1` are set to `status='needs_review'`; execute endpoint rejects needs_review drafts with 409 Conflict.
+- **shipping**: Apaczka cache fix — use `storage.stream()` for cache reads and `storage.upload_stream()` for writes instead of download/upload.
 - **shipping**: `_calc_packages` now counts zgrzewki (product units) not bottles; kaucja no longer inflates package count.
 - **shipping**: `order_pickup` endpoint now allows InPost paczkomat (previously blocked to kurier only).
 - **shipping**: `MOCK_COURIER` now also skips InPost dispatch order in `order_pickup` endpoint.
