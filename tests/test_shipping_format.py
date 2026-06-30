@@ -1,7 +1,5 @@
 """Tests for zdrovena.common.shipping_format helpers."""
 
-import pytest
-
 from zdrovena.common.shipping_format import (
     extract_locker_id_from_title,
     normalize_pl_phone,

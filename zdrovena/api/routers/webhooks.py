@@ -19,7 +19,6 @@ import io
 import json
 import logging
 import os
-import re
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -35,21 +34,6 @@ from zdrovena.common.shipping_format import (
     extract_locker_id_from_title,
     normalize_pl_phone,
     parse_pl_address,
-)
-from zdrovena.common.shipping_exceptions import (
-    CourierAuthError,
-    CourierBusinessError,
-    CourierConnectionError,
-    CourierServerError,
-    CourierTimeoutError,
-    CourierTransientError,
-    DispatchAlreadyAcceptedError,
-    MissingDispatchIdError,
-    MissingShippingAddressError,
-    ShipmentAlreadyDispatchedError,
-    ShopifyPayloadError,
-    UnparseableShippingLineError,
-    ZdrovenaShippingError,
 )
 from zdrovena.common.shipping_store import ShippingStore
 
@@ -154,7 +138,7 @@ def _parcel_template(draft: dict[str, Any]) -> str:
 
 def _parcel_weight_and_dims(draft: dict[str, Any]) -> tuple[float, dict[str, float]]:
     """Derive total weight and largest-box dimensions from packages_breakdown (bug #5)."""
-    from zdrovena.common.inpost import PARCEL_SPECS, _DEFAULT_DIMS
+    from zdrovena.common.inpost import _DEFAULT_DIMS, PARCEL_SPECS
 
     breakdown = draft.get("packages_breakdown") or []
     total_weight = 0.0
