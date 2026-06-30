@@ -127,7 +127,7 @@ class TestWebhookEndpoint:
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
             with patch.dict("os.environ", {"ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS": "true"}):
                 resp = client.post(
-                    "/api/webhooks/shopify/order-created",
+                    "/api/webhooks/shopify/order-create",
                     content=_ORDER_NO_SHIPPING,
                     headers={"Content-Type": "application/json"},
                 )
@@ -139,7 +139,7 @@ class TestWebhookEndpoint:
             with patch.dict("os.environ", {"ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS": "true"}):
                 with patch("zdrovena.api.routers.webhooks._create_draft"):
                     resp = client.post(
-                        "/api/webhooks/shopify/order-created",
+                        "/api/webhooks/shopify/order-create",
                         content=_ORDER_WITH_SHIPPING,
                         headers={"Content-Type": "application/json"},
                     )
@@ -150,7 +150,7 @@ class TestWebhookEndpoint:
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
             with patch.dict("os.environ", {}, clear=False):
                 resp = client.post(
-                    "/api/webhooks/shopify/order-created",
+                    "/api/webhooks/shopify/order-create",
                     content=_ORDER_WITH_SHIPPING,
                     headers={"Content-Type": "application/json"},
                 )
@@ -163,7 +163,7 @@ class TestWebhookEndpoint:
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=secret):
             with patch("zdrovena.api.routers.webhooks._create_draft"):
                 resp = client.post(
-                    "/api/webhooks/shopify/order-created",
+                    "/api/webhooks/shopify/order-create",
                     content=_ORDER_WITH_SHIPPING,
                     headers={"Content-Type": "application/json", "X-Shopify-Hmac-Sha256": sig},
                 )
@@ -174,7 +174,7 @@ class TestWebhookEndpoint:
         secret = "test-webhook-secret"
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=secret):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=_ORDER_WITH_SHIPPING,
                 headers={"Content-Type": "application/json", "X-Shopify-Hmac-Sha256": "bad"},
             )
@@ -183,7 +183,7 @@ class TestWebhookEndpoint:
     def test_missing_hmac_header_with_secret_configured_rejected(self, client):
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value="secret"):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=_ORDER_WITH_SHIPPING,
                 headers={"Content-Type": "application/json"},
             )
@@ -193,7 +193,7 @@ class TestWebhookEndpoint:
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
             with patch.dict("os.environ", {"ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS": "true"}):
                 resp = client.post(
-                    "/api/webhooks/shopify/order-created",
+                    "/api/webhooks/shopify/order-create",
                     content=b"not-json",
                     headers={"Content-Type": "application/json"},
                 )

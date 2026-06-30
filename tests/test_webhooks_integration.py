@@ -79,7 +79,7 @@ class TestInPostKurierFullFlow:
         body = json.dumps(order).encode()
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=body,
                 headers={"Content-Type": "application/json"},
             )
@@ -99,7 +99,7 @@ class TestInPostKurierFullFlow:
         body = json.dumps(order).encode()
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
             client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=body,
                 headers={"Content-Type": "application/json"},
             )
@@ -134,7 +134,7 @@ class TestInPostKurierFullFlow:
         body = json.dumps(order).encode()
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
             client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=body,
                 headers={"Content-Type": "application/json"},
             )
@@ -163,7 +163,7 @@ class TestHmacEndToEnd:
         sig = _sign_shopify(body, secret)
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=secret):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=body,
                 headers={
                     "Content-Type": "application/json",
@@ -178,7 +178,7 @@ class TestHmacEndToEnd:
         body = json.dumps(order).encode()
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value="real"):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=body,
                 headers={
                     "Content-Type": "application/json",
@@ -206,13 +206,13 @@ class TestWebhookIdempotency:
         body = json.dumps(order).encode()
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
             client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=body,
                 headers={"Content-Type": "application/json"},
             )
             # Shopify resends the exact same payload
             client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=body,
                 headers={"Content-Type": "application/json"},
             )
@@ -230,7 +230,7 @@ class TestExecuteFailurePersistsErrorOnStore:
         body = json.dumps(order).encode()
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
             client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=body,
                 headers={"Content-Type": "application/json"},
             )
@@ -254,7 +254,7 @@ class TestExecuteFailurePersistsErrorOnStore:
         body = json.dumps(order).encode()
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
             client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=body,
                 headers={"Content-Type": "application/json"},
             )
