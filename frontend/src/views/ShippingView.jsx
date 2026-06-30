@@ -191,6 +191,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
 
     const isSelectable = onToggleSelect && (
         draft.status === 'pending' ||
+        draft.status === 'needs_review' ||
         draft.status === 'error' ||
         (draft.courier === 'inpost' && draft.status === 'created' && !draft.pickup_ordered)
     )
@@ -237,9 +238,10 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                 <span><Pill kind={courierPillKind(draft)}>{courierLabel(draft)}</Pill></span>
                 <span className="mono dim" style={{ fontSize: '0.85em' }}>{fmtDate(draft.created_at)}</span>
                 <span>
-                    <Pill kind={draft.status === 'created' ? 'ok' : draft.status === 'pending' ? 'default' : 'warn'}>
+                    <Pill kind={draft.status === 'created' ? 'ok' : draft.status === 'pending' ? 'default' : draft.status === 'needs_review' ? 'warn' : 'warn'}>
                         {draft.status === 'pending' ? (T.sh_status_pending ?? 'oczekujące')
                             : draft.status === 'created' ? (T.sh_status_created ?? 'nadane')
+                            : draft.status === 'needs_review' ? (T.sh_status_needs_review ?? 'do sprawdzenia')
                             : (T.sh_status_error ?? 'błąd')}
                     </Pill>
                 </span>
@@ -570,7 +572,7 @@ export default function ShippingView() {
     })
 
     const selectableIds = filtered
-        .filter(d => d.status === 'pending' || d.status === 'error' ||
+        .filter(d => d.status === 'pending' || d.status === 'needs_review' || d.status === 'error' ||
             (d.courier === 'inpost' && d.status === 'created' && !d.pickup_ordered))
         .map(d => d.id)
     const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedDraftIds.has(id))
