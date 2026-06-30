@@ -683,6 +683,7 @@ def update_draft(
     packages_count: int | None = Body(None, ge=1, le=99),
     service: str | None = Body(None),
     locker_id: str | None = Body(None),
+    reviewed: bool | None = Body(None),
 ) -> dict[str, Any]:
     draft = shipping_store.get_draft(draft_id)
     if not draft:
@@ -702,6 +703,9 @@ def update_draft(
         receiver = dict(draft.get("receiver") or {})
         receiver["locker_id"] = locker_id
         patch["receiver"] = receiver
+    if reviewed is True and draft.get("status") == "needs_review":
+        patch["status"] = "pending"
+        patch["error"] = None
 
     if patch:
         shipping_store.update_draft(draft_id, patch)
