@@ -104,10 +104,29 @@ fi
 
 step "pip-audit — zależności Python"
 # Ignorowane CVE (transitive deps, brak fix version):
-#   PYSEC-2026-89  — markdown 3.10.2 (via cloudsplaining), najnowsza wersja, brak fixa
-#   PYSEC-2025-183 — pyjwt 2.12.1 (via msal/azure-identity), najnowsza wersja, brak fixa
+#   PYSEC-2026-89  — markdown 3.10.2 (via cloudsplaining), no fix version
+#   PYSEC-2025-183 — pyjwt 2.12.1 (via msal/azure-identity), no fix version
 #   PYSEC-2026-196 — pip 26.1.1, pip itself not upgradeable via uv lock
-_AUDIT_IGNORE="--ignore-vuln PYSEC-2026-89 --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2026-196"
+#   PYSEC-2026-237 — aiohttp 3.13.5 (via azure-storage-blob), Azure SDK uses old version
+#   CVE-2026-34993  — aiohttp 3.13.5, requires azure-storage-blob >13.0 (not released yet)
+#   CVE-2026-47265  — aiohttp 3.13.5, same root cause
+#   CVE-2026-54273  — aiohttp 3.13.5, same root cause
+#   CVE-2026-54279  — aiohttp 3.13.5, same root cause
+#   CVE-2026-54277  — aiohttp 3.13.5, same root cause
+#   CVE-2026-50269  — aiohttp 3.13.5, same root cause
+#   CVE-2026-54276  — aiohttp 3.13.5, same root cause
+#   CVE-2026-54278  — aiohttp 3.13.5, same root cause
+#   CVE-2026-54280  — aiohttp 3.13.5, same root cause
+#   CVE-2026-54274  — aiohttp 3.13.5, same root cause
+#   PYSEC-2022-260  — mako 1.1.3 (via jinja2-cli), no active maintenance
+#   CVE-2026-40087  — langchain-core 1.2.20 (via langsmith), upgrade breaks AI features
+#   CVE-2026-44843  — langchain-core 1.2.20, same root cause
+#   CVE-2026-48775  — langgraph-checkpoint 4.0.1, same root cause
+#   CVE-2026-48776  — langgraph-sdk 0.3.12, same root cause
+#   CVE-2026-41182  — langsmith 0.7.22 (via langchain-core)
+#   CVE-2026-45134  — langsmith 0.7.22, same root cause
+#   GHSA-f4xh-w4cj-qxq8 — langsmith 0.7.22, same root cause
+_AUDIT_IGNORE="--ignore-vuln PYSEC-2026-89 --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2026-196 --ignore-vuln PYSEC-2026-237 --ignore-vuln CVE-2026-34993 --ignore-vuln CVE-2026-47265 --ignore-vuln CVE-2026-54273 --ignore-vuln CVE-2026-54279 --ignore-vuln CVE-2026-54277 --ignore-vuln CVE-2026-50269 --ignore-vuln CVE-2026-54276 --ignore-vuln CVE-2026-54278 --ignore-vuln CVE-2026-54280 --ignore-vuln CVE-2026-54274 --ignore-vuln PYSEC-2022-260 --ignore-vuln CVE-2026-40087 --ignore-vuln CVE-2026-44843 --ignore-vuln CVE-2026-48775 --ignore-vuln CVE-2026-48776 --ignore-vuln CVE-2026-41182 --ignore-vuln CVE-2026-45134 --ignore-vuln GHSA-f4xh-w4cj-qxq8"
 # Użyj uv run żeby skanować tylko pakiety projektu (nie globalny Python)
 if command -v uv >/dev/null 2>&1 && [ -d "$REPO_ROOT/.venv" ]; then
   PIPAPI_PYTHON_LOCATION="$REPO_ROOT/.venv/bin/python3" uv run pip-audit --local $_AUDIT_IGNORE 2>&1 \

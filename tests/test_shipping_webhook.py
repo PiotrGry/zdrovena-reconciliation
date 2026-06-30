@@ -125,24 +125,37 @@ _ORDER_WITH_SHIPPING = json.dumps(
 class TestWebhookEndpoint:
     def test_no_shipping_lines_returns_skipped(self, client):
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            resp = client.post(
-                "/api/webhooks/shopify/order-created",
-                content=_ORDER_NO_SHIPPING,
-                headers={"Content-Type": "application/json"},
-            )
+            with patch.dict("os.environ", {"ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS": "true"}):
+                resp = client.post(
+                    "/api/webhooks/shopify/order-created",
+                    content=_ORDER_NO_SHIPPING,
+                    headers={"Content-Type": "application/json"},
+                )
         assert resp.status_code == 200
         assert resp.json() == {"status": "skipped"}
 
-    def test_no_secret_configured_skips_hmac(self, client):
+    def test_no_secret_configured_allows_unsigned_with_flag(self, client):
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            with patch("zdrovena.api.routers.webhooks._create_draft"):
+            with patch.dict("os.environ", {"ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS": "true"}):
+                with patch("zdrovena.api.routers.webhooks._create_draft"):
+                    resp = client.post(
+                        "/api/webhooks/shopify/order-created",
+                        content=_ORDER_WITH_SHIPPING,
+                        headers={"Content-Type": "application/json"},
+                    )
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "accepted"}
+
+    def test_no_secret_configured_rejects_unsigned_without_flag(self, client):
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
+            with patch.dict("os.environ", {}, clear=False):
                 resp = client.post(
                     "/api/webhooks/shopify/order-created",
                     content=_ORDER_WITH_SHIPPING,
                     headers={"Content-Type": "application/json"},
                 )
-        assert resp.status_code == 200
-        assert resp.json() == {"status": "accepted"}
+        assert resp.status_code == 503
+        assert "not configured" in resp.json()["detail"]
 
     def test_valid_hmac_accepted(self, client):
         secret = "test-webhook-secret"
@@ -178,11 +191,12 @@ class TestWebhookEndpoint:
 
     def test_invalid_json_returns_400(self, client):
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            resp = client.post(
-                "/api/webhooks/shopify/order-created",
-                content=b"not-json",
-                headers={"Content-Type": "application/json"},
-            )
+            with patch.dict("os.environ", {"ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS": "true"}):
+                resp = client.post(
+                    "/api/webhooks/shopify/order-created",
+                    content=b"not-json",
+                    headers={"Content-Type": "application/json"},
+                )
         assert resp.status_code == 400
 
 
@@ -433,6 +447,53 @@ class TestUpdateDraft:
         draft = self._seed_draft(store)
         resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"packages_count": 100})
         assert resp.status_code == 422
+
+    def test_reviewed_true_clears_needs_review_status(self, client, store):
+        draft = self._seed_draft(store)
+        store.update_draft(draft["id"], {"status": "needs_review"})
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"reviewed": True})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "pending"
+        updated = store.get_draft(draft["id"])
+        assert updated["status"] == "pending"
+
+    def test_reviewed_true_clears_error_field(self, client, store):
+        draft = self._seed_draft(store)
+        store.update_draft(draft["id"], {"status": "needs_review", "error": "Test error"})
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"reviewed": True})
+        assert resp.status_code == 200
+        assert resp.json()["error"] is None
+        updated = store.get_draft(draft["id"])
+        assert updated["error"] is None
+
+    def test_reviewed_true_ignored_when_not_needs_review(self, client, store):
+        draft = self._seed_draft(store)
+        store.update_draft(draft["id"], {"status": "pending"})
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"reviewed": True})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "pending"
+
+    def test_needs_review_draft_still_blocks_execute(self, client, store):
+        draft = self._seed_draft(store)
+        store.update_draft(draft["id"], {"status": "needs_review"})
+        resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 409
+        assert "requires review" in resp.json()["detail"].lower()
+
+    def test_after_reviewed_execute_not_blocked_by_review(self, client, store):
+        draft = self._seed_draft(store)
+        store.update_draft(draft["id"], {"status": "needs_review"})
+        # First PATCH to mark as reviewed
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"reviewed": True})
+        assert resp.status_code == 200
+        # Now execute should not be blocked by needs_review (no 409 with "review" in message)
+        resp = client.post(
+            f"/api/shipping/drafts/{draft['id']}/execute",
+            json={"pickup_date": "2026-07-05", "pickup_from": "08:00", "pickup_to": "17:00"},
+        )
+        # Should NOT return 409 with "requires review" message
+        if resp.status_code == 409:
+            assert "review" not in resp.json()["detail"].lower()
 
 
 # ── Helper function unit tests ────────────────────────────────────────────────
@@ -720,7 +781,7 @@ class TestCreateDraftApaczka:
         d = drafts[0]
         assert d["courier"] == "apaczka"
         assert d["service"] == "apaczka"
-        assert d["status"] == "pending"
+        assert d["status"] == "needs_review"  # phone is null in fixture, so needs_review
         assert d["tracking_number"] is None
         assert d["courier_draft_id"] is None
         assert d["shopify_order_number"] == "1003"

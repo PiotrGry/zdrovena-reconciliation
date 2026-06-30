@@ -66,9 +66,8 @@ class ApaczkaClient:
         try:
             import io
 
-            buf = io.BytesIO()
-            self._storage.download(_SERVICE_CACHE_KEY, buf)  # type: ignore[arg-type]
-            cached = json.loads(buf.getvalue())
+            cached_bytes = b"".join(self._storage.stream(_SERVICE_CACHE_KEY))  # type: ignore[arg-type]
+            cached = json.loads(cached_bytes)
             fetched_at = datetime.fromisoformat(cached["fetched_at"])
             age_h = (datetime.now(timezone.utc) - fetched_at).total_seconds() / 3600
             if age_h < _SERVICE_CACHE_TTL_H:
@@ -86,7 +85,10 @@ class ApaczkaClient:
         try:
             import io
 
-            self._storage.upload(_SERVICE_CACHE_KEY, io.BytesIO(json.dumps(cache_doc).encode()))
+            json_bytes = json.dumps(cache_doc).encode()
+            self._storage.upload_stream(
+                io.BytesIO(json_bytes), _SERVICE_CACHE_KEY, "application/json"
+            )  # type: ignore[attr-defined]
         except Exception as exc:
             logger.warning("Failed to cache Apaczka service_structure: %s", exc)
         return services  # type: ignore[return-value]
@@ -165,6 +167,14 @@ class ApaczkaClient:
         result = self._call("order_send", data)
         order_id = result.get("response", {}).get("id")
         logger.info("Apaczka shipment created: order_id=%s reference=%s", order_id, reference)
+        return result.get("response", result)
+
+    # ── Cancel ────────────────────────────────────────────────────────────────
+
+    def cancel_shipment(self, order_id: str) -> dict[str, Any]:
+        """Cancel an Apaczka shipment by order_id."""
+        result = self._call("order_cancel", {"order_id": order_id})
+        logger.info("Apaczka shipment cancelled: order_id=%s", order_id)
         return result.get("response", result)
 
     # ── Label ─────────────────────────────────────────────────────────────────
