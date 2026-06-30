@@ -1,11 +1,13 @@
 """zdrovena.api.routers.webhooks — Shopify webhooks + shipping drafts + label endpoints.
 
-POST /webhooks/shopify/order-created      — Shopify order webhook (HMAC-validated)
-GET  /shipping/drafts                     — list shipping drafts from Table Storage
-GET  /shipping/drafts/{id}/label          — stream label PDF from courier
-POST /shipping/drafts/{id}/execute        — (re)create courier shipment for a draft
-POST /shipping/drafts/{id}/pickup         — order InPost kurier pickup
-PATCH /shipping/drafts/{id}               — update packages_count
+POST /webhooks/shopify/order-created          — Shopify order webhook (HMAC-validated)
+GET  /shipping/drafts                         — list shipping drafts from Table Storage
+GET  /shipping/drafts/{id}/label              — stream label PDF from courier
+POST /shipping/drafts/{id}/execute            — (re)create courier shipment for a draft
+POST /shipping/drafts/{id}/pickup             — order InPost kurier pickup
+PATCH /shipping/drafts/{id}                   — update packages_count
+DELETE /shipping/drafts/{id}/shipment         — cancel courier shipment
+DELETE /shipping/drafts/{id}/dispatch         — cancel pickup dispatch order
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import io
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -28,6 +31,26 @@ from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_
 from zdrovena.api.deps import ShippingStoreDep, StorageDep
 from zdrovena.audit.bottles import SKIP_RE, is_glass
 from zdrovena.common.secrets import get_secret
+from zdrovena.common.shipping_format import (
+    extract_locker_id_from_title,
+    normalize_pl_phone,
+    parse_pl_address,
+)
+from zdrovena.common.shipping_exceptions import (
+    CourierAuthError,
+    CourierBusinessError,
+    CourierConnectionError,
+    CourierServerError,
+    CourierTimeoutError,
+    CourierTransientError,
+    DispatchAlreadyAcceptedError,
+    MissingDispatchIdError,
+    MissingShippingAddressError,
+    ShipmentAlreadyDispatchedError,
+    ShopifyPayloadError,
+    UnparseableShippingLineError,
+    ZdrovenaShippingError,
+)
 from zdrovena.common.shipping_store import ShippingStore
 
 logger = logging.getLogger("zdrovena.api.routers.webhooks")
@@ -60,12 +83,18 @@ def _get_sender() -> dict[str, str]:
         "firstname": "",
         "lastname": _name,
         "street": get_secret("sender_street", required=False) or "",
-        "building_number": "1",
+        "building_number": get_secret("sender_building_number", required=False) or "1",
         "city": get_secret("sender_city", required=False) or "",
         "post_code": get_secret("sender_post_code", required=False) or "",
         "phone": get_secret("sender_phone", required=False) or "",
         "email": get_secret("sender_email", required=False) or "",
     }
+
+
+# ── Address / phone parsing helpers ───────────────────────────────────────────
+
+
+
 
 
 # ── SMS notification ─────────────────────────────────────────────────────────
@@ -99,9 +128,10 @@ def _maybe_send_new_order_sms(draft: dict[str, Any]) -> None:
 
 
 def _pick_courier(order: dict[str, Any]) -> str:
+    """Route to InPost only on explicit 'inpost' or 'paczkomat' keywords. 'kurier' alone → Apaczka."""
     lines = order.get("shipping_lines") or []
     title = (lines[0].get("title", "") if lines else "").lower()
-    if "kurier" in title or "paczkomat" in title:
+    if "inpost" in title or "paczkomat" in title:
         return "inpost"
     return "apaczka"
 
@@ -111,6 +141,42 @@ def _pick_inpost_service(title: str) -> str:
 
 
 # ── Courier execution helpers ─────────────────────────────────────────────────
+
+
+def _parcel_template(draft: dict[str, Any]) -> str:
+    """Derive InPost paczkomat template from packages_breakdown (bug #4)."""
+    from zdrovena.common.inpost import PARCEL_SPECS
+
+    breakdown = draft.get("packages_breakdown") or []
+    for box_type in ("3-pak", "szkło-2pak", "2-pak", "szkło", "1-pak", "pół-pak"):
+        if any(b.get("type") == box_type for b in breakdown):
+            tpl = PARCEL_SPECS.get(box_type, {}).get("paczkomat_template")
+            return tpl if tpl else "large"
+    return "large"
+
+
+def _parcel_weight_and_dims(draft: dict[str, Any]) -> tuple[float, dict[str, float]]:
+    """Derive total weight and largest-box dimensions from packages_breakdown (bug #5)."""
+    from zdrovena.common.inpost import PARCEL_SPECS, _DEFAULT_DIMS
+
+    breakdown = draft.get("packages_breakdown") or []
+    total_weight = 0.0
+    largest_dims: dict[str, float] = _DEFAULT_DIMS
+    largest_volume = 0.0
+
+    for box in breakdown:
+        box_type = box.get("type", "")
+        qty = box.get("qty", 1)
+        spec = PARCEL_SPECS.get(box_type)
+        if not spec:
+            continue
+        total_weight += spec["weight_kg"] * qty
+        vol = spec["length"] * spec["width"] * spec["height"]
+        if vol > largest_volume:
+            largest_volume = vol
+            largest_dims = spec
+
+    return (total_weight if total_weight > 0 else 6.0), largest_dims
 
 
 def _run_inpost(
@@ -127,6 +193,7 @@ def _run_inpost(
         logger.info("MOCK_COURIER: skipping InPost API for order %s", ref)
         return {
             "courier_draft_id": f"mock-inpost-{ref}",
+            "dispatch_order_id": f"mock-dispatch-{ref}",
             "tracking_number": f"MOCK{ref}0000000000",
             "status": "created",
             "pickup_ordered": False,
@@ -148,7 +215,10 @@ def _run_inpost(
     inpost_service = "paczkomat" if draft.get("service") == "inpost_locker_standard" else "kurier"
 
     pickup_ordered = False
+    dispatch_order_id: str | None = None
+
     if inpost_service == "paczkomat":
+        template = _parcel_template(draft)  # fix #4: correct locker size
         result = client.create_paczkomat_shipment(
             receiver_first_name=first_name,
             receiver_last_name=last_name,
@@ -156,37 +226,43 @@ def _run_inpost(
             receiver_phone=phone,
             target_point=receiver.get("locker_id", ""),
             reference=reference,
+            template=template,
         )
     else:
         addr = draft.get("shipping_address") or {}
+        weight_kg, dims = _parcel_weight_and_dims(draft)  # fix #5: real dims from spec
         result = client.create_kurier_shipment(
             receiver_first_name=first_name,
             receiver_last_name=last_name,
             receiver_email=email,
             receiver_phone=phone,
             receiver_street=addr.get("street", ""),
-            receiver_building_number="1",
+            receiver_building_number=addr.get("building_number", "1"),  # fix #3
             receiver_city=addr.get("city", ""),
             receiver_post_code=addr.get("post_code", ""),
             sender=sender,
             reference=reference,
+            weight_kg=weight_kg,
+            dimensions=dims,
         )
 
     # Both paczkomat (drzwi→paczkomat) and kurier use dispatch_order for sender pickup
     try:
-        client.create_dispatch_order(
+        dispatch_result = client.create_dispatch_order(
             str(result["id"]),
             sender,
             pickup_date=pickup_date,
             pickup_from=pickup_from,
             pickup_to=pickup_to,
         )
+        dispatch_order_id = str(dispatch_result.get("id", "")) or None  # fix #6: save ID
         pickup_ordered = True
     except Exception as exc:
         logger.warning("InPost dispatch order failed for %s: %s", reference, exc)
 
     return {
         "courier_draft_id": str(result.get("id", "")),
+        "dispatch_order_id": dispatch_order_id,  # fix #6
         "tracking_number": result.get("tracking_number"),
         "status": "created",
         "pickup_ordered": pickup_ordered,
@@ -315,18 +391,19 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
     total_qty = max(sum(item.get("quantity", 1) for item in product_items), 1)
     packages_count, packages_breakdown = _calc_packages(product_items)
 
+    # fix #2: locker_id from title first, then note_attributes fallbacks
     note_attrs = {a["name"]: a["value"] for a in (order.get("note_attributes") or [])}
-    locker_id = (
-        (
-            note_attrs.get("PickupPointId")
+    if inpost_service == "paczkomat":
+        locker_id = (
+            extract_locker_id_from_title(title)
+            or note_attrs.get("PickupPointId")
             or note_attrs.get("inpost_locker_id")
             or note_attrs.get("paczkomat_id")
             or note_attrs.get("locker_id")
             or shipping_addr.get("address2", "")
         )
-        if inpost_service == "paczkomat"
-        else ""
-    )
+    else:
+        locker_id = ""
 
     if courier == "inpost":
         service = (
@@ -334,6 +411,13 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
         )
     else:
         service = "apaczka"
+
+    # fix #3: parse address1 into street + building_number
+    raw_address1 = shipping_addr.get("address1", "")
+    street, building_number = parse_pl_address(raw_address1)
+
+    # fix: normalize phone
+    phone = normalize_pl_phone(phone) if phone else phone
 
     record: dict[str, Any] = {
         "id": str(uuid.uuid4()),
@@ -346,7 +430,8 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
         "service": service,
         "tracking_number": None,
         "courier_draft_id": None,
-        "status": "pending",
+        "dispatch_order_id": None,  # fix #6: field exists from creation
+        "status": "needs_review" if packages_count > 1 else "pending",
         "packages_count": packages_count,
         "packages_breakdown": packages_breakdown,
         "total_qty": total_qty,
@@ -363,11 +448,12 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
             "locker_id": locker_id,
         },
         "shipping_address": {
-            "street": f"{shipping_addr.get('address1', '')} {shipping_addr.get('address2', '')}".strip(),
+            "street": street,
+            "building_number": building_number,  # fix #3
             "city": shipping_addr.get("city", ""),
             "post_code": shipping_addr.get("zip", ""),
         },
-        "parcel": {"template": "small", "weight_kg": None},
+        "parcel": {"template": "large", "weight_kg": None},  # fix #4: large is safe default
         "error": None,
     }
 
@@ -376,6 +462,29 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
 
 
 # ── Webhook endpoint ──────────────────────────────────────────────────────────
+
+
+def _is_duplicate_webhook(webhook_id: str, order_id: str, shipping_store: ShippingStore) -> bool:
+    """Return True if this Shopify webhook was already processed (idempotency guard)."""
+    if not webhook_id:
+        return False
+    # Check if a draft for this order already exists and is past 'pending'
+    # This is a lightweight check — a proper processed_webhooks table would be more robust
+    # but requires schema migration. For now we check existing drafts by shopify_order_id.
+    try:
+        drafts = shipping_store.list_drafts()
+        for d in drafts:
+            if d.get("shopify_order_id") == order_id and d.get("status") != "error":
+                logger.info(
+                    "Duplicate webhook %s for order %s — already have draft %s, skipping",
+                    webhook_id,
+                    order_id,
+                    d.get("id"),
+                )
+                return True
+    except Exception:
+        pass
+    return False
 
 
 @router.post(
@@ -393,6 +502,7 @@ async def shopify_order_created(
     raw_body = await request.body()
 
     sig_header = request.headers.get("X-Shopify-Hmac-Sha256", "")
+    webhook_id = request.headers.get("X-Shopify-Webhook-Id", "")
     webhook_secret = _get_webhook_secret()
 
     if webhook_secret:
@@ -407,7 +517,14 @@ async def shopify_order_created(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature"
             )
     else:
-        logger.warning("shopify-webhook-secret not configured — skipping HMAC validation")
+        allow_unsigned = os.getenv("ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS", "").lower() in ("1", "true", "yes")
+        if not allow_unsigned:
+            logger.warning("shopify-webhook-secret not configured and unsigned webhooks disabled — rejected")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Webhook secret not configured",
+            )
+        logger.warning("shopify-webhook-secret not configured — skipping HMAC validation (unsigned webhooks allowed)")
 
     try:
         order = json.loads(raw_body)
@@ -417,6 +534,11 @@ async def shopify_order_created(
     if not order.get("shipping_lines"):
         logger.warning("Order %s has no shipping_lines — skipping draft", order.get("id"))
         return {"status": "skipped"}
+
+    # Idempotency: skip if this order already has a draft (Shopify retries on non-200)
+    order_id = str(order.get("id", ""))
+    if _is_duplicate_webhook(webhook_id, order_id, shipping_store):
+        return {"status": "duplicate"}
 
     background_tasks.add_task(_create_draft, order, shipping_store, storage)
     logger.info("Queued shipping draft for order %s", order.get("order_number") or order.get("id"))
@@ -463,6 +585,11 @@ def execute_draft(
     draft = shipping_store.get_draft(draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
+    if draft.get("status") == "needs_review":
+        raise HTTPException(
+            status_code=409,
+            detail="Draft requires review (multi-package) — use PATCH to override",
+        )
     if draft.get("status") == "created":
         raise HTTPException(
             status_code=409,

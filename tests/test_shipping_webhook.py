@@ -125,24 +125,37 @@ _ORDER_WITH_SHIPPING = json.dumps(
 class TestWebhookEndpoint:
     def test_no_shipping_lines_returns_skipped(self, client):
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            resp = client.post(
-                "/api/webhooks/shopify/order-created",
-                content=_ORDER_NO_SHIPPING,
-                headers={"Content-Type": "application/json"},
-            )
+            with patch.dict("os.environ", {"ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS": "true"}):
+                resp = client.post(
+                    "/api/webhooks/shopify/order-created",
+                    content=_ORDER_NO_SHIPPING,
+                    headers={"Content-Type": "application/json"},
+                )
         assert resp.status_code == 200
         assert resp.json() == {"status": "skipped"}
 
-    def test_no_secret_configured_skips_hmac(self, client):
+    def test_no_secret_configured_allows_unsigned_with_flag(self, client):
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            with patch("zdrovena.api.routers.webhooks._create_draft"):
+            with patch.dict("os.environ", {"ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS": "true"}):
+                with patch("zdrovena.api.routers.webhooks._create_draft"):
+                    resp = client.post(
+                        "/api/webhooks/shopify/order-created",
+                        content=_ORDER_WITH_SHIPPING,
+                        headers={"Content-Type": "application/json"},
+                    )
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "accepted"}
+
+    def test_no_secret_configured_rejects_unsigned_without_flag(self, client):
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
+            with patch.dict("os.environ", {}, clear=False):
                 resp = client.post(
                     "/api/webhooks/shopify/order-created",
                     content=_ORDER_WITH_SHIPPING,
                     headers={"Content-Type": "application/json"},
                 )
-        assert resp.status_code == 200
-        assert resp.json() == {"status": "accepted"}
+        assert resp.status_code == 503
+        assert "not configured" in resp.json()["detail"]
 
     def test_valid_hmac_accepted(self, client):
         secret = "test-webhook-secret"
@@ -178,11 +191,12 @@ class TestWebhookEndpoint:
 
     def test_invalid_json_returns_400(self, client):
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            resp = client.post(
-                "/api/webhooks/shopify/order-created",
-                content=b"not-json",
-                headers={"Content-Type": "application/json"},
-            )
+            with patch.dict("os.environ", {"ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS": "true"}):
+                resp = client.post(
+                    "/api/webhooks/shopify/order-created",
+                    content=b"not-json",
+                    headers={"Content-Type": "application/json"},
+                )
         assert resp.status_code == 400
 
 
