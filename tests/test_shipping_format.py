@@ -27,7 +27,7 @@ class TestNormalizePlPhone:
 
     def test_leading_zero_gets_stripped(self):
         # "048600100200" is 12 digits, doesn't match 9-digit or 11-digit patterns
-        assert normalize_pl_phone("048600100200") == "048600100200"  # returns original
+        assert normalize_pl_phone("048600100200") is None  # invalid phone
 
     def test_empty_string_returns_none(self):
         assert normalize_pl_phone("") is None
@@ -35,8 +35,8 @@ class TestNormalizePlPhone:
     def test_none_returns_none(self):
         assert normalize_pl_phone(None) is None
 
-    def test_unparseable_returns_original(self):
-        assert normalize_pl_phone("12345") == "12345"
+    def test_unparseable_returns_none(self):
+        assert normalize_pl_phone("12345") is None
 
     def test_with_parentheses_and_spaces(self):
         assert normalize_pl_phone("(600) 100-200") == "+48600100200"

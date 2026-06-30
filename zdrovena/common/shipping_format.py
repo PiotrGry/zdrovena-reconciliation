@@ -10,7 +10,7 @@ _LOCKER_ID_RE = re.compile(r"^[A-Z0-9]{3,12}$")
 
 
 def normalize_pl_phone(raw: str | None) -> str | None:
-    """Normalize Polish phone to +48XXXXXXXXX format. Returns original if can't parse."""
+    """Normalize Polish phone to +48XXXXXXXXX format. Returns None if invalid."""
     if not raw:
         return None
     digits = _PHONE_DIGITS_RE.sub("", raw)
@@ -18,7 +18,7 @@ def normalize_pl_phone(raw: str | None) -> str | None:
         return f"+{digits}"
     if len(digits) == 9:
         return f"+48{digits}"
-    return raw
+    return None
 
 
 def parse_pl_address(raw: str) -> tuple[str, str]:

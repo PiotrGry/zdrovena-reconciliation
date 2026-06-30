@@ -1,5 +1,0 @@
-Email address to invite [inviteeEmail] Required,Redirection url [inviteRedirectURL] Required,Send invitation message (true or false) [sendEmail],Customized invitation message [customizedMessageBody],Display name of the user being invited [invitedUserDisplayName]
-dorota@wodahumio.pl,https://portal.wodahumio.pl,true,Zapraszam Cię do portalu wodahumio. Kliknij link aby aktywować dostęp i zaloguj się pod adresem https://portal.wodahumio.pl,Dorota Gryzło
-ela.jakubowska@wodahumio.pl,https://portal.wodahumio.pl,true,Zapraszam Cię do portalu wodahumio. Kliknij link aby aktywować dostęp i zaloguj się pod adresem https://portal.wodahumio.pl,Ela Jakubowska
-kasia@wodahumio.pl,https://portal.wodahumio.pl,true,Zapraszam Cię do portalu wodahumio. Kliknij link aby aktywować dostęp i zaloguj się pod adresem https://portal.wodahumio.pl,Kasia
-krzysztof@wodahumio.pl,https://portal.wodahumio.pl,true,Zapraszam Cię do portalu wodahumio. Kliknij link aby aktywować dostęp i zaloguj się pod adresem https://portal.wodahumio.pl,Krzysztof Gryzło

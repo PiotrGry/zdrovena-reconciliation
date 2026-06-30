@@ -412,7 +412,7 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
         "tracking_number": None,
         "courier_draft_id": None,
         "dispatch_order_id": None,  # fix #6: field exists from creation
-        "status": "needs_review" if packages_count > 1 else "pending",
+        "status": "needs_review" if (packages_count > 1 or phone is None) else "pending",
         "packages_count": packages_count,
         "packages_breakdown": packages_breakdown,
         "total_qty": total_qty,

@@ -734,7 +734,7 @@ class TestCreateDraftApaczka:
         d = drafts[0]
         assert d["courier"] == "apaczka"
         assert d["service"] == "apaczka"
-        assert d["status"] == "pending"
+        assert d["status"] == "needs_review"  # phone is null in fixture, so needs_review
         assert d["tracking_number"] is None
         assert d["courier_draft_id"] is None
         assert d["shopify_order_number"] == "1003"
