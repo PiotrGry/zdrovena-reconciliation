@@ -23,22 +23,82 @@ _TIMEOUT = 15
 # paczkomat_template: InPost locker template (A=small/B=medium/C=large); None = too big for any locker.
 # dpd_template / orlen_template: to be filled when those carriers are integrated.
 PARCEL_SPECS: dict[str, dict] = {
-    "3-pak":      {"length": 40, "width": 40, "height": 20, "weight_kg": 18.0, "paczkomat_template": "large"},
-    "2-pak":      {"length": 40, "width": 30, "height": 20, "weight_kg": 12.0, "paczkomat_template": "large"},
-    "1-pak":      {"length": 30, "width": 20, "height": 20, "weight_kg":  6.0, "paczkomat_template": "large"},
-    "pół-pak":    {"length": 20, "width": 15, "height": 20, "weight_kg":  3.0, "paczkomat_template": "large"},
-    "szkło":      {"length": 30, "width": 30, "height": 20, "weight_kg":  9.0, "paczkomat_template": "large"},
-    "szkło-2pak": {"length": 30, "width": 30, "height": 20, "weight_kg":  9.0, "paczkomat_template": "large"},
+    "3-pak": {
+        "length": 40,
+        "width": 40,
+        "height": 20,
+        "weight_kg": 18.0,
+        "paczkomat_template": "large",
+    },
+    "2-pak": {
+        "length": 40,
+        "width": 30,
+        "height": 20,
+        "weight_kg": 12.0,
+        "paczkomat_template": "large",
+    },
+    "1-pak": {
+        "length": 30,
+        "width": 20,
+        "height": 20,
+        "weight_kg": 6.0,
+        "paczkomat_template": "large",
+    },
+    "pół-pak": {
+        "length": 20,
+        "width": 15,
+        "height": 20,
+        "weight_kg": 3.0,
+        "paczkomat_template": "large",
+    },
+    "szkło": {
+        "length": 30,
+        "width": 30,
+        "height": 20,
+        "weight_kg": 9.0,
+        "paczkomat_template": "large",
+    },
+    "szkło-2pak": {
+        "length": 30,
+        "width": 30,
+        "height": 20,
+        "weight_kg": 9.0,
+        "paczkomat_template": "large",
+    },
 }
 
 # Max package dimensions that fit in the "large" slot of each carrier's locker/automat.
 # Dimensions: height × width × depth (cm), max_weight_kg.
 # ✅ = verified against carrier/aggregator website; ❓ = unverified, use with caution.
 LOCKER_LARGE_SLOT: dict[str, dict] = {
-    "inpost":      {"height": 41, "width": 38, "depth": 64, "max_weight_kg": 25, "verified": True},   # ✅ apaczka.pl / inpost.pl
-    "orlen":       {"height": 41, "width": 38, "depth": 60, "max_weight_kg": 20, "verified": True},   # ✅ apaczka.pl (60×41×38)
-    "dpd_automat": {"height": 50, "width": 44, "depth": 59, "max_weight_kg": 20, "verified": False},  # ❓ DPD nie publikuje wymiarów skrytki
-    "dpd_punkt":   {"height": 64, "width": 41, "depth": 38, "max_weight_kg": 20, "verified": False},  # ❓ DPD nie publikuje wymiarów skrytki
+    "inpost": {
+        "height": 41,
+        "width": 38,
+        "depth": 64,
+        "max_weight_kg": 25,
+        "verified": True,
+    },  # ✅ apaczka.pl / inpost.pl
+    "orlen": {
+        "height": 41,
+        "width": 38,
+        "depth": 60,
+        "max_weight_kg": 20,
+        "verified": True,
+    },  # ✅ apaczka.pl (60×41×38)
+    "dpd_automat": {
+        "height": 50,
+        "width": 44,
+        "depth": 59,
+        "max_weight_kg": 20,
+        "verified": False,
+    },  # ❓ DPD nie publikuje wymiarów skrytki
+    "dpd_punkt": {
+        "height": 64,
+        "width": 41,
+        "depth": 38,
+        "max_weight_kg": 20,
+        "verified": False,
+    },  # ❓ DPD nie publikuje wymiarów skrytki
 }
 
 _DEFAULT_DIMS = PARCEL_SPECS["1-pak"]

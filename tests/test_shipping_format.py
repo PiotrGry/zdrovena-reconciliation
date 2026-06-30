@@ -96,7 +96,7 @@ class TestExtractLockerIdFromTitle:
         assert result == "RUH02M"
 
     def test_extract_locker_id_from_dpd_title(self):
-        title = "DPD • DPD Pickup- \"Lidl\" • 0.19 km • PL5A362"
+        title = 'DPD • DPD Pickup- "Lidl" • 0.19 km • PL5A362'
         result = extract_locker_id_from_title(title)
         assert result == "PL5A362"
 
