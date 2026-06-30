@@ -110,40 +110,43 @@ class ShippingStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
-    def _local_load(self) -> dict[str, Any]:
-        lock_fd = os.open(str(self._lock_file), os.O_CREAT | os.O_RDWR)
+    def _local_load_unlocked(self) -> dict[str, Any]:
+        if not self._local_file.exists():
+            return {}
         try:
-            flock(lock_fd, LOCK_EX)
-            if not self._local_file.exists():
-                return {}
+            return json.loads(self._local_file.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _local_save_unlocked(self, data: dict[str, Any]) -> None:
+        temp_fd, temp_path = tempfile.mkstemp(
+            dir=str(self._local_root), prefix=".tmp-", suffix=".json"
+        )
+        try:
+            with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(temp_path, str(self._local_file))
+        except Exception:
             try:
-                return json.loads(self._local_file.read_text(encoding="utf-8"))
-            except Exception:
-                return {}
-        finally:
-            flock(lock_fd, LOCK_UN)
-            os.close(lock_fd)
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            raise
+
+    def _acquire_lock(self):
+        lock_fd = os.open(str(self._lock_file), os.O_CREAT | os.O_RDWR)
+        flock(lock_fd, LOCK_EX)
+        return lock_fd
+
+    def _release_lock(self, lock_fd):
+        flock(lock_fd, LOCK_UN)
+        os.close(lock_fd)
+
+    def _local_load(self) -> dict[str, Any]:
+        return self._local_load_unlocked()
 
     def _local_save(self, data: dict[str, Any]) -> None:
-        lock_fd = os.open(str(self._lock_file), os.O_CREAT | os.O_RDWR)
-        try:
-            flock(lock_fd, LOCK_EX)
-            temp_fd, temp_path = tempfile.mkstemp(
-                dir=str(self._local_root), prefix=".tmp-", suffix=".json"
-            )
-            try:
-                with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-                os.replace(temp_path, str(self._local_file))
-            except Exception:
-                try:
-                    os.unlink(temp_path)
-                except OSError:
-                    pass
-                raise
-        finally:
-            flock(lock_fd, LOCK_UN)
-            os.close(lock_fd)
+        return self._local_save_unlocked(data)
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -155,14 +158,18 @@ class ShippingStore:
                 logger.error("Table upsert failed for draft %s: %s", record.get("id"), exc)
                 raise
         else:
-            data = self._local_load()
-            shopify_order_id = record.get("shopify_order_id")
-            if shopify_order_id:
-                for existing_id, existing_record in list(data.items()):
-                    if existing_record.get("shopify_order_id") == shopify_order_id:
-                        del data[existing_id]
-            data[record["id"]] = record
-            self._local_save(data)
+            lock_fd = self._acquire_lock()
+            try:
+                data = self._local_load()
+                shopify_order_id = record.get("shopify_order_id")
+                if shopify_order_id:
+                    for existing_id, existing_record in list(data.items()):
+                        if existing_record.get("shopify_order_id") == shopify_order_id:
+                            del data[existing_id]
+                data[record["id"]] = record
+                self._local_save(data)
+            finally:
+                self._release_lock(lock_fd)
 
     def update_draft(self, draft_id: str, fields: dict[str, Any]) -> bool:
         """Merge-update specific fields of a draft. Returns False if not found (local only)."""
@@ -182,12 +189,16 @@ class ShippingStore:
                 logger.error("Table update failed for draft %s: %s", draft_id, exc)
                 raise
         else:
-            data = self._local_load()
-            if draft_id not in data:
-                return False
-            data[draft_id].update(fields)
-            self._local_save(data)
-            return True
+            lock_fd = self._acquire_lock()
+            try:
+                data = self._local_load()
+                if draft_id not in data:
+                    return False
+                data[draft_id].update(fields)
+                self._local_save(data)
+                return True
+            finally:
+                self._release_lock(lock_fd)
 
     def get_draft(self, draft_id: str) -> dict[str, Any] | None:
         if self._use_table:
@@ -208,9 +219,13 @@ class ShippingStore:
             except Exception:
                 pass
         else:
-            data = self._local_load()
-            data.pop(draft_id, None)
-            self._local_save(data)
+            lock_fd = self._acquire_lock()
+            try:
+                data = self._local_load()
+                data.pop(draft_id, None)
+                self._local_save(data)
+            finally:
+                self._release_lock(lock_fd)
 
     def list_drafts(self, limit: int = 200) -> list[dict[str, Any]]:
         if self._use_table:
