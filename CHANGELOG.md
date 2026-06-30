@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v2.7.1 (2026-06-30)
+
+### Added
+
+- **shipping**: `reviewed` parameter in PATCH `/shipping/drafts/{draft_id}` — allows operators to exit `needs_review` status by setting `reviewed=true`, which clears the status to `pending` and removes error flag.
+
+### Fixed
+
+- **shipping**: Drafts with invalid phone numbers now properly set status to `needs_review`, preventing auto-execution and requiring explicit operator review.
+
+---
+
 ## v2.7.0 (2026-06-30)
 
 ### Added
