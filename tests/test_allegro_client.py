@@ -404,10 +404,7 @@ class TestInvoicesApi:
             c.upload_invoice_file(order_id="o1", invoice_id="inv1", pdf_bytes=b"%PDF-1.4 test")
         call = req.call_args_list[1]
         assert call.args[0].upper() == "PUT"
-        assert (
-            call.args[1]
-            == f"{_BASE_URL_PROD}/order/checkout-forms/o1/invoices/inv1/file"
-        )
+        assert call.args[1] == f"{_BASE_URL_PROD}/order/checkout-forms/o1/invoices/inv1/file"
         # Body should be raw PDF bytes with application/pdf content-type
         body = call.kwargs.get("data")
         assert body == b"%PDF-1.4 test"

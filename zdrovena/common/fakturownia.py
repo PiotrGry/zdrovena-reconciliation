@@ -44,7 +44,7 @@ log = logging.getLogger(__name__)
 
 # ── KSeF Rozliczenie constants ────────────────────────────────────────────────
 
-SETTLEMENT_KIND_CHARGE = "charge"        # KSeF Obciazenia
+SETTLEMENT_KIND_CHARGE = "charge"  # KSeF Obciazenia
 SETTLEMENT_KIND_DEDUCTION = "deduction"  # KSeF Odliczenia
 _VALID_SETTLEMENT_KINDS = {SETTLEMENT_KIND_CHARGE, SETTLEMENT_KIND_DEDUCTION}
 
@@ -231,9 +231,7 @@ class FakturowniaClient:
         return self.update_invoice(invoice_id, {"settlement_positions": merged})
 
     @staticmethod
-    def has_settlement_with_description(
-        invoice: dict[str, Any], description: str
-    ) -> bool:
+    def has_settlement_with_description(invoice: dict[str, Any], description: str) -> bool:
         """Return True iff invoice.settlement_positions contains a row whose
         description matches (case-insensitive, stripped)."""
         needle = (description or "").strip().casefold()

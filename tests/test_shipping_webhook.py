@@ -347,17 +347,20 @@ class TestExecuteDraft:
             store, courier="inpost", service="inpost_courier_standard"
         )
         allegro_client = MagicMock()
-        with patch(
-            "zdrovena.api.routers.webhooks._run_inpost",
-            return_value={
-                "courier_draft_id": "inpost-shipment-77",
-                "tracking_number": "6200XYZ",
-                "status": "created",
-                "error": None,
-            },
-        ), patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
-            return_value=allegro_client,
+        with (
+            patch(
+                "zdrovena.api.routers.webhooks._run_inpost",
+                return_value={
+                    "courier_draft_id": "inpost-shipment-77",
+                    "tracking_number": "6200XYZ",
+                    "status": "created",
+                    "error": None,
+                },
+            ),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_client",
+                return_value=allegro_client,
+            ),
         ):
             resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
         assert resp.status_code == 200
@@ -368,21 +371,22 @@ class TestExecuteDraft:
         )
 
     def test_execute_allegro_apaczka_pushes_tracking_with_other_carrier(self, client, store):
-        draft = self._seed_allegro_error_draft(
-            store, courier="apaczka", service="apaczka_courier"
-        )
+        draft = self._seed_allegro_error_draft(store, courier="apaczka", service="apaczka_courier")
         allegro_client = MagicMock()
-        with patch(
-            "zdrovena.api.routers.webhooks._run_apaczka",
-            return_value={
-                "courier_draft_id": "apaczka-order-88",
-                "tracking_number": "APZWAY0088",
-                "status": "created",
-                "error": None,
-            },
-        ), patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
-            return_value=allegro_client,
+        with (
+            patch(
+                "zdrovena.api.routers.webhooks._run_apaczka",
+                return_value={
+                    "courier_draft_id": "apaczka-order-88",
+                    "tracking_number": "APZWAY0088",
+                    "status": "created",
+                    "error": None,
+                },
+            ),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_client",
+                return_value=allegro_client,
+            ),
         ):
             resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
         assert resp.status_code == 200
@@ -398,17 +402,20 @@ class TestExecuteDraft:
         )
         allegro_client = MagicMock()
         allegro_client.create_shipment.side_effect = RuntimeError("Allegro 500")
-        with patch(
-            "zdrovena.api.routers.webhooks._run_inpost",
-            return_value={
-                "courier_draft_id": "x",
-                "tracking_number": "TRK-OK",
-                "status": "created",
-                "error": None,
-            },
-        ), patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
-            return_value=allegro_client,
+        with (
+            patch(
+                "zdrovena.api.routers.webhooks._run_inpost",
+                return_value={
+                    "courier_draft_id": "x",
+                    "tracking_number": "TRK-OK",
+                    "status": "created",
+                    "error": None,
+                },
+            ),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_client",
+                return_value=allegro_client,
+            ),
         ):
             resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
         assert resp.status_code == 200
@@ -419,22 +426,24 @@ class TestExecuteDraft:
     def test_execute_shopify_draft_does_not_push_to_allegro(self, client, store):
         draft = self._seed_error_draft(store, courier="inpost")
         allegro_client = MagicMock()
-        with patch(
-            "zdrovena.api.routers.webhooks._run_inpost",
-            return_value={
-                "courier_draft_id": "x",
-                "tracking_number": "TRK-SHOPIFY",
-                "status": "created",
-                "error": None,
-            },
-        ), patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
-            return_value=allegro_client,
+        with (
+            patch(
+                "zdrovena.api.routers.webhooks._run_inpost",
+                return_value={
+                    "courier_draft_id": "x",
+                    "tracking_number": "TRK-SHOPIFY",
+                    "status": "created",
+                    "error": None,
+                },
+            ),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_client",
+                return_value=allegro_client,
+            ),
         ):
             resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
         assert resp.status_code == 200
         allegro_client.create_shipment.assert_not_called()
-
 
 
 # ── Order pickup ──────────────────────────────────────────────────────────────

@@ -33,9 +33,10 @@ logger = logging.getLogger(__name__)
 # ── constants (env-overridable) ──────────────────────────────────────────────
 
 KAUCJA_UNIT_PRICE_PLN = os.getenv("KAUCJA_UNIT_PRICE_PLN", "0.50").strip() or "0.50"
-KAUCJA_DESCRIPTION = os.getenv(
-    "KAUCJA_DESCRIPTION", "Kaucja za opakowania zwrotne"
-).strip() or "Kaucja za opakowania zwrotne"
+KAUCJA_DESCRIPTION = (
+    os.getenv("KAUCJA_DESCRIPTION", "Kaucja za opakowania zwrotne").strip()
+    or "Kaucja za opakowania zwrotne"
+)
 
 
 # ── stats ────────────────────────────────────────────────────────────────────
@@ -117,9 +118,7 @@ def patch_allegro_invoices_once(
         for allegro_inv in allegro_invoices or []:
             invoice_number = (allegro_inv.get("number") or "").strip()
             if not invoice_number:
-                logger.warning(
-                    "Allegro invoice for order %s has no `number` — skipping", order_id
-                )
+                logger.warning("Allegro invoice for order %s has no `number` — skipping", order_id)
                 stats["errors"] += 1
                 continue
 
