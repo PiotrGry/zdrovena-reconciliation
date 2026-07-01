@@ -363,6 +363,33 @@ class TestInvoiceMatching:
         assert stats["skipped_no_fakturownia_match"] == 1
         fakturownia_client.add_settlement_position.assert_not_called()
 
+    def test_ambiguous_match_skipped(
+        self, allegro_client, fakturownia_client, shipping_store
+    ):
+        """Więcej niż 1 faktura o tym samym numerze — NIE patchujemy żadnej
+        (nie ryzykujemy dopisania kaucji do złej). Zliczane w skipped_ambiguous_match."""
+        shipping_store.list_drafts.return_value = [_draft(external_order_id="ORD-1")]
+        allegro_client.list_order_invoices.return_value = [
+            {"id": "allegro-inv-1", "number": "FV/2025/999"},
+        ]
+        # Dwie różne faktury zwrócone dla tego samego numeru (patologia, ale możliwa)
+        fakturownia_client.list_invoices.return_value = [
+            _fakturownia_invoice(invoice_id=111, positions=[]),
+            _fakturownia_invoice(invoice_id=222, positions=[]),
+        ]
+
+        stats = patch_allegro_invoices_once(
+            allegro_client=allegro_client,
+            fakturownia_client=fakturownia_client,
+            shipping_store=shipping_store,
+        )
+
+        assert stats["skipped_ambiguous_match"] == 1
+        assert stats["patched"] == 0
+        # KLUCZOWE: nie pobieramy szczegółów żadnej z faktur ani nie patchujemy
+        fakturownia_client.get_invoice.assert_not_called()
+        fakturownia_client.add_settlement_position.assert_not_called()
+
 
 # ── source filter (only Allegro orders) ──────────────────────────────────────
 

@@ -271,6 +271,59 @@ class TestAddSettlementPosition:
                 description="",
             )
 
+    def test_race_double_add_idempotent(self, client):
+        """Race protection: jeśli między zewnętrznym idempotency check a naszym PUT-em
+        inny worker dodał pozycję z tą samą description — nie robimy drugiego PUT-a.
+        Zwracamy świeżo pobraną fakturę, PUT nie leci.
+        """
+        # Faktura już ma pozycję kaucji (dodaną przez równoległego workera)
+        existing = {
+            "id": 950,
+            "settlement_positions": [
+                {
+                    "id": 77,
+                    "kind": "charge",
+                    "amount": "5.00",
+                    "description": "Kaucja za opakowania zwrotne",
+                }
+            ],
+        }
+
+        with patch("requests.Session.request") as mock:
+            # Tylko 1 request — GET. Żadnego PUT.
+            mock.side_effect = [_resp(existing)]
+
+            result = client.add_settlement_position(
+                invoice_id=950,
+                kind="charge",
+                amount_pln="5.00",
+                description="Kaucja za opakowania zwrotne",
+            )
+
+        # Dokładnie jeden call — GET, bez PUT-a
+        assert mock.call_count == 1
+        assert mock.call_args_list[0].kwargs["method"] == "GET"
+        # Zwrócił istniejącą fakturę
+        assert result == existing
+
+    def test_race_double_add_case_insensitive_match(self, client):
+        """Race check jest case-insensitive + stripped (jak has_settlement_with_description)."""
+        existing = {
+            "id": 951,
+            "settlement_positions": [
+                {"id": 1, "description": "  KAUCJA za opakowania zwrotne  "},
+            ],
+        }
+        with patch("requests.Session.request") as mock:
+            mock.side_effect = [_resp(existing)]
+            client.add_settlement_position(
+                invoice_id=951,
+                kind="charge",
+                amount_pln="5.00",
+                description="Kaucja za opakowania zwrotne",
+            )
+        assert mock.call_count == 1  # tylko GET, bez PUT
+
 
 # ── has_settlement_with_description (idempotency helper) ─────────────────────
 

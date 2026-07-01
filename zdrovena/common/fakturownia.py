@@ -202,6 +202,22 @@ class FakturowniaClient:
         current = self.get_invoice(invoice_id)
         existing_rows = current.get("settlement_positions") or []
 
+        # Race protection: idempotency re-check. Wołający (patcher) sprawdza
+        # `has_settlement_with_description` przed patchem, ale między tym check-em a
+        # naszym PUT-em inny worker/retry mógł dodać tę samą pozycję. Robimy drugi
+        # check tu, na świeżo pobranej fakturze — jeśli pozycja z tym opisem już jest,
+        # zwracamy fakturę bez PUT-a (idempotent no-op).
+        needle = description.strip().casefold()
+        for row in existing_rows:
+            desc = (row.get("description") or "").strip().casefold()
+            if desc == needle:
+                log.info(
+                    "add_settlement_position: invoice %s already has row %r — skipping PUT",
+                    invoice_id,
+                    description.strip(),
+                )
+                return current
+
         # Preserve existing rows verbatim (Rails PUT semantics require `id` on kept rows).
         merged: list[dict[str, Any]] = list(existing_rows)
         merged.append(
