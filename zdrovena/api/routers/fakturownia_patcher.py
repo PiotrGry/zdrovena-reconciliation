@@ -49,6 +49,7 @@ def _new_stats() -> dict[str, int]:
         "skipped_already_patched": 0,
         "skipped_no_pet": 0,
         "skipped_no_fakturownia_match": 0,
+        "skipped_ambiguous_match": 0,
         "errors": 0,
     }
 
@@ -151,6 +152,20 @@ def _process_one_invoice(
     if not matches:
         logger.info("No Fakturownia invoice for number %s — skipping", invoice_number)
         stats["skipped_no_fakturownia_match"] += 1
+        return
+
+    if len(matches) > 1:
+        # Ambiguous match — nie ryzykujemy patchowania złej faktury. Zgłaszamy jako błąd,
+        # żeby operator dostał sygnał; nie łapiemy w skipped_no_fakturownia_match, bo to
+        # zupełnie inna sytuacja (znaleźmy więcej faktur o tym samym numerze).
+        ids = [m.get("id") for m in matches]
+        logger.error(
+            "Ambiguous Fakturownia match for number %s: %d invoices (%s) — skipping",
+            invoice_number,
+            len(matches),
+            ids,
+        )
+        stats["skipped_ambiguous_match"] += 1
         return
 
     match = matches[0]
