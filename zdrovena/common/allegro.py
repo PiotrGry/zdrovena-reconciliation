@@ -1,0 +1,456 @@
+"""zdrovena.common.allegro — Allegro REST API v1 client.
+
+Allegro has no webhooks — this client is used by pollers to sync orders and
+invoices. Auth is OAuth 2.0 refresh-token flow (access 12h, refresh 3 months).
+All external calls are made via a single `requests.Session` so tests can stub
+`requests.Session.request` in one place.
+
+Secrets (Azure Key Vault):
+    allegro-client-id, allegro-client-secret, allegro-refresh-token
+
+Environment vars:
+    ALLEGRO_ENV=prod|sandbox (default prod)
+    ALLEGRO_HTTP_TIMEOUT   (default 30 seconds)
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import time
+from typing import Any
+
+import requests
+from requests.auth import HTTPBasicAuth
+
+from zdrovena.common.shipping_exceptions import (
+    AllegroAuthError,
+    AllegroBusinessError,
+    AllegroCommandPending,
+    CourierConnectionError,
+    CourierServerError,
+    CourierTimeoutError,
+)
+
+logger = logging.getLogger("zdrovena.common.allegro")
+
+_BASE_URL_PROD = "https://api.allegro.pl"
+_BASE_URL_SANDBOX = "https://api.allegro.pl.allegrosandbox.pl"
+_AUTH_URL_PROD = "https://allegro.pl/auth/oauth/token"
+_AUTH_URL_SANDBOX = "https://allegro.pl.allegrosandbox.pl/auth/oauth/token"
+
+_ACCEPT_HEADER = "application/vnd.allegro.public.v1+json"
+_DEFAULT_TIMEOUT = int(os.environ.get("ALLEGRO_HTTP_TIMEOUT", "30"))
+
+# Refresh window before actual expiry so we never hand out an about-to-expire token.
+_TOKEN_REFRESH_SKEW_S = 30
+
+
+class AllegroClient:
+    """Thin wrapper over Allegro REST API for orders + invoices flow.
+
+    All methods raise a subclass of ZdrovenaShippingError on failure so callers
+    can distinguish auth/business/transient errors without inspecting HTTP codes.
+    """
+
+    def __init__(
+        self,
+        *,
+        client_id: str,
+        client_secret: str,
+        refresh_token: str,
+        env: str = "prod",
+        timeout: int | None = None,
+    ) -> None:
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._refresh_token = refresh_token
+        self._env = env
+        if env == "sandbox":
+            self._base_url = _BASE_URL_SANDBOX
+            self._auth_url = _AUTH_URL_SANDBOX
+        else:
+            self._base_url = _BASE_URL_PROD
+            self._auth_url = _AUTH_URL_PROD
+        self._timeout = timeout or _DEFAULT_TIMEOUT
+        self._session = requests.Session()
+        self._access_token: str | None = None
+        self._expires_at: float = 0.0
+
+    # ── OAuth ──────────────────────────────────────────────────────────────
+
+    def _fetch_token(self) -> None:
+        """Refresh access token using the stored refresh_token grant.
+
+        Allegro returns `{"access_token", "expires_in", "refresh_token", "token_type"}`.
+        We cache both the access token and the (possibly rotated) refresh token.
+        """
+        try:
+            resp = self._session.request(
+                "POST",
+                self._auth_url,
+                auth=HTTPBasicAuth(self._client_id, self._client_secret),
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": self._refresh_token,
+                },
+                timeout=self._timeout,
+            )
+        except requests.Timeout as exc:
+            raise CourierTimeoutError(courier="allegro", action="oauth_token") from exc
+        except requests.ConnectionError as exc:
+            raise CourierConnectionError(courier="allegro", detail=str(exc)) from exc
+
+        if resp.status_code in (401, 403):
+            raise AllegroAuthError(detail=(resp.text or "")[:200])
+        if not resp.ok:
+            raise CourierServerError(courier="allegro", status=resp.status_code)
+
+        payload = resp.json() or {}
+        token = payload.get("access_token")
+        if not token:
+            raise AllegroAuthError(detail="missing access_token in response")
+        self._access_token = token
+        expires_in = int(payload.get("expires_in", 43200))
+        self._expires_at = time.time() + max(expires_in - _TOKEN_REFRESH_SKEW_S, 0)
+        # Refresh tokens may rotate — persist the latest value in-memory.
+        new_rt = payload.get("refresh_token")
+        if new_rt:
+            self._refresh_token = new_rt
+
+    def _get_token(self) -> str:
+        if self._access_token is None or time.time() >= self._expires_at:
+            self._fetch_token()
+        assert self._access_token is not None
+        return self._access_token
+
+    # ── Low-level HTTP ─────────────────────────────────────────────────────
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        data: bytes | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> requests.Response:
+        token = self._get_token()
+        headers: dict[str, str] = {
+            "Authorization": f"Bearer {token}",
+            "Accept": _ACCEPT_HEADER,
+        }
+        if extra_headers:
+            headers.update(extra_headers)
+
+        url = f"{self._base_url}{path}"
+        kwargs: dict[str, Any] = {
+            "headers": headers,
+            "timeout": self._timeout,
+        }
+        if params is not None:
+            kwargs["params"] = params
+        if json_body is not None:
+            kwargs["json"] = json_body
+        if data is not None:
+            kwargs["data"] = data
+
+        try:
+            resp = self._session.request(method, url, **kwargs)
+        except requests.Timeout as exc:
+            raise CourierTimeoutError(courier="allegro", action=path) from exc
+        except requests.ConnectionError as exc:
+            raise CourierConnectionError(courier="allegro", detail=str(exc)) from exc
+
+        if resp.status_code in (401, 403):
+            raise AllegroAuthError(detail=(resp.text or "")[:200])
+        if 400 <= resp.status_code < 500:
+            raise AllegroBusinessError(
+                detail=f"{resp.status_code} {(resp.text or '')[:200]}",
+                action=path,
+            )
+        if resp.status_code >= 500:
+            raise CourierServerError(courier="allegro", status=resp.status_code)
+        return resp
+
+    def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._request("GET", path, params=params).json() or {}
+
+    def _post(self, path: str, json_body: dict[str, Any]) -> dict[str, Any]:
+        resp = self._request("POST", path, json_body=json_body)
+        if resp.status_code == 204:
+            return {}
+        try:
+            return resp.json() or {}
+        except ValueError:
+            return {}
+
+    def _put_json(self, path: str, json_body: dict[str, Any]) -> dict[str, Any]:
+        resp = self._request("PUT", path, json_body=json_body)
+        if resp.status_code == 204:
+            return {}
+        try:
+            return resp.json() or {}
+        except ValueError:
+            return {}
+
+    # ── Orders API ─────────────────────────────────────────────────────────
+
+    def list_orders(
+        self,
+        *,
+        status: str | None = None,
+        bought_at_gte: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """List checkout forms (buyer orders).
+
+        Filters (all optional):
+            status: e.g. "READY_FOR_PROCESSING" | "BOUGHT" | "PROCESSING"
+            bought_at_gte: ISO 8601 timestamp (line-items purchased at ≥ this)
+            limit / offset: pagination
+        """
+        params: dict[str, Any] = {}
+        if status:
+            params["status"] = status
+        if bought_at_gte:
+            params["lineItems.boughtAt.gte"] = bought_at_gte
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
+        data = self._get("/order/checkout-forms", params=params or None)
+        return list(data.get("checkoutForms") or [])
+
+    def get_order(self, order_id: str) -> dict[str, Any]:
+        return self._get(f"/order/checkout-forms/{order_id}")
+
+    def mark_order_processed(self, order_id: str, status: str = "PROCESSING") -> None:
+        """PUT /order/checkout-forms/{id}/fulfillment with fulfillment status."""
+        self._request(
+            "PUT",
+            f"/order/checkout-forms/{order_id}/fulfillment",
+            json_body={"status": status},
+        )
+
+    # ── Shipments ──────────────────────────────────────────────────────────
+
+    def create_shipment(
+        self,
+        *,
+        order_id: str,
+        carrier_id: str,
+        waybill: str,
+    ) -> dict[str, Any]:
+        return self._post(
+            f"/order/checkout-forms/{order_id}/shipments",
+            {"carrierId": carrier_id, "waybill": waybill},
+        )
+
+    def get_shipments(self, order_id: str) -> list[dict[str, Any]]:
+        data = self._get(f"/order/checkout-forms/{order_id}/shipments")
+        return list(data.get("shipments") or [])
+
+    # ── Invoices ───────────────────────────────────────────────────────────
+
+    def list_order_invoices(self, order_id: str) -> list[dict[str, Any]]:
+        data = self._get(f"/order/checkout-forms/{order_id}/invoices")
+        return list(data.get("invoices") or [])
+
+    def create_invoice_declaration(
+        self,
+        *,
+        order_id: str,
+        invoice_number: str,
+        file_type: str = "VAT",
+    ) -> dict[str, Any]:
+        """Declare a new invoice for an order; returned id is used to upload PDF."""
+        return self._post(
+            f"/order/checkout-forms/{order_id}/invoices",
+            {
+                "invoiceNumber": invoice_number,
+                "file": {"type": file_type},
+            },
+        )
+
+    def upload_invoice_file(
+        self,
+        *,
+        order_id: str,
+        invoice_id: str,
+        pdf_bytes: bytes,
+    ) -> None:
+        self._request(
+            "PUT",
+            f"/order/checkout-forms/{order_id}/invoices/{invoice_id}/file",
+            data=pdf_bytes,
+            extra_headers={"Content-Type": "application/pdf"},
+        )
+
+
+    # ── Wysyłam z Allegro / Ship with Allegro ────────────────────────────────
+    # Docs: developer.allegro.pl/tutorials/jak-zarzadzac-przesylkami-przez-wysylam-z-allegro-LRVjK7K21sY
+
+    def get_delivery_services(self) -> list[dict[str, Any]]:
+        """List available delivery services (Allegro Standard + own agreements)."""
+        data = self._get("/shipment-management/delivery-services")
+        return list(data.get("deliveryServices") or [])
+
+    def get_delivery_proposal(self, order_id: str) -> dict[str, Any]:
+        """Proposed shipping data prefilled from the order."""
+        return self._get(f"/shipment-management/delivery-proposals/{order_id}")
+
+    def create_ship_with_allegro_shipment(
+        self,
+        *,
+        command_id: str,
+        order_id: str,
+        delivery_method_id: str,
+        credentials_id: str | None,
+        packages: list[dict[str, Any]],
+        pickup_point_id: str | None = None,
+        sending_method: str | None = None,
+        additional_services: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """POST /shipment-management/shipments/create-commands.
+
+        For Allegro Standard: pass credentials_id=None.
+        For own agreements: pass the credentialsId returned by get_delivery_services.
+        For InPost: pass sending_method one of 'parcel_locker' | 'dispatch_order' |
+        'pop' | 'any_point' — mapped to additionalServices.sendingAtPoint.
+        """
+        input_body: dict[str, Any] = {
+            "orderId": order_id,
+            "deliveryMethodId": delivery_method_id,
+            "packages": packages,
+        }
+        if credentials_id is not None:
+            input_body["credentialsId"] = credentials_id
+        if pickup_point_id:
+            input_body["pickupPointId"] = pickup_point_id
+
+        add_services = dict(additional_services or {})
+        if sending_method:
+            add_services["sendingAtPoint"] = sending_method
+        if add_services:
+            input_body["additionalServices"] = add_services
+
+        return self._post(
+            "/shipment-management/shipments/create-commands",
+            {"commandId": command_id, "input": input_body},
+        )
+
+    def get_ship_with_allegro_command_status(self, command_id: str) -> dict[str, Any]:
+        """Poll status of a create-command. Returns dict with status, shipmentId, errors."""
+        return self._get(f"/shipment-management/shipments/create-commands/{command_id}")
+
+    def wait_for_ship_with_allegro_shipment(
+        self,
+        command_id: str,
+        *,
+        max_attempts: int = 20,
+        interval_s: float = 1.5,
+    ) -> str:
+        """Poll create-command until SUCCESS → returns shipmentId.
+
+        Raises AllegroBusinessError on ERROR status or timeout.
+        """
+        for _ in range(max_attempts):
+            payload = self.get_ship_with_allegro_command_status(command_id)
+            status = payload.get("status")
+            if status == "SUCCESS":
+                ship_id = payload.get("shipmentId")
+                if not ship_id:
+                    raise AllegroBusinessError(
+                        detail="SUCCESS status but no shipmentId returned",
+                        action="wait_for_ship_with_allegro_shipment",
+                    )
+                return str(ship_id)
+            if status == "ERROR":
+                errors = payload.get("errors") or []
+                detail = errors[0].get("message") if errors else "unknown error"
+                raise AllegroBusinessError(
+                    detail=f"create-command ERROR: {detail}",
+                    action="wait_for_ship_with_allegro_shipment",
+                )
+            time.sleep(interval_s)
+        # Timeout krótkiego polling — komenda może jeszcze ukończyć się asynchronicznie.
+        # Osobny podtyp wyjątku pozwala wołającemu odróżnić pending od twardego ERROR bez
+        # sprawdzania stringów.
+        raise AllegroCommandPending(command_id=command_id)
+
+    def get_ship_with_allegro_shipment(self, shipment_id: str) -> dict[str, Any]:
+        """GET /shipment-management/shipments/{shipmentId} — full shipment with waybill."""
+        return self._get(f"/shipment-management/shipments/{shipment_id}")
+
+    @staticmethod
+    def extract_shipment_waybill(
+        shipment: dict[str, Any],
+    ) -> tuple[str | None, str | None]:
+        """Return (carrierId, carrierWaybill) from the first package's transportingInfo.
+
+        Uses the NEW field packages.transportingInfo (packages.waybill was deprecated
+        and removed on 2026-07-01).
+        """
+        packages = shipment.get("packages") or []
+        if not packages:
+            return (None, None)
+        info_list = packages[0].get("transportingInfo") or []
+        if not info_list:
+            return (None, None)
+        info = info_list[0]
+        carrier = info.get("carrierId")
+        waybill = info.get("carrierWaybill") or None
+        return (carrier, waybill)
+
+    def get_ship_with_allegro_pickup_proposals(
+        self, shipment_ids: list[str]
+    ) -> list[dict[str, Any]]:
+        """POST /shipment-management/pickup-proposals — available pickup slots."""
+        data = self._post(
+            "/shipment-management/pickup-proposals",
+            {"input": {"shipmentIds": list(shipment_ids)}},
+        )
+        return list(data.get("proposalItems") or [])
+
+    def create_ship_with_allegro_pickup(
+        self,
+        *,
+        command_id: str,
+        proposal_item_id: str,
+        shipment_ids: list[str],
+    ) -> dict[str, Any]:
+        """POST /shipment-management/pickups/create-commands — order courier pickup."""
+        return self._post(
+            "/shipment-management/pickups/create-commands",
+            {
+                "commandId": command_id,
+                "input": {
+                    "proposalItemId": proposal_item_id,
+                    "shipmentIds": list(shipment_ids),
+                },
+            },
+        )
+
+    def get_ship_with_allegro_label(self, shipment_id: str) -> bytes:
+        """GET /shipment-management/shipments/{shipmentId}/label — returns PDF bytes.
+
+        Accepts either raw PDF response or a JSON envelope with base64-encoded label.
+        """
+        import base64 as _b64
+
+        resp = self._request("GET", f"/shipment-management/shipments/{shipment_id}/label")
+        headers = getattr(resp, "headers", {}) or {}
+        content_type = (headers.get("Content-Type", "") if hasattr(headers, "get") else "").lower()
+        if "pdf" in content_type or (resp.content and resp.content.startswith(b"%PDF")):
+            return resp.content
+        try:
+            payload = resp.json() or {}
+        except (ValueError, AttributeError):
+            return resp.content
+        encoded = payload.get("label") if isinstance(payload, dict) else None
+        if encoded:
+            return _b64.b64decode(encoded)
+        return resp.content

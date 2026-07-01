@@ -179,6 +179,16 @@ class ApaczkaSignatureError(CourierAuthError):
         )
 
 
+class AllegroAuthError(CourierAuthError):
+    def __init__(self, detail: str = "", order_id: str = "") -> None:
+        super().__init__(
+            f"Allegro OAuth 401/403: {detail}",
+            order_id=order_id,
+            courier="allegro",
+            action="authenticate",
+        )
+
+
 class ApaczkaInsufficientBalanceError(CourierAuthError):
     def __init__(self, order_id: str = "") -> None:
         super().__init__(
@@ -225,6 +235,33 @@ class ApaczkaServiceUnavailableError(CourierBusinessError):
             courier="apaczka",
             action="create_shipment",
         )
+
+
+class AllegroBusinessError(CourierBusinessError):
+    def __init__(self, detail: str = "", order_id: str = "", action: str = "allegro_call") -> None:
+        super().__init__(
+            f"Allegro business error: {detail}",
+            order_id=order_id,
+            courier="allegro",
+            action=action,
+        )
+
+
+class AllegroCommandPending(AllegroBusinessError):
+    """Ship with Allegro create-command jeszcze IN_PROGRESS po timeout krótkiego polling.
+
+    To NIE jest twardy błąd — komenda jest kolejkowana po stronie Allegro.
+    Wołający powinien zwrócić status='pending_confirmation' i pozostawić dopytanie
+    o waybill oddzielnemu workerowi (nie tworzyć kolejnej komendy dla tego samego draftu!).
+    """
+
+    def __init__(self, command_id: str = "", order_id: str = "") -> None:
+        super().__init__(
+            detail=f"create-command {command_id} still pending (async)",
+            order_id=order_id,
+            action="wait_for_ship_with_allegro_shipment",
+        )
+        self.command_id = command_id
 
 
 class PickupSlotUnavailableError(CourierBusinessError):
@@ -315,3 +352,4 @@ class MissingDispatchIdError(CancellationError):
             f"Draft {draft_id!r} has no dispatch_order_id — cannot cancel pickup",
             action="cancel_dispatch",
         )
+

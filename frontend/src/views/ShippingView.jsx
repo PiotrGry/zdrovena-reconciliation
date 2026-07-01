@@ -19,6 +19,11 @@ function fmtDate(iso) {
 }
 
 function courierLabel(draft) {
+    if (draft.courier === 'allegro_delivery') {
+        if (draft.allegro_sending_method === 'parcel_locker') return 'Wysyłam z Allegro (Paczkomat)'
+        if (draft.allegro_sending_method === 'dispatch_order') return 'Wysyłam z Allegro (Kurier InPost)'
+        return 'Wysyłam z Allegro'
+    }
     if (draft.courier === 'inpost') {
         if (draft.service === 'inpost_locker_standard') return 'InPost Paczkomat'
         if (draft.service === 'inpost_courier_standard') return 'InPost Kurier'
@@ -28,6 +33,7 @@ function courierLabel(draft) {
 }
 
 function courierPillKind(draft) {
+    if (draft.courier === 'allegro_delivery') return 'warn'
     if (draft.courier === 'inpost') return 'info'
     return 'default'
 }
@@ -413,6 +419,7 @@ export default function ShippingView() {
     const [search, setSearch] = useState('')
     const [filterStatus, setFilterStatus] = useState('all')
     const [filterCourier, setFilterCourier] = useState('all')
+    const [filterSource, setFilterSource] = useState('all')
     const [filterDateFrom, setFilterDateFrom] = useState('')
     const [busy, setBusy] = useState(new Set())
     const [selectedDraftIds, setSelectedDraftIds] = useState(new Set())
@@ -562,6 +569,7 @@ export default function ShippingView() {
     const filtered = drafts.filter(d => {
         if (filterStatus !== 'all' && d.status !== filterStatus) return false
         if (filterCourier !== 'all' && d.courier !== filterCourier) return false
+        if (filterSource !== 'all' && (d.source || 'shopify') !== filterSource) return false
         if (filterDateFrom && d.created_at?.slice(0, 10) < filterDateFrom) return false
         if (search) {
             const q = search.toLowerCase()
@@ -618,6 +626,14 @@ export default function ShippingView() {
                         <option value="all">{T.sh_filter_all_courier ?? 'Wszyscy kurierzy'}</option>
                         <option value="inpost">InPost</option>
                         <option value="apaczka">Apaczka</option>
+                        <option value="allegro_delivery">Wysyłam z Allegro</option>
+                    </select>
+                    <select value={filterSource} onChange={e => setFilterSource(e.target.value)}
+                        title={T.sh_filter_source ?? 'Źródło zamówienia'}
+                        style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}>
+                        <option value="all">{T.sh_filter_all_source ?? 'Wszystkie źródła'}</option>
+                        <option value="shopify">Shopify</option>
+                        <option value="allegro">Allegro</option>
                     </select>
                     <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
                         title="From date"
