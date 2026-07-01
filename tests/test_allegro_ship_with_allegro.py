@@ -258,7 +258,9 @@ class TestWaitForShipment:
             side_effect=responses,
         ):
             with patch("time.sleep"):
-                result = c.wait_for_ship_with_allegro_shipment("cmd-1", max_attempts=5, interval_s=0)
+                result = c.wait_for_ship_with_allegro_shipment(
+                    "cmd-1", max_attempts=5, interval_s=0
+                )
         assert result == "ship-99"
 
     def test_raises_on_error_status(self):
@@ -290,9 +292,7 @@ class TestWaitForShipment:
         ):
             with patch("time.sleep"):
                 with pytest.raises(AllegroCommandPending) as excinfo:
-                    c.wait_for_ship_with_allegro_shipment(
-                        "cmd-1", max_attempts=3, interval_s=0
-                    )
+                    c.wait_for_ship_with_allegro_shipment("cmd-1", max_attempts=3, interval_s=0)
                 assert excinfo.value.command_id == "cmd-1"
                 # Backward compat: nadal jest AllegroBusinessError
                 assert isinstance(excinfo.value, AllegroBusinessError)
@@ -309,9 +309,7 @@ class TestGetShipmentDetails:
             "packages": [
                 {
                     "id": "pkg-1",
-                    "transportingInfo": [
-                        {"carrierId": "INPOST", "carrierWaybill": "6200XYZ"}
-                    ],
+                    "transportingInfo": [{"carrierId": "INPOST", "carrierWaybill": "6200XYZ"}],
                     # Deprecated field kept during transition until 2026-07-01
                     "waybill": "6200XYZ",
                 }
@@ -330,9 +328,7 @@ class TestGetShipmentDetails:
     def test_extract_first_waybill_helper(self):
         c = _mock_client()
         shipment = {
-            "packages": [
-                {"transportingInfo": [{"carrierId": "DPD", "carrierWaybill": "WAY-1"}]}
-            ]
+            "packages": [{"transportingInfo": [{"carrierId": "DPD", "carrierWaybill": "WAY-1"}]}]
         }
         assert c.extract_shipment_waybill(shipment) == ("DPD", "WAY-1")
 

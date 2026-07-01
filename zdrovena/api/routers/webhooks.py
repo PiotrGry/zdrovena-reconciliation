@@ -185,9 +185,7 @@ def _maybe_push_tracking_to_allegro(draft: dict[str, Any]) -> None:
             carrier_id,
         )
     except Exception as exc:
-        logger.error(
-            "Failed to push tracking to Allegro for order %s: %s", external_id, exc
-        )
+        logger.error("Failed to push tracking to Allegro for order %s: %s", external_id, exc)
 
 
 def _pick_courier(order: dict[str, Any]) -> str:
@@ -385,6 +383,8 @@ def _run_apaczka(
         "status": "created",
         "error": None,
     }
+
+
 def _run_allegro_delivery(
     draft: dict[str, Any],
     storage: Any,
@@ -536,8 +536,6 @@ def _run_allegro_delivery(
         "allegro_command_id": command_id,
         "error": None,
     }
-
-
 
 
 # ── Background task: create draft on Shopify webhook ─────────────────────────
