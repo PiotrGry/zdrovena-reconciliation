@@ -8,7 +8,7 @@ import hmac
 import json
 import os
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -311,6 +311,130 @@ class TestExecuteDraft:
         with patch("zdrovena.api.routers.webhooks._run_inpost", side_effect=Exception("API down")):
             resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
         assert resp.status_code == 502
+
+    def _seed_allegro_error_draft(self, store, courier, service):
+        draft = {
+            "id": f"draft-allegro-{courier}",
+            "created_at": "2026-06-25T10:00:00+00:00",
+            "source": "allegro",
+            "external_order_id": "AL-ORDER-77",
+            "shopify_order_id": None,
+            "shopify_order_number": "AL77",
+            "customer_name": "Allegro Buyer",
+            "courier": courier,
+            "service": service,
+            "tracking_number": None,
+            "courier_draft_id": None,
+            "status": "error",
+            "packages_count": 1,
+            "pickup_ordered": False,
+            "receiver": {
+                "first_name": "Allegro",
+                "last_name": "Buyer",
+                "email": "b@b.com",
+                "phone": "600000000",
+                "locker_id": "WAW02A",
+            },
+            "shipping_address": {"street": "Testowa 2", "city": "Kraków", "post_code": "30-001"},
+            "parcel": {"template": "small", "weight_kg": None},
+            "error": "prev failure",
+        }
+        store.upsert_draft(draft)
+        return draft
+
+    def test_execute_allegro_inpost_pushes_tracking_with_inpost_carrier(self, client, store):
+        draft = self._seed_allegro_error_draft(
+            store, courier="inpost", service="inpost_courier_standard"
+        )
+        allegro_client = MagicMock()
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "inpost-shipment-77",
+                "tracking_number": "6200XYZ",
+                "status": "created",
+                "error": None,
+            },
+        ), patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client",
+            return_value=allegro_client,
+        ):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 200
+        allegro_client.create_shipment.assert_called_once_with(
+            order_id="AL-ORDER-77",
+            carrier_id="INPOST",
+            waybill="6200XYZ",
+        )
+
+    def test_execute_allegro_apaczka_pushes_tracking_with_other_carrier(self, client, store):
+        draft = self._seed_allegro_error_draft(
+            store, courier="apaczka", service="apaczka_courier"
+        )
+        allegro_client = MagicMock()
+        with patch(
+            "zdrovena.api.routers.webhooks._run_apaczka",
+            return_value={
+                "courier_draft_id": "apaczka-order-88",
+                "tracking_number": "APZWAY0088",
+                "status": "created",
+                "error": None,
+            },
+        ), patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client",
+            return_value=allegro_client,
+        ):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 200
+        allegro_client.create_shipment.assert_called_once_with(
+            order_id="AL-ORDER-77",
+            carrier_id="OTHER",
+            waybill="APZWAY0088",
+        )
+
+    def test_execute_allegro_push_error_does_not_break_execute(self, client, store):
+        draft = self._seed_allegro_error_draft(
+            store, courier="inpost", service="inpost_courier_standard"
+        )
+        allegro_client = MagicMock()
+        allegro_client.create_shipment.side_effect = RuntimeError("Allegro 500")
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "x",
+                "tracking_number": "TRK-OK",
+                "status": "created",
+                "error": None,
+            },
+        ), patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client",
+            return_value=allegro_client,
+        ):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 200
+        updated = store.get_draft(draft["id"])
+        assert updated["tracking_number"] == "TRK-OK"
+        assert updated["status"] == "created"
+
+    def test_execute_shopify_draft_does_not_push_to_allegro(self, client, store):
+        draft = self._seed_error_draft(store, courier="inpost")
+        allegro_client = MagicMock()
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "x",
+                "tracking_number": "TRK-SHOPIFY",
+                "status": "created",
+                "error": None,
+            },
+        ), patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client",
+            return_value=allegro_client,
+        ):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 200
+        allegro_client.create_shipment.assert_not_called()
+
 
 
 # ── Order pickup ──────────────────────────────────────────────────────────────
@@ -671,6 +795,105 @@ class TestCreateDraft:
         assert d["status"] == "pending"
         assert d["service"] == "inpost_locker_standard"
         assert d["receiver"]["locker_id"] == "WAW01A"
+
+
+class TestCreateDraftAllegroDelivery:
+    """Routing na 'allegro_delivery' (Wysyłam z Allegro) dla source='allegro'
+    z AllegroDeliveryMethodId — zastępuje InPost/Apaczkę całkowicie."""
+
+    def _base_allegro_order(self, title: str, method_id: str, pickup_id=None):
+        note_attrs = []
+        if method_id:
+            note_attrs.append({"name": "AllegroDeliveryMethodId", "value": method_id})
+        if pickup_id:
+            note_attrs.append({"name": "PickupPointId", "value": pickup_id})
+        return {
+            "id": "AL-9001",
+            "order_number": 9001,
+            "shipping_lines": [{"title": title}],
+            "line_items": [{"quantity": 1, "name": "Woda 500ml"}],
+            "shipping_address": {
+                "first_name": "Jan",
+                "last_name": "Kowalski",
+                "address1": "Marszałkowska 1",
+                "address2": "",
+                "city": "Warszawa",
+                "zip": "00-001",
+                "phone": "+48123456789",
+            },
+            "customer": {},
+            "email": "jan@example.com",
+            "note_attributes": note_attrs,
+        }
+
+    def test_allegro_paczkomat_routes_to_allegro_delivery(self, store):
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        storage = object()
+        order = self._base_allegro_order(
+            title="InPost Paczkomat (WAW10A)",
+            method_id="c50d09e8-3b32-4e7a-8f4c-11a2b3c4d5e6",
+            pickup_id="WAW10A",
+        )
+        _create_draft(order, store, storage, source="allegro")
+
+        d = store.list_drafts()[0]
+        assert d["source"] == "allegro"
+        assert d["courier"] == "allegro_delivery"
+        assert d["service"] == "allegro_delivery"
+        assert d["allegro_delivery_method_id"] == "c50d09e8-3b32-4e7a-8f4c-11a2b3c4d5e6"
+        assert d["allegro_credentials_id"] is None
+        assert d["allegro_sending_method"] == "parcel_locker"
+
+    def test_allegro_inpost_kurier_maps_to_dispatch_order(self, store):
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        storage = object()
+        order = self._base_allegro_order(
+            title="InPost Kurier", method_id="aa11bb22-cc33-dd44-ee55-ff6677889900"
+        )
+        _create_draft(order, store, storage, source="allegro")
+
+        d = store.list_drafts()[0]
+        assert d["courier"] == "allegro_delivery"
+        assert d["allegro_sending_method"] == "dispatch_order"
+
+    def test_allegro_non_inpost_no_sending_method(self, store):
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        storage = object()
+        order = self._base_allegro_order(
+            title="Kurier DPD", method_id="11111111-2222-3333-4444-555555555555"
+        )
+        _create_draft(order, store, storage, source="allegro")
+
+        d = store.list_drafts()[0]
+        assert d["courier"] == "allegro_delivery"
+        assert d["allegro_sending_method"] is None
+
+    def test_allegro_without_method_id_fallback_to_apaczka(self, store):
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        storage = object()
+        order = self._base_allegro_order(title="Kurier DPD", method_id="")
+        _create_draft(order, store, storage, source="allegro")
+
+        d = store.list_drafts()[0]
+        assert d["courier"] == "apaczka"
+        assert d["service"] == "apaczka"
+
+    def test_shopify_source_ignores_allegro_method_id(self, store):
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        storage = object()
+        order = self._base_allegro_order(
+            title="InPost Paczkomat (WAW10A)", method_id="c50d09e8-3b32"
+        )
+        _create_draft(order, store, storage, source="shopify")
+
+        d = store.list_drafts()[0]
+        assert d["source"] == "shopify"
+        assert d["courier"] == "inpost"
 
 
 # ── Label endpoint ────────────────────────────────────────────────────────────

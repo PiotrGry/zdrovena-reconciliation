@@ -179,6 +179,16 @@ class ApaczkaSignatureError(CourierAuthError):
         )
 
 
+class AllegroAuthError(CourierAuthError):
+    def __init__(self, detail: str = "", order_id: str = "") -> None:
+        super().__init__(
+            f"Allegro OAuth 401/403: {detail}",
+            order_id=order_id,
+            courier="allegro",
+            action="authenticate",
+        )
+
+
 class ApaczkaInsufficientBalanceError(CourierAuthError):
     def __init__(self, order_id: str = "") -> None:
         super().__init__(
@@ -224,6 +234,16 @@ class ApaczkaServiceUnavailableError(CourierBusinessError):
             order_id=order_id,
             courier="apaczka",
             action="create_shipment",
+        )
+
+
+class AllegroBusinessError(CourierBusinessError):
+    def __init__(self, detail: str = "", order_id: str = "", action: str = "allegro_call") -> None:
+        super().__init__(
+            f"Allegro business error: {detail}",
+            order_id=order_id,
+            courier="allegro",
+            action=action,
         )
 
 
@@ -315,3 +335,29 @@ class MissingDispatchIdError(CancellationError):
             f"Draft {draft_id!r} has no dispatch_order_id — cannot cancel pickup",
             action="cancel_dispatch",
         )
+
+
+# ── Fakturownia (invoicing) errors — reuse shipping hierarchy for uniform handling ──
+
+
+class FakturowniaAuthError(CourierAuthError):
+    def __init__(self, detail: str = "") -> None:
+        super().__init__(
+            f"Fakturownia 401/403: {detail}",
+            courier="fakturownia",
+            action="authenticate",
+        )
+
+
+class FakturowniaBusinessError(CourierBusinessError):
+    def __init__(self, detail: str = "", action: str = "fakturownia_call") -> None:
+        super().__init__(
+            f"Fakturownia business error: {detail}",
+            courier="fakturownia",
+            action=action,
+        )
+
+
+class FakturowniaServerError(CourierServerError):
+    def __init__(self, status: int = 0) -> None:
+        super().__init__(courier="fakturownia", status=status)

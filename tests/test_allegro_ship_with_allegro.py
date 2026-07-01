@@ -1,0 +1,419 @@
+"""Tests for Ship with Allegro (Wysyłam z Allegro) methods on AllegroClient.
+
+Endpoints covered:
+- GET  /shipment-management/delivery-services
+- GET  /shipment-management/delivery-proposals/{orderId}
+- POST /shipment-management/shipments/create-commands
+- GET  /shipment-management/shipments/create-commands/{commandId}
+- GET  /shipment-management/shipments/{shipmentId}
+- POST /shipment-management/pickup-proposals
+- POST /shipment-management/pickups/create-commands
+- GET  /shipment-management/shipments/{shipmentId}/label
+
+Docs: https://developer.allegro.pl/tutorials/jak-zarzadzac-przesylkami-przez-wysylam-z-allegro-LRVjK7K21sY
+"""
+
+from __future__ import annotations
+
+import base64
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from zdrovena.common.allegro import AllegroClient
+from zdrovena.common.shipping_exceptions import AllegroBusinessError
+
+
+def _mock_client() -> AllegroClient:
+    c = AllegroClient(
+        client_id="cid",
+        client_secret="csec",
+        refresh_token="rt",
+        env="prod",
+    )
+    # Bypass OAuth
+    c._access_token = "test-token"
+    c._expires_at = 9999999999
+    return c
+
+
+def _mock_response(status: int = 200, json_data=None, content: bytes = b""):
+    resp = MagicMock()
+    resp.status_code = status
+    resp.text = "" if json_data is None else str(json_data)
+    resp.content = content
+    resp.json.return_value = json_data if json_data is not None else {}
+    return resp
+
+
+# ── delivery-services ─────────────────────────────────────────────────────────
+
+
+class TestGetDeliveryServices:
+    def test_returns_service_list(self):
+        c = _mock_client()
+        services = [
+            {
+                "id": "svc-inpost-locker",
+                "carrierId": "INPOST",
+                "owner": "ALLEGRO",
+                "name": "Allegro InPost Paczkomat",
+                "additionalProperties": {"inpost#sendingMethod": {"required": False}},
+            },
+            {
+                "id": "svc-dpd",
+                "carrierId": "DPD",
+                "owner": "ALLEGRO",
+                "name": "Allegro DPD",
+            },
+        ]
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(200, {"deliveryServices": services}),
+        ):
+            result = c.get_delivery_services()
+        assert result == services
+
+    def test_empty_response_returns_empty_list(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(200, {}),
+        ):
+            assert c.get_delivery_services() == []
+
+    def test_uses_correct_endpoint(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(200, {"deliveryServices": []}),
+        ) as m:
+            c.get_delivery_services()
+        url = m.call_args[0][1]
+        assert "/shipment-management/delivery-services" in url
+
+
+# ── delivery-proposals ────────────────────────────────────────────────────────
+
+
+class TestGetDeliveryProposal:
+    def test_returns_proposal_for_order(self):
+        c = _mock_client()
+        proposal = {
+            "deliveryMethodId": "svc-inpost-locker",
+            "receiver": {"name": "Anna Nowak"},
+            "packages": [{"dimensions": {"length": 30, "width": 20, "height": 15}}],
+        }
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(200, proposal),
+        ) as m:
+            result = c.get_delivery_proposal("ORDER-123")
+        assert result == proposal
+        url = m.call_args[0][1]
+        assert "/shipment-management/delivery-proposals/ORDER-123" in url
+
+
+# ── create-commands (create shipment) ─────────────────────────────────────────
+
+
+class TestCreateShipmentCommand:
+    def test_posts_with_generated_command_id(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(
+                201,
+                {"commandId": "cmd-uuid-1", "status": "IN_PROGRESS"},
+            ),
+        ) as m:
+            result = c.create_ship_with_allegro_shipment(
+                command_id="cmd-uuid-1",
+                order_id="ORDER-123",
+                delivery_method_id="svc-inpost-locker",
+                credentials_id=None,
+                pickup_point_id="WAW01A",
+                sending_method="parcel_locker",
+                packages=[{"dimensions": {"length": 30, "width": 20, "height": 15}, "weight": 5.0}],
+            )
+        assert result["commandId"] == "cmd-uuid-1"
+        # Verify POST body
+        _, kwargs = m.call_args
+        body = kwargs["json"]
+        assert body["commandId"] == "cmd-uuid-1"
+        assert body["input"]["orderId"] == "ORDER-123"
+        assert body["input"]["deliveryMethodId"] == "svc-inpost-locker"
+        assert "credentialsId" not in body["input"] or body["input"]["credentialsId"] is None
+
+    def test_inpost_sending_method_included_in_additional_services(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(201, {"commandId": "x", "status": "IN_PROGRESS"}),
+        ) as m:
+            c.create_ship_with_allegro_shipment(
+                command_id="x",
+                order_id="O1",
+                delivery_method_id="svc-inpost",
+                credentials_id=None,
+                sending_method="dispatch_order",
+                packages=[{"weight": 2.0}],
+            )
+        body = m.call_args[1]["json"]
+        add = body["input"].get("additionalServices", {})
+        assert add.get("sendingAtPoint") == "dispatch_order"
+
+    def test_own_agreement_passes_credentials_id(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(201, {"commandId": "x", "status": "IN_PROGRESS"}),
+        ) as m:
+            c.create_ship_with_allegro_shipment(
+                command_id="x",
+                order_id="O1",
+                delivery_method_id="svc-dpd",
+                credentials_id="cred-abc",
+                packages=[{"weight": 3.0}],
+            )
+        body = m.call_args[1]["json"]
+        assert body["input"]["credentialsId"] == "cred-abc"
+
+    def test_business_error_raises(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(400, {"error": "bad order"}),
+        ):
+            with pytest.raises(AllegroBusinessError):
+                c.create_ship_with_allegro_shipment(
+                    command_id="x",
+                    order_id="O1",
+                    delivery_method_id="svc",
+                    credentials_id=None,
+                    packages=[{"weight": 1.0}],
+                )
+
+
+# ── polling create-commands status ────────────────────────────────────────────
+
+
+class TestGetCreateShipmentStatus:
+    def test_returns_success_status(self):
+        c = _mock_client()
+        payload = {
+            "commandId": "cmd-1",
+            "status": "SUCCESS",
+            "shipmentId": "ship-42",
+        }
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(200, payload),
+        ) as m:
+            result = c.get_ship_with_allegro_command_status("cmd-1")
+        assert result == payload
+        url = m.call_args[0][1]
+        assert "/shipment-management/shipments/create-commands/cmd-1" in url
+
+    def test_returns_error_status_with_details(self):
+        c = _mock_client()
+        payload = {
+            "commandId": "cmd-1",
+            "status": "ERROR",
+            "shipmentId": None,
+            "errors": [{"code": "DELIVERY_METHOD_NOT_AVAILABLE", "message": "..."}],
+        }
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(200, payload),
+        ):
+            result = c.get_ship_with_allegro_command_status("cmd-1")
+        assert result["status"] == "ERROR"
+        assert result["errors"][0]["code"] == "DELIVERY_METHOD_NOT_AVAILABLE"
+
+
+class TestWaitForShipment:
+    """Helper that polls create-command until SUCCESS or ERROR."""
+
+    def test_returns_shipment_id_on_success(self):
+        c = _mock_client()
+        responses = [
+            _mock_response(200, {"status": "IN_PROGRESS"}),
+            _mock_response(200, {"status": "IN_PROGRESS"}),
+            _mock_response(200, {"status": "SUCCESS", "shipmentId": "ship-99"}),
+        ]
+        with patch.object(
+            c._session,
+            "request",
+            side_effect=responses,
+        ):
+            with patch("time.sleep"):
+                result = c.wait_for_ship_with_allegro_shipment("cmd-1", max_attempts=5, interval_s=0)
+        assert result == "ship-99"
+
+    def test_raises_on_error_status(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(
+                200,
+                {"status": "ERROR", "errors": [{"code": "X", "message": "boom"}]},
+            ),
+        ):
+            with pytest.raises(AllegroBusinessError):
+                c.wait_for_ship_with_allegro_shipment("cmd-1", max_attempts=3, interval_s=0)
+
+    def test_raises_on_timeout(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(200, {"status": "IN_PROGRESS"}),
+        ):
+            with patch("time.sleep"):
+                with pytest.raises(AllegroBusinessError, match="timed out"):
+                    c.wait_for_ship_with_allegro_shipment(
+                        "cmd-1", max_attempts=3, interval_s=0
+                    )
+
+
+# ── get shipment details ──────────────────────────────────────────────────────
+
+
+class TestGetShipmentDetails:
+    def test_returns_transporting_info_new_field(self):
+        c = _mock_client()
+        payload = {
+            "id": "ship-99",
+            "packages": [
+                {
+                    "id": "pkg-1",
+                    "transportingInfo": [
+                        {"carrierId": "INPOST", "carrierWaybill": "6200XYZ"}
+                    ],
+                    # Deprecated field kept during transition until 2026-07-01
+                    "waybill": "6200XYZ",
+                }
+            ],
+        }
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(200, payload),
+        ) as m:
+            shipment = c.get_ship_with_allegro_shipment("ship-99")
+        assert shipment == payload
+        url = m.call_args[0][1]
+        assert "/shipment-management/shipments/ship-99" in url
+
+    def test_extract_first_waybill_helper(self):
+        c = _mock_client()
+        shipment = {
+            "packages": [
+                {"transportingInfo": [{"carrierId": "DPD", "carrierWaybill": "WAY-1"}]}
+            ]
+        }
+        assert c.extract_shipment_waybill(shipment) == ("DPD", "WAY-1")
+
+    def test_extract_waybill_none_when_empty_string(self):
+        c = _mock_client()
+        shipment = {"packages": [{"transportingInfo": [{"carrierId": "X", "carrierWaybill": ""}]}]}
+        assert c.extract_shipment_waybill(shipment) == ("X", None)
+
+    def test_extract_waybill_none_when_no_packages(self):
+        c = _mock_client()
+        assert c.extract_shipment_waybill({"packages": []}) == (None, None)
+
+
+# ── pickup proposals + pickups/create-commands ────────────────────────────────
+
+
+class TestPickupProposals:
+    def test_posts_shipment_ids(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(
+                200,
+                {
+                    "proposalItems": [
+                        {
+                            "id": "prop-1",
+                            "pickupDate": "2026-07-02",
+                            "timeSlot": {"from": "10:00", "to": "14:00"},
+                        }
+                    ]
+                },
+            ),
+        ) as m:
+            proposals = c.get_ship_with_allegro_pickup_proposals(["ship-99"])
+        assert proposals[0]["id"] == "prop-1"
+        body = m.call_args[1]["json"]
+        assert body["input"]["shipmentIds"] == ["ship-99"]
+
+
+class TestCreatePickupCommand:
+    def test_posts_pickup_command(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(
+                201,
+                {"commandId": "pu-cmd-1", "status": "IN_PROGRESS"},
+            ),
+        ) as m:
+            result = c.create_ship_with_allegro_pickup(
+                command_id="pu-cmd-1",
+                proposal_item_id="prop-1",
+                shipment_ids=["ship-99"],
+            )
+        assert result["commandId"] == "pu-cmd-1"
+        body = m.call_args[1]["json"]
+        assert body["commandId"] == "pu-cmd-1"
+        assert body["input"]["proposalItemId"] == "prop-1"
+        assert body["input"]["shipmentIds"] == ["ship-99"]
+
+
+# ── label ─────────────────────────────────────────────────────────────────────
+
+
+class TestGetShipmentLabel:
+    def test_returns_pdf_bytes(self):
+        c = _mock_client()
+        pdf = b"%PDF-1.4 fake label"
+        resp = _mock_response(200, content=pdf)
+        resp.content = pdf
+        with patch.object(
+            c._session,
+            "request",
+            return_value=resp,
+        ) as m:
+            data = c.get_ship_with_allegro_label("ship-99")
+        assert data == pdf
+        url = m.call_args[0][1]
+        assert "/shipment-management/shipments/ship-99/label" in url
+
+    def test_accepts_base64_response(self):
+        c = _mock_client()
+        raw = b"%PDF-1.4 label"
+        b64 = base64.b64encode(raw).decode()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(200, {"label": b64}),
+        ):
+            data = c.get_ship_with_allegro_label("ship-99")
+        assert data == raw

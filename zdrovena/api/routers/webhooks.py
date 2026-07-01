@@ -108,6 +108,88 @@ def _maybe_send_new_order_sms(draft: dict[str, Any]) -> None:
 # ── Routing: decide courier from shipping_lines title ─────────────────────────
 
 
+# ── Allegro helpers ───────────────────────────────────────────────────────────
+
+
+def _allegro_carrier_id_for_courier(courier: str) -> str:
+    """Map internal courier name to Allegro carrier code.
+
+    Allegro's native carrier codes include INPOST, DPD, UPS, POCZTA, etc.
+    Apaczka is a broker; when we ship through it we don't know the underlying
+    carrier at the time of tracking-push, so we fall back to OTHER which
+    accepts a free-text waybill.
+
+    'allegro_delivery' (Wysyłam z Allegro): the waybill is synced server-side
+    by Allegro itself, so no manual push is ever needed — the mapping is only
+    a fallback if the guard in _maybe_push_tracking_to_allegro is bypassed.
+    """
+    return "INPOST" if courier == "inpost" else "OTHER"
+
+
+def _get_allegro_client() -> Any | None:
+    """Build an AllegroClient from Key Vault secrets. Returns None if missing."""
+    import os
+
+    client_id = get_secret("allegro-client-id", required=False)
+    client_secret = get_secret("allegro-client-secret", required=False)
+    refresh_token = get_secret("allegro-refresh-token", required=False)
+    if not (client_id and client_secret and refresh_token):
+        return None
+    from zdrovena.common.allegro import AllegroClient
+
+    return AllegroClient(
+        client_id=client_id,
+        client_secret=client_secret,
+        refresh_token=refresh_token,
+        env=os.environ.get("ALLEGRO_ENV", "prod"),
+    )
+
+
+def _maybe_push_tracking_to_allegro(draft: dict[str, Any]) -> None:
+    """After a shipment is created, push the waybill back to Allegro.
+
+    No-op when the draft is not Allegro-sourced, has no tracking number,
+    or no external_order_id. Errors are logged but never re-raised — the
+    local draft is already saved and the operator can retry manually.
+
+    Skipped entirely for courier='allegro_delivery' (Ship with Allegro),
+    because the waybill is already known to Allegro server-side.
+    """
+    if draft.get("source") != "allegro":
+        return
+    if draft.get("courier") == "allegro_delivery":
+        return
+    tracking = draft.get("tracking_number")
+    external_id = str(draft.get("external_order_id") or "")
+    if not tracking or not external_id:
+        return
+    client = _get_allegro_client()
+    if client is None:
+        logger.warning(
+            "Allegro credentials missing — cannot push tracking %s for order %s",
+            tracking,
+            external_id,
+        )
+        return
+    carrier_id = _allegro_carrier_id_for_courier(draft.get("courier", ""))
+    try:
+        client.create_shipment(
+            order_id=external_id,
+            carrier_id=carrier_id,
+            waybill=tracking,
+        )
+        logger.info(
+            "Pushed tracking %s to Allegro order %s (%s)",
+            tracking,
+            external_id,
+            carrier_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to push tracking to Allegro for order %s: %s", external_id, exc
+        )
+
+
 def _pick_courier(order: dict[str, Any]) -> str:
     """Route to InPost only on explicit 'inpost' or 'paczkomat' keywords. 'kurier' alone → Apaczka."""
     lines = order.get("shipping_lines") or []
@@ -303,6 +385,113 @@ def _run_apaczka(
         "status": "created",
         "error": None,
     }
+def _run_allegro_delivery(
+    draft: dict[str, Any],
+    storage: Any,
+    *,
+    pickup_date: str | None = None,
+    pickup_from: str | None = None,
+    pickup_to: str | None = None,
+) -> dict[str, Any]:
+    """Create shipment via Wysyłam z Allegro (Ship with Allegro).
+
+    Flow:
+      1. create-commands (POST) with delivery_method_id + optional credentials
+      2. poll until SUCCESS → shipmentId
+      3. GET shipment → extract carrierWaybill from packages.transportingInfo
+      4. optionally order pickup via pickup-proposals + pickups/create-commands
+
+    Draft fields consumed:
+      allegro_delivery_method_id — required (from get_delivery_services)
+      allegro_credentials_id     — None for Allegro Standard, string for own agreement
+      allegro_sending_method     — InPost only: parcel_locker | dispatch_order | pop | any_point
+
+    Errors bubble up to execute_draft which converts them to HTTP 502.
+    """
+    import uuid as _uuid
+
+    if _MOCK_COURIER:
+        ref = draft.get("shopify_order_number", "mock")
+        logger.info("MOCK_COURIER: skipping Allegro Delivery API for order %s", ref)
+        return {
+            "courier_draft_id": f"mock-allegro-{ref}",
+            "tracking_number": f"AWA{ref}00000",
+            "status": "created",
+            "pickup_ordered": False,
+            "error": None,
+        }
+
+    client = _get_allegro_client()
+    if client is None:
+        raise RuntimeError("Allegro credentials missing — cannot use Ship with Allegro")
+
+    order_id = str(draft.get("external_order_id") or "")
+    delivery_method_id = draft.get("allegro_delivery_method_id")
+    if not order_id or not delivery_method_id:
+        raise RuntimeError(
+            "Ship with Allegro requires external_order_id and allegro_delivery_method_id"
+        )
+
+    # Build packages: weight from breakdown + safe defaults for dims.
+    weight_kg, dims = _parcel_weight_and_dims(draft)
+    packages = [
+        {
+            "weight": {"amount": round(weight_kg, 2), "unit": "KILOGRAM"},
+            "dimensions": {
+                "length": {"amount": dims["length"], "unit": "CENTIMETER"},
+                "width": {"amount": dims["width"], "unit": "CENTIMETER"},
+                "height": {"amount": dims["height"], "unit": "CENTIMETER"},
+            },
+        }
+    ]
+
+    command_id = str(_uuid.uuid4())
+    pickup_point_id = (draft.get("receiver") or {}).get("locker_id") or None
+    sending_method = draft.get("allegro_sending_method")
+
+    client.create_ship_with_allegro_shipment(
+        command_id=command_id,
+        order_id=order_id,
+        delivery_method_id=delivery_method_id,
+        credentials_id=draft.get("allegro_credentials_id"),
+        packages=packages,
+        pickup_point_id=pickup_point_id,
+        sending_method=sending_method,
+    )
+    shipment_id = client.wait_for_ship_with_allegro_shipment(command_id)
+    shipment = client.get_ship_with_allegro_shipment(shipment_id)
+    _carrier_id, waybill = client.extract_shipment_waybill(shipment)
+
+    pickup_ordered = False
+    if pickup_date:
+        try:
+            proposals = client.get_ship_with_allegro_pickup_proposals([shipment_id])
+            if proposals:
+                pu_cmd = str(_uuid.uuid4())
+                client.create_ship_with_allegro_pickup(
+                    command_id=pu_cmd,
+                    proposal_item_id=proposals[0].get("id"),
+                    shipment_ids=[shipment_id],
+                )
+                pickup_ordered = True
+            else:
+                logger.warning(
+                    "No pickup proposals available for shipment %s on %s",
+                    shipment_id,
+                    pickup_date,
+                )
+        except Exception as exc:
+            logger.warning("Allegro Delivery pickup failed for %s: %s", shipment_id, exc)
+
+    return {
+        "courier_draft_id": shipment_id,
+        "tracking_number": waybill,
+        "status": "created",
+        "pickup_ordered": pickup_ordered,
+        "error": None,
+    }
+
+
 
 
 # ── Background task: create draft on Shopify webhook ─────────────────────────
@@ -350,7 +539,13 @@ def _calc_packages(
     return max(total, 1), breakdown
 
 
-def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage: Any) -> None:
+def _create_draft(
+    order: dict[str, Any],
+    shipping_store: ShippingStore,
+    storage: Any,
+    *,
+    source: str = "shopify",
+) -> None:
     order_id = str(order.get("id", ""))
     order_number = order.get("order_number") or order.get("name", "")
     shipping_lines = order.get("shipping_lines") or []
@@ -364,16 +559,34 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
     email = order.get("email") or customer.get("email", "")
     phone = shipping_addr.get("phone") or order.get("phone") or customer.get("phone", "")
 
-    courier = _pick_courier(order)
-    inpost_service = _pick_inpost_service(title) if courier == "inpost" else None
+    # fix #2: locker_id from title first, then note_attributes fallbacks
+    note_attrs = {a["name"]: a["value"] for a in (order.get("note_attributes") or [])}
+
+    # Wysyłam z Allegro (Ship with Allegro): dla source='allegro' z AllegroDeliveryMethodId
+    # całkowicie zastępujemy InPost/Apaczkę — przesyłkę tworzy Allegro po stronie serwera.
+    allegro_method_id = (note_attrs.get("AllegroDeliveryMethodId") or "").strip()
+    use_allegro_delivery = source == "allegro" and bool(allegro_method_id)
+
+    if use_allegro_delivery:
+        courier = "allegro_delivery"
+        # sendingAtPoint tylko dla InPost — rozpoznajemy po nazwie w shipping_lines.title
+        title_lower = title.lower()
+        if "inpost" in title_lower or "paczkomat" in title_lower:
+            allegro_sending_method: str | None = (
+                "parcel_locker" if "paczkomat" in title_lower else "dispatch_order"
+            )
+        else:
+            allegro_sending_method = None
+        inpost_service = "paczkomat" if allegro_sending_method == "parcel_locker" else None
+    else:
+        courier = _pick_courier(order)
+        inpost_service = _pick_inpost_service(title) if courier == "inpost" else None
+        allegro_sending_method = None
 
     line_items = order.get("line_items") or []
     product_items = [item for item in line_items if not SKIP_RE.search(item.get("name", ""))]
     total_qty = max(sum(item.get("quantity", 1) for item in product_items), 1)
     packages_count, packages_breakdown = _calc_packages(product_items)
-
-    # fix #2: locker_id from title first, then note_attributes fallbacks
-    note_attrs = {a["name"]: a["value"] for a in (order.get("note_attributes") or [])}
     if inpost_service == "paczkomat":
         locker_id = (
             extract_locker_id_from_title(title)
@@ -386,7 +599,9 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
     else:
         locker_id = ""
 
-    if courier == "inpost":
+    if courier == "allegro_delivery":
+        service = "allegro_delivery"
+    elif courier == "inpost":
         service = (
             "inpost_locker_standard" if inpost_service == "paczkomat" else "inpost_courier_standard"
         )
@@ -403,8 +618,9 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
     record: dict[str, Any] = {
         "id": str(uuid.uuid4()),
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "source": "shopify",
-        "shopify_order_id": order_id,
+        "source": source,
+        "external_order_id": order_id,
+        "shopify_order_id": order_id if source == "shopify" else None,
         "shopify_order_number": str(order_number),
         "customer_name": customer_name,
         "courier": courier,
@@ -437,6 +653,12 @@ def _create_draft(order: dict[str, Any], shipping_store: ShippingStore, storage:
         "parcel": {"template": "large", "weight_kg": None},  # fix #4: large is safe default
         "error": None,
     }
+
+    # Wysyłam z Allegro — dodatkowe pola potrzebne dla /shipment-management/*
+    if courier == "allegro_delivery":
+        record["allegro_delivery_method_id"] = allegro_method_id
+        record["allegro_credentials_id"] = None  # Allegro Standard; nadpisze się dla własnej umowy
+        record["allegro_sending_method"] = allegro_sending_method
 
     shipping_store.upsert_draft(record)
     _maybe_send_new_order_sms(record)
@@ -589,7 +811,9 @@ def execute_draft(
     try:
         sender = _get_sender()
         courier = draft.get("courier", "apaczka")
-        if courier == "inpost":
+        if courier == "allegro_delivery":
+            patch = _run_allegro_delivery(draft, storage, **pickup_schedule)
+        elif courier == "inpost":
             patch = _run_inpost(draft, sender, **pickup_schedule)
         else:
             patch = _run_apaczka(draft, sender, storage, **pickup_schedule)
@@ -600,6 +824,8 @@ def execute_draft(
 
     shipping_store.update_draft(draft_id, patch)
     updated = shipping_store.get_draft(draft_id)
+    if updated:
+        _maybe_push_tracking_to_allegro(updated)
     return updated or patch
 
 
