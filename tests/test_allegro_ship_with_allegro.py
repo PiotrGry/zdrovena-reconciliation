@@ -275,6 +275,13 @@ class TestWaitForShipment:
                 c.wait_for_ship_with_allegro_shipment("cmd-1", max_attempts=3, interval_s=0)
 
     def test_raises_on_timeout(self):
+        """Timeout → AllegroCommandPending (subklasa AllegroBusinessError, backward compat).
+
+        Wołający powinien odróżniać pending od twardego ERROR przez typ wyjątku,
+        nie przez substring "timed out" w message.
+        """
+        from zdrovena.common.shipping_exceptions import AllegroCommandPending
+
         c = _mock_client()
         with patch.object(
             c._session,
@@ -282,10 +289,13 @@ class TestWaitForShipment:
             return_value=_mock_response(200, {"status": "IN_PROGRESS"}),
         ):
             with patch("time.sleep"):
-                with pytest.raises(AllegroBusinessError, match="timed out"):
+                with pytest.raises(AllegroCommandPending) as excinfo:
                     c.wait_for_ship_with_allegro_shipment(
                         "cmd-1", max_attempts=3, interval_s=0
                     )
+                assert excinfo.value.command_id == "cmd-1"
+                # Backward compat: nadal jest AllegroBusinessError
+                assert isinstance(excinfo.value, AllegroBusinessError)
 
 
 # ── get shipment details ──────────────────────────────────────────────────────

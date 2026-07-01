@@ -247,6 +247,23 @@ class AllegroBusinessError(CourierBusinessError):
         )
 
 
+class AllegroCommandPending(AllegroBusinessError):
+    """Ship with Allegro create-command jeszcze IN_PROGRESS po timeout krótkiego polling.
+
+    To NIE jest twardy błąd — komenda jest kolejkowana po stronie Allegro.
+    Wołający powinien zwrócić status='pending_confirmation' i pozostawić dopytanie
+    o waybill oddzielnemu workerowi (nie tworzyć kolejnej komendy dla tego samego draftu!).
+    """
+
+    def __init__(self, command_id: str = "", order_id: str = "") -> None:
+        super().__init__(
+            detail=f"create-command {command_id} still pending (async)",
+            order_id=order_id,
+            action="wait_for_ship_with_allegro_shipment",
+        )
+        self.command_id = command_id
+
+
 class PickupSlotUnavailableError(CourierBusinessError):
     def __init__(self, courier: str = "", order_id: str = "") -> None:
         super().__init__(

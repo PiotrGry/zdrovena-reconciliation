@@ -421,6 +421,26 @@ def _run_allegro_delivery(
             "error": None,
         }
 
+    # Duplicate guard: jeśli draft ma już otwartą komendę Allegro w stanie pending,
+    # NIE tworzymy drugiej — zwracamy istniejący command_id żeby worker mógł dopytać.
+    # Zapobiega podwójnej wysyłce, jeśli execute_draft zostanie zawołany drugi raz
+    # zanim asynchroniczna komenda zakończy się po stronie Allegro.
+    existing_cmd = draft.get("allegro_command_id")
+    if existing_cmd and draft.get("status") == "pending_confirmation":
+        logger.info(
+            "Allegro command %s already pending for draft %s — skipping create",
+            existing_cmd,
+            draft.get("id"),
+        )
+        return {
+            "courier_draft_id": None,
+            "tracking_number": None,
+            "status": "pending_confirmation",
+            "pickup_ordered": False,
+            "allegro_command_id": existing_cmd,
+            "error": None,
+        }
+
     client = _get_allegro_client()
     if client is None:
         raise RuntimeError("Allegro credentials missing — cannot use Ship with Allegro")
@@ -462,29 +482,27 @@ def _run_allegro_delivery(
     # Non-blocking: krótki polling ~3s. Jeśli create-command jeszcze IN_PROGRESS — zwracamy
     # status='pending_confirmation' i zostawiamy dopytanie o waybill oddzielnemu workerowi.
     # Unikamy trzymania HTTP requesta na kilkadziesiąt sekund (poprzedni problem z InPost sync).
-    from zdrovena.common.shipping_exceptions import AllegroBusinessError
+    from zdrovena.common.shipping_exceptions import AllegroCommandPending
 
     try:
         shipment_id = client.wait_for_ship_with_allegro_shipment(
             command_id, max_attempts=3, interval_s=1.0
         )
-    except AllegroBusinessError as exc:
-        # Timeout wewnątrz wait_for — to nie błąd, tylko async pending. Odróżniamy od twardego ERROR.
-        if "timed out" in str(exc).lower():
-            logger.info(
-                "Allegro Delivery create-command %s pending — draft %s -> pending_confirmation",
-                command_id,
-                draft.get("id"),
-            )
-            return {
-                "courier_draft_id": None,
-                "tracking_number": None,
-                "status": "pending_confirmation",
-                "pickup_ordered": False,
-                "allegro_command_id": command_id,
-                "error": None,
-            }
-        raise
+    except AllegroCommandPending as exc:
+        # Osobny podtyp wyjątku — nie sprawdzamy substringu w message.
+        logger.info(
+            "Allegro Delivery create-command %s pending — draft %s -> pending_confirmation",
+            exc.command_id or command_id,
+            draft.get("id"),
+        )
+        return {
+            "courier_draft_id": None,
+            "tracking_number": None,
+            "status": "pending_confirmation",
+            "pickup_ordered": False,
+            "allegro_command_id": exc.command_id or command_id,
+            "error": None,
+        }
 
     shipment = client.get_ship_with_allegro_shipment(shipment_id)
     _carrier_id, waybill = client.extract_shipment_waybill(shipment)

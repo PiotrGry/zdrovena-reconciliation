@@ -255,13 +255,13 @@ class TestPendingConfirmation:
         return base
 
     def test_timeout_returns_pending_confirmation(self):
-        from zdrovena.common.shipping_exceptions import AllegroBusinessError
+        """AllegroCommandPending (osobny podtyp) — zwracamy pending_confirmation bez sprawdzania stringu."""
+        from zdrovena.common.shipping_exceptions import AllegroCommandPending
 
         client = MagicMock()
         client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-async-1"}
-        client.wait_for_ship_with_allegro_shipment.side_effect = AllegroBusinessError(
-            detail="create-command cmd-async-1 timed out after 3 attempts",
-            action="wait_for_ship_with_allegro_shipment",
+        client.wait_for_ship_with_allegro_shipment.side_effect = AllegroCommandPending(
+            command_id="cmd-async-1",
         )
 
         with patch(
@@ -275,8 +275,32 @@ class TestPendingConfirmation:
         assert result["tracking_number"] is None
         assert result["pickup_ordered"] is False
         assert result["error"] is None
-        assert result["allegro_command_id"]  # zachowujemy, żeby worker mógł dopytać
+        assert result["allegro_command_id"] == "cmd-async-1"
         # Nie wołamy get_ship_with_allegro_shipment przy pending
+        client.get_ship_with_allegro_shipment.assert_not_called()
+
+    def test_pending_draft_does_not_create_second_command(self):
+        """Duplicate guard: draft już z allegro_command_id + status pending_confirmation —
+        NIE wolno tworzyć drugiej komendy Allegro (regression: podwójna wysyłka)."""
+        client = MagicMock()
+
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client",
+            return_value=client,
+        ):
+            draft = self._draft(
+                allegro_command_id="cmd-existing-42",
+                status="pending_confirmation",
+            )
+            result = _run_allegro_delivery(draft, MagicMock())
+
+        assert result["status"] == "pending_confirmation"
+        assert result["allegro_command_id"] == "cmd-existing-42"
+        assert result["courier_draft_id"] is None
+        assert result["tracking_number"] is None
+        # KLUCZOWE: nie wołamy create ani wait
+        client.create_ship_with_allegro_shipment.assert_not_called()
+        client.wait_for_ship_with_allegro_shipment.assert_not_called()
         client.get_ship_with_allegro_shipment.assert_not_called()
 
     def test_hard_error_bubbles_up(self):

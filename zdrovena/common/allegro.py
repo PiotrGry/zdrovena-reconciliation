@@ -26,6 +26,7 @@ from requests.auth import HTTPBasicAuth
 from zdrovena.common.shipping_exceptions import (
     AllegroAuthError,
     AllegroBusinessError,
+    AllegroCommandPending,
     CourierConnectionError,
     CourierServerError,
     CourierTimeoutError,
@@ -375,10 +376,10 @@ class AllegroClient:
                     action="wait_for_ship_with_allegro_shipment",
                 )
             time.sleep(interval_s)
-        raise AllegroBusinessError(
-            detail=f"create-command {command_id} timed out after {max_attempts} attempts",
-            action="wait_for_ship_with_allegro_shipment",
-        )
+        # Timeout krótkiego polling — komenda może jeszcze ukończyć się asynchronicznie.
+        # Osobny podtyp wyjątku pozwala wołającemu odróżnić pending od twardego ERROR bez
+        # sprawdzania stringów.
+        raise AllegroCommandPending(command_id=command_id)
 
     def get_ship_with_allegro_shipment(self, shipment_id: str) -> dict[str, Any]:
         """GET /shipment-management/shipments/{shipmentId} — full shipment with waybill."""
