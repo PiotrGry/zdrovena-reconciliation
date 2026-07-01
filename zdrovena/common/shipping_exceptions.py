@@ -353,3 +353,28 @@ class MissingDispatchIdError(CancellationError):
             action="cancel_dispatch",
         )
 
+
+# ── Fakturownia (invoicing) errors — reuse shipping hierarchy for uniform handling ──
+
+
+class FakturowniaAuthError(CourierAuthError):
+    def __init__(self, detail: str = "") -> None:
+        super().__init__(
+            f"Fakturownia 401/403: {detail}",
+            courier="fakturownia",
+            action="authenticate",
+        )
+
+
+class FakturowniaBusinessError(CourierBusinessError):
+    def __init__(self, detail: str = "", action: str = "fakturownia_call") -> None:
+        super().__init__(
+            f"Fakturownia business error: {detail}",
+            courier="fakturownia",
+            action=action,
+        )
+
+
+class FakturowniaServerError(CourierServerError):
+    def __init__(self, status: int = 0) -> None:
+        super().__init__(courier="fakturownia", status=status)
