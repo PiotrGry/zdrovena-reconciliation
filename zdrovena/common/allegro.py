@@ -289,7 +289,6 @@ class AllegroClient:
             extra_headers={"Content-Type": "application/pdf"},
         )
 
-
     # ── Wysyłam z Allegro / Ship with Allegro ────────────────────────────────
     # Docs: developer.allegro.pl/tutorials/jak-zarzadzac-przesylkami-przez-wysylam-z-allegro-LRVjK7K21sY
 

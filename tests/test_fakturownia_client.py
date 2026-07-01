@@ -94,7 +94,9 @@ class TestGetInvoice:
                 client.get_invoice(999999)
 
     def test_get_invoice_401_raises_auth_error(self, client):
-        with patch("requests.Session.request", return_value=_resp({"code": "unauthorized"}, status=401)):
+        with patch(
+            "requests.Session.request", return_value=_resp({"code": "unauthorized"}, status=401)
+        ):
             with pytest.raises(FakturowniaAuthError):
                 client.get_invoice(12345)
 
@@ -119,7 +121,9 @@ class TestGetInvoice:
 
 class TestUpdateInvoice:
     def test_update_invoice_puts_wrapped_payload(self, client):
-        with patch("requests.Session.request", return_value=_resp({"id": 111, "buyer_name": "New"})) as mock:
+        with patch(
+            "requests.Session.request", return_value=_resp({"id": 111, "buyer_name": "New"})
+        ) as mock:
             client.update_invoice(111, {"buyer_name": "New"})
             _, kwargs = mock.call_args
             assert kwargs["method"] == "PUT"
@@ -216,8 +220,7 @@ class TestAddSettlementPosition:
         assert any(s.get("id") == 42 for s in settlements)
         # new row appended
         assert any(
-            s.get("kind") == "charge"
-            and s.get("description") == "Kaucja za opakowania zwrotne"
+            s.get("kind") == "charge" and s.get("description") == "Kaucja za opakowania zwrotne"
             for s in settlements
         )
 
@@ -356,9 +359,7 @@ class TestHasSettlementWithDescription:
         )
 
     def test_returns_false_when_no_settlements(self):
-        assert (
-            FakturowniaClient.has_settlement_with_description({}, "Kaucja") is False
-        )
+        assert FakturowniaClient.has_settlement_with_description({}, "Kaucja") is False
         assert (
             FakturowniaClient.has_settlement_with_description(
                 {"settlement_positions": []}, "Kaucja"
@@ -398,7 +399,9 @@ class TestListInvoices:
             assert out == [{"id": 1}, {"id": 2}]
 
     def test_list_invoices_by_number(self, client):
-        with patch("requests.Session.request", return_value=_resp([{"id": 1, "number": "FV/2025/1"}])) as mock:
+        with patch(
+            "requests.Session.request", return_value=_resp([{"id": 1, "number": "FV/2025/1"}])
+        ) as mock:
             client.list_invoices(number="FV/2025/1")
             params = mock.call_args.kwargs["params"]
             assert params["number"] == "FV/2025/1"
@@ -424,7 +427,9 @@ class TestErrorMapping:
                 client.get_invoice(1)
 
     def test_400_raises_business_error(self, client):
-        with patch("requests.Session.request", return_value=_resp({"error": "bad request"}, status=400)):
+        with patch(
+            "requests.Session.request", return_value=_resp({"error": "bad request"}, status=400)
+        ):
             with pytest.raises(FakturowniaBusinessError):
                 client.get_invoice(1)
 

@@ -139,7 +139,11 @@ class TestRunAllegroDelivery:
         }
         client.extract_shipment_waybill = MagicMock(return_value=("INPOST", "W1"))
         client.get_ship_with_allegro_pickup_proposals.return_value = [
-            {"id": "prop-1", "pickupDate": "2026-07-02", "timeSlot": {"from": "10:00", "to": "14:00"}}
+            {
+                "id": "prop-1",
+                "pickupDate": "2026-07-02",
+                "timeSlot": {"from": "10:00", "to": "14:00"},
+            }
         ]
 
         with patch(

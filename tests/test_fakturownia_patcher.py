@@ -129,20 +129,36 @@ class TestHappyPath:
             [{"id": "inv-2", "number": "FV/2025/102"}],
         ]
         fakturownia_client.list_invoices.side_effect = [
-            [_fakturownia_invoice(invoice_id=101, positions=[
-                {"name": "Woda Humio 500ml x 6", "quantity": 2},  # 12 pet
-            ])],
-            [_fakturownia_invoice(invoice_id=102, positions=[
-                {"name": "Zgrzewka Humio", "quantity": 3},  # 3*12=36 pet
-            ])],
+            [
+                _fakturownia_invoice(
+                    invoice_id=101,
+                    positions=[
+                        {"name": "Woda Humio 500ml x 6", "quantity": 2},  # 12 pet
+                    ],
+                )
+            ],
+            [
+                _fakturownia_invoice(
+                    invoice_id=102,
+                    positions=[
+                        {"name": "Zgrzewka Humio", "quantity": 3},  # 3*12=36 pet
+                    ],
+                )
+            ],
         ]
         fakturownia_client.get_invoice.side_effect = [
-            _fakturownia_invoice(invoice_id=101, positions=[
-                {"name": "Woda Humio 500ml x 6", "quantity": 2},
-            ]),
-            _fakturownia_invoice(invoice_id=102, positions=[
-                {"name": "Zgrzewka Humio", "quantity": 3},
-            ]),
+            _fakturownia_invoice(
+                invoice_id=101,
+                positions=[
+                    {"name": "Woda Humio 500ml x 6", "quantity": 2},
+                ],
+            ),
+            _fakturownia_invoice(
+                invoice_id=102,
+                positions=[
+                    {"name": "Zgrzewka Humio", "quantity": 3},
+                ],
+            ),
         ]
         fakturownia_client.has_settlement_with_description.return_value = False
 
@@ -165,17 +181,18 @@ class TestHappyPath:
 
 
 class TestIdempotency:
-    def test_skip_when_already_patched(
-        self, allegro_client, fakturownia_client, shipping_store
-    ):
+    def test_skip_when_already_patched(self, allegro_client, fakturownia_client, shipping_store):
         shipping_store.list_drafts.return_value = [_draft(external_order_id="ORD-1")]
         allegro_client.list_order_invoices.return_value = [
             {"id": "inv-1", "number": "FV/2025/100"},
         ]
         fakturownia_client.list_invoices.return_value = [
-            _fakturownia_invoice(invoice_id=100, positions=[
-                {"name": "Woda Humio 500ml x 12", "quantity": 1},
-            ])
+            _fakturownia_invoice(
+                invoice_id=100,
+                positions=[
+                    {"name": "Woda Humio 500ml x 12", "quantity": 1},
+                ],
+            )
         ]
         fakturownia_client.get_invoice.return_value = _fakturownia_invoice(
             invoice_id=100,
@@ -210,9 +227,12 @@ class TestNoPetBottles:
         ]
         # "szkle" → glass, glass has NO kaucja
         fakturownia_client.list_invoices.return_value = [
-            _fakturownia_invoice(invoice_id=100, positions=[
-                {"name": "Woda Humio w szkle 500ml x 12", "quantity": 1},
-            ])
+            _fakturownia_invoice(
+                invoice_id=100,
+                positions=[
+                    {"name": "Woda Humio w szkle 500ml x 12", "quantity": 1},
+                ],
+            )
         ]
         fakturownia_client.get_invoice.return_value = _fakturownia_invoice(
             invoice_id=100,
@@ -247,9 +267,12 @@ class TestErrorIsolation:
             [{"id": "inv-2", "number": "FV/2025/102"}],  # 2nd OK
         ]
         fakturownia_client.list_invoices.return_value = [
-            _fakturownia_invoice(invoice_id=102, positions=[
-                {"name": "Woda Humio 500ml x 12", "quantity": 1},
-            ])
+            _fakturownia_invoice(
+                invoice_id=102,
+                positions=[
+                    {"name": "Woda Humio 500ml x 12", "quantity": 1},
+                ],
+            )
         ]
         fakturownia_client.get_invoice.return_value = _fakturownia_invoice(
             invoice_id=102,
@@ -278,20 +301,36 @@ class TestErrorIsolation:
             [{"id": "inv-2", "number": "FV/2025/102"}],
         ]
         fakturownia_client.list_invoices.side_effect = [
-            [_fakturownia_invoice(invoice_id=101, positions=[
-                {"name": "Woda Humio 500ml x 12", "quantity": 1},
-            ])],
-            [_fakturownia_invoice(invoice_id=102, positions=[
-                {"name": "Woda Humio 500ml x 12", "quantity": 1},
-            ])],
+            [
+                _fakturownia_invoice(
+                    invoice_id=101,
+                    positions=[
+                        {"name": "Woda Humio 500ml x 12", "quantity": 1},
+                    ],
+                )
+            ],
+            [
+                _fakturownia_invoice(
+                    invoice_id=102,
+                    positions=[
+                        {"name": "Woda Humio 500ml x 12", "quantity": 1},
+                    ],
+                )
+            ],
         ]
         fakturownia_client.get_invoice.side_effect = [
-            _fakturownia_invoice(invoice_id=101, positions=[
-                {"name": "Woda Humio 500ml x 12", "quantity": 1},
-            ]),
-            _fakturownia_invoice(invoice_id=102, positions=[
-                {"name": "Woda Humio 500ml x 12", "quantity": 1},
-            ]),
+            _fakturownia_invoice(
+                invoice_id=101,
+                positions=[
+                    {"name": "Woda Humio 500ml x 12", "quantity": 1},
+                ],
+            ),
+            _fakturownia_invoice(
+                invoice_id=102,
+                positions=[
+                    {"name": "Woda Humio 500ml x 12", "quantity": 1},
+                ],
+            ),
         ]
         fakturownia_client.has_settlement_with_description.return_value = False
         # 1st patch fails, 2nd succeeds
@@ -326,9 +365,12 @@ class TestInvoiceMatching:
         ]
         # Fakturownia returns invoice matching that number
         fakturownia_client.list_invoices.return_value = [
-            _fakturownia_invoice(invoice_id=999, positions=[
-                {"name": "Woda Humio 500ml x 12", "quantity": 1},
-            ]),
+            _fakturownia_invoice(
+                invoice_id=999,
+                positions=[
+                    {"name": "Woda Humio 500ml x 12", "quantity": 1},
+                ],
+            ),
         ]
         fakturownia_client.get_invoice.return_value = _fakturownia_invoice(
             invoice_id=999,
@@ -363,9 +405,7 @@ class TestInvoiceMatching:
         assert stats["skipped_no_fakturownia_match"] == 1
         fakturownia_client.add_settlement_position.assert_not_called()
 
-    def test_ambiguous_match_skipped(
-        self, allegro_client, fakturownia_client, shipping_store
-    ):
+    def test_ambiguous_match_skipped(self, allegro_client, fakturownia_client, shipping_store):
         """Więcej niż 1 faktura o tym samym numerze — NIE patchujemy żadnej
         (nie ryzykujemy dopisania kaucji do złej). Zliczane w skipped_ambiguous_match."""
         shipping_store.list_drafts.return_value = [_draft(external_order_id="ORD-1")]
@@ -395,9 +435,7 @@ class TestInvoiceMatching:
 
 
 class TestSourceFilter:
-    def test_shopify_drafts_ignored(
-        self, allegro_client, fakturownia_client, shipping_store
-    ):
+    def test_shopify_drafts_ignored(self, allegro_client, fakturownia_client, shipping_store):
         shipping_store.list_drafts.return_value = [
             {"id": "d1", "source": "shopify", "external_order_id": "SHOP-1"},
             {"id": "d2", "source": "allegro", "external_order_id": "ORD-1", "status": "shipped"},
