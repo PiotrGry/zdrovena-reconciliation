@@ -33,6 +33,17 @@ Hierarchy::
         └── MissingDispatchIdError
 
 Each exception carries metadata for log reconstruction without visiting Shopify panel.
+
+Orthogonal to the tree above, per-courier marker bases allow catching every error
+from one courier regardless of handling semantics::
+
+    InPostError   ← InPostAuthError, InPostBusinessError (+ locker/service),
+                    InPostTransientError
+    ApaczkaError  ← ApaczkaAuthError (+ signature/balance), ApaczkaBusinessError
+                    (+ service), ApaczkaTransientError
+
+Concrete classes multiply-inherit (InPostError, Courier*Error) so both axes work:
+`except InPostError` and `except CourierAuthError` each match InPostAuthError.
 """
 
 from __future__ import annotations
@@ -59,6 +70,23 @@ class ZdrovenaShippingError(ZdrovenaError):
         self.action = action
         self.payload_snippet = payload_snippet
         super().__init__(message)
+
+
+# ── Per-courier marker bases (unified catch: `except InPostError` / `ApaczkaError`) ──
+# These are orthogonal to the handling-semantics axis (Auth/Business/Transient).
+# The concrete InPost*/Apaczka* errors below multiply-inherit from BOTH a marker
+# and a Courier*Error so callers can catch either "all InPost errors" or "all auth
+# errors" without losing the other classification. Fixes audit F-I4 / F-A4, where
+# InPostError/ApaczkaError lived outside ZdrovenaShippingError and escaped the
+# shared `except ZdrovenaShippingError` handler as bare 500s.
+
+
+class InPostError(ZdrovenaShippingError):
+    """Base marker for all InPost (ShipX) errors."""
+
+
+class ApaczkaError(ZdrovenaShippingError):
+    """Base marker for all Apaczka errors."""
 
 
 # ── Shopify payload errors (return 200, retry won't help) ─────────────────────
@@ -159,7 +187,7 @@ class CourierAuthError(ZdrovenaShippingError):
     """Auth failure with courier API — token expired or wrong credentials."""
 
 
-class InPostAuthError(CourierAuthError):
+class InPostAuthError(InPostError, CourierAuthError):
     def __init__(self, detail: str = "", order_id: str = "") -> None:
         super().__init__(
             f"InPost 401/403: {detail}",
@@ -169,7 +197,11 @@ class InPostAuthError(CourierAuthError):
         )
 
 
-class ApaczkaSignatureError(CourierAuthError):
+class ApaczkaAuthError(ApaczkaError, CourierAuthError):
+    """401/403 (or HMAC rejection) from Apaczka."""
+
+
+class ApaczkaSignatureError(ApaczkaAuthError):
     def __init__(self, detail: str = "", order_id: str = "") -> None:
         super().__init__(
             f"Apaczka HMAC signature rejected: {detail}",
@@ -189,7 +221,7 @@ class AllegroAuthError(CourierAuthError):
         )
 
 
-class ApaczkaInsufficientBalanceError(CourierAuthError):
+class ApaczkaInsufficientBalanceError(ApaczkaAuthError):
     def __init__(self, order_id: str = "") -> None:
         super().__init__(
             "Apaczka account has insufficient balance",
@@ -206,7 +238,15 @@ class CourierBusinessError(ZdrovenaShippingError):
     """Business-logic rejection from courier — operator action required."""
 
 
-class InPostLockerUnavailableError(CourierBusinessError):
+class InPostBusinessError(InPostError, CourierBusinessError):
+    """4xx business/validation rejection from InPost (bad address, dimensions, 422)."""
+
+
+class ApaczkaBusinessError(ApaczkaError, CourierBusinessError):
+    """4xx or in-body business error from Apaczka (invalid service, address, waybill)."""
+
+
+class InPostLockerUnavailableError(InPostBusinessError):
     def __init__(self, locker_id: str = "", order_id: str = "") -> None:
         super().__init__(
             f"InPost locker {locker_id!r} is full or offline",
@@ -217,7 +257,7 @@ class InPostLockerUnavailableError(CourierBusinessError):
         )
 
 
-class InPostInvalidServiceError(CourierBusinessError):
+class InPostInvalidServiceError(InPostBusinessError):
     def __init__(self, detail: str = "", order_id: str = "") -> None:
         super().__init__(
             f"InPost rejected service/parcel dimensions: {detail}",
@@ -227,7 +267,7 @@ class InPostInvalidServiceError(CourierBusinessError):
         )
 
 
-class ApaczkaServiceUnavailableError(CourierBusinessError):
+class ApaczkaServiceUnavailableError(ApaczkaBusinessError):
     def __init__(self, service_id: str = "", order_id: str = "") -> None:
         super().__init__(
             f"Apaczka service {service_id!r} is currently unavailable",
@@ -319,6 +359,14 @@ class CourierServerError(CourierTransientError):
             courier=courier,
             action="request",
         )
+
+
+class InPostTransientError(InPostError, CourierTransientError):
+    """5xx or network error from InPost — safe to retry with backoff."""
+
+
+class ApaczkaTransientError(ApaczkaError, CourierTransientError):
+    """5xx or network error from Apaczka — safe to retry with backoff."""
 
 
 # ── Cancellation errors ───────────────────────────────────────────────────────
