@@ -15,7 +15,12 @@ import requests
 logger = logging.getLogger("zdrovena.common.inpost")
 
 _BASE = os.environ.get("INPOST_BASE_URL", "https://api-shipx-pl.easypack24.net")
-_TIMEOUT = 15
+_TIMEOUT = int(os.environ.get("INPOST_TIMEOUT", "15"))
+# Courier service slug. Production accounts with a signed contract use
+# inpost_courier_standard (requires trucker_id). Sandbox / prepaid accounts
+# without a contract must use inpost_courier_c2c. Set the env var only on
+# sandbox; in production leave it unset to keep the standard service.
+_COURIER_SERVICE = os.environ.get("INPOST_COURIER_SERVICE", "inpost_courier_standard")
 
 # Physical dimensions and weights per package type produced by _calc_packages.
 # Dimensions in cm; weight_kg is gross weight of a single box.
@@ -164,7 +169,7 @@ class InPostClient:
     ) -> dict[str, Any]:
         dims = dimensions or _DEFAULT_DIMS
         payload = {
-            "service": "inpost_courier_standard",
+            "service": _COURIER_SERVICE,
             "reference": reference,
             "receiver": {
                 "first_name": receiver_first_name,
