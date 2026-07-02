@@ -53,8 +53,10 @@ def poll_orders_once(
     }
     try:
         forms = client.list_orders(status=status)
-    except Exception as exc:
-        logger.error("Allegro list_orders failed: %s", exc)
+    except Exception:
+        # Resilience boundary: a poll cycle must never crash the scheduler, so we
+        # catch broadly (network, auth, mapping) and surface it as an error stat.
+        logger.exception("Allegro list_orders failed")
         stats["errors"] += 1
         return stats
 
@@ -64,8 +66,10 @@ def poll_orders_once(
 
     try:
         drafts = shipping_store.list_drafts()
-    except Exception as exc:
-        logger.error("shipping_store.list_drafts failed: %s", exc)
+    except Exception:
+        # Resilience boundary: store read failure degrades to "no known drafts"
+        # (dedup best-effort) rather than aborting the whole cycle.
+        logger.exception("shipping_store.list_drafts failed")
         stats["errors"] += 1
         drafts = []
 
@@ -84,8 +88,10 @@ def poll_orders_once(
         try:
             shopify_like = allegro_to_shopify_order(form)
             _create_draft(shopify_like, shipping_store, storage, source="allegro")
-        except Exception as exc:
-            logger.error("Failed to create draft for Allegro order %s: %s", allegro_id, exc)
+        except Exception:
+            # Resilience boundary: one malformed/failing order must not abort the
+            # rest of the cycle. logger.exception captures the traceback (TRY400).
+            logger.exception("Failed to create draft for Allegro order %s", allegro_id)
             stats["errors"] += 1
             continue
 
