@@ -49,6 +49,8 @@ services:
       FAKTUROWNIA_API_TOKEN: "${FAKTUROWNIA_API_TOKEN:-dev-placeholder}"
       KSEF_ENABLED: "false"
       MOCK_COURIER: "${MOCK_COURIER:-0}"
+      INPOST_COURIER_SERVICE: "${INPOST_COURIER_SERVICE:-inpost_courier_standard}"
+      INPOST_TIMEOUT: "${INPOST_TIMEOUT:-15}"
       AZURE_STORAGE_CONNECTION_STRING: >-
         DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;TableEndpoint=http://azurite:10002/devstoreaccount1;
       AZURE_STORAGE_CONTAINER: "zdrovena-files"
