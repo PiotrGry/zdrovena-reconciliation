@@ -1,0 +1,992 @@
+{
+  "status": 200,
+  "message": "",
+  "response": {
+    "services": [
+      {
+        "service_id": "1",
+        "name": "UPS Standard",
+        "delivery_time": "",
+        "supplier": "UPS",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "2",
+        "name": "UPS Express Saver",
+        "delivery_time": "(w ciągu dnia)",
+        "supplier": "UPS",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "3",
+        "name": "UPS Express Plus do 12:00",
+        "delivery_time": "do 12:00",
+        "supplier": "UPS",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "4",
+        "name": "UPS Express Plus do 9:00",
+        "delivery_time": "do 9:00",
+        "supplier": "UPS",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "5",
+        "name": "UPS Standard",
+        "delivery_time": "",
+        "supplier": "UPS",
+        "domestic": "0",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "6",
+        "name": "UPS Express Saver",
+        "delivery_time": "",
+        "supplier": "UPS",
+        "domestic": "0",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "8",
+        "name": "UPS Expedited",
+        "delivery_time": "",
+        "supplier": "UPS",
+        "domestic": "0",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "13",
+        "name": "UPS AP Punkt-Drzwi",
+        "delivery_time": "",
+        "supplier": "UPS",
+        "domestic": "1",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "14",
+        "name": "UPS AP Punkt-Punkt",
+        "delivery_time": "",
+        "supplier": "UPS",
+        "domestic": "1",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "1",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "15",
+        "name": "UPS AP Drzwi-Punkt",
+        "delivery_time": "",
+        "supplier": "UPS",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "0",
+        "door_to_point": "1",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "16",
+        "name": "UPS AP Drzwi-Punkt",
+        "delivery_time": "",
+        "supplier": "UPS",
+        "domestic": "0",
+        "pickup_courier": "1",
+        "door_to_door": "0",
+        "door_to_point": "1",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "21",
+        "name": "DPD Kurier",
+        "delivery_time": "",
+        "supplier": "DPD",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "22",
+        "name": "DPD Kurier Europa",
+        "delivery_time": "",
+        "supplier": "DPD",
+        "domestic": "0",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "23",
+        "name": "DPD Pickup Drzwi-Punkt",
+        "delivery_time": "",
+        "supplier": "DPD",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "0",
+        "door_to_point": "1",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "24",
+        "name": "DPD Kurier do 9:30",
+        "delivery_time": "do 9:30",
+        "supplier": "DPD",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "25",
+        "name": "DPD Kurier do 12:00",
+        "delivery_time": "do 12:00",
+        "supplier": "DPD",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "26",
+        "name": "DPD Pickup Punkt-Punkt",
+        "delivery_time": "",
+        "supplier": "DPD",
+        "domestic": "1",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "1",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "27",
+        "name": "DPD Max",
+        "delivery_time": "",
+        "supplier": "DPD",
+        "domestic": "0",
+        "pickup_courier": "2",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "28",
+        "name": "Allegro SMART DPD Kurier",
+        "delivery_time": "",
+        "supplier": "DPD",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "29",
+        "name": "DPD Pickup Europa",
+        "delivery_time": "",
+        "supplier": "DPD",
+        "domestic": "0",
+        "pickup_courier": "1",
+        "door_to_door": "0",
+        "door_to_point": "1",
+        "point_to_point": "1",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "30",
+        "name": "DPD Pickup Punkt-Drzwi",
+        "delivery_time": "",
+        "supplier": "DPD",
+        "domestic": "1",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "40",
+        "name": "Allegro SMART Paczkomat InPost",
+        "delivery_time": "",
+        "supplier": "INPOST",
+        "domestic": "1",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "1",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "41",
+        "name": "InPost Paczkomat",
+        "delivery_time": "",
+        "supplier": "INPOST",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "0",
+        "door_to_point": "1",
+        "point_to_point": "1",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "42",
+        "name": "InPost Kurier",
+        "delivery_time": "",
+        "supplier": "INPOST",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "43",
+        "name": "InPost Paczkomat-Drzwi",
+        "delivery_time": "",
+        "supplier": "INPOST",
+        "domestic": "1",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "45",
+        "name": "InPost International Drzwi-Punkt",
+        "delivery_time": "",
+        "supplier": "INPOST",
+        "domestic": "0",
+        "pickup_courier": "2",
+        "door_to_door": "0",
+        "door_to_point": "1",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "46",
+        "name": "InPost International Paczkomat",
+        "delivery_time": "",
+        "supplier": "INPOST",
+        "domestic": "0",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "1",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "47",
+        "name": "Szybkie Zwroty Paczkomat-Drzwi",
+        "delivery_time": "",
+        "supplier": "INPOST",
+        "domestic": "1",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "50",
+        "name": "Orlen Paczka Punkt-Punkt",
+        "delivery_time": "",
+        "supplier": "PWR",
+        "domestic": "1",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "1",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "53",
+        "name": "Orlen Paczka Drzwi-Punkt",
+        "delivery_time": "",
+        "supplier": "PWR",
+        "domestic": "1",
+        "pickup_courier": "2",
+        "door_to_door": "0",
+        "door_to_point": "1",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "60",
+        "name": "Pocztex Kurier Drzwi-Drzwi",
+        "delivery_time": "",
+        "supplier": "POCZTA",
+        "domestic": "1",
+        "pickup_courier": "2",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "64",
+        "name": "Pocztex Kurier Drzwi-Punkt",
+        "delivery_time": "",
+        "supplier": "POCZTA",
+        "domestic": "1",
+        "pickup_courier": "2",
+        "door_to_door": "0",
+        "door_to_point": "1",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "65",
+        "name": "Pocztex Punkt Punkt-Drzwi",
+        "delivery_time": "",
+        "supplier": "POCZTA",
+        "domestic": "1",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "66",
+        "name": "Pocztex Punkt Punkt-Punkt",
+        "delivery_time": "",
+        "supplier": "POCZTA",
+        "domestic": "1",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "1",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "67",
+        "name": "Allegro SMART Pocztex",
+        "delivery_time": "",
+        "supplier": "POCZTA",
+        "domestic": "1",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "68",
+        "name": "Allegro SMART Pocztex Punkty",
+        "delivery_time": "",
+        "supplier": "POCZTA",
+        "domestic": "1",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "1",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "69",
+        "name": "Poczta Polska Palety",
+        "delivery_time": "",
+        "supplier": "POCZTA",
+        "domestic": "1",
+        "pickup_courier": "2",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "82",
+        "name": "DHL Parcel Kurier",
+        "delivery_time": "",
+        "supplier": "DHL",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "83",
+        "name": "DHL Parcel Kurier do 12:00",
+        "delivery_time": "do 12:00",
+        "supplier": "DHL",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "84",
+        "name": "DHL Parcel Kurier do 9:00",
+        "delivery_time": "do 9:00",
+        "supplier": "DHL",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "86",
+        "name": "DHL POP do punktu",
+        "delivery_time": "",
+        "supplier": "DHL_PARCEL",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "0",
+        "door_to_point": "1",
+        "point_to_point": "1",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "87",
+        "name": "DHL POP Punkt-Drzwi",
+        "delivery_time": "",
+        "supplier": "DHL",
+        "domestic": "1",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "91",
+        "name": "DHL Parcel Connect Drzwi-Drzwi",
+        "delivery_time": "",
+        "supplier": "DHL_INT",
+        "domestic": "0",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "92",
+        "name": "DHL Parcel Connect Drzwi-Punkt",
+        "delivery_time": "",
+        "supplier": "DHL_INT",
+        "domestic": "0",
+        "pickup_courier": "1",
+        "door_to_door": "0",
+        "door_to_point": "1",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "140",
+        "name": "Raben",
+        "delivery_time": "",
+        "supplier": "RABEN",
+        "domestic": "0",
+        "pickup_courier": "2",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "150",
+        "name": "Geis Cargo",
+        "delivery_time": "",
+        "supplier": "KEX",
+        "domestic": "1",
+        "pickup_courier": "2",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "151",
+        "name": "FEDEX Kurier",
+        "delivery_time": "",
+        "supplier": "FEDEX",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "153",
+        "name": "FedEx International Economy",
+        "delivery_time": "",
+        "supplier": "FEDEX",
+        "domestic": "0",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "200",
+        "name": "GLS Zagranica",
+        "delivery_time": "",
+        "supplier": "GLS",
+        "domestic": "0",
+        "pickup_courier": "2",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "202",
+        "name": "GLS Kurier Drzwi-Drzwi",
+        "delivery_time": "",
+        "supplier": "GLS",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "203",
+        "name": "GLS Kurier Drzwi-Punkt",
+        "delivery_time": "",
+        "supplier": "GLS",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "0",
+        "door_to_point": "1",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "204",
+        "name": "GLS Kurier Punkt-Drzwi",
+        "delivery_time": "",
+        "supplier": "GLS",
+        "domestic": "1",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "205",
+        "name": "GLS Zagranica Drzwi-Drzwi",
+        "delivery_time": "",
+        "supplier": "GLS",
+        "domestic": "0",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "206",
+        "name": "GLS Zagranica Drzwi-Punkt",
+        "delivery_time": "",
+        "supplier": "GLS",
+        "domestic": "0",
+        "pickup_courier": "1",
+        "door_to_door": "0",
+        "door_to_point": "1",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "207",
+        "name": "GLS Zagranica Punkt-Drzwi",
+        "delivery_time": "",
+        "supplier": "GLS",
+        "domestic": "0",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "208",
+        "name": "GLS Zagranica Import Punkt-Drzwi",
+        "delivery_time": "",
+        "supplier": "GLS",
+        "domestic": "0",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "230",
+        "name": "Hellmann",
+        "delivery_time": "",
+        "supplier": "HELLMANN",
+        "domestic": "1",
+        "pickup_courier": "2",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "231",
+        "name": "Hellmann",
+        "delivery_time": "",
+        "supplier": "HELLMANN",
+        "domestic": "0",
+        "pickup_courier": "2",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "240",
+        "name": "Rhenus Logistics",
+        "delivery_time": "",
+        "supplier": "RHENUS",
+        "domestic": "1",
+        "pickup_courier": "2",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "250",
+        "name": "Geodis",
+        "delivery_time": "",
+        "supplier": "PEKAES",
+        "domestic": "1",
+        "pickup_courier": "2",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "251",
+        "name": "Geodis",
+        "delivery_time": "",
+        "supplier": "PEKAES",
+        "domestic": "0",
+        "pickup_courier": "2",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "260",
+        "name": "Ambro Express",
+        "delivery_time": "",
+        "supplier": "AMBRO",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "261",
+        "name": "Ambro Express Zagranica",
+        "delivery_time": "",
+        "supplier": "AMBRO",
+        "domestic": "0",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "310",
+        "name": "Alsendo International Magazyn-Drzwi",
+        "delivery_time": "",
+        "supplier": "CBL",
+        "domestic": "0",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "311",
+        "name": "Alsendo International Magazyn-Punkt",
+        "delivery_time": "",
+        "supplier": "CBL",
+        "domestic": "0",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "1",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "312",
+        "name": "Alsendo International Punkt-Drzwi",
+        "delivery_time": "",
+        "supplier": "PP_CBL",
+        "domestic": "0",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "313",
+        "name": "Packeta Punkt-Drzwi",
+        "delivery_time": "",
+        "supplier": "PP_PACKETA",
+        "domestic": "0",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "314",
+        "name": "Packeta Punkt-Punkt",
+        "delivery_time": "",
+        "supplier": "PP_PACKETA",
+        "domestic": "0",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "1",
+        "point_to_door": "0"
+      },
+      {
+        "service_id": "316",
+        "name": "Packeta Magazyn-Drzwi",
+        "delivery_time": "",
+        "supplier": "PACKETA",
+        "domestic": "0",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "317",
+        "name": "Packeta Magazyn-Punkt",
+        "delivery_time": "",
+        "supplier": "PACKETA",
+        "domestic": "0",
+        "pickup_courier": "0",
+        "door_to_door": "0",
+        "door_to_point": "0",
+        "point_to_point": "1",
+        "point_to_door": "0"
+      }
+    ],
+    "options": {
+      "11": {
+        "type": "bool",
+        "name": "Zwrot dokumentów",
+        "desc": "Zwrot dokumentów"
+      },
+      "19": {
+        "type": "bool",
+        "name": "Dostawa w sobotę",
+        "desc": "Dla wybranych przewoźników"
+      },
+      "31": {
+        "type": "bool",
+        "name": "Powiadomienie SMS",
+        "desc": ""
+      },
+      "44": {
+        "type": "bool",
+        "name": "Doręczenie do rąk własnych",
+        "desc": "Doręczenie do rąk własnych aka Bezpośrednie doręczenie"
+      },
+      "58": {
+        "type": "bool",
+        "name": "Ostrożnie",
+        "desc": "Usługa Poczty Polskiej"
+      },
+      "82": {
+        "type": "bool",
+        "name": "Opony",
+        "desc": ""
+      },
+      "85": {
+        "type": "bool",
+        "name": "Podjazd z listem",
+        "desc": "Kurier przywiezie list przewozowy dla twojej przesyłki."
+      },
+      "88": {
+        "type": "bool",
+        "name": "Preawizacja",
+        "desc": "Informacja telefoniczna przed doręczeniem przesyłki."
+      },
+      "91": {
+        "type": "bool",
+        "name": "Nadanie na umowie własnej",
+        "desc": ""
+      },
+      "92": {
+        "type": "bool",
+        "name": "Nadanie bez etykiety",
+        "desc": ""
+      },
+      "128": {
+        "type": "bool",
+        "name": "Przedmioty kruche",
+        "desc": ""
+      },
+      "129": {
+        "type": "bool",
+        "name": "Płyny lub gazy",
+        "desc": ""
+      },
+      "130": {
+        "type": "bool",
+        "name": "Żywe owady",
+        "desc": ""
+      },
+      "131": {
+        "type": "bool",
+        "name": "Żywe ptaki",
+        "desc": ""
+      },
+      "132": {
+        "type": "bool",
+        "name": "Żywe rośliny",
+        "desc": ""
+      },
+      "134": {
+        "type": "bool",
+        "name": "Sprawdzenie zawartości",
+        "desc": "Sprawdzenie zawartości przy odbiorze"
+      }
+    },
+    "package_type": {
+      "LIST": {
+        "type": "LIST",
+        "desc": "Przesyłka zawierająca dokumenty w wersji papierowej, zapakowane w kopertę kurierską."
+      },
+      "PACZKA": {
+        "type": "PACZKA",
+        "desc": "Przesyłka zapakowana w prostopadłościenny karton o regularnych kształtach, bez wystających elementów lub w foliopak kurierski."
+      },
+      "PALETA": {
+        "type": "PALETA",
+        "desc": "Towar na palecie Euro o podstawie 120x80. Bez elementów wystających poza obrys palety."
+      },
+      "PALETA_60X40": {
+        "type": "PALETA_60X40",
+        "desc": "Towar na palecie o podstawie 60x40. Bez elementów wystających poza obrys palety."
+      },
+      "POLPALETA": {
+        "type": "POLPALETA",
+        "desc": "Towar na palecie o podstawie 60x80. Bez elementów wystających poza obrys palety."
+      },
+      "PALETA_PRZEMYSLOWA": {
+        "type": "PALETA_PRZEMYSLOWA",
+        "desc": "Towar na palecie o podstawie 120x100. Bez elementów wystających poza obrys palety."
+      },
+      "PALETA_PRZEMYSLOWA_B": {
+        "type": "PALETA_PRZEMYSLOWA_B",
+        "desc": "Towar na palecie o podstawie 120x120. Bez elementów wystających poza obrys palety."
+      }
+    },
+    "points_type": [
+      "UPS",
+      "INPOST",
+      "POCZTA",
+      "DHL_PARCEL",
+      "DPD",
+      "PWR",
+      "CBL",
+      "PACKETA",
+      "DHL_INT",
+      "GLS"
+    ],
+    "pickup_type": {
+      "COURIER": {
+        "type": "COURIER",
+        "desc": "Podjazd kuriera."
+      },
+      "SELF": {
+        "type": "SELF",
+        "desc": "Dostarczę przesyłkę samodzielnie do punktu nadania."
+      }
+    },
+    "unit_type": {
+      "PCS": {
+        "type": "PCS",
+        "desc": "Jednostka w odprawie celnej określająca sztukę."
+      },
+      "PKG": {
+        "type": "PKG",
+        "desc": "Jednostka w odprawie celnej określająca opakowanie/paczkę."
+      }
+    }
+  }
+}

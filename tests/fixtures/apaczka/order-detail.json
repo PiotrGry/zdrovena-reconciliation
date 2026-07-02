@@ -1,0 +1,76 @@
+{
+  "status": 200,
+  "message": "",
+  "response": {
+    "order": {
+      "id": "479337741",
+      "supplier": "dpd",
+      "service_id": "23",
+      "service_name": "DPD Pickup Drzwi-Punkt",
+      "waybill_number": "1046066011656U",
+      "pickup": {
+        "type": "COURIER",
+        "date": "2026-06-30",
+        "hours_from": "09:00",
+        "hours_to": "17:00",
+        "address_id": null
+      },
+      "pickup_number": "20260630705610",
+      "tracking_url": "https://www.apaczka.pl/sledz-przesylke/?waybill=1046066011656U",
+      "status": "DELIVERED",
+      "shipments_count": 1,
+      "shipments": [
+        {
+          "shipment_type_code": "PACZKA",
+          "weight": "6.0",
+          "weight_billable": "6.0",
+          "length": "30",
+          "width": "20",
+          "height": "20",
+          "content": "woda butelkowana 12 szt",
+          "comment": "",
+          "waybill_number": "1046066011656U",
+          "is_nstd": false,
+          "price": "1063",
+          "price_vat": 23,
+          "price_gross": "1307"
+        }
+      ],
+      "content": "woda butelkowana 12 szt",
+      "comment": "",
+      "sender": {
+        "name": "REDACTED",
+        "contact_person": "REDACTED",
+        "email": "REDACTED",
+        "phone": "REDACTED",
+        "line1": "REDACTED",
+        "line2": "",
+        "postal_code": "REDACTED",
+        "city": "REDACTED",
+        "country_code": "PL",
+        "foreign_address_id": ""
+      },
+      "receiver": {
+        "name": "REDACTED",
+        "contact_person": "REDACTED",
+        "email": "REDACTED",
+        "phone": "REDACTED",
+        "line1": "REDACTED",
+        "line2": "",
+        "postal_code": "REDACTED",
+        "city": "REDACTED",
+        "country_code": "PL",
+        "foreign_address_id": "PL63666"
+      },
+      "created": "2026-06-30 08:36:40",
+      "delivered": "2026-07-01 19:51:44",
+      "price": "1093",
+      "price_var": 23,
+      "price_gross": "1344",
+      "cod": false,
+      "cod_currency": "",
+      "declaration_value": false,
+      "externalId": "24119597"
+    }
+  }
+}

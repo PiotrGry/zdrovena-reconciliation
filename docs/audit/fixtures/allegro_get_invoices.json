@@ -1,0 +1,39 @@
+{
+  "_source": "https://developer.allegro.pl/documentation/#operation/getListOfInvoices",
+  "_fetched_at": "2026-07-02",
+  "_note": "Response of GET /order/checkout-forms/{id}/invoices. Note: invoice items use `invoiceNumber` (NOT `number`).",
+  "orderMode": "UKRAINE_EXPORT",
+  "invoices": [
+    {
+      "id": "56ae349d-8045-4bb3-adcc-7cf6fb420f61",
+      "invoiceNumber": "FV 01/2020",
+      "createdAt": "2021-01-07T15:50:00.000Z",
+      "file": {
+        "name": "invoice.pdf",
+        "uploadedAt": "2025-11-07T12:56:10.349Z",
+        "securityVerification": {
+          "status": "ACCEPTED",
+          "verifiedAt": "2025-11-07T12:56:10.349Z"
+        },
+        "verification": {
+          "status": "ACCEPTED_WITH_WARNINGS",
+          "details": [
+            {
+              "type": "WARNING",
+              "code": "MISSING_EORI_NUMBER",
+              "message": "EORI number is missing from the invoice"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "links": [
+    {
+      "id": "56ae349d-8045-4bb3-adcc-7cf6fb420f61",
+      "url": "https://paragony.pl/cokolwiek",
+      "createdAt": "2025-11-07T12:56:10.349Z"
+    }
+  ],
+  "hasExternalInvoices": false
+}

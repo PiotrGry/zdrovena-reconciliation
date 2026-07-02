@@ -1,0 +1,13 @@
+{
+  "_source": "https://developer.allegro.pl/documentation/#operation/createShipment",
+  "_fetched_at": "2026-07-02",
+  "_note": "Request body for POST /order/checkout-forms/{id}/shipments. carrierName only for carrierId=OTHER. lineItems optional (omit = ship all).",
+  "carrierId": "ALLEGRO",
+  "waybill": "AD-1239134",
+  "carrierName": "Sample carrier",
+  "lineItems": [
+    {
+      "id": "14e142cf-e8e0-48cc-bcf6-399b5fd90b32"
+    }
+  ]
+}
