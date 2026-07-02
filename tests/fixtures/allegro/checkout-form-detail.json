@@ -1,0 +1,152 @@
+{
+  "id": "6282fec0-75f7-11f1-b8b6-9d2856530dfe",
+  "messageToSeller": null,
+  "buyer": {
+    "id": "53252673",
+    "email": "abqsn58id1+48f7f6069@allegromail.pl",
+    "login": "Client:53252673",
+    "firstName": "Agnieszka",
+    "lastName": "Wojtczak",
+    "companyName": null,
+    "guest": false,
+    "personalIdentity": null,
+    "phoneNumber": "+48 697 102 046",
+    "preferences": {
+      "language": "pl-PL"
+    },
+    "address": {
+      "street": "Różana, 17",
+      "city": "Sieradz",
+      "postCode": "98-200",
+      "countryCode": "PL"
+    }
+  },
+  "payment": {
+    "id": "62e51c38-75f7-11f1-b68e-775012317e0d",
+    "type": "ONLINE",
+    "provider": "AF",
+    "finishedAt": "2026-07-02T09:22:33.135Z",
+    "paidAmount": {
+      "amount": "158.00",
+      "currency": "PLN"
+    },
+    "reconciliation": null,
+    "features": []
+  },
+  "status": "READY_FOR_PROCESSING",
+  "fulfillment": {
+    "status": "NEW",
+    "shipmentSummary": {
+      "lineItemsSent": "NONE"
+    },
+    "provider": {
+      "id": "SELLER"
+    }
+  },
+  "delivery": {
+    "address": {
+      "firstName": "Agnieszka",
+      "lastName": "Wojtczak",
+      "street": "Różana, 17",
+      "city": "Sieradz",
+      "zipCode": "98-200",
+      "countryCode": "PL",
+      "companyName": null,
+      "phoneNumber": "+48697102046",
+      "modifiedAt": null
+    },
+    "method": {
+      "id": "0b257488-c85d-4507-b967-9b45ffbfa2e8",
+      "name": "Allegro One Box, DPD"
+    },
+    "pickupPoint": {
+      "id": "AL012ESI",
+      "name": "Allegro One Box - AL012ESI",
+      "description": "Obok siłowni \"Studio Relaks\"",
+      "address": {
+        "street": "Organizacji Katyń 11",
+        "zipCode": "98-200",
+        "city": "Sieradz",
+        "countryCode": "PL"
+      }
+    },
+    "cost": {
+      "amount": "0.00",
+      "currency": "PLN"
+    },
+    "smart": true,
+    "time": {
+      "from": "2026-07-03T22:00:00Z",
+      "to": "2026-07-04T21:59:59.999Z",
+      "guaranteed": null,
+      "dispatch": {
+        "from": "2026-07-02T22:00:00Z",
+        "to": "2026-07-03T21:59:59.999Z"
+      }
+    },
+    "calculatedNumberOfPackages": 1,
+    "cancellation": null
+  },
+  "invoice": {
+    "required": false,
+    "address": null,
+    "dueDate": null,
+    "features": null
+  },
+  "lineItems": [
+    {
+      "id": "627c4800-75f7-11f1-b8b6-9d2856530dfe",
+      "offer": {
+        "id": "17613428785",
+        "name": "HUMIO - Alkaliczna Woda Humusowa 500ml x 12",
+        "external": {
+          "id": "PET"
+        },
+        "productSet": null,
+        "hsNumber": null
+      },
+      "quantity": 2,
+      "originalPrice": {
+        "amount": "73.00",
+        "currency": "PLN"
+      },
+      "price": {
+        "amount": "73.00",
+        "currency": "PLN"
+      },
+      "reconciliation": null,
+      "selectedAdditionalServices": [],
+      "vouchers": [],
+      "tax": {
+        "rate": "8.00",
+        "subject": "GOODS",
+        "exemption": null
+      },
+      "boughtAt": "2026-07-02T09:22:17.087Z",
+      "discounts": null,
+      "deposit": {
+        "price": {
+          "amount": "6.00",
+          "currency": "PLN"
+        }
+      },
+      "serialNumbers": {
+        "expected": false,
+        "entries": []
+      }
+    }
+  ],
+  "surcharges": [],
+  "note": null,
+  "marketplace": {
+    "id": "allegro-pl"
+  },
+  "summary": {
+    "totalToPay": {
+      "amount": "158.00",
+      "currency": "PLN"
+    }
+  },
+  "updatedAt": "2026-07-02T09:22:33.135Z",
+  "revision": "3294a91d"
+}
