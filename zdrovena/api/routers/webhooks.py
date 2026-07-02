@@ -77,11 +77,8 @@ def _verify_shopify_hmac(raw_body: bytes, signature_header: str, secret: str) ->
         # Log truncated details to speed up local HMAC debugging without
         # leaking the full secret or signature to production logs.
         logger.warning(
-            "HMAC mismatch: computed=%s... received=%s... secret_prefix=%s body_len=%d",
-            computed[:16],
-            signature_header[:16],
-            secret[:8],
-            len(raw_body),
+            "HMAC mismatch: computed=%s... received=%s... body_len=%d",
+            computed[:16], signature_header[:16], len(raw_body),
         )
         return False
     return True

@@ -62,9 +62,7 @@ class TestInPostClientInit:
 
     def test_does_not_leak_token_into_url(self):
         client = InPostClient(_TOKEN, _ORG)
-        # Token must travel as header — never as query string
-        assert _TOKEN not in repr(client._session.headers["Authorization"]).lower() or True
-        # And the base URL has no embedded credential
+        # Base URL must not embed credentials
         from zdrovena.common.inpost import _BASE
 
         assert "@" not in _BASE
@@ -357,3 +355,39 @@ class TestErrorHierarchy:
 
     def test_inpost_error_is_shipping_error_subclass(self):
         assert issubclass(InPostError, ZdrovenaShippingError)
+
+
+# ── cancel_shipment ──────────────────────────────────────────────────────────
+
+
+class TestCancelShipment:
+    def test_success_sends_delete_to_shipment_url(self):
+        client = InPostClient(_TOKEN, _ORG)
+        r = MagicMock(spec=requests.Response)
+        r.ok = True
+        r.status_code = 204
+        with patch.object(client._session, "delete", return_value=r) as mock_delete:
+            result = client.cancel_shipment("ship-42")
+        url = mock_delete.call_args.args[0]
+        assert url.endswith("/v1/shipments/ship-42")
+        assert result is None
+
+    def test_422_raises_already_dispatched(self):
+        client = InPostClient(_TOKEN, _ORG)
+        r = MagicMock(spec=requests.Response)
+        r.ok = False
+        r.status_code = 422
+        r.text = "Shipment already dispatched"
+        with patch.object(client._session, "delete", return_value=r):
+            with pytest.raises(InPostError, match="already dispatched"):
+                client.cancel_shipment("ship-42")
+
+    def test_other_4xx_raises_with_status(self):
+        client = InPostClient(_TOKEN, _ORG)
+        r = MagicMock(spec=requests.Response)
+        r.ok = False
+        r.status_code = 404
+        r.text = "not found"
+        with patch.object(client._session, "delete", return_value=r):
+            with pytest.raises(InPostError, match="404"):
+                client.cancel_shipment("ship-42")
