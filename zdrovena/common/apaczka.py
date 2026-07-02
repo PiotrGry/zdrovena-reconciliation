@@ -30,9 +30,9 @@ class ApaczkaError(Exception):
 
 
 def _sign(app_id: str, secret: str, endpoint: str, data: dict[str, Any]) -> dict[str, Any]:
-    request_json = json.dumps(data, separators=(",", ":"))
+    request_json = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
     expires = str(int(time.time()) + 1800)
-    msg = f"{app_id}:{endpoint}:{request_json}:{expires}"
+    msg = f"{app_id}:{endpoint}/:{request_json}:{expires}"
     sig = hmac.new(secret.encode(), msg.encode(), hashlib.sha256).hexdigest()
     return {
         "app_id": app_id,
@@ -173,7 +173,7 @@ class ApaczkaClient:
 
     def cancel_shipment(self, order_id: str) -> dict[str, Any]:
         """Cancel an Apaczka shipment by order_id."""
-        result = self._call("order_cancel", {"order_id": order_id})
+        result = self._call("cancel_order", {"order_id": order_id})
         logger.info("Apaczka shipment cancelled: order_id=%s", order_id)
         return result.get("response", result)
 
