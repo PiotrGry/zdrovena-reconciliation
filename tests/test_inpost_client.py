@@ -15,6 +15,15 @@ import pytest
 import requests
 
 from zdrovena.common.inpost import InPostClient, InPostError
+from zdrovena.common.shipping_exceptions import (
+    CourierAuthError,
+    CourierBusinessError,
+    CourierTransientError,
+    InPostAuthError,
+    InPostBusinessError,
+    InPostTransientError,
+    ZdrovenaShippingError,
+)
 
 _TOKEN = "tok-test-123"
 _ORG = "org-9"
@@ -115,11 +124,11 @@ class TestPaczkomatShipment:
             with pytest.raises(InPostError, match=r"503"):
                 client.create_paczkomat_shipment(**self._kwargs())
 
-    def test_network_error_propagates(self):
-        """ConnectionError from requests must NOT be silently swallowed."""
+    def test_network_error_mapped_to_transient(self):
+        """ConnectionError is mapped to InPostTransientError (retryable), not swallowed."""
         client = InPostClient(_TOKEN, _ORG)
         with patch.object(client._session, "post", side_effect=requests.ConnectionError("refused")):
-            with pytest.raises(requests.ConnectionError):
+            with pytest.raises(InPostTransientError, match="network error"):
                 client.create_paczkomat_shipment(**self._kwargs())
 
     def test_timeout_argument_is_passed(self):
@@ -280,8 +289,60 @@ class TestGetLabel:
             with pytest.raises(InPostError, match=r"404"):
                 client.get_label("ship-1")
 
-    def test_network_error_propagates(self):
+    def test_network_error_mapped_to_transient(self):
         client = InPostClient(_TOKEN, _ORG)
         with patch.object(client._session, "get", side_effect=requests.Timeout("slow")):
-            with pytest.raises(requests.Timeout):
+            with pytest.raises(InPostTransientError, match="network error"):
                 client.get_label("ship-1")
+
+
+# ── error hierarchy: both classification axes must catch ─────────────────────
+
+
+class TestErrorHierarchy:
+    """F-I4 regression: InPost errors must live inside ZdrovenaShippingError so the
+    shared `except ZdrovenaShippingError` handler catches them (not bare 500s), and
+    also under the per-courier InPostError marker."""
+
+    def _kwargs(self):
+        return {
+            "receiver_first_name": "Anna",
+            "receiver_last_name": "Nowak",
+            "receiver_email": "anna@example.com",
+            "receiver_phone": "500100200",
+            "target_point": "WAW01A",
+            "reference": "order-1042",
+        }
+
+    def test_401_caught_as_inpost_and_auth_and_shipping(self):
+        client = InPostClient(_TOKEN, _ORG)
+        with patch.object(client._session, "post", return_value=_err_response(401, "nope")):
+            with pytest.raises(InPostAuthError) as exc_info:
+                client.create_paczkomat_shipment(**self._kwargs())
+        err = exc_info.value
+        assert isinstance(err, InPostError)
+        assert isinstance(err, CourierAuthError)
+        assert isinstance(err, ZdrovenaShippingError)
+
+    def test_4xx_is_business_and_inpost_and_shipping(self):
+        client = InPostClient(_TOKEN, _ORG)
+        with patch.object(client._session, "post", return_value=_err_response(400, "bad")):
+            with pytest.raises(InPostError) as exc_info:
+                client.create_paczkomat_shipment(**self._kwargs())
+        err = exc_info.value
+        assert isinstance(err, InPostBusinessError)
+        assert isinstance(err, CourierBusinessError)
+        assert isinstance(err, ZdrovenaShippingError)
+
+    def test_5xx_is_transient_and_inpost_and_shipping(self):
+        client = InPostClient(_TOKEN, _ORG)
+        with patch.object(client._session, "post", return_value=_err_response(503, "down")):
+            with pytest.raises(InPostError) as exc_info:
+                client.create_paczkomat_shipment(**self._kwargs())
+        err = exc_info.value
+        assert isinstance(err, InPostTransientError)
+        assert isinstance(err, CourierTransientError)
+        assert isinstance(err, ZdrovenaShippingError)
+
+    def test_inpost_error_is_shipping_error_subclass(self):
+        assert issubclass(InPostError, ZdrovenaShippingError)
