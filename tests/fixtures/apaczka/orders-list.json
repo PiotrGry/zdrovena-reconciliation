@@ -1,0 +1,92 @@
+{
+  "status": 200,
+  "message": "",
+  "response": {
+    "orders": [
+      {
+        "id": "479337741",
+        "service_id": "23",
+        "service_name": "DPD Pickup Drzwi-Punkt",
+        "waybill_number": "1046066011656U",
+        "pickup_number": "20260630705610",
+        "tracking_url": "https://www.apaczka.pl/sledz-przesylke/?waybill=1046066011656U",
+        "status": "DELIVERED",
+        "shipments_count": 1,
+        "content": "woda butelkowana 12 szt",
+        "comment": "",
+        "receiver": {
+          "name": "Jan Kowalski",
+          "contact_person": "Jan Kowalski",
+          "email": "test@example.com",
+          "phone": "+48500000000",
+          "line1": "Ul.Pilsudskiego 35 / 21",
+          "line2": "",
+          "postal_code": "26-110",
+          "city": "Skarżysko-Kamienna",
+          "country_code": "PL",
+          "foreign_address_id": "PL63666"
+        },
+        "created": "2026-06-30 08:36:40",
+        "delivered": "2026-07-01 19:51:44",
+        "externalId": "24119597",
+        "supplier": "dpd"
+      },
+      {
+        "id": "479280890",
+        "service_id": "23",
+        "service_name": "DPD Pickup Drzwi-Punkt",
+        "waybill_number": "1045980577174U",
+        "pickup_number": "20260629711737",
+        "tracking_url": "https://www.apaczka.pl/sledz-przesylke/?waybill=1045980577174U",
+        "status": "DELIVERED",
+        "shipments_count": 1,
+        "content": "12 butelek x1, plastik",
+        "comment": "",
+        "receiver": {
+          "name": "Jan Kowalski",
+          "contact_person": "Jan Kowalski",
+          "email": "test@example.com",
+          "phone": "+48500000000",
+          "line1": "Pocztowa 2",
+          "line2": "",
+          "postal_code": "67-400",
+          "city": "Wschowa",
+          "country_code": "PL",
+          "foreign_address_id": "PL62986"
+        },
+        "created": "2026-06-29 09:52:46",
+        "delivered": "2026-06-30 12:34:17",
+        "externalId": "22916217",
+        "supplier": "dpd"
+      },
+      {
+        "id": "479215517",
+        "service_id": "23",
+        "service_name": "DPD Pickup Drzwi-Punkt",
+        "waybill_number": "1045838810254U",
+        "pickup_number": "20260626708033",
+        "tracking_url": "https://www.apaczka.pl/sledz-przesylke/?waybill=1045838810254U",
+        "status": "DELIVERED",
+        "shipments_count": 1,
+        "content": "woda butelkowana 12 szt",
+        "comment": "",
+        "receiver": {
+          "name": "Jan Kowalski",
+          "contact_person": "Jan Kowalski",
+          "email": "test@example.com",
+          "phone": "+48500000000",
+          "line1": "Nowowiejskiego 2",
+          "line2": "",
+          "postal_code": "09-400",
+          "city": "Płock",
+          "country_code": "PL",
+          "foreign_address_id": "PL70354"
+        },
+        "created": "2026-06-26 09:23:50",
+        "delivered": "2026-06-29 13:12:35",
+        "externalId": "12667971",
+        "supplier": "dpd"
+      }
+    ]
+  }
+}

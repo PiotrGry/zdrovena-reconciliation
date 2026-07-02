@@ -1,0 +1,188 @@
+{
+  "status": 200,
+  "message": "",
+  "response": {
+    "services": [
+      {
+        "service_id": "1",
+        "name": "UPS Standard",
+        "delivery_time": "",
+        "supplier": "UPS",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "2",
+        "name": "UPS Express Saver",
+        "delivery_time": "(w ciągu dnia)",
+        "supplier": "UPS",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      },
+      {
+        "service_id": "3",
+        "name": "UPS Express Plus do 12:00",
+        "delivery_time": "do 12:00",
+        "supplier": "UPS",
+        "domestic": "1",
+        "pickup_courier": "1",
+        "door_to_door": "1",
+        "door_to_point": "0",
+        "point_to_point": "0",
+        "point_to_door": "1"
+      }
+    ],
+    "options": {
+      "11": {
+        "type": "bool",
+        "name": "Zwrot dokumentów",
+        "desc": "Zwrot dokumentów"
+      },
+      "19": {
+        "type": "bool",
+        "name": "Dostawa w sobotę",
+        "desc": "Dla wybranych przewoźników"
+      },
+      "31": {
+        "type": "bool",
+        "name": "Powiadomienie SMS",
+        "desc": ""
+      },
+      "44": {
+        "type": "bool",
+        "name": "Doręczenie do rąk własnych",
+        "desc": "Doręczenie do rąk własnych aka Bezpośrednie doręczenie"
+      },
+      "58": {
+        "type": "bool",
+        "name": "Ostrożnie",
+        "desc": "Usługa Poczty Polskiej"
+      },
+      "82": {
+        "type": "bool",
+        "name": "Opony",
+        "desc": ""
+      },
+      "85": {
+        "type": "bool",
+        "name": "Podjazd z listem",
+        "desc": "Kurier przywiezie list przewozowy dla twojej przesyłki."
+      },
+      "88": {
+        "type": "bool",
+        "name": "Preawizacja",
+        "desc": "Informacja telefoniczna przed doręczeniem przesyłki."
+      },
+      "91": {
+        "type": "bool",
+        "name": "Nadanie na umowie własnej",
+        "desc": ""
+      },
+      "92": {
+        "type": "bool",
+        "name": "Nadanie bez etykiety",
+        "desc": ""
+      },
+      "128": {
+        "type": "bool",
+        "name": "Przedmioty kruche",
+        "desc": ""
+      },
+      "129": {
+        "type": "bool",
+        "name": "Płyny lub gazy",
+        "desc": ""
+      },
+      "130": {
+        "type": "bool",
+        "name": "Żywe owady",
+        "desc": ""
+      },
+      "131": {
+        "type": "bool",
+        "name": "Żywe ptaki",
+        "desc": ""
+      },
+      "132": {
+        "type": "bool",
+        "name": "Żywe rośliny",
+        "desc": ""
+      },
+      "134": {
+        "type": "bool",
+        "name": "Sprawdzenie zawartości",
+        "desc": "Sprawdzenie zawartości przy odbiorze"
+      }
+    },
+    "package_type": {
+      "LIST": {
+        "type": "LIST",
+        "desc": "Przesyłka zawierająca dokumenty w wersji papierowej, zapakowane w kopertę kurierską."
+      },
+      "PACZKA": {
+        "type": "PACZKA",
+        "desc": "Przesyłka zapakowana w prostopadłościenny karton o regularnych kształtach, bez wystających elementów lub w foliopak kurierski."
+      },
+      "PALETA": {
+        "type": "PALETA",
+        "desc": "Towar na palecie Euro o podstawie 120x80. Bez elementów wystających poza obrys palety."
+      },
+      "PALETA_60X40": {
+        "type": "PALETA_60X40",
+        "desc": "Towar na palecie o podstawie 60x40. Bez elementów wystających poza obrys palety."
+      },
+      "POLPALETA": {
+        "type": "POLPALETA",
+        "desc": "Towar na palecie o podstawie 60x80. Bez elementów wystających poza obrys palety."
+      },
+      "PALETA_PRZEMYSLOWA": {
+        "type": "PALETA_PRZEMYSLOWA",
+        "desc": "Towar na palecie o podstawie 120x100. Bez elementów wystających poza obrys palety."
+      },
+      "PALETA_PRZEMYSLOWA_B": {
+        "type": "PALETA_PRZEMYSLOWA_B",
+        "desc": "Towar na palecie o podstawie 120x120. Bez elementów wystających poza obrys palety."
+      }
+    },
+    "points_type": [
+      "UPS",
+      "INPOST",
+      "POCZTA",
+      "DHL_PARCEL",
+      "DPD",
+      "PWR",
+      "CBL",
+      "PACKETA",
+      "DHL_INT",
+      "GLS"
+    ],
+    "pickup_type": {
+      "COURIER": {
+        "type": "COURIER",
+        "desc": "Podjazd kuriera."
+      },
+      "SELF": {
+        "type": "SELF",
+        "desc": "Dostarczę przesyłkę samodzielnie do punktu nadania."
+      }
+    },
+    "unit_type": {
+      "PCS": {
+        "type": "PCS",
+        "desc": "Jednostka w odprawie celnej określająca sztukę."
+      },
+      "PKG": {
+        "type": "PKG",
+        "desc": "Jednostka w odprawie celnej określająca opakowanie/paczkę."
+      }
+    }
+  }
+}
