@@ -52,8 +52,8 @@ def _verify_shopify_hmac(raw_body: bytes, signature_header: str, secret: str) ->
     ).decode()
     if not hmac.compare_digest(computed, signature_header):
         logger.warning(
-            "HMAC mismatch: computed=%s... received=%s... secret_prefix=%s body_len=%d",
-            computed[:16], signature_header[:16], secret[:8], len(raw_body),
+            "HMAC mismatch: computed=%s... received=%s... body_len=%d",
+            computed[:16], signature_header[:16], len(raw_body),
         )
         return False
     return True
