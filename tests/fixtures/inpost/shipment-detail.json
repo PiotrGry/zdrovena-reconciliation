@@ -1,0 +1,140 @@
+{
+  "href": "https://api-shipx-pl.easypack24.net/v1/shipments/2832738823",
+  "id": 2832738823,
+  "status": "sent_from_source_branch",
+  "tracking_number": "620999681787320432041895",
+  "return_tracking_number": null,
+  "service": "inpost_locker_allegro_smart",
+  "reference": "woda but. 24 szt.",
+  "is_return": false,
+  "application_id": 111053,
+  "created_by_id": null,
+  "external_customer_id": null,
+  "sending_method": "dispatch_order",
+  "end_of_week_collection": false,
+  "comments": null,
+  "mpk": null,
+  "additional_services": [],
+  "custom_attributes": {
+    "target_point": "GRN01BAPP",
+    "sending_method": "dispatch_order",
+    "dispatch_order_id": 15176870
+  },
+  "cod": {
+    "amount": null,
+    "currency": null
+  },
+  "insurance": {
+    "amount": 5000,
+    "currency": "PLN"
+  },
+  "sender": {
+    "id": 5665638875,
+    "name": "JAN KOWALSKI",
+    "company_name": "Maria Gryzło ZDROVENA",
+    "first_name": "MARIA",
+    "last_name": "GRYZŁO",
+    "email": "biuro@wodahumio.pl",
+    "phone": "723624437",
+    "address": {
+      "id": 4019729439,
+      "street": "Cieszyńska",
+      "building_number": "6/12",
+      "line1": null,
+      "line2": null,
+      "city": "Kraków",
+      "post_code": "30-015",
+      "country_code": "PL"
+    }
+  },
+  "receiver": {
+    "id": 5665638873,
+    "name": "Jan Kowalski",
+    "company_name": "Coaching Szkolenia",
+    "first_name": "Anna",
+    "last_name": "Jurewicz",
+    "email": "mnfg8iqklv+767626a64@allegromail.pl",
+    "phone": "605436304",
+    "address": {
+      "id": 4019729437,
+      "street": "Fiałki",
+      "building_number": "20",
+      "line1": null,
+      "line2": null,
+      "city": "Górzno, Polska",
+      "post_code": "87-320",
+      "country_code": "PL"
+    }
+  },
+  "selected_offer": {
+    "id": 2846990133,
+    "status": "bought",
+    "expires_at": null,
+    "rate": null,
+    "currency": "PLN",
+    "additional_services": [],
+    "carrier": {
+      "id": "inpost_locker",
+      "name": "InPost Paczkomaty",
+      "description": "InPost Paczkomaty - Przesyłki paczkomatowe"
+    },
+    "service": {
+      "id": "inpost_locker_allegro_smart",
+      "name": "Allegro Paczkomaty24/7 InPost",
+      "description": "Przesyłka paczkomatowa Allegro Paczkomat 24/7 InPost"
+    },
+    "unavailability_reasons": null
+  },
+  "offers": [
+    {
+      "id": 2846990133,
+      "status": "bought",
+      "expires_at": null,
+      "rate": null,
+      "currency": "PLN",
+      "additional_services": [],
+      "carrier": {
+        "id": "inpost_locker",
+        "name": "InPost Paczkomaty",
+        "description": "InPost Paczkomaty - Przesyłki paczkomatowe"
+      },
+      "service": {
+        "id": "inpost_locker_allegro_smart",
+        "name": "Allegro Paczkomaty24/7 InPost",
+        "description": "Przesyłka paczkomatowa Allegro Paczkomat 24/7 InPost"
+      },
+      "unavailability_reasons": null
+    }
+  ],
+  "transactions": [
+    {
+      "id": 2589598132,
+      "status": "success",
+      "offer_id": 2846990133,
+      "details": {},
+      "created_at": "2026-07-02T08:59:05.799+02:00",
+      "updated_at": "2026-07-02T08:59:06.191+02:00"
+    }
+  ],
+  "parcels": [
+    {
+      "id": 2843984153,
+      "identify_number": "woda but. 24 szt.",
+      "tracking_number": "620999681787320432041895",
+      "is_non_standard": false,
+      "template": null,
+      "dimensions": {
+        "length": 640.0,
+        "width": 380.0,
+        "height": 410.0,
+        "unit": "mm"
+      },
+      "weight": {
+        "amount": 13.0,
+        "unit": "kg"
+      }
+    }
+  ],
+  "created_at": "2026-07-02T08:59:05.396+02:00",
+  "updated_at": "2026-07-02T18:31:23.637+02:00"
+}
