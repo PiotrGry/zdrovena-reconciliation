@@ -121,6 +121,33 @@ class TestGetDeliveryProposal:
 # ── create-commands (create shipment) ─────────────────────────────────────────
 
 
+_SENDER = {
+    "name": "Nadawca",
+    "street": "Główna 30",
+    "postalCode": "10-200",
+    "city": "Warszawa",
+    "countryCode": "PL",
+    "email": "sender@mail.com",
+    "phone": "500600700",
+}
+_RECEIVER = {
+    "name": "Odbiorca",
+    "street": "Testowa 1",
+    "postalCode": "00-001",
+    "city": "Kraków",
+    "countryCode": "PL",
+    "email": "buyer@mail.com",
+    "phone": "600700800",
+}
+_PACKAGE = {
+    "type": "PACKAGE",
+    "length": {"value": 30, "unit": "CENTIMETER"},
+    "width": {"value": 20, "unit": "CENTIMETER"},
+    "height": {"value": 15, "unit": "CENTIMETER"},
+    "weight": {"value": 5.0, "unit": "KILOGRAMS"},
+}
+
+
 class TestCreateShipmentCommand:
     def test_posts_with_generated_command_id(self):
         c = _mock_client()
@@ -137,20 +164,26 @@ class TestCreateShipmentCommand:
                 order_id="ORDER-123",
                 delivery_method_id="svc-inpost-locker",
                 credentials_id=None,
-                pickup_point_id="WAW01A",
-                sending_method="parcel_locker",
-                packages=[{"dimensions": {"length": 30, "width": 20, "height": 15}, "weight": 5.0}],
+                sender=_SENDER,
+                receiver={**_RECEIVER, "point": "WAW01A"},
+                packages=[_PACKAGE],
             )
         assert result["commandId"] == "cmd-uuid-1"
-        # Verify POST body
+        # Verify POST body follows the create-commands contract.
         _, kwargs = m.call_args
         body = kwargs["json"]
         assert body["commandId"] == "cmd-uuid-1"
-        assert body["input"]["orderId"] == "ORDER-123"
+        # order_id is sent as referenceNumber; there is no top-level orderId.
+        assert body["input"]["referenceNumber"] == "ORDER-123"
+        assert "orderId" not in body["input"]
         assert body["input"]["deliveryMethodId"] == "svc-inpost-locker"
+        assert body["input"]["sender"] == _SENDER
+        # Pickup-point code goes inside the receiver block as `point`.
+        assert body["input"]["receiver"]["point"] == "WAW01A"
+        assert "pickupPointId" not in body["input"]
         assert "credentialsId" not in body["input"] or body["input"]["credentialsId"] is None
 
-    def test_inpost_sending_method_included_in_additional_services(self):
+    def test_additional_services_is_array_of_strings(self):
         c = _mock_client()
         with patch.object(
             c._session,
@@ -162,12 +195,32 @@ class TestCreateShipmentCommand:
                 order_id="O1",
                 delivery_method_id="svc-inpost",
                 credentials_id=None,
-                sending_method="dispatch_order",
-                packages=[{"weight": 2.0}],
+                sender=_SENDER,
+                receiver=_RECEIVER,
+                packages=[_PACKAGE],
+                additional_services=["ADDITIONAL_HANDLING"],
             )
         body = m.call_args[1]["json"]
-        add = body["input"].get("additionalServices", {})
-        assert add.get("sendingAtPoint") == "dispatch_order"
+        assert body["input"]["additionalServices"] == ["ADDITIONAL_HANDLING"]
+
+    def test_no_additional_services_key_when_omitted(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(201, {"commandId": "x", "status": "IN_PROGRESS"}),
+        ) as m:
+            c.create_ship_with_allegro_shipment(
+                command_id="x",
+                order_id="O1",
+                delivery_method_id="svc-inpost",
+                credentials_id=None,
+                sender=_SENDER,
+                receiver=_RECEIVER,
+                packages=[_PACKAGE],
+            )
+        body = m.call_args[1]["json"]
+        assert "additionalServices" not in body["input"]
 
     def test_own_agreement_passes_credentials_id(self):
         c = _mock_client()
@@ -181,10 +234,36 @@ class TestCreateShipmentCommand:
                 order_id="O1",
                 delivery_method_id="svc-dpd",
                 credentials_id="cred-abc",
-                packages=[{"weight": 3.0}],
+                sender=_SENDER,
+                receiver=_RECEIVER,
+                packages=[_PACKAGE],
             )
         body = m.call_args[1]["json"]
         assert body["input"]["credentialsId"] == "cred-abc"
+
+    def test_package_uses_flat_dims_and_plural_weight_unit(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(201, {"commandId": "x", "status": "IN_PROGRESS"}),
+        ) as m:
+            c.create_ship_with_allegro_shipment(
+                command_id="x",
+                order_id="O1",
+                delivery_method_id="svc",
+                credentials_id=None,
+                sender=_SENDER,
+                receiver=_RECEIVER,
+                packages=[_PACKAGE],
+            )
+        pkg = m.call_args[1]["json"]["input"]["packages"][0]
+        assert pkg["type"] == "PACKAGE"
+        # FLAT dims (no `dimensions` wrapper) using `.value`.
+        assert "dimensions" not in pkg
+        assert pkg["length"]["value"] == 30
+        assert pkg["weight"]["value"] == 5.0
+        assert pkg["weight"]["unit"] == "KILOGRAMS"
 
     def test_business_error_raises(self):
         c = _mock_client()
@@ -199,7 +278,9 @@ class TestCreateShipmentCommand:
                     order_id="O1",
                     delivery_method_id="svc",
                     credentials_id=None,
-                    packages=[{"weight": 1.0}],
+                    sender=_SENDER,
+                    receiver=_RECEIVER,
+                    packages=[_PACKAGE],
                 )
 
 
@@ -391,6 +472,67 @@ class TestCreatePickupCommand:
         assert body["commandId"] == "pu-cmd-1"
         assert body["input"]["proposalItemId"] == "prop-1"
         assert body["input"]["shipmentIds"] == ["ship-99"]
+
+
+# ── cancel shipment / dispatch ────────────────────────────────────────────────
+
+
+class TestCancelShipment:
+    def test_posts_cancel_shipment_command(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(201, {"commandId": "cxl-1", "status": "IN_PROGRESS"}),
+        ) as m:
+            result = c.cancel_ship_with_allegro_shipment(
+                command_id="cxl-1", shipment_id="ship-42"
+            )
+        assert result["commandId"] == "cxl-1"
+        url = m.call_args[0][1]
+        assert "/shipment-management/shipments/cancel-commands" in url
+        body = m.call_args[1]["json"]
+        assert body["commandId"] == "cxl-1"
+        assert body["input"] == {"shipmentId": "ship-42"}
+
+    def test_business_error_raises(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(400, {"error": "already dispatched"}),
+        ):
+            with pytest.raises(AllegroBusinessError):
+                c.cancel_ship_with_allegro_shipment(command_id="cxl-1", shipment_id="ship-42")
+
+
+class TestCancelDispatch:
+    def test_posts_cancel_dispatch_command(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(201, {"commandId": "cxl-2", "status": "IN_PROGRESS"}),
+        ) as m:
+            result = c.cancel_ship_with_allegro_dispatch(
+                command_id="cxl-2", dispatch_id="disp-9"
+            )
+        assert result["commandId"] == "cxl-2"
+        url = m.call_args[0][1]
+        assert "/shipment-management/dispatches/cancel-commands" in url
+        body = m.call_args[1]["json"]
+        assert body["commandId"] == "cxl-2"
+        assert body["input"] == {"dispatchId": "disp-9"}
+
+    def test_business_error_raises(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(400, {"error": "already accepted"}),
+        ):
+            with pytest.raises(AllegroBusinessError):
+                c.cancel_ship_with_allegro_dispatch(command_id="cxl-2", dispatch_id="disp-9")
 
 
 # ── label ─────────────────────────────────────────────────────────────────────
