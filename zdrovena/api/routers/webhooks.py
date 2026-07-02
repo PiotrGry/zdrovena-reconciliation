@@ -6,8 +6,11 @@ GET  /shipping/drafts/{id}/label              — stream label PDF from courier
 POST /shipping/drafts/{id}/execute            — (re)create courier shipment for a draft
 POST /shipping/drafts/{id}/pickup             — order InPost kurier pickup
 PATCH /shipping/drafts/{id}                   — update packages_count
-DELETE /shipping/drafts/{id}/shipment         — cancel courier shipment
-DELETE /shipping/drafts/{id}/dispatch         — cancel pickup dispatch order
+DELETE /shipping/drafts/{id}/shipment         — cancel Ship-with-Allegro shipment
+DELETE /shipping/drafts/{id}/dispatch         — cancel Ship-with-Allegro dispatch
+DELETE /inpost/shipments/{id}                 — cancel InPost shipment before dispatch
+DELETE /inpost/dispatch_orders/{id}           — cancel InPost dispatch order
+DELETE /apaczka/orders/{id}                   — cancel Apaczka order
 """
 
 from __future__ import annotations
@@ -23,19 +26,39 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.responses import StreamingResponse
 
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
-from zdrovena.api.deps import ShippingStoreDep, StorageDep
+from zdrovena.api.deps import ShippingStoreDep, ShopifyDedupStoreDep, StorageDep
 from zdrovena.audit.bottles import SKIP_RE, is_glass
 from zdrovena.common.secrets import get_secret
+from zdrovena.common.shipping_exceptions import (
+    AllegroAuthError,
+    AllegroBusinessError,
+    AllegroCommandPending,
+    CourierAuthError,
+    CourierBusinessError,
+    CourierTransientError,
+    ZdrovenaShippingError,
+)
 from zdrovena.common.shipping_format import (
     extract_locker_id_from_title,
     normalize_pl_phone,
     parse_pl_address,
 )
 from zdrovena.common.shipping_store import ShippingStore
+from zdrovena.common.shopify_dedup_store import DedupStoreError
 
 logger = logging.getLogger("zdrovena.api.routers.webhooks")
 _MOCK_COURIER = os.getenv("MOCK_COURIER", "").lower() in ("1", "true", "yes")
@@ -55,6 +78,38 @@ def _verify_shopify_hmac(raw_body: bytes, signature_header: str, secret: str) ->
 
 def _get_webhook_secret() -> str | None:
     return get_secret("shopify_webhook_secret", required=False)
+
+
+# Topics we actually process. A HMAC-valid payload from any other topic (e.g. a
+# mis-configured products/create subscription) would crash _create_draft, so we
+# reject unknown topics as defense-in-depth after HMAC.
+ALLOWED_SHOPIFY_TOPICS = frozenset({"orders/create", "orders/updated"})
+
+
+def _allowed_shopify_domains() -> frozenset[str] | None:
+    """Whitelisted shop domains from SHOPIFY_ALLOWED_DOMAINS (comma-separated).
+
+    Returns None when unset — dev mode, all domains accepted (with a warning).
+    """
+    raw = os.getenv("SHOPIFY_ALLOWED_DOMAINS", "").strip()
+    if not raw:
+        return None
+    return frozenset(d.strip().lower() for d in raw.split(",") if d.strip())
+
+
+def _is_shopify_topic_allowed(topic: str) -> bool:
+    return topic in ALLOWED_SHOPIFY_TOPICS
+
+
+def _is_shopify_domain_allowed(shop_domain: str) -> bool:
+    allowed = _allowed_shopify_domains()
+    if allowed is None:
+        logger.warning(
+            "SHOPIFY_ALLOWED_DOMAINS not configured — accepting webhook from %s (dev mode)",
+            shop_domain or "<missing>",
+        )
+        return True
+    return shop_domain.lower() in allowed
 
 
 # ── Sender address ────────────────────────────────────────────────────────────
@@ -184,8 +239,8 @@ def _maybe_push_tracking_to_allegro(draft: dict[str, Any]) -> None:
             external_id,
             carrier_id,
         )
-    except Exception as exc:
-        logger.error("Failed to push tracking to Allegro for order %s: %s", external_id, exc)
+    except Exception:
+        logger.exception("Failed to push tracking to Allegro for order %s", external_id)
 
 
 def _pick_courier(order: dict[str, Any]) -> str:
@@ -452,22 +507,35 @@ def _run_allegro_delivery(
             "Ship with Allegro requires external_order_id and allegro_delivery_method_id"
         )
 
-    # Build packages: weight from breakdown + safe defaults for dims.
+    # Build packages per Allegro create-commands contract: FLAT dimensions, each a
+    # {"value", "unit"} object; weight unit is the plural "KILOGRAMS"; type is required.
     weight_kg, dims = _parcel_weight_and_dims(draft)
     packages = [
         {
-            "weight": {"amount": round(weight_kg, 2), "unit": "KILOGRAM"},
-            "dimensions": {
-                "length": {"amount": dims["length"], "unit": "CENTIMETER"},
-                "width": {"amount": dims["width"], "unit": "CENTIMETER"},
-                "height": {"amount": dims["height"], "unit": "CENTIMETER"},
-            },
+            "type": "PACKAGE",
+            "length": {"value": dims["length"], "unit": "CENTIMETER"},
+            "width": {"value": dims["width"], "unit": "CENTIMETER"},
+            "height": {"value": dims["height"], "unit": "CENTIMETER"},
+            "weight": {"value": round(weight_kg, 2), "unit": "KILOGRAMS"},
         }
     ]
 
-    command_id = str(_uuid.uuid4())
+    # sender/receiver blocks are required by the API. Pull them from the order's
+    # delivery proposal (prefilled with the buyer's address by Allegro).
+    proposal = client.get_delivery_proposal(order_id)
+    sender = proposal.get("senderData") or {}
+    receiver = dict(proposal.get("receiverData") or {})
+
+    # Pickup-point / locker code lives inside the receiver block as `point`.
     pickup_point_id = (draft.get("receiver") or {}).get("locker_id") or None
-    sending_method = draft.get("allegro_sending_method")
+    if pickup_point_id:
+        receiver["point"] = pickup_point_id
+
+    # TODO: map draft["allegro_sending_method"] to a valid Allegro additionalServices
+    # string once the courier→service mapping is confirmed. The previous
+    # "sendingAtPoint"/"parcel_locker" values were not valid API values, so we omit
+    # additionalServices for now rather than send a 400-inducing payload.
+    command_id = str(_uuid.uuid4())
 
     client.create_ship_with_allegro_shipment(
         command_id=command_id,
@@ -475,15 +543,13 @@ def _run_allegro_delivery(
         delivery_method_id=delivery_method_id,
         credentials_id=draft.get("allegro_credentials_id"),
         packages=packages,
-        pickup_point_id=pickup_point_id,
-        sending_method=sending_method,
+        sender=sender,
+        receiver=receiver,
     )
 
     # Non-blocking: krótki polling ~3s. Jeśli create-command jeszcze IN_PROGRESS — zwracamy
     # status='pending_confirmation' i zostawiamy dopytanie o waybill oddzielnemu workerowi.
     # Unikamy trzymania HTTP requesta na kilkadziesiąt sekund (poprzedni problem z InPost sync).
-    from zdrovena.common.shipping_exceptions import AllegroCommandPending
-
     try:
         shipment_id = client.wait_for_ship_with_allegro_shipment(
             command_id, max_attempts=3, interval_s=1.0
@@ -525,11 +591,14 @@ def _run_allegro_delivery(
                     shipment_id,
                     pickup_date,
                 )
-        except Exception as exc:
-            logger.warning("Allegro Delivery pickup failed for %s: %s", shipment_id, exc)
+        except (AllegroBusinessError, AllegroAuthError, CourierTransientError):
+            # Pickup is best-effort: the shipment is already created, so a pickup
+            # failure must not abort the flow — operator can retry the pickup.
+            logger.exception("Allegro Delivery pickup failed for %s", shipment_id)
 
     return {
         "courier_draft_id": shipment_id,
+        "allegro_shipment_id": shipment_id,
         "tracking_number": waybill,
         "status": "created",
         "pickup_ordered": pickup_ordered,
@@ -716,24 +785,6 @@ def _create_draft(
 # ── Webhook endpoint ──────────────────────────────────────────────────────────
 
 
-def _is_duplicate_webhook(webhook_id: str, order_id: str, shipping_store: ShippingStore) -> bool:
-    """Return True if this Shopify webhook was already processed (idempotency guard)."""
-    try:
-        drafts = shipping_store.list_drafts()
-        for d in drafts:
-            if d.get("shopify_order_id") == order_id and d.get("status") != "error":
-                logger.info(
-                    "Duplicate webhook %s for order %s — already have draft %s, skipping",
-                    webhook_id,
-                    order_id,
-                    d.get("id"),
-                )
-                return True
-    except Exception:
-        pass
-    return False
-
-
 @router.post(
     "/webhooks/shopify/order-created",
     status_code=status.HTTP_200_OK,
@@ -745,56 +796,69 @@ async def shopify_order_created(
     background_tasks: BackgroundTasks,
     shipping_store: ShippingStoreDep,
     storage: StorageDep,
+    dedup_store: ShopifyDedupStoreDep,
 ) -> dict[str, str]:
     raw_body = await request.body()
 
     sig_header = request.headers.get("X-Shopify-Hmac-Sha256", "")
     webhook_id = request.headers.get("X-Shopify-Webhook-Id", "")
+    topic = request.headers.get("X-Shopify-Topic", "")
+    shop_domain = request.headers.get("X-Shopify-Shop-Domain", "")
     webhook_secret = _get_webhook_secret()
 
-    if webhook_secret:
-        if not sig_header:
-            logger.warning("Shopify webhook received without HMAC header — rejected")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing signature"
-            )
-        if not _verify_shopify_hmac(raw_body, sig_header, webhook_secret):
-            logger.warning("Shopify webhook HMAC mismatch — rejected")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature"
-            )
-    else:
-        allow_unsigned = os.getenv("ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS", "").lower() in (
-            "1",
-            "true",
-            "yes",
+    # 1. HMAC — always required. There is no unsigned bypass: an unsigned payload
+    #    could forge orders and ship parcels to arbitrary addresses.
+    if not webhook_secret:
+        logger.warning("shopify-webhook-secret not configured — rejecting webhook")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Webhook secret not configured",
         )
-        if not allow_unsigned:
-            logger.warning(
-                "shopify-webhook-secret not configured and unsigned webhooks disabled — rejected"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Webhook secret not configured",
-            )
-        logger.warning(
-            "shopify-webhook-secret not configured — skipping HMAC validation (unsigned webhooks allowed)"
-        )
+    if not sig_header:
+        logger.warning("Shopify webhook received without HMAC header — rejected")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing signature")
+    if not _verify_shopify_hmac(raw_body, sig_header, webhook_secret):
+        logger.warning("Shopify webhook HMAC mismatch — rejected")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
 
+    # 2. Whitelist topic + shop domain (defense-in-depth after HMAC).
+    if not _is_shopify_topic_allowed(topic):
+        logger.warning("Shopify webhook with disallowed topic %r (id=%s) — rejected", topic, webhook_id)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Topic not allowed")
+    if not _is_shopify_domain_allowed(shop_domain):
+        logger.warning("Shopify webhook from disallowed shop %r (id=%s) — rejected", shop_domain, webhook_id)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Shop domain not allowed")
+
+    # 3. Parse the (now trusted) body.
     try:
         order = json.loads(raw_body)
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON") from exc
 
+    # 4. Deduplicate by X-Shopify-Webhook-Id. Save the id BEFORE processing so a
+    #    retry of the same delivery is a no-op. Fail-closed (503) if the dedup store
+    #    is unavailable so Shopify retries rather than us risking a duplicate draft.
+    if webhook_id:
+        try:
+            if dedup_store.is_duplicate(webhook_id):
+                logger.info("Duplicate Shopify webhook %s — skipping", webhook_id)
+                return {"status": "duplicate", "webhook_id": webhook_id}
+            dedup_store.mark_seen(webhook_id)
+        except DedupStoreError:
+            logger.exception("Shopify dedup store unavailable for webhook %s", webhook_id)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Dedup store unavailable",
+            ) from None
+    else:
+        logger.warning("Shopify webhook missing X-Shopify-Webhook-Id — dedup skipped")
+
+    # 5. Orders without shipping lines never become drafts.
     if not order.get("shipping_lines"):
         logger.warning("Order %s has no shipping_lines — skipping draft", order.get("id"))
         return {"status": "skipped"}
 
-    # Idempotency: skip if this order already has a draft (Shopify retries on non-200)
-    order_id = str(order.get("id", ""))
-    if _is_duplicate_webhook(webhook_id, order_id, shipping_store):
-        return {"status": "duplicate"}
-
+    # 6. Heavy work off the request path (Shopify enforces a 5s timeout).
     background_tasks.add_task(_create_draft, order, shipping_store, storage)
     logger.info("Queued shipping draft for order %s", order.get("order_number") or order.get("id"))
     return {"status": "accepted"}
@@ -867,7 +931,7 @@ def execute_draft(
         else:
             patch = _run_apaczka(draft, sender, storage, **pickup_schedule)
     except Exception as exc:
-        logger.error("execute_draft failed for %s: %s", draft_id, exc)
+        logger.exception("execute_draft failed for %s", draft_id)
         shipping_store.update_draft(draft_id, {"status": "error", "error": str(exc)})
         raise HTTPException(status_code=502, detail=f"Courier API error: {exc}") from exc
 
@@ -932,11 +996,212 @@ def order_pickup(
                 pickup_to=pickup_to,
             )
         except Exception as exc:
-            logger.error("order_pickup failed for draft %s: %s", draft_id, exc)
+            logger.exception("order_pickup failed for draft %s", draft_id)
             raise HTTPException(status_code=502, detail=f"InPost dispatch error: {exc}") from exc
 
     shipping_store.update_draft(draft_id, {"pickup_ordered": True})
     return {"status": "pickup_ordered", "draft_id": draft_id}
+
+
+# ── Cancel (Ship with Allegro) ────────────────────────────────────────────────
+
+
+@router.delete(
+    "/shipping/drafts/{draft_id}/shipment",
+    summary="Cancel a Ship-with-Allegro shipment before dispatch",
+    responses={
+        403: {"description": "Insufficient role"},
+        404: {"description": "Draft not found"},
+        409: {"description": "No Allegro shipment to cancel"},
+        502: {"description": "Allegro API error"},
+    },
+)
+def cancel_shipment(
+    draft_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    """Cancel the Allegro shipment created for this draft (before it is dispatched)."""
+    draft = shipping_store.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    shipment_id = draft.get("allegro_shipment_id") or draft.get("courier_draft_id")
+    if not shipment_id:
+        raise HTTPException(status_code=409, detail="No Allegro shipment to cancel")
+
+    if not _MOCK_COURIER:
+        client = _get_allegro_client()
+        if client is None:
+            raise HTTPException(status_code=502, detail="Allegro credentials missing")
+        try:
+            client.cancel_ship_with_allegro_shipment(
+                command_id=str(uuid.uuid4()), shipment_id=str(shipment_id)
+            )
+        except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
+            logger.exception("Allegro cancel shipment failed for draft %s", draft_id)
+            raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
+
+    shipping_store.update_draft(
+        draft_id, {"status": "cancelled", "allegro_shipment_id": None}
+    )
+    return {"status": "cancelled", "draft_id": draft_id, "shipment_id": str(shipment_id)}
+
+
+@router.delete(
+    "/shipping/drafts/{draft_id}/dispatch",
+    summary="Cancel a Ship-with-Allegro dispatch (pickup) before acceptance",
+    responses={
+        403: {"description": "Insufficient role"},
+        404: {"description": "Draft not found"},
+        409: {"description": "No Allegro dispatch to cancel"},
+        502: {"description": "Allegro API error"},
+    },
+)
+def cancel_dispatch(
+    draft_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    """Cancel the Allegro dispatch (pickup) order created for this draft."""
+    draft = shipping_store.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    dispatch_id = draft.get("allegro_dispatch_id")
+    if not dispatch_id:
+        raise HTTPException(status_code=409, detail="No Allegro dispatch to cancel")
+
+    if not _MOCK_COURIER:
+        client = _get_allegro_client()
+        if client is None:
+            raise HTTPException(status_code=502, detail="Allegro credentials missing")
+        try:
+            client.cancel_ship_with_allegro_dispatch(
+                command_id=str(uuid.uuid4()), dispatch_id=str(dispatch_id)
+            )
+        except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
+            logger.exception("Allegro cancel dispatch failed for draft %s", draft_id)
+            raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
+
+    shipping_store.update_draft(
+        draft_id, {"pickup_ordered": False, "allegro_dispatch_id": None}
+    )
+    return {"status": "dispatch_cancelled", "draft_id": draft_id, "dispatch_id": str(dispatch_id)}
+
+
+# ── Cancel (raw courier id: InPost / Apaczka) ─────────────────────────────────
+
+
+def _courier_cancel_http_status(exc: ZdrovenaShippingError) -> int:
+    """Map a shipping-hierarchy error onto an HTTP status for cancel endpoints.
+
+    Auth -> 401, business (e.g. already dispatched / not cancellable) -> 409,
+    transient (network/5xx) -> 503, anything else in the hierarchy -> 500.
+    """
+    if isinstance(exc, CourierAuthError):
+        return status.HTTP_401_UNAUTHORIZED
+    if isinstance(exc, CourierBusinessError):
+        return status.HTTP_409_CONFLICT
+    if isinstance(exc, CourierTransientError):
+        return status.HTTP_503_SERVICE_UNAVAILABLE
+    return status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
+def _build_inpost_client() -> Any:
+    from zdrovena.common.inpost import InPostClient
+
+    token = get_secret("inpost_api_token")
+    org_id = get_secret("inpost_organization_id")
+    return InPostClient(token, org_id)
+
+
+@router.delete(
+    "/inpost/shipments/{shipment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Cancel an InPost shipment before dispatch",
+    responses={
+        403: {"description": "Insufficient role"},
+        409: {"description": "Shipment cannot be cancelled (already dispatched / unknown)"},
+        503: {"description": "InPost API transient error"},
+    },
+)
+def cancel_inpost_shipment(
+    shipment_id: str,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> Response:
+    if _MOCK_COURIER:
+        logger.info("MOCK_COURIER: skipping InPost cancel_shipment for %s", shipment_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    try:
+        _build_inpost_client().cancel_shipment(shipment_id)
+    except ZdrovenaShippingError as exc:
+        logger.exception("InPost cancel_shipment failed for %s", shipment_id)
+        raise HTTPException(
+            status_code=_courier_cancel_http_status(exc), detail=f"InPost cancel error: {exc}"
+        ) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
+    "/inpost/dispatch_orders/{dispatch_order_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Cancel an InPost dispatch order before courier acceptance",
+    responses={
+        403: {"description": "Insufficient role"},
+        409: {"description": "Dispatch cannot be cancelled (already accepted / unknown)"},
+        503: {"description": "InPost API transient error"},
+    },
+)
+def cancel_inpost_dispatch(
+    dispatch_order_id: str,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> Response:
+    if _MOCK_COURIER:
+        logger.info("MOCK_COURIER: skipping InPost cancel_dispatch_order for %s", dispatch_order_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    try:
+        _build_inpost_client().cancel_dispatch_order(dispatch_order_id)
+    except ZdrovenaShippingError as exc:
+        logger.exception("InPost cancel_dispatch_order failed for %s", dispatch_order_id)
+        raise HTTPException(
+            status_code=_courier_cancel_http_status(exc), detail=f"InPost cancel error: {exc}"
+        ) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
+    "/apaczka/orders/{order_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Cancel an Apaczka order",
+    responses={
+        403: {"description": "Insufficient role"},
+        409: {"description": "Order cannot be cancelled (already sent / unknown)"},
+        503: {"description": "Apaczka API transient error"},
+    },
+)
+def cancel_apaczka_order(
+    order_id: str,
+    storage: StorageDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> Response:
+    if _MOCK_COURIER:
+        logger.info("MOCK_COURIER: skipping Apaczka cancel for %s", order_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    from zdrovena.common.apaczka import ApaczkaClient
+
+    app_id = get_secret("apaczka_app_id")
+    app_secret = get_secret("apaczka_app_secret")
+    service_id = get_secret("apaczka_service_id")
+    client = ApaczkaClient(app_id, app_secret, service_id, storage)
+    try:
+        client.cancel_shipment(order_id)
+    except ZdrovenaShippingError as exc:
+        logger.exception("Apaczka cancel failed for order %s", order_id)
+        raise HTTPException(
+            status_code=_courier_cancel_http_status(exc), detail=f"Apaczka cancel error: {exc}"
+        ) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ── Update packages_count ─────────────────────────────────────────────────────
@@ -1037,7 +1302,7 @@ def get_label(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("Label fetch failed for draft %s: %s", draft_id, exc)
+        logger.exception("Label fetch failed for draft %s", draft_id)
         raise HTTPException(status_code=502, detail=f"Courier API error: {exc}") from exc
 
     order_num = draft.get("shopify_order_number", draft_id).lstrip("#")
