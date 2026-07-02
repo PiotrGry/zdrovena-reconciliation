@@ -17,6 +17,15 @@ else
     ok "Docker — no running containers"
 fi
 
+# ── Cloudflared tunnel ───────────────────────────────────────────────────────
+if pgrep -f "cloudflared tunnel" > /dev/null 2>&1; then
+    info "Stopping cloudflared..."
+    pkill -f "cloudflared tunnel" 2>/dev/null || true
+    ok "Cloudflared stopped"
+else
+    ok "Cloudflared — not running"
+fi
+
 # ── Native backend (uvicorn) ──────────────────────────────────────────────────
 if pgrep -f "uvicorn zdrovena" > /dev/null 2>&1; then
     info "Stopping uvicorn..."
