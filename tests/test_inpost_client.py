@@ -216,6 +216,17 @@ class TestKurierShipment:
         assert sent["service"] == "inpost_courier_standard"
         assert sent["sender"] == _SENDER
 
+    def test_courier_service_env_var_override(self, monkeypatch):
+        import zdrovena.common.inpost as inpost_mod
+
+        monkeypatch.setattr(inpost_mod, "_COURIER_SERVICE", "inpost_courier_c2c")
+        client = InPostClient(_TOKEN, _ORG)
+        resp = _ok_response({"id": "ship-env"})
+        with patch.object(client._session, "post", return_value=resp) as mock_post:
+            client.create_kurier_shipment(**self._kwargs())
+        sent = mock_post.call_args.kwargs["json"]
+        assert sent["service"] == "inpost_courier_c2c"
+
 
 # ── create_dispatch_order ────────────────────────────────────────────────────
 

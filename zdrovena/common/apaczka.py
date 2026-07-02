@@ -244,7 +244,9 @@ class ApaczkaClient:
 
     def cancel_shipment(self, order_id: str) -> dict[str, Any]:
         """Cancel an Apaczka shipment by order_id."""
-        result = self._call("order_cancel", {"order_id": order_id})
+        # Apaczka endpoint is /api/v2/cancel_order/, not /api/v2/order_cancel/.
+        # Verified via panel.apaczka.pl API docs.
+        result = self._call("cancel_order", {"order_id": order_id})
         logger.info("Apaczka shipment cancelled: order_id=%s", order_id)
         return result.get("response", result)
 

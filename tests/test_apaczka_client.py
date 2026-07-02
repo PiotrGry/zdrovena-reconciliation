@@ -464,9 +464,7 @@ class TestErrorHierarchy:
 
     def test_network_error_mapped_to_transient(self):
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
-        with patch.object(
-            client._session, "post", side_effect=requests.ConnectionError("refused")
-        ):
+        with patch.object(client._session, "post", side_effect=requests.ConnectionError("refused")):
             with pytest.raises(ApaczkaTransientError, match="network error"):
                 client._call("order_send", {})
 
@@ -488,3 +486,36 @@ class TestErrorHierarchy:
 
     def test_apaczka_error_is_shipping_error_subclass(self):
         assert issubclass(ApaczkaError, ZdrovenaShippingError)
+
+
+# ── cancel_shipment ──────────────────────────────────────────────────────────
+
+
+class TestCancelShipment:
+    def test_posts_to_cancel_order_endpoint(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        api_response = _ok_response({"status": 200, "response": {"cancelled": True}})
+        with patch.object(client._session, "post", return_value=api_response) as mock_post:
+            client.cancel_shipment("ord-99")
+
+        url = mock_post.call_args.args[0]
+        assert url.endswith("/cancel_order/")
+
+    def test_passes_order_id_in_payload(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        api_response = _ok_response({"status": 200, "response": {}})
+        with patch.object(client._session, "post", return_value=api_response) as mock_post:
+            client.cancel_shipment("ord-99")
+
+        form_data = mock_post.call_args.kwargs["data"]
+        import json
+
+        request_payload = json.loads(form_data["request"])
+        assert request_payload["order_id"] == "ord-99"
+
+    def test_business_error_propagates(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        api_response = _ok_response({"status": 400, "message": "Already delivered"})
+        with patch.object(client._session, "post", return_value=api_response):
+            with pytest.raises(ApaczkaError, match="Already delivered"):
+                client.cancel_shipment("ord-99")

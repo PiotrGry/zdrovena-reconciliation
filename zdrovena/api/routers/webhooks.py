@@ -73,7 +73,18 @@ def _verify_shopify_hmac(raw_body: bytes, signature_header: str, secret: str) ->
     computed = base64.b64encode(
         hmac.new(secret.encode(), raw_body, hashlib.sha256).digest()
     ).decode()
-    return hmac.compare_digest(computed, signature_header)
+    if not hmac.compare_digest(computed, signature_header):
+        # Log truncated details to speed up local HMAC debugging without
+        # leaking the full secret or signature to production logs.
+        logger.warning(
+            "HMAC mismatch: computed=%s... received=%s... secret_prefix=%s body_len=%d",
+            computed[:16],
+            signature_header[:16],
+            secret[:8],
+            len(raw_body),
+        )
+        return False
+    return True
 
 
 def _get_webhook_secret() -> str | None:
@@ -800,7 +811,9 @@ async def shopify_order_created(
 ) -> dict[str, str]:
     raw_body = await request.body()
 
-    sig_header = request.headers.get("X-Shopify-Hmac-Sha256", "")
+    # .strip() defends against proxies/tools that append trailing whitespace or
+    # newlines to the header value (observed with cloudflared tunneled tests).
+    sig_header = request.headers.get("X-Shopify-Hmac-Sha256", "").strip()
     webhook_id = request.headers.get("X-Shopify-Webhook-Id", "")
     topic = request.headers.get("X-Shopify-Topic", "")
     shop_domain = request.headers.get("X-Shopify-Shop-Domain", "")
