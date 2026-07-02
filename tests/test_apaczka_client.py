@@ -69,14 +69,14 @@ class TestSignVector:
         # Computed manually:
         #   request_json = '{"a":1}'  (no spaces; separators=(",", ":"))
         #   expires = 1700000000 + 1800 = 1700001800
-        #   msg = "app1:order_send:{\"a\":1}:1700001800"
+        #   msg = "app1:order_send/:{"a":1}:1700001800"  (trailing / in route)
         #   hmac.new(b"sec1", msg.encode(), hashlib.sha256).hexdigest()
         assert result["app_id"] == _APP_ID
         assert result["expires"] == "1700001800"
         assert result["request"] == '{"a":1}'
         assert (
             result["signature"]
-            == "f13f5a7705a0042227b195a71fe5fb384ac4acba74f9dddbb9d05388d3827886"
+            == "df4b76c9797a5a59c1e49b760203a4ddb79e5dcb601026d12a0722b23d879664"
         )
 
     def test_request_json_uses_compact_separators(self, monkeypatch):
