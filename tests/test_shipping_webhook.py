@@ -18,8 +18,11 @@ os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 from zdrovena.api.main import app
 from zdrovena.api.routers.webhooks import _pick_courier, _verify_shopify_hmac
 from zdrovena.common.shipping_store import ShippingStore
+from zdrovena.common.shopify_dedup_store import ShopifyDedupStore
 
 _FIXTURES = Path(__file__).parent / "fixtures"
+
+_WEBHOOK_SECRET = "test-webhook-secret"
 
 
 def _load_fixture(name: str) -> dict:
@@ -31,6 +34,24 @@ def _load_fixture(name: str) -> dict:
 
 def _sign(body: bytes, secret: str) -> str:
     return base64.b64encode(hmac.new(secret.encode(), body, hashlib.sha256).digest()).decode()
+
+
+def _shopify_headers(
+    body: bytes,
+    secret: str = _WEBHOOK_SECRET,
+    *,
+    topic: str = "orders/create",
+    webhook_id: str | None = "wh-test-1",
+) -> dict[str, str]:
+    """Build valid Shopify webhook headers (HMAC + topic + optional delivery id)."""
+    headers = {
+        "Content-Type": "application/json",
+        "X-Shopify-Hmac-Sha256": _sign(body, secret),
+        "X-Shopify-Topic": topic,
+    }
+    if webhook_id is not None:
+        headers["X-Shopify-Webhook-Id"] = webhook_id
+    return headers
 
 
 class TestVerifyShopifyHmac:
@@ -91,14 +112,20 @@ def store(tmp_path) -> ShippingStore:
 
 
 @pytest.fixture()
-def client(tmp_path, store):
+def dedup_store(tmp_path) -> ShopifyDedupStore:
+    return ShopifyDedupStore(local_root=tmp_path / "dedup")
+
+
+@pytest.fixture()
+def client(tmp_path, store, dedup_store):
     from zdrovena.common.storage import LocalStorageService
 
     storage = LocalStorageService(root=tmp_path / "storage")
     with patch("zdrovena.api.deps._storage_singleton", return_value=storage):
         with patch("zdrovena.api.deps._shipping_store_singleton", return_value=store):
-            with TestClient(app, raise_server_exceptions=True) as c:
-                yield c
+            with patch("zdrovena.api.deps._shopify_dedup_singleton", return_value=dedup_store):
+                with TestClient(app, raise_server_exceptions=True) as c:
+                    yield c
 
 
 _ORDER_NO_SHIPPING = json.dumps({"id": 999, "order_number": 1001}).encode()
@@ -124,80 +151,179 @@ _ORDER_WITH_SHIPPING = json.dumps(
 
 class TestWebhookEndpoint:
     def test_no_shipping_lines_returns_skipped(self, client):
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            with patch.dict("os.environ", {"ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS": "true"}):
-                resp = client.post(
-                    "/api/webhooks/shopify/order-created",
-                    content=_ORDER_NO_SHIPPING,
-                    headers={"Content-Type": "application/json"},
-                )
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
+            resp = client.post(
+                "/api/webhooks/shopify/order-created",
+                content=_ORDER_NO_SHIPPING,
+                headers=_shopify_headers(_ORDER_NO_SHIPPING, webhook_id="wh-skip"),
+            )
         assert resp.status_code == 200
         assert resp.json() == {"status": "skipped"}
 
-    def test_no_secret_configured_allows_unsigned_with_flag(self, client):
+    def test_no_secret_configured_rejects_with_503(self, client):
+        """No configured secret → 503 (no unsigned bypass exists anymore)."""
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            with patch.dict("os.environ", {"ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS": "true"}):
-                with patch("zdrovena.api.routers.webhooks._create_draft"):
-                    resp = client.post(
-                        "/api/webhooks/shopify/order-created",
-                        content=_ORDER_WITH_SHIPPING,
-                        headers={"Content-Type": "application/json"},
-                    )
-        assert resp.status_code == 200
-        assert resp.json() == {"status": "accepted"}
-
-    def test_no_secret_configured_rejects_unsigned_without_flag(self, client):
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            with patch.dict("os.environ", {}, clear=False):
-                resp = client.post(
-                    "/api/webhooks/shopify/order-created",
-                    content=_ORDER_WITH_SHIPPING,
-                    headers={"Content-Type": "application/json"},
-                )
+            resp = client.post(
+                "/api/webhooks/shopify/order-created",
+                content=_ORDER_WITH_SHIPPING,
+                headers=_shopify_headers(_ORDER_WITH_SHIPPING),
+            )
         assert resp.status_code == 503
         assert "not configured" in resp.json()["detail"]
 
     def test_valid_hmac_accepted(self, client):
-        secret = "test-webhook-secret"
-        sig = _sign(_ORDER_WITH_SHIPPING, secret)
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=secret):
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
             with patch("zdrovena.api.routers.webhooks._create_draft"):
                 resp = client.post(
                     "/api/webhooks/shopify/order-created",
                     content=_ORDER_WITH_SHIPPING,
-                    headers={"Content-Type": "application/json", "X-Shopify-Hmac-Sha256": sig},
+                    headers=_shopify_headers(_ORDER_WITH_SHIPPING),
                 )
         assert resp.status_code == 200
         assert resp.json() == {"status": "accepted"}
 
     def test_invalid_hmac_rejected(self, client):
-        secret = "test-webhook-secret"
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=secret):
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
             resp = client.post(
                 "/api/webhooks/shopify/order-created",
                 content=_ORDER_WITH_SHIPPING,
-                headers={"Content-Type": "application/json", "X-Shopify-Hmac-Sha256": "bad"},
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Shopify-Hmac-Sha256": "bad",
+                    "X-Shopify-Topic": "orders/create",
+                },
             )
         assert resp.status_code == 401
 
     def test_missing_hmac_header_with_secret_configured_rejected(self, client):
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value="secret"):
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
             resp = client.post(
                 "/api/webhooks/shopify/order-created",
                 content=_ORDER_WITH_SHIPPING,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", "X-Shopify-Topic": "orders/create"},
             )
         assert resp.status_code == 401
 
     def test_invalid_json_returns_400(self, client):
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            with patch.dict("os.environ", {"ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS": "true"}):
+        bad = b"not-json"
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
+            resp = client.post(
+                "/api/webhooks/shopify/order-created",
+                content=bad,
+                headers=_shopify_headers(bad, webhook_id="wh-badjson"),
+            )
+        assert resp.status_code == 400
+
+    def test_disallowed_topic_rejected_403(self, client):
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
+            resp = client.post(
+                "/api/webhooks/shopify/order-created",
+                content=_ORDER_WITH_SHIPPING,
+                headers=_shopify_headers(_ORDER_WITH_SHIPPING, topic="products/create"),
+            )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "Topic not allowed"
+
+    def test_missing_topic_rejected_403(self, client):
+        headers = {
+            "Content-Type": "application/json",
+            "X-Shopify-Hmac-Sha256": _sign(_ORDER_WITH_SHIPPING, _WEBHOOK_SECRET),
+        }
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
+            resp = client.post(
+                "/api/webhooks/shopify/order-created",
+                content=_ORDER_WITH_SHIPPING,
+                headers=headers,
+            )
+        assert resp.status_code == 403
+
+    def test_orders_updated_topic_allowed(self, client):
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
+            with patch("zdrovena.api.routers.webhooks._create_draft"):
                 resp = client.post(
                     "/api/webhooks/shopify/order-created",
-                    content=b"not-json",
-                    headers={"Content-Type": "application/json"},
+                    content=_ORDER_WITH_SHIPPING,
+                    headers=_shopify_headers(
+                        _ORDER_WITH_SHIPPING, topic="orders/updated", webhook_id="wh-upd"
+                    ),
                 )
-        assert resp.status_code == 400
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "accepted"}
+
+    def test_disallowed_domain_rejected_403(self, client):
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
+            with patch.dict("os.environ", {"SHOPIFY_ALLOWED_DOMAINS": "zdrovena.myshopify.com"}):
+                headers = _shopify_headers(_ORDER_WITH_SHIPPING)
+                headers["X-Shopify-Shop-Domain"] = "evil.myshopify.com"
+                resp = client.post(
+                    "/api/webhooks/shopify/order-created",
+                    content=_ORDER_WITH_SHIPPING,
+                    headers=headers,
+                )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "Shop domain not allowed"
+
+    def test_allowed_domain_accepted(self, client):
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
+            with patch("zdrovena.api.routers.webhooks._create_draft"):
+                with patch.dict("os.environ", {"SHOPIFY_ALLOWED_DOMAINS": "zdrovena.myshopify.com"}):
+                    headers = _shopify_headers(_ORDER_WITH_SHIPPING)
+                    headers["X-Shopify-Shop-Domain"] = "zdrovena.myshopify.com"
+                    resp = client.post(
+                        "/api/webhooks/shopify/order-created",
+                        content=_ORDER_WITH_SHIPPING,
+                        headers=headers,
+                    )
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "accepted"}
+
+    def test_duplicate_webhook_id_returns_duplicate(self, client):
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
+            with patch("zdrovena.api.routers.webhooks._create_draft") as mock_create:
+                headers = _shopify_headers(_ORDER_WITH_SHIPPING, webhook_id="wh-dup-1")
+                first = client.post(
+                    "/api/webhooks/shopify/order-created",
+                    content=_ORDER_WITH_SHIPPING,
+                    headers=headers,
+                )
+                second = client.post(
+                    "/api/webhooks/shopify/order-created",
+                    content=_ORDER_WITH_SHIPPING,
+                    headers=headers,
+                )
+        assert first.status_code == 200
+        assert first.json() == {"status": "accepted"}
+        assert second.status_code == 200
+        assert second.json() == {"status": "duplicate", "webhook_id": "wh-dup-1"}
+        # Second (duplicate) delivery must NOT enqueue a second draft creation.
+        assert mock_create.call_count == 1
+
+    def test_missing_webhook_id_still_processes(self, client):
+        """No X-Shopify-Webhook-Id → warn and continue (dedup skipped, not a hard error)."""
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
+            with patch("zdrovena.api.routers.webhooks._create_draft"):
+                resp = client.post(
+                    "/api/webhooks/shopify/order-created",
+                    content=_ORDER_WITH_SHIPPING,
+                    headers=_shopify_headers(_ORDER_WITH_SHIPPING, webhook_id=None),
+                )
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "accepted"}
+
+    def test_dedup_store_failure_returns_503(self, client):
+        from zdrovena.common.shopify_dedup_store import DedupStoreError
+
+        broken = MagicMock()
+        broken.is_duplicate.side_effect = DedupStoreError("backend down")
+        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
+            with patch("zdrovena.api.deps._shopify_dedup_singleton", return_value=broken):
+                resp = client.post(
+                    "/api/webhooks/shopify/order-created",
+                    content=_ORDER_WITH_SHIPPING,
+                    headers=_shopify_headers(_ORDER_WITH_SHIPPING, webhook_id="wh-fail"),
+                )
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == "Dedup store unavailable"
 
 
 # ── List drafts ───────────────────────────────────────────────────────────────
@@ -524,6 +650,128 @@ class TestOrderPickup:
         assert resp.json()["status"] == "pickup_ordered"
         updated = store.get_draft(draft["id"])
         assert updated["pickup_ordered"] is True
+
+
+# ── Cancel shipment / dispatch (Ship with Allegro) ────────────────────────────
+
+
+class TestCancelShipmentEndpoint:
+    def _seed(self, store, **overrides):
+        draft = {
+            "id": "draft-cxl-1",
+            "created_at": "2026-05-20T10:00:00+00:00",
+            "source": "allegro",
+            "shopify_order_number": "2200",
+            "courier": "allegro_delivery",
+            "status": "created",
+            "allegro_shipment_id": "ship-42",
+        }
+        draft.update(overrides)
+        store.upsert_draft(draft)
+        return draft
+
+    def test_404_for_missing_draft(self, client):
+        resp = client.delete("/api/shipping/drafts/nonexistent/shipment")
+        assert resp.status_code == 404
+
+    def test_409_when_no_shipment_id(self, client, store):
+        draft = self._seed(store, allegro_shipment_id=None)
+        resp = client.delete(f"/api/shipping/drafts/{draft['id']}/shipment")
+        assert resp.status_code == 409
+
+    def test_successful_cancel_updates_store(self, client, store):
+        draft = self._seed(store)
+        allegro = MagicMock()
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro
+        ):
+            resp = client.delete(f"/api/shipping/drafts/{draft['id']}/shipment")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "cancelled"
+        allegro.cancel_ship_with_allegro_shipment.assert_called_once()
+        assert allegro.cancel_ship_with_allegro_shipment.call_args.kwargs["shipment_id"] == "ship-42"
+        updated = store.get_draft(draft["id"])
+        assert updated["status"] == "cancelled"
+        assert updated["allegro_shipment_id"] is None
+
+    def test_falls_back_to_courier_draft_id(self, client, store):
+        draft = self._seed(store, allegro_shipment_id=None, courier_draft_id="cd-9")
+        allegro = MagicMock()
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro
+        ):
+            resp = client.delete(f"/api/shipping/drafts/{draft['id']}/shipment")
+        assert resp.status_code == 200
+        assert allegro.cancel_ship_with_allegro_shipment.call_args.kwargs["shipment_id"] == "cd-9"
+
+    def test_502_on_allegro_error(self, client, store):
+        from zdrovena.common.shipping_exceptions import AllegroBusinessError
+
+        draft = self._seed(store)
+        allegro = MagicMock()
+        allegro.cancel_ship_with_allegro_shipment.side_effect = AllegroBusinessError(
+            detail="already dispatched", action="cancel-commands"
+        )
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro
+        ):
+            resp = client.delete(f"/api/shipping/drafts/{draft['id']}/shipment")
+        assert resp.status_code == 502
+
+
+class TestCancelDispatchEndpoint:
+    def _seed(self, store, **overrides):
+        draft = {
+            "id": "draft-cxl-disp-1",
+            "created_at": "2026-05-20T10:00:00+00:00",
+            "source": "allegro",
+            "shopify_order_number": "2300",
+            "courier": "allegro_delivery",
+            "status": "created",
+            "pickup_ordered": True,
+            "allegro_dispatch_id": "disp-9",
+        }
+        draft.update(overrides)
+        store.upsert_draft(draft)
+        return draft
+
+    def test_404_for_missing_draft(self, client):
+        resp = client.delete("/api/shipping/drafts/nonexistent/dispatch")
+        assert resp.status_code == 404
+
+    def test_409_when_no_dispatch_id(self, client, store):
+        draft = self._seed(store, allegro_dispatch_id=None)
+        resp = client.delete(f"/api/shipping/drafts/{draft['id']}/dispatch")
+        assert resp.status_code == 409
+
+    def test_successful_cancel_updates_store(self, client, store):
+        draft = self._seed(store)
+        allegro = MagicMock()
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro
+        ):
+            resp = client.delete(f"/api/shipping/drafts/{draft['id']}/dispatch")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "dispatch_cancelled"
+        allegro.cancel_ship_with_allegro_dispatch.assert_called_once()
+        assert allegro.cancel_ship_with_allegro_dispatch.call_args.kwargs["dispatch_id"] == "disp-9"
+        updated = store.get_draft(draft["id"])
+        assert updated["pickup_ordered"] is False
+        assert updated["allegro_dispatch_id"] is None
+
+    def test_502_on_allegro_error(self, client, store):
+        from zdrovena.common.shipping_exceptions import AllegroBusinessError
+
+        draft = self._seed(store)
+        allegro = MagicMock()
+        allegro.cancel_ship_with_allegro_dispatch.side_effect = AllegroBusinessError(
+            detail="already accepted", action="cancel-commands"
+        )
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro
+        ):
+            resp = client.delete(f"/api/shipping/drafts/{draft['id']}/dispatch")
+        assert resp.status_code == 502
 
 
 # ── Update packages_count ─────────────────────────────────────────────────────
@@ -1364,3 +1612,77 @@ class TestCalcPackages:
         assert d["packages_count"] == 2
         bd = {b["type"]: b["qty"] for b in d["packages_breakdown"]}
         assert bd == {"3-pak": 1, "2-pak": 1}
+
+
+# ── Cancel raw courier id (InPost / Apaczka) ──────────────────────────────────
+
+
+class TestCancelInpostShipmentEndpoint:
+    def test_successful_cancel_returns_204(self, client):
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.cancel_shipment", return_value=None
+            ) as mock_cancel:
+                resp = client.delete("/api/inpost/shipments/ship-123")
+        assert resp.status_code == 204
+        assert resp.content == b""
+        mock_cancel.assert_called_once_with("ship-123")
+
+    def test_409_on_business_error(self, client):
+        from zdrovena.common.shipping_exceptions import InPostBusinessError
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.cancel_shipment",
+                side_effect=InPostBusinessError(
+                    "shipment already dispatched", courier="inpost", action="cancel_shipment"
+                ),
+            ):
+                resp = client.delete("/api/inpost/shipments/ship-404")
+        assert resp.status_code == 409
+
+
+class TestCancelInpostDispatchEndpoint:
+    def test_successful_cancel_returns_204(self, client):
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.cancel_dispatch_order", return_value=None
+            ) as mock_cancel:
+                resp = client.delete("/api/inpost/dispatch_orders/disp-77")
+        assert resp.status_code == 204
+        mock_cancel.assert_called_once_with("disp-77")
+
+    def test_503_on_transient_error(self, client):
+        from zdrovena.common.shipping_exceptions import CourierTimeoutError
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.cancel_dispatch_order",
+                side_effect=CourierTimeoutError(courier="inpost", action="cancel_dispatch_order"),
+            ):
+                resp = client.delete("/api/inpost/dispatch_orders/disp-timeout")
+        assert resp.status_code == 503
+
+
+class TestCancelApaczkaOrderEndpoint:
+    def test_successful_cancel_returns_204(self, client):
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.apaczka.ApaczkaClient.cancel_shipment", return_value={}
+            ) as mock_cancel:
+                resp = client.delete("/api/apaczka/orders/ord-55")
+        assert resp.status_code == 204
+        mock_cancel.assert_called_once_with("ord-55")
+
+    def test_409_on_business_error(self, client):
+        from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.apaczka.ApaczkaClient.cancel_shipment",
+                side_effect=ApaczkaBusinessError(
+                    "already sent", courier="apaczka", action="order_cancel"
+                ),
+            ):
+                resp = client.delete("/api/apaczka/orders/ord-gone")
+        assert resp.status_code == 409
