@@ -31,6 +31,7 @@ into logs.
 from __future__ import annotations
 
 import logging
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from zdrovena.common.allegro_invoice_mapper import allegro_order_to_fakturownia_invoice
@@ -57,6 +58,55 @@ def _alert_invoice_failure(*, allegro_order_id: str, reason: str) -> None:
         # Resilience boundary: alerting must never raise into the caller —
         # the ERROR log above already captured the real failure.
         logger.exception("Invoice-failure SMS alert itself failed for order %s", allegro_order_id)
+
+
+_TOTAL_MISMATCH_TOLERANCE = Decimal("0.01")
+
+
+def _check_total_matches_allegro(order: dict[str, Any], payload: dict[str, Any]) -> None:
+    """Sanity check: compare our computed invoice total against Allegro's own
+    order.summary.totalToPay (minus delivery cost, since the invoice does not
+    include shipping as a line item). Logs a WARNING on mismatch — does NOT
+    raise and does NOT block invoice creation, since a false positive
+    shouldn't halt legitimate invoicing, and does NOT alert via SMS (this is
+    a lower-severity signal for later investigation, not an active failure).
+
+    Added after a real bug (allegro_invoice_mapper.py not multiplying
+    price/deposit by quantity) was caught by exactly this kind of manual
+    cross-check against a real order's totalToPay — this automates that
+    check going forward.
+    """
+    total_to_pay_amount = ((order.get("summary") or {}).get("totalToPay") or {}).get("amount")
+    if total_to_pay_amount is None:
+        return
+
+    delivery_cost_amount = ((order.get("delivery") or {}).get("cost") or {}).get("amount", "0")
+
+    try:
+        expected = Decimal(str(total_to_pay_amount)) - Decimal(str(delivery_cost_amount))
+        computed = sum(
+            (Decimal(str(p["total_price_gross"])) for p in payload.get("positions", [])),
+            start=Decimal("0"),
+        )
+        computed += sum(
+            (Decimal(s["amount"]) for s in payload.get("settlement_positions", [])),
+            start=Decimal("0"),
+        )
+    except (InvalidOperation, KeyError, TypeError, ValueError):
+        return
+
+    if abs(computed - expected) > _TOTAL_MISMATCH_TOLERANCE:
+        logger.warning(
+            "Invoice total mismatch for Allegro order %s: computed invoice total %s "
+            "does not match Allegro's totalToPay-minus-delivery %s "
+            "(totalToPay=%s, delivery=%s) — proceeding anyway, but this may indicate "
+            "a bug in allegro_invoice_mapper.py",
+            order.get("id"),
+            computed,
+            expected,
+            total_to_pay_amount,
+            delivery_cost_amount,
+        )
 
 
 def create_invoice_for_order(
@@ -95,6 +145,8 @@ def create_invoice_for_order(
             "Fakturownia already has an invoice for Allegro order %s — skipping", allegro_order_id
         )
         return {"status": "already_exists"}
+
+    _check_total_matches_allegro(order, payload)
 
     try:
         created = fakturownia_client.create_invoice(payload)

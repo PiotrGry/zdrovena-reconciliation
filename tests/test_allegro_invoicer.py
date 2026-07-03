@@ -7,6 +7,7 @@ On any failure: log ERROR and send exactly one SMS alert.
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock, patch
 
 from zdrovena.api.routers.allegro_invoicer import create_invoice_for_order
@@ -121,3 +122,90 @@ class TestFailureAlerts:
         assert result["status"] == "error"
         assert result["fakturownia_invoice_id"] == 999
         mock_alert.assert_called_once()
+
+
+# ── totalToPay sanity check ──────────────────────────────────────────────────
+
+
+def _order_with_summary(*, total_to_pay: str, delivery_cost: str = "0.00", **overrides) -> dict:
+    base = _order(**overrides)
+    base["summary"] = {"totalToPay": {"amount": total_to_pay, "currency": "PLN"}}
+    base["delivery"] = {"cost": {"amount": delivery_cost, "currency": "PLN"}}
+    return base
+
+
+class TestTotalSanityCheck:
+    def test_no_warning_when_totals_match(self, caplog):
+        """Default fixture: quantity=1, price 73.00, deposit 6.00,
+        totalToPay 79.00, no delivery cost. (73+6)*1 = 79 — matches.
+        """
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = []
+        fakturownia.create_invoice.return_value = {"id": 999, "number": "FV/2026/999"}
+        fakturownia.get_invoice_pdf.return_value = b"%PDF-1.4 fake"
+        allegro = MagicMock()
+        allegro.create_invoice_declaration.return_value = {"id": "alg-inv-1"}
+
+        order = _order_with_summary(total_to_pay="79.00")
+        with caplog.at_level(logging.WARNING, logger="zdrovena.api.routers.allegro_invoicer"):
+            create_invoice_for_order(order, fakturownia_client=fakturownia, allegro_client=allegro)
+
+        assert not any("mismatch" in r.message.lower() for r in caplog.records)
+
+    def test_warns_on_mismatch(self, caplog):
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = []
+        fakturownia.create_invoice.return_value = {"id": 999, "number": "FV/2026/999"}
+        fakturownia.get_invoice_pdf.return_value = b"%PDF-1.4 fake"
+        allegro = MagicMock()
+        allegro.create_invoice_declaration.return_value = {"id": "alg-inv-1"}
+
+        # Wrong totalToPay — 200.00 does not match (73+6)*1 = 79.00
+        order = _order_with_summary(total_to_pay="200.00")
+        with caplog.at_level(logging.WARNING, logger="zdrovena.api.routers.allegro_invoicer"):
+            result = create_invoice_for_order(
+                order, fakturownia_client=fakturownia, allegro_client=allegro
+            )
+
+        assert result["status"] == "created"  # mismatch does NOT block creation
+        assert any("mismatch" in r.message.lower() for r in caplog.records)
+        assert any(str(order["id"]) in r.message for r in caplog.records)
+
+    def test_accounts_for_delivery_cost(self, caplog):
+        """totalToPay includes delivery cost, which isn't part of the invoice
+        — the check must subtract it before comparing, not treat it as a
+        mismatch.
+        """
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = []
+        fakturownia.create_invoice.return_value = {"id": 999, "number": "FV/2026/999"}
+        fakturownia.get_invoice_pdf.return_value = b"%PDF-1.4 fake"
+        allegro = MagicMock()
+        allegro.create_invoice_declaration.return_value = {"id": "alg-inv-1"}
+
+        # (73+6)*1 = 79.00 invoice total, + 12.50 delivery = 91.50 totalToPay
+        order = _order_with_summary(total_to_pay="91.50", delivery_cost="12.50")
+        with caplog.at_level(logging.WARNING, logger="zdrovena.api.routers.allegro_invoicer"):
+            create_invoice_for_order(order, fakturownia_client=fakturownia, allegro_client=allegro)
+
+        assert not any("mismatch" in r.message.lower() for r in caplog.records)
+
+    def test_missing_summary_skips_check_silently(self, caplog):
+        """No summary.totalToPay at all (e.g. an older/different order shape)
+        — must not crash and must not warn, since there's nothing to compare.
+        """
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = []
+        fakturownia.create_invoice.return_value = {"id": 999, "number": "FV/2026/999"}
+        fakturownia.get_invoice_pdf.return_value = b"%PDF-1.4 fake"
+        allegro = MagicMock()
+        allegro.create_invoice_declaration.return_value = {"id": "alg-inv-1"}
+
+        order = _order()  # no "summary" key at all
+        with caplog.at_level(logging.WARNING, logger="zdrovena.api.routers.allegro_invoicer"):
+            result = create_invoice_for_order(
+                order, fakturownia_client=fakturownia, allegro_client=allegro
+            )
+
+        assert result["status"] == "created"
+        assert not any("mismatch" in r.message.lower() for r in caplog.records)
