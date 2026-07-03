@@ -130,6 +130,61 @@ PARCEL_SPECS: dict[str, dict] = {
     },
 }
 
+# InPost paczkomat slot sizes (per InPost + apaczka.pl).
+# Dimensions: height × width × depth (cm), max_weight_kg per slot.
+# Used by pick_paczkomat_template() to select the smallest slot that fits a
+# given package by volume + weight (P2-1). All slots share the same weight
+# limit (25 kg) so the picker is effectively volume-driven.
+PACZKOMAT_SLOTS: dict[str, dict] = {
+    "small": {"height": 8, "width": 38, "depth": 64, "max_weight_kg": 25},   # slot A
+    "medium": {"height": 19, "width": 38, "depth": 64, "max_weight_kg": 25},  # slot B
+    "large": {"height": 41, "width": 38, "depth": 64, "max_weight_kg": 25},   # slot C
+}
+
+# Ordered smallest-first (cheapest) for the auto-picker.
+_PACZKOMAT_SLOT_ORDER: tuple[str, ...] = ("small", "medium", "large")
+
+
+def _fits_in_slot(dims: dict, weight_kg: float, slot: dict) -> bool:
+    """Return True if a package fits in a paczkomat slot in any rotation.
+
+    Paczkomat slots have fixed depth/width but different heights. The package's
+    smallest side must fit the slot height; the other two must fit within the
+    slot's width×depth footprint (either orientation).
+    """
+    if weight_kg > slot["max_weight_kg"]:
+        return False
+    sides = sorted(
+        [float(dims.get("length", 0)), float(dims.get("width", 0)), float(dims.get("height", 0))]
+    )
+    if not all(sides):
+        return False
+    shortest, mid, longest = sides
+    slot_h = float(slot["height"])
+    footprint_a = float(slot["width"])
+    footprint_b = float(slot["depth"])
+    footprint_short = min(footprint_a, footprint_b)
+    footprint_long = max(footprint_a, footprint_b)
+    # smallest package side must go along the slot's height axis
+    if shortest > slot_h:
+        return False
+    # remaining two sides must fit in the footprint (either way round)
+    return mid <= footprint_short and longest <= footprint_long
+
+
+def pick_paczkomat_template(dims: dict, weight_kg: float) -> str | None:
+    """Pick the smallest paczkomat slot that fits ``dims`` + ``weight_kg``.
+
+    Returns the slot name (``"small"``/``"medium"``/``"large"``) or ``None`` if
+    the package is too big for every slot. Used to route small orders to
+    cheaper slots automatically (P2-1).
+    """
+    for slot_name in _PACZKOMAT_SLOT_ORDER:
+        if _fits_in_slot(dims, weight_kg, PACZKOMAT_SLOTS[slot_name]):
+            return slot_name
+    return None
+
+
 # Max package dimensions that fit in the "large" slot of each carrier's locker/automat.
 # Dimensions: height × width × depth (cm), max_weight_kg.
 # ✅ = verified against carrier/aggregator website; ❓ = unverified, use with caution.

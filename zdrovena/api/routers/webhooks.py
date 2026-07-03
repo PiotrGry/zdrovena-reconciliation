@@ -394,14 +394,31 @@ def _pick_inpost_service(title: str) -> str:
 
 
 def _parcel_template(draft: dict[str, Any]) -> str:
-    """Derive InPost paczkomat template from packages_breakdown (bug #4)."""
-    from zdrovena.common.inpost import PARCEL_SPECS
+    """Derive InPost paczkomat template from packages_breakdown.
+
+    Preferred path (P2-1): compute total weight + largest package dims and let
+    ``pick_paczkomat_template`` choose the smallest fitting slot (cheaper for
+    orders that would fit in an A/B slot). Falls back to the largest box's
+    static ``paczkomat_template`` and finally to ``"large"`` for safety.
+    """
+    from zdrovena.common.inpost import PARCEL_SPECS, pick_paczkomat_template
 
     breakdown = draft.get("packages_breakdown") or []
+
+    # 1. auto-pick by dims + weight of the largest box (safest single-parcel pick)
+    total_weight, largest_dims = _parcel_weight_and_dims(draft)
+    if breakdown and largest_dims:
+        auto = pick_paczkomat_template(dict(largest_dims), total_weight)
+        if auto:
+            return auto
+
+    # 2. static fallback — largest box in the breakdown
     for box_type in ("3-pak", "szkło-2pak", "2-pak", "szkło", "1-pak", "pół-pak"):
         if any(b.get("type") == box_type for b in breakdown):
             tpl = PARCEL_SPECS.get(box_type, {}).get("paczkomat_template")
             return tpl if tpl else "large"
+
+    # 3. no breakdown — default to the biggest slot (guaranteed acceptance)
     return "large"
 
 
