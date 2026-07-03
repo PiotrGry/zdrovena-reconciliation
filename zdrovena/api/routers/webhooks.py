@@ -824,6 +824,41 @@ def _calc_packages(
     return max(total, 1), breakdown
 
 
+def _create_draft_safely(
+    order: dict[str, Any],
+    shipping_store: ShippingStore,
+    storage: Any,
+    *,
+    source: str = "shopify",
+) -> None:
+    """Wrapper around ``_create_draft`` that DLQs any exception (P1-9).
+
+    ``BackgroundTasks`` provides no persistence — an exception here would be
+    silently swallowed and the order would be lost. Instead we capture the
+    payload + error to the DLQ so an operator can retry via
+    ``POST /shipping/drafts/dlq/{entry_id}/retry``.
+    """
+    try:
+        _create_draft(order, shipping_store, storage, source=source)
+    except Exception as exc:
+        logger.exception(
+            "Draft creation failed for order %s (source=%s) — enqueueing to DLQ",
+            order.get("id") or order.get("order_number"),
+            source,
+        )
+        try:
+            shipping_store.enqueue_dlq(
+                payload=order,
+                error=f"{type(exc).__name__}: {exc}",
+                source=source,
+            )
+        except Exception:
+            logger.exception(
+                "DLQ enqueue itself failed for order %s",
+                order.get("id") or order.get("order_number"),
+            )
+
+
 def _create_draft(
     order: dict[str, Any],
     shipping_store: ShippingStore,
@@ -1049,7 +1084,7 @@ async def shopify_order_created(
         return {"status": "skipped"}
 
     # 6. Heavy work off the request path (Shopify enforces a 5s timeout).
-    background_tasks.add_task(_create_draft, order, shipping_store, storage)
+    background_tasks.add_task(_create_draft_safely, order, shipping_store, storage)
     logger.info("Queued shipping draft for order %s", order.get("order_number") or order.get("id"))
     return {"status": "accepted"}
 
@@ -1068,6 +1103,89 @@ def list_drafts(
 ) -> dict[str, Any]:
     drafts = shipping_store.list_drafts()
     return {"drafts": drafts}
+
+
+# ── Dead-letter queue (P1-9) ────────────────────────────────────────────────
+
+
+@router.get(
+    "/shipping/drafts/dlq",
+    summary="List failed draft-creation attempts (DLQ)",
+    responses={403: {"description": "Insufficient role"}},
+)
+def list_dlq(
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_viewer_or_above)],
+) -> dict[str, Any]:
+    return {"entries": shipping_store.list_dlq()}
+
+
+@router.post(
+    "/shipping/drafts/dlq/{entry_id}/retry",
+    summary="Retry a failed draft-creation attempt from DLQ",
+    responses={
+        403: {"description": "Insufficient role"},
+        404: {"description": "DLQ entry not found"},
+        502: {"description": "Retry failed — entry left in DLQ with updated error"},
+    },
+)
+def retry_dlq_entry(
+    entry_id: str,
+    shipping_store: ShippingStoreDep,
+    storage: StorageDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    entry = shipping_store.get_dlq_entry(entry_id)
+    if not entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="DLQ entry not found"
+        )
+    payload = entry.get("payload") or {}
+    source = entry.get("source") or "shopify"
+    try:
+        _create_draft(payload, shipping_store, storage, source=source)
+    except Exception as exc:
+        logger.exception("DLQ retry failed for entry %s", entry_id)
+        # bump retries + last_error; keep the entry in DLQ
+        try:
+            shipping_store.enqueue_dlq(
+                payload=payload,
+                error=f"{type(exc).__name__}: {exc}",
+                source=source,
+                entry_id=entry_id,
+            )
+        except Exception:
+            logger.exception("DLQ update after retry failure failed for %s", entry_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Retry failed: {type(exc).__name__}: {exc}",
+        ) from exc
+    # success → remove from DLQ
+    shipping_store.delete_dlq_entry(entry_id)
+    return {"status": "retried", "entry_id": entry_id}
+
+
+@router.delete(
+    "/shipping/drafts/dlq/{entry_id}",
+    summary="Discard a DLQ entry without retrying",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        403: {"description": "Insufficient role"},
+        404: {"description": "DLQ entry not found"},
+    },
+)
+def delete_dlq_entry(
+    entry_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> Response:
+    entry = shipping_store.get_dlq_entry(entry_id)
+    if not entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="DLQ entry not found"
+        )
+    shipping_store.delete_dlq_entry(entry_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ── Execute draft ─────────────────────────────────────────────────────────────
