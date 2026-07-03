@@ -21,6 +21,7 @@ module "api_prod" {
   azure_client_id_entra                 = var.azure_client_id_entra
   allowed_origins                       = var.swa_custom_domain != "" ? "https://${azurerm_static_web_app.ui.default_host_name},https://${var.swa_custom_domain}" : "https://${azurerm_static_web_app.ui.default_host_name}"
   applicationinsights_connection_string = azurerm_application_insights.ai.connection_string
+  shopify_allowed_domains               = var.shopify_allowed_domains
   min_replicas                          = 0
   max_replicas                          = 2
   cpu                                   = var.container_app_cpu

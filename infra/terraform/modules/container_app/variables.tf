@@ -89,3 +89,9 @@ variable "applicationinsights_connection_string" {
   default     = null
   description = "Azure Application Insights connection string for distributed tracing and logging"
 }
+
+variable "shopify_allowed_domains" {
+  type        = string
+  default     = ""
+  description = "Comma-separated Shopify shop domain whitelist, set as SHOPIFY_ALLOWED_DOMAINS. Leave empty for permissive dev/staging behaviour — required for prod (webhooks.py fails closed when APP_ENV=prod and this is unset)."
+}
