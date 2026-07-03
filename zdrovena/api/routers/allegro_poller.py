@@ -114,6 +114,8 @@ def poll_orders_once(
                 )
                 if invoice_result["status"] == "created":
                     stats["invoices_created"] += 1
+                elif invoice_result["status"] == "error":
+                    stats["invoice_errors"] += 1
             except Exception:
                 # Resilience boundary: an invoicing failure must not block the
                 # next order's draft — create_invoice_for_order already logs

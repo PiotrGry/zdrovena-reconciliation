@@ -49,6 +49,17 @@ SETTLEMENT_KIND_CHARGE = "charge"  # KSeF Obciazenia
 SETTLEMENT_KIND_DEDUCTION = "deduction"  # KSeF Odliczenia
 _VALID_SETTLEMENT_KINDS = {SETTLEMENT_KIND_CHARGE, SETTLEMENT_KIND_DEDUCTION}
 
+# Shared across fakturownia_patcher.py (settlement-patching an existing
+# invoice) and allegro_invoice_mapper.py (building a new invoice with the
+# deposit baked in from the start) — both must use the EXACT same
+# description string, or the patcher's has_settlement_with_description()
+# idempotency check will fail to recognize kaucja rows the mapper already
+# added, and add a duplicate.
+KAUCJA_DESCRIPTION = (
+    os.getenv("KAUCJA_DESCRIPTION", "Kaucja za opakowania zwrotne").strip()
+    or "Kaucja za opakowania zwrotne"
+)
+
 
 class FakturowniaClient:
     """Thin REST client for Fakturownia.

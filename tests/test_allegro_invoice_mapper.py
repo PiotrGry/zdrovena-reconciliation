@@ -76,6 +76,33 @@ class TestCompanyBuyer:
         assert invoice["buyer_company"] == "1"
         assert "buyer_first_name" not in invoice
 
+    def test_maps_buyer_address(self):
+        order = _order(
+            invoice={
+                "required": True,
+                "address": {
+                    "street": "Grunwaldzka 166",
+                    "city": "Poznan",
+                    "zipCode": "60-166",
+                    "countryCode": "PL",
+                    "company": {"name": "Nazwa Firmy Sp. z o.o.", "taxId": "5252674798"},
+                },
+            }
+        )
+        invoice = allegro_order_to_fakturownia_invoice(order)
+        assert invoice["buyer_street"] == "Grunwaldzka 166"
+        assert invoice["buyer_city"] == "Poznan"
+        assert invoice["buyer_post_code"] == "60-166"
+        assert invoice["buyer_country"] == "PL"
+
+    def test_omits_address_fields_when_address_missing(self):
+        order = _order(invoice={"required": True, "address": None})
+        invoice = allegro_order_to_fakturownia_invoice(order)
+        assert "buyer_street" not in invoice
+        assert "buyer_city" not in invoice
+        assert "buyer_post_code" not in invoice
+        assert "buyer_country" not in invoice
+
 
 class TestPositionsAndDeposit:
     def test_position_uses_actual_price_not_original(self):

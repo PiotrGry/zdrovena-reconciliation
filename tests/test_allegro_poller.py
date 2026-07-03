@@ -293,3 +293,29 @@ class TestInvoiceCreationWiring:
 
         mock_invoicer.assert_not_called()
         assert stats["created"] == 1
+
+    def test_returned_error_status_increments_invoice_errors(self, monkeypatch):
+        """create_invoice_for_order's normal (non-raising) error return must
+        also count toward invoice_errors — this is the expected failure path
+        for real Fakturownia/Allegro business failures, not an edge case.
+        """
+        monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af1")]
+        store = MagicMock()
+        store.list_drafts.return_value = []
+        fakturownia = MagicMock()
+
+        with patch(
+            "zdrovena.api.routers.allegro_poller.create_invoice_for_order",
+            return_value={"status": "error", "error": "Fakturownia 500"},
+        ):
+            stats = poll_orders_once(
+                client=client,
+                shipping_store=store,
+                storage=MagicMock(),
+                fakturownia_client=fakturownia,
+            )
+
+        assert stats["invoice_errors"] == 1
+        assert stats["invoices_created"] == 0

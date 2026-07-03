@@ -26,6 +26,7 @@ from decimal import Decimal
 from typing import Any
 
 from zdrovena.common.bottles import count_pet_bottles
+from zdrovena.common.fakturownia import KAUCJA_DESCRIPTION
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +34,6 @@ logger = logging.getLogger(__name__)
 # ── constants (env-overridable) ──────────────────────────────────────────────
 
 KAUCJA_UNIT_PRICE_PLN = os.getenv("KAUCJA_UNIT_PRICE_PLN", "0.50").strip() or "0.50"
-KAUCJA_DESCRIPTION = (
-    os.getenv("KAUCJA_DESCRIPTION", "Kaucja za opakowania zwrotne").strip()
-    or "Kaucja za opakowania zwrotne"
-)
 
 
 # ── stats ────────────────────────────────────────────────────────────────────

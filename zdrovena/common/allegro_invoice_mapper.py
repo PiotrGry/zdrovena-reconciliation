@@ -21,7 +21,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-_KAUCJA_DESCRIPTION = "Kaucja za opakowania zwrotne"
+from zdrovena.common.fakturownia import KAUCJA_DESCRIPTION
 
 
 def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any] | None:
@@ -52,6 +52,13 @@ def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any
         )
         deposit = item.get("deposit")
         if deposit:
+            # ASSUMPTION (unverified against a real multi-quantity deposit
+            # order as of this writing): deposit.price.amount is the TOTAL
+            # deposit for this line (matching how price.amount is also a
+            # line total), not a per-unit amount. If a real order shows
+            # otherwise, this needs `* quantity`. See the manual verification
+            # step in docs/superpowers/plans/2026-07-03-allegro-invoice-creation.md
+            # (Task 8) before trusting this on a multi-quantity deposit order.
             deposit_total += Decimal(str((deposit.get("price") or {}).get("amount", "0")))
 
     invoice: dict[str, Any] = {
@@ -74,12 +81,25 @@ def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any
 
     invoice["buyer_email"] = buyer.get("email", "")
 
+    street = address.get("street")
+    if street:
+        invoice["buyer_street"] = street
+    city = address.get("city")
+    if city:
+        invoice["buyer_city"] = city
+    zip_code = address.get("zipCode")
+    if zip_code:
+        invoice["buyer_post_code"] = zip_code
+    country_code = address.get("countryCode")
+    if country_code:
+        invoice["buyer_country"] = country_code
+
     if deposit_total > 0:
         invoice["settlement_positions"] = [
             {
                 "kind": "charge",
                 "amount": f"{deposit_total:.2f}",
-                "description": _KAUCJA_DESCRIPTION,
+                "description": KAUCJA_DESCRIPTION,
             }
         ]
 
