@@ -21,7 +21,7 @@
   "company": null,
   "confirmation_number": "LA0MYPLPN",
   "confirmed": true,
-  "contact_email": "Katarzyna6193@wp.pl",
+  "contact_email": "test@example.com",
   "created_at": "2026-05-14T08:55:35+02:00",
   "currency": "PLN",
   "current_subtotal_price": "85.00",
@@ -74,7 +74,7 @@
   "device_id": null,
   "discount_codes": [],
   "duties_included": false,
-  "email": "Katarzyna6193@wp.pl",
+  "email": "test@example.com",
   "estimated_taxes": false,
   "financial_status": "paid",
   "fulfillment_status": "fulfilled",
@@ -116,15 +116,15 @@
     },
     {
       "name": "customer_email",
-      "value": "Katarzyna6193@wp.pl"
+      "value": "test@example.com"
     },
     {
       "name": "customer_first_name",
-      "value": "Katarzyna"
+      "value": "TEST"
     },
     {
       "name": "customer_last_name",
-      "value": "Malinowska"
+      "value": "Buyer"
     },
     {
       "name": "shipping_street",
@@ -286,19 +286,19 @@
   "updated_at": "2026-05-14T09:01:44+02:00",
   "user_id": null,
   "billing_address": {
-    "first_name": "Katarzyna",
-    "address1": "gostyńska 42a",
-    "phone": "+48602345678",
-    "city": "śrem",
-    "zip": "63-100",
+    "first_name": "TEST",
+    "address1": "ul. Testowa 1",
+    "phone": "+4824908703",
+    "city": "Warszawa",
+    "zip": "00-000",
     "province": null,
     "country": "Poland",
-    "last_name": "Malinowska",
+    "last_name": "Buyer",
     "address2": null,
     "company": null,
     "latitude": 52.0790917,
     "longitude": 17.0280663,
-    "name": "Katarzyna Malinowska",
+    "name": "Magdalena Nowak",
     "country_code": "PL",
     "province_code": null
   },
@@ -467,19 +467,19 @@
   "payment_terms": null,
   "refunds": [],
   "shipping_address": {
-    "first_name": "Katarzyna",
-    "address1": "Gostyńska 51",
-    "phone": "+48602345678",
-    "city": "Śrem",
-    "zip": "63-100",
+    "first_name": "TEST",
+    "address1": "ul. Testowa 1",
+    "phone": "+4824908703",
+    "city": "Warszawa",
+    "zip": "00-000",
     "province": "",
     "country": "Poland",
-    "last_name": "Malinowska",
+    "last_name": "Buyer",
     "address2": "",
     "company": "DPD - DPD Pickup- \"Sklep Żabka\" - PL72095",
     "latitude": 52.0778907,
     "longitude": 17.031653,
-    "name": "Katarzyna Malinowska",
+    "name": "Magdalena Nowak",
     "country_code": "PL",
     "province_code": null
   },

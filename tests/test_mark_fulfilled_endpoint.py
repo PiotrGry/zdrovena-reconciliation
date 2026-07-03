@@ -24,7 +24,6 @@ from zdrovena.api.main import app
 from zdrovena.common.shipping_store import ShippingStore
 from zdrovena.common.storage import LocalStorageService
 
-
 # ── fixtures ─────────────────────────────────────────────────────────────────
 
 
@@ -70,9 +69,7 @@ class TestMarkFulfilledNonAllegro:
 
         # We patch _get_allegro_client at the router level to make sure it is
         # NEVER invoked for a non-Allegro source.
-        with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client"
-        ) as get_client:
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client") as get_client:
             resp = client.post(f"/api/shipping/drafts/{draft_id}/mark-fulfilled")
 
         assert resp.status_code == 200
@@ -192,9 +189,7 @@ class TestMarkFulfilledErrors:
             courier="allegro_delivery",
         )
         # Even without the external id we should NOT touch Allegro.
-        with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client"
-        ) as get_client:
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client") as get_client:
             resp = client.post(f"/api/shipping/drafts/{draft_id}/mark-fulfilled")
 
         assert resp.status_code == 409
@@ -217,9 +212,7 @@ class TestMarkFulfilledErrors:
         )
 
         fake_client = MagicMock()
-        fake_client.mark_order_processed.side_effect = AllegroBusinessError(
-            "order already SENT"
-        )
+        fake_client.mark_order_processed.side_effect = AllegroBusinessError("order already SENT")
         with patch(
             "zdrovena.api.routers.webhooks._get_allegro_client",
             return_value=fake_client,

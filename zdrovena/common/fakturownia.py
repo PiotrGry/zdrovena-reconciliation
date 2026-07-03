@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import os
 from decimal import Decimal
+from http import HTTPStatus
 from typing import Any
 
 import requests
@@ -115,8 +116,8 @@ class FakturowniaClient:
     @staticmethod
     def _parse_response(resp: requests.Response, *, method: str, path: str) -> Any:
         status = resp.status_code
-        if 200 <= status < 300:
-            if status == 204:
+        if HTTPStatus.OK <= status < HTTPStatus.MULTIPLE_CHOICES:
+            if status == HTTPStatus.NO_CONTENT:
                 return None
             try:
                 return resp.json()
@@ -128,9 +129,9 @@ class FakturowniaClient:
         except ValueError:
             body = {"text": (resp.text or "")[:200]}
         detail = f"{method} {path} → {status}: {body}"
-        if status in (401, 403):
+        if status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
             raise FakturowniaAuthError(detail=detail)
-        if 500 <= status < 600:
+        if status >= HTTPStatus.INTERNAL_SERVER_ERROR:
             raise FakturowniaServerError(status=status)
         # everything else (400, 404, 422, ...) is business error
         raise FakturowniaBusinessError(detail=detail, action=f"{method.lower()} {path}")

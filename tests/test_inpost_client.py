@@ -15,6 +15,15 @@ import pytest
 import requests
 
 from zdrovena.common.inpost import InPostClient, InPostError
+from zdrovena.common.shipping_exceptions import (
+    CourierAuthError,
+    CourierBusinessError,
+    CourierTransientError,
+    InPostAuthError,
+    InPostBusinessError,
+    InPostTransientError,
+    ZdrovenaShippingError,
+)
 
 _TOKEN = "tok-test-123"
 _ORG = "org-9"
@@ -51,11 +60,7 @@ class TestInPostClientInit:
         assert client._session.headers["Authorization"] == f"Bearer {_TOKEN}"
         assert client._session.headers["Content-Type"] == "application/json"
 
-    def test_does_not_leak_token_into_url(self):
-        client = InPostClient(_TOKEN, _ORG)
-        # Token must travel as header — never as query string
-        assert _TOKEN not in repr(client._session.headers["Authorization"]).lower() or True
-        # And the base URL has no embedded credential
+    def test_base_url_has_no_embedded_credentials(self):
         from zdrovena.common.inpost import _BASE
 
         assert "@" not in _BASE
@@ -115,11 +120,11 @@ class TestPaczkomatShipment:
             with pytest.raises(InPostError, match=r"503"):
                 client.create_paczkomat_shipment(**self._kwargs())
 
-    def test_network_error_propagates(self):
-        """ConnectionError from requests must NOT be silently swallowed."""
+    def test_network_error_mapped_to_transient(self):
+        """ConnectionError is mapped to InPostTransientError (retryable), not swallowed."""
         client = InPostClient(_TOKEN, _ORG)
         with patch.object(client._session, "post", side_effect=requests.ConnectionError("refused")):
-            with pytest.raises(requests.ConnectionError):
+            with pytest.raises(InPostTransientError, match="network error"):
                 client.create_paczkomat_shipment(**self._kwargs())
 
     def test_timeout_argument_is_passed(self):
@@ -207,6 +212,17 @@ class TestKurierShipment:
         assert sent["service"] == "inpost_courier_standard"
         assert sent["sender"] == _SENDER
 
+    def test_courier_service_env_var_override(self, monkeypatch):
+        import zdrovena.common.inpost as inpost_mod
+
+        monkeypatch.setattr(inpost_mod, "_COURIER_SERVICE", "inpost_courier_c2c")
+        client = InPostClient(_TOKEN, _ORG)
+        resp = _ok_response({"id": "ship-env"})
+        with patch.object(client._session, "post", return_value=resp) as mock_post:
+            client.create_kurier_shipment(**self._kwargs())
+        sent = mock_post.call_args.kwargs["json"]
+        assert sent["service"] == "inpost_courier_c2c"
+
 
 # ── create_dispatch_order ────────────────────────────────────────────────────
 
@@ -280,8 +296,96 @@ class TestGetLabel:
             with pytest.raises(InPostError, match=r"404"):
                 client.get_label("ship-1")
 
-    def test_network_error_propagates(self):
+    def test_network_error_mapped_to_transient(self):
         client = InPostClient(_TOKEN, _ORG)
         with patch.object(client._session, "get", side_effect=requests.Timeout("slow")):
-            with pytest.raises(requests.Timeout):
+            with pytest.raises(InPostTransientError, match="network error"):
                 client.get_label("ship-1")
+
+
+# ── error hierarchy: both classification axes must catch ─────────────────────
+
+
+class TestErrorHierarchy:
+    """F-I4 regression: InPost errors must live inside ZdrovenaShippingError so the
+    shared `except ZdrovenaShippingError` handler catches them (not bare 500s), and
+    also under the per-courier InPostError marker."""
+
+    def _kwargs(self):
+        return {
+            "receiver_first_name": "Anna",
+            "receiver_last_name": "Nowak",
+            "receiver_email": "anna@example.com",
+            "receiver_phone": "500100200",
+            "target_point": "WAW01A",
+            "reference": "order-1042",
+        }
+
+    def test_401_caught_as_inpost_and_auth_and_shipping(self):
+        client = InPostClient(_TOKEN, _ORG)
+        with patch.object(client._session, "post", return_value=_err_response(401, "nope")):
+            with pytest.raises(InPostAuthError) as exc_info:
+                client.create_paczkomat_shipment(**self._kwargs())
+        err = exc_info.value
+        assert isinstance(err, InPostError)
+        assert isinstance(err, CourierAuthError)
+        assert isinstance(err, ZdrovenaShippingError)
+
+    def test_4xx_is_business_and_inpost_and_shipping(self):
+        client = InPostClient(_TOKEN, _ORG)
+        with patch.object(client._session, "post", return_value=_err_response(400, "bad")):
+            with pytest.raises(InPostError) as exc_info:
+                client.create_paczkomat_shipment(**self._kwargs())
+        err = exc_info.value
+        assert isinstance(err, InPostBusinessError)
+        assert isinstance(err, CourierBusinessError)
+        assert isinstance(err, ZdrovenaShippingError)
+
+    def test_5xx_is_transient_and_inpost_and_shipping(self):
+        client = InPostClient(_TOKEN, _ORG)
+        with patch.object(client._session, "post", return_value=_err_response(503, "down")):
+            with pytest.raises(InPostError) as exc_info:
+                client.create_paczkomat_shipment(**self._kwargs())
+        err = exc_info.value
+        assert isinstance(err, InPostTransientError)
+        assert isinstance(err, CourierTransientError)
+        assert isinstance(err, ZdrovenaShippingError)
+
+    def test_inpost_error_is_shipping_error_subclass(self):
+        assert issubclass(InPostError, ZdrovenaShippingError)
+
+
+# ── cancel_shipment ──────────────────────────────────────────────────────────
+
+
+class TestCancelShipment:
+    def test_success_sends_delete_to_shipment_url(self):
+        client = InPostClient(_TOKEN, _ORG)
+        r = MagicMock(spec=requests.Response)
+        r.ok = True
+        r.status_code = 204
+        with patch.object(client._session, "delete", return_value=r) as mock_delete:
+            result = client.cancel_shipment("ship-42")
+        url = mock_delete.call_args.args[0]
+        assert url.endswith("/v1/shipments/ship-42")
+        assert result is None
+
+    def test_422_raises_already_dispatched(self):
+        client = InPostClient(_TOKEN, _ORG)
+        r = MagicMock(spec=requests.Response)
+        r.ok = False
+        r.status_code = 422
+        r.text = "Shipment already dispatched"
+        with patch.object(client._session, "delete", return_value=r):
+            with pytest.raises(InPostError, match="already dispatched"):
+                client.cancel_shipment("ship-42")
+
+    def test_other_4xx_raises_with_status(self):
+        client = InPostClient(_TOKEN, _ORG)
+        r = MagicMock(spec=requests.Response)
+        r.ok = False
+        r.status_code = 404
+        r.text = "not found"
+        with patch.object(client._session, "delete", return_value=r):
+            with pytest.raises(InPostError, match="404"):
+                client.cancel_shipment("ship-42")
