@@ -799,6 +799,50 @@ def _run_allegro_delivery(
 # ── Background task: create draft on Shopify webhook ─────────────────────────
 
 
+def _assert_packages_fit_locker(
+    breakdown: list[dict[str, Any]],
+    *,
+    carrier: str = "inpost",
+) -> list[str]:
+    """Sanity-check that every box in ``breakdown`` fits the carrier's largest locker slot.
+
+    Returns a list of warning strings (empty if everything fits). We log each
+    warning but do NOT hard-fail — an oversized parcel still ships via
+    courier-to-door; we just can't hand it off at an automat. Used by
+    ``_calc_packages`` for P2-3 sanity assertions.
+    """
+    from zdrovena.common.inpost import LOCKER_LARGE_SLOT, PARCEL_SPECS
+
+    slot = LOCKER_LARGE_SLOT.get(carrier)
+    if not slot:
+        return []
+    warnings: list[str] = []
+    for box in breakdown:
+        box_type = box.get("type", "")
+        spec = PARCEL_SPECS.get(box_type)
+        if not spec:
+            continue
+        # Sort sides so we compare shortest-to-shortest, etc. (rotation-invariant)
+        pkg_sides = sorted([spec["length"], spec["width"], spec["height"]])
+        slot_sides = sorted([slot["height"], slot["width"], slot["depth"]])
+        if any(p > s for p, s in zip(pkg_sides, slot_sides)):
+            msg = (
+                f"box '{box_type}' ({spec['length']}×{spec['width']}×{spec['height']} cm) "
+                f"exceeds {carrier} locker large slot "
+                f"({slot['height']}×{slot['width']}×{slot['depth']} cm)"
+            )
+            warnings.append(msg)
+            logger.warning("_calc_packages: %s", msg)
+        if spec["weight_kg"] > slot["max_weight_kg"]:
+            msg = (
+                f"box '{box_type}' weight {spec['weight_kg']} kg exceeds "
+                f"{carrier} locker max {slot['max_weight_kg']} kg"
+            )
+            warnings.append(msg)
+            logger.warning("_calc_packages: %s", msg)
+    return warnings
+
+
 def _calc_packages(
     product_items: list[dict[str, Any]],
 ) -> tuple[int, list[dict[str, Any]]]:
@@ -806,6 +850,11 @@ def _calc_packages(
 
     Plastik: greedy largest-box-first (3-pak → 2-pak → 1-pak → pół-pak).
     Szkło: greedy 2-pak consolidation (szkło-2pak → szkło for remainder).
+
+    Post-condition (P2-3): every produced box is checked against the InPost
+    ``LOCKER_LARGE_SLOT`` catalogue and any overflow is logged as a warning so
+    operators can catch a mis-configured PARCEL_SPECS (e.g. a box larger than
+    the paczkomat slot) early.
     """
     plastic_qty = 0
     glass_qty = 0
@@ -838,6 +887,12 @@ def _calc_packages(
         breakdown.append({"type": "szkło", "qty": remaining_glass})
 
     total = sum(b["qty"] for b in breakdown)
+
+    # P2-3: sanity-check that every produced box fits the InPost large slot.
+    # We log warnings only — an oversized parcel is still valid, it just can't
+    # be handed off at a locker/automat.
+    _assert_packages_fit_locker(breakdown, carrier="inpost")
+
     return max(total, 1), breakdown
 
 
