@@ -178,7 +178,7 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, selected, onToggleSelect, forceOpen }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, busy, canManage, selected, onToggleSelect, forceOpen }) {
     const { t, lang } = useT()
     const T = t[lang]
     const [open, setOpen] = useState(false)
@@ -387,6 +387,29 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                                 Podjazd zamówiony
                             </span>
                         )}
+
+                        {canManage && draft.status === 'created' && (
+                            draft.fulfillment_status === 'fulfilled' ? (
+                                <span className="pickup-badge" title={draft.fulfilled_at || ''}>
+                                    <Icon name="check" size={12} />
+                                    Zrealizowane{draft.source === 'allegro' ? ' (Allegro: PROCESSING)' : ''}
+                                </span>
+                            ) : (
+                                <button
+                                    className="btn btn-secondary"
+                                    onClick={() => onMarkFulfilled(draft)}
+                                    disabled={isBusy}
+                                    title={draft.source === 'allegro'
+                                        ? 'Oznacz lokalnie jako zrealizowane i wyślij PROCESSING do Allegro'
+                                        : 'Oznacz lokalnie jako zrealizowane'}
+                                >
+                                    {isBusy
+                                        ? <><Icon name="loader" size={13} className="spin" /> Oznaczanie…</>
+                                        : <><Icon name="check" size={13} /> Oznacz jako zrealizowane</>
+                                    }
+                                </button>
+                            )
+                        )}
                     </div>
 
                     {pickupModal && (
@@ -522,6 +545,26 @@ export default function ShippingView() {
                 const body = await res.json().catch(() => ({}))
                 throw new Error(body.detail || `${res.status}`)
             }
+        })()
+    }
+
+    function handleMarkFulfilled(draft) {
+        const isAllegro = draft.source === 'allegro'
+        const message = isAllegro
+            ? 'Oznaczyć draft jako zrealizowany? Dodatkowo zmieni to status zamówienia w Allegro na PROCESSING — tej operacji nie da się cofnąć po stronie Allegro.'
+            : 'Oznaczyć draft jako zrealizowany? Zmieni to tylko lokalny status w naszym systemie.'
+        if (!window.confirm(message)) return
+        return withBusy(draft.id, async () => {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}/mark-fulfilled`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(body.detail || `${res.status}`)
+            }
+            await load()
         })()
     }
 
@@ -748,6 +791,7 @@ export default function ShippingView() {
                         onPrintLabel={handlePrintLabel}
                         onExecute={handleExecute}
                         onPickup={handlePickup}
+                        onMarkFulfilled={handleMarkFulfilled}
                         selected={selectedDraftIds.has(draft.id)}
                         onToggleSelect={handleToggleSelect}
                         forceOpen={expandAll}
