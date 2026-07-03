@@ -63,3 +63,6 @@ htmlcov/
 .gstack/
 .env.smoke
 .venv-local
+
+# git worktrees (superpowers subagent-driven-development)
+.worktrees/
