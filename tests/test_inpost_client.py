@@ -205,6 +205,7 @@ class TestKurierShipment:
 
     def test_courier_service_env_var_override(self, monkeypatch):
         import zdrovena.common.inpost as inpost_mod
+
         monkeypatch.setattr(inpost_mod, "_COURIER_SERVICE", "inpost_courier_c2c")
         client = InPostClient(_TOKEN, _ORG)
         resp = _ok_response({"id": "ship-env"})

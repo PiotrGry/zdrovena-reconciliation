@@ -372,6 +372,7 @@ class TestCancelShipment:
 
         form_data = mock_post.call_args.kwargs["data"]
         import json
+
         request_payload = json.loads(form_data["request"])
         assert request_payload["order_id"] == "ord-99"
 
