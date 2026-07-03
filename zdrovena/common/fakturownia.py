@@ -94,6 +94,7 @@ class FakturowniaClient:
         *,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
+        raw: bool = False,
     ) -> Any:
         url = f"{self.base_url}{path}"
         # api_token in query for GET; both places acceptable per Fakturownia docs.
@@ -111,12 +112,16 @@ class FakturowniaClient:
         except requests.ConnectionError as e:
             raise CourierConnectionError(courier="fakturownia", detail=str(e)) from e
 
-        return self._parse_response(resp, method=method, path=path)
+        return self._parse_response(resp, method=method, path=path, raw=raw)
 
     @staticmethod
-    def _parse_response(resp: requests.Response, *, method: str, path: str) -> Any:
+    def _parse_response(
+        resp: requests.Response, *, method: str, path: str, raw: bool = False
+    ) -> Any:
         status = resp.status_code
         if HTTPStatus.OK <= status < HTTPStatus.MULTIPLE_CHOICES:
+            if raw:
+                return resp.content
             if status == HTTPStatus.NO_CONTENT:
                 return None
             try:
@@ -140,6 +145,10 @@ class FakturowniaClient:
 
     def get_invoice(self, invoice_id: int) -> dict[str, Any]:
         return self._request("GET", f"/invoices/{invoice_id}.json")
+
+    def get_invoice_pdf(self, invoice_id: int) -> bytes:
+        """Download the invoice PDF. Returns raw PDF bytes."""
+        return self._request("GET", f"/invoices/{invoice_id}.pdf", raw=True)
 
     def list_invoices(
         self,

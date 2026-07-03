@@ -187,6 +187,32 @@ class TestCreateInvoice:
                 client.create_invoice({"kind": "vat", "positions": []})
 
 
+# ── get_invoice_pdf ──────────────────────────────────────────────────────────
+
+
+class TestGetInvoicePdf:
+    def test_get_invoice_pdf_returns_raw_bytes(self, client):
+        r = _resp(status=200)
+        r.content = b"%PDF-1.4 fake pdf bytes"
+        with patch("requests.Session.request", return_value=r) as mock:
+            out = client.get_invoice_pdf(777)
+            assert out == b"%PDF-1.4 fake pdf bytes"
+            _, kwargs = mock.call_args
+            assert kwargs["method"] == "GET"
+            assert "/invoices/777.pdf" in kwargs["url"]
+            assert kwargs["params"]["api_token"] == "test-token-abc"
+
+    def test_get_invoice_pdf_404_raises_business_error(self, client):
+        with patch("requests.Session.request", return_value=_resp({}, status=404)):
+            with pytest.raises(FakturowniaBusinessError):
+                client.get_invoice_pdf(999999)
+
+    def test_get_invoice_pdf_500_raises_server_error(self, client):
+        with patch("requests.Session.request", return_value=_resp({}, status=500)):
+            with pytest.raises(FakturowniaServerError):
+                client.get_invoice_pdf(777)
+
+
 # ── add_settlement_position (KSeF Rozliczenie / kaucja) ─────────────────────
 
 
