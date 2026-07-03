@@ -1471,6 +1471,11 @@ def order_pickup(
     if not courier_draft_id:
         raise HTTPException(status_code=409, detail="No courier draft ID — execute first")
 
+    # Claim before calling the courier (not after) so two concurrent requests
+    # can't both pass the pickup_ordered check above and both dispatch.
+    if not shipping_store.try_claim_pickup(draft_id):
+        raise HTTPException(status_code=409, detail="Pickup already ordered")
+
     if _MOCK_COURIER:
         ref = draft.get("shopify_order_number", "mock")
         logger.info("MOCK_COURIER: skipping InPost dispatch order for draft %s", ref)
@@ -1491,9 +1496,9 @@ def order_pickup(
             )
         except Exception as exc:
             logger.exception("order_pickup failed for draft %s", draft_id)
+            shipping_store.update_draft(draft_id, {"pickup_ordered": False})
             raise HTTPException(status_code=502, detail=f"InPost dispatch error: {exc}") from exc
 
-    shipping_store.update_draft(draft_id, {"pickup_ordered": True})
     return {"status": "pickup_ordered", "draft_id": draft_id}
 
 

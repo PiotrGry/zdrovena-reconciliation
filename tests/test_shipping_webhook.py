@@ -701,6 +701,36 @@ class TestOrderPickup:
         updated = store.get_draft(draft["id"])
         assert updated["pickup_ordered"] is True
 
+    def test_409_when_claim_lost_to_concurrent_request(self, client, store):
+        """A second request that races in after the claim but before the
+        courier call must be rejected, not silently dispatch a duplicate.
+        """
+        draft = self._seed_created_kurier(store)
+        assert store.try_claim_pickup(draft["id"]) is True  # simulates a winning concurrent request
+        resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+        assert resp.status_code == 409
+
+    def test_502_rolls_back_claim_so_retry_is_possible(self, client, store):
+        draft = self._seed_created_kurier(store)
+        with patch(
+            "zdrovena.common.inpost.InPostClient.create_dispatch_order",
+            side_effect=RuntimeError("InPost unreachable"),
+        ):
+            with patch("zdrovena.api.routers.webhooks.get_secret", return_value="test-value"):
+                resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+        assert resp.status_code == 502
+        updated = store.get_draft(draft["id"])
+        assert updated["pickup_ordered"] is False
+
+        # A retry after the courier failure must be able to claim again.
+        with patch(
+            "zdrovena.common.inpost.InPostClient.create_dispatch_order",
+            return_value={"id": "disp-retry"},
+        ):
+            with patch("zdrovena.api.routers.webhooks.get_secret", return_value="test-value"):
+                retry_resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+        assert retry_resp.status_code == 200
+
 
 # ── Cancel shipment / dispatch (Ship with Allegro) ────────────────────────────
 

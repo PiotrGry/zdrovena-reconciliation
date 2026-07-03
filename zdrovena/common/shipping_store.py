@@ -159,8 +159,26 @@ class ShippingStore:
 
     def upsert_draft(self, record: dict[str, Any]) -> None:
         if self._use_table:
+            client = self._table_client()
+            shopify_order_id = record.get("shopify_order_id")
+            if shopify_order_id:
+                escaped = str(shopify_order_id).replace("'", "''")
+                query_filter = (
+                    f"PartitionKey eq '{PARTITION_KEY}' and "
+                    f"shopify_order_id eq '{escaped}' and "
+                    f"RowKey ne '{record['id']}'"
+                )
+                try:
+                    for existing in client.query_entities(query_filter=query_filter):
+                        client.delete_entity(existing["PartitionKey"], existing["RowKey"])
+                except Exception as exc:
+                    logger.warning(
+                        "Table dedup lookup failed for shopify_order_id %s: %s",
+                        shopify_order_id,
+                        exc,
+                    )
             try:
-                self._table_client().upsert_entity(_serialize(record))
+                client.upsert_entity(_serialize(record))
             except Exception as exc:
                 logger.error("Table upsert failed for draft %s: %s", record.get("id"), exc)
                 raise
@@ -202,6 +220,52 @@ class ShippingStore:
                 if draft_id not in data:
                     return False
                 data[draft_id].update(fields)
+                self._local_save(data)
+                return True
+            finally:
+                self._release_lock(lock_fd)
+
+    def try_claim_pickup(self, draft_id: str) -> bool:
+        """Atomically claim pickup for a draft.
+
+        Returns True if this call won the claim (caller should proceed to call the
+        courier), False if pickup was already claimed — by this or a concurrent
+        request — or the draft does not exist. Claiming *before* the courier call
+        (rather than marking pickup_ordered after) closes the check-then-act race
+        where two concurrent requests could both pass the pickup_ordered check and
+        both call the courier.
+        """
+        if self._use_table:
+            client = self._table_client()
+            try:
+                entity = client.get_entity(partition_key=PARTITION_KEY, row_key=draft_id)
+            except Exception:
+                return False
+            if entity.get("pickup_ordered"):
+                return False
+            patch = {"PartitionKey": PARTITION_KEY, "RowKey": draft_id, "pickup_ordered": True}
+            try:
+                from azure.core import MatchConditions
+
+                client.update_entity(
+                    patch,
+                    mode="merge",
+                    etag=entity.metadata["etag"],
+                    match_condition=MatchConditions.IfNotModified,
+                )
+                return True
+            except Exception:
+                # Lost the race to a concurrent claim, or a transient error —
+                # either way this call did not win the claim.
+                return False
+        else:
+            lock_fd = self._acquire_lock()
+            try:
+                data = self._local_load()
+                record = data.get(draft_id)
+                if record is None or record.get("pickup_ordered"):
+                    return False
+                record["pickup_ordered"] = True
                 self._local_save(data)
                 return True
             finally:

@@ -5,8 +5,8 @@ DELETE /files/{key} — RBAC-authenticated blob delete (accountant or admin).
 
 from __future__ import annotations
 
-import io
 import mimetypes
+import tempfile
 import urllib.parse
 from typing import Annotated
 
@@ -50,6 +50,9 @@ def list_files(
     frontend can navigate the tree one level at a time.  Pass ``flat=true``
     to get the old behaviour (every blob, no folder entries).
     """
+    if ".." in prefix:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid prefix")
+
     # Normalize prefix: strip leading slash, ensure trailing slash for tree walk
     prefix = prefix.lstrip("/")
     dir_prefix = (prefix.rstrip("/") + "/") if prefix else ""
@@ -149,8 +152,14 @@ async def upload_file(
     if not normalised or ".." in normalised or normalised.startswith("/"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid key")
     content_type = request.headers.get("content-type", "application/octet-stream")
-    body = await request.body()
-    storage.upload_stream(io.BytesIO(body), normalised, content_type)
+    # Spool to disk past 10MiB instead of buffering the whole body in memory —
+    # a large upload would otherwise be read fully into RAM before storage
+    # ever sees it, which can exhaust the API container.
+    with tempfile.SpooledTemporaryFile(max_size=10 * 1024 * 1024) as spooled:
+        async for chunk in request.stream():
+            spooled.write(chunk)
+        spooled.seek(0)
+        storage.upload_stream(spooled, normalised, content_type)
 
 
 @router.delete(

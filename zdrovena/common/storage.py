@@ -136,7 +136,7 @@ class LocalStorageService:
 
     def list_files(self, prefix: str = "") -> list[BlobFile]:
         results: list[BlobFile] = []
-        base = self.root / prefix if prefix else self.root
+        base = self._validate_key(prefix) if prefix else self.root
         if not base.exists():
             return results
         for path in sorted(base.rglob("*")):
