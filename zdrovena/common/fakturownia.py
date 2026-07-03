@@ -170,6 +170,15 @@ class FakturowniaClient:
         body = {"api_token": self.api_token, "invoice": patch}
         return self._request("PUT", f"/invoices/{invoice_id}.json", json=body)
 
+    def create_invoice(self, invoice: dict[str, Any]) -> dict[str, Any]:
+        """Create a new Fakturownia document (VAT invoice, nota księgowa, etc.).
+
+        `invoice["kind"]` selects the document type (e.g. "vat", "accounting_note").
+        Returns the created document, including its `id`.
+        """
+        body = {"api_token": self.api_token, "invoice": invoice}
+        return self._request("POST", "/invoices.json", json=body)
+
     # ── settlement_positions (KSeF Rozliczenie) ─────────────────────────────
 
     def add_settlement_position(

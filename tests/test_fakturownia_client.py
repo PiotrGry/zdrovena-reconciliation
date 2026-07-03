@@ -146,6 +146,47 @@ class TestUpdateInvoice:
                 client.update_invoice(111, {"buyer_name": ""})
 
 
+# ── create_invoice ───────────────────────────────────────────────────────────
+
+
+class TestCreateInvoice:
+    def test_create_invoice_posts_wrapped_payload(self, client):
+        payload = {
+            "kind": "vat",
+            "buyer_name": "Anna Nowak",
+            "positions": [{"name": "HUMIO 6 PET", "tax": 8, "total_price_gross": 73.00, "quantity": 1}],
+        }
+        with patch(
+            "requests.Session.request", return_value=_resp({"id": 777, **payload})
+        ) as mock:
+            out = client.create_invoice(payload)
+            _, kwargs = mock.call_args
+            assert kwargs["method"] == "POST"
+            assert kwargs["url"].endswith("/invoices.json")
+            body = kwargs["json"]
+            assert body["api_token"] == "test-token-abc"
+            assert body["invoice"] == payload
+            assert out["id"] == 777
+
+    def test_create_invoice_422_raises_business_error(self, client):
+        err = {"code": "error", "message": {"buyer_name": ["can't be blank"]}}
+        with patch("requests.Session.request", return_value=_resp(err, status=422)):
+            with pytest.raises(FakturowniaBusinessError):
+                client.create_invoice({"kind": "vat", "positions": []})
+
+    def test_create_invoice_401_raises_auth_error(self, client):
+        with patch(
+            "requests.Session.request", return_value=_resp({"code": "unauthorized"}, status=401)
+        ):
+            with pytest.raises(FakturowniaAuthError):
+                client.create_invoice({"kind": "vat", "positions": []})
+
+    def test_create_invoice_500_raises_server_error(self, client):
+        with patch("requests.Session.request", return_value=_resp({}, status=500)):
+            with pytest.raises(FakturowniaServerError):
+                client.create_invoice({"kind": "vat", "positions": []})
+
+
 # ── add_settlement_position (KSeF Rozliczenie / kaucja) ─────────────────────
 
 
