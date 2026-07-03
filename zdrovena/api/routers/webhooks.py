@@ -1180,73 +1180,95 @@ def cancel_dispatch(
 
 
 @router.post(
-    "/shipping/drafts/{draft_id}/mark-allegro-processed",
-    summary="Manually mark the Allegro order as PROCESSING (operator action)",
+    "/shipping/drafts/{draft_id}/mark-fulfilled",
+    summary="Manually mark the draft as fulfilled (operator action)",
     responses={
-        400: {"description": "Draft is not an Allegro draft"},
         403: {"description": "Insufficient role"},
         404: {"description": "Draft not found"},
-        409: {"description": "Draft has no external Allegro order id"},
-        502: {"description": "Allegro API error"},
+        409: {"description": "Allegro draft has no external Allegro order id"},
+        502: {"description": "Allegro API error (only for Allegro drafts)"},
     },
 )
-def mark_allegro_processed(
+def mark_fulfilled(
     draft_id: str,
     shipping_store: ShippingStoreDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
 ) -> dict[str, Any]:
-    """Idempotent operator action to mark an Allegro order as PROCESSING.
+    """Idempotent operator action to mark the draft as fulfilled.
 
-    We deliberately do NOT do this automatically after draft creation - a draft only
-    represents "we intend to ship", not "we shipped". The operator confirms via the
-    UI once the parcel actually leaves. Re-running this endpoint is safe: if the
-    draft is already marked processed we return 200 without hitting Allegro.
+    A draft only represents "we intend to ship", not "we shipped". The operator
+    confirms via the UI once the parcel actually leaves — this endpoint sets the
+    local ``fulfillment_status="fulfilled"`` flag (with ``fulfilled_at`` /
+    ``fulfilled_by``) for every draft, regardless of source.
+
+    For Allegro drafts we additionally invoke
+    ``AllegroClient.mark_order_processed(external_order_id)`` to move the order
+    to ``PROCESSING`` on Allegro's side, and mirror the timestamps into the
+    legacy ``allegro_fulfillment_status`` / ``allegro_marked_processed_*`` fields.
+
+    Re-running this endpoint is safe: if the draft is already fulfilled we
+    return 200 without hitting Allegro again.
     """
     draft = shipping_store.get_draft(draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
 
-    if draft.get("source") != "allegro":
-        raise HTTPException(status_code=400, detail="Draft is not an Allegro draft")
-
-    external_order_id = draft.get("external_order_id") or draft.get("allegro_order_id")
-    if not external_order_id:
-        raise HTTPException(status_code=409, detail="Draft has no external Allegro order id")
+    is_allegro = draft.get("source") == "allegro"
+    external_order_id = (
+        draft.get("external_order_id") or draft.get("allegro_order_id") if is_allegro else None
+    )
+    if is_allegro and not external_order_id:
+        raise HTTPException(status_code=409, detail="Allegro draft has no external order id")
 
     # Idempotency - a second click is a no-op that reports the existing state.
-    if draft.get("allegro_fulfillment_status") == "PROCESSING":
+    if draft.get("fulfillment_status") == "fulfilled":
         return {
-            "status": "already_processed",
+            "status": "already_fulfilled",
             "draft_id": draft_id,
+            "source": draft.get("source"),
             "external_order_id": external_order_id,
-            "marked_at": draft.get("allegro_marked_processed_at"),
-            "marked_by": draft.get("allegro_marked_processed_by"),
+            "fulfilled_at": draft.get("fulfilled_at"),
+            "fulfilled_by": draft.get("fulfilled_by"),
+            "allegro_side_effect": False,
         }
 
-    if not _MOCK_COURIER:
+    allegro_side_effect = False
+    if is_allegro and not _MOCK_COURIER:
         client = _get_allegro_client()
         if client is None:
             raise HTTPException(status_code=502, detail="Allegro credentials missing")
         try:
             client.mark_order_processed(str(external_order_id))
+            allegro_side_effect = True
         except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
             logger.exception("Allegro mark_order_processed failed for draft %s", draft_id)
             raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
+    elif is_allegro and _MOCK_COURIER:
+        # In mock mode we still record that the Allegro side-effect "happened".
+        allegro_side_effect = True
 
     marked_at = datetime.now(timezone.utc).isoformat()
     marked_by = principal.email or principal.sub
-    shipping_store.update_draft(
-        draft_id,
-        {
-            "allegro_fulfillment_status": "PROCESSING",
-            "allegro_marked_processed_at": marked_at,
-            "allegro_marked_processed_by": marked_by,
-        },
-    )
+
+    patch: dict[str, Any] = {
+        "fulfillment_status": "fulfilled",
+        "fulfilled_at": marked_at,
+        "fulfilled_by": marked_by,
+    }
+    if is_allegro:
+        # Keep the Allegro-specific mirror fields for backwards compatibility
+        # with any UI/report that already reads them.
+        patch["allegro_fulfillment_status"] = "PROCESSING"
+        patch["allegro_marked_processed_at"] = marked_at
+        patch["allegro_marked_processed_by"] = marked_by
+
+    shipping_store.update_draft(draft_id, patch)
     return {
-        "status": "marked_processed",
+        "status": "marked_fulfilled",
         "draft_id": draft_id,
+        "source": draft.get("source"),
         "external_order_id": external_order_id,
-        "marked_at": marked_at,
-        "marked_by": marked_by,
+        "fulfilled_at": marked_at,
+        "fulfilled_by": marked_by,
+        "allegro_side_effect": allegro_side_effect,
     }

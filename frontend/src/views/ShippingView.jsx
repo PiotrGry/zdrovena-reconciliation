@@ -178,7 +178,7 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkAllegroProcessed, busy, canManage, selected, onToggleSelect, forceOpen }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, busy, canManage, selected, onToggleSelect, forceOpen }) {
     const { t, lang } = useT()
     const T = t[lang]
     const [open, setOpen] = useState(false)
@@ -388,22 +388,24 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkAllegroProce
                             </span>
                         )}
 
-                        {canManage && draft.source === 'allegro' && draft.status === 'created' && (
-                            draft.allegro_fulfillment_status === 'PROCESSING' ? (
-                                <span className="pickup-badge" title={draft.allegro_marked_processed_at || ''}>
+                        {canManage && draft.status === 'created' && (
+                            draft.fulfillment_status === 'fulfilled' ? (
+                                <span className="pickup-badge" title={draft.fulfilled_at || ''}>
                                     <Icon name="check" size={12} />
-                                    Oznaczone w Allegro
+                                    Zrealizowane{draft.source === 'allegro' ? ' (Allegro: PROCESSING)' : ''}
                                 </span>
                             ) : (
                                 <button
                                     className="btn btn-secondary"
-                                    onClick={() => onMarkAllegroProcessed(draft)}
+                                    onClick={() => onMarkFulfilled(draft)}
                                     disabled={isBusy}
-                                    title="Zmienia status zamówienia w Allegro na PROCESSING"
+                                    title={draft.source === 'allegro'
+                                        ? 'Oznacz lokalnie jako zrealizowane i wyślij PROCESSING do Allegro'
+                                        : 'Oznacz lokalnie jako zrealizowane'}
                                 >
                                     {isBusy
                                         ? <><Icon name="loader" size={13} className="spin" /> Oznaczanie…</>
-                                        : <><Icon name="check" size={13} /> Oznacz w Allegro jako zrealizowane</>
+                                        : <><Icon name="check" size={13} /> Oznacz jako zrealizowane</>
                                     }
                                 </button>
                             )
@@ -546,11 +548,15 @@ export default function ShippingView() {
         })()
     }
 
-    function handleMarkAllegroProcessed(draft) {
-        if (!window.confirm('Oznaczyć zamówienie Allegro jako zrealizowane? To wywoła side-effect po stronie Allegro (status PROCESSING) i nie da się cofnąć.')) return
+    function handleMarkFulfilled(draft) {
+        const isAllegro = draft.source === 'allegro'
+        const message = isAllegro
+            ? 'Oznaczyć draft jako zrealizowany? Dodatkowo zmieni to status zamówienia w Allegro na PROCESSING — tej operacji nie da się cofnąć po stronie Allegro.'
+            : 'Oznaczyć draft jako zrealizowany? Zmieni to tylko lokalny status w naszym systemie.'
+        if (!window.confirm(message)) return
         return withBusy(draft.id, async () => {
             const token = await getToken()
-            const res = await fetch(`/api/shipping/drafts/${draft.id}/mark-allegro-processed`, {
+            const res = await fetch(`/api/shipping/drafts/${draft.id}/mark-fulfilled`, {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${token}` },
             })
@@ -785,7 +791,7 @@ export default function ShippingView() {
                         onPrintLabel={handlePrintLabel}
                         onExecute={handleExecute}
                         onPickup={handlePickup}
-                        onMarkAllegroProcessed={handleMarkAllegroProcessed}
+                        onMarkFulfilled={handleMarkFulfilled}
                         selected={selectedDraftIds.has(draft.id)}
                         onToggleSelect={handleToggleSelect}
                         forceOpen={expandAll}
