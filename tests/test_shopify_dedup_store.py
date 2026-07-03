@@ -101,6 +101,54 @@ class TestFailClosed:
             store.mark_seen("wh-1")
 
 
+class TestAtomicMarkSeenIfNew:
+    def test_first_call_returns_true_second_returns_false(self, store):
+        assert store.mark_seen_if_new("wh-atomic-1") is True
+        assert store.mark_seen_if_new("wh-atomic-1") is False
+
+    def test_empty_id_returns_false(self, store):
+        assert store.mark_seen_if_new("") is False
+
+    def test_expired_entry_allows_reinsert(self, tmp_path):
+        store = ShopifyDedupStore(local_root=tmp_path / "dedup")
+        stale = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        store._local_file.write_text(json.dumps({"wh-expired": stale}), encoding="utf-8")
+
+        # Expired entry — next mark_seen_if_new must count as fresh insert.
+        assert store.mark_seen_if_new("wh-expired") is True
+        # Immediate second call must lose.
+        assert store.mark_seen_if_new("wh-expired") is False
+
+    def test_concurrent_calls_only_one_wins(self, tmp_path):
+        """Simulate 20 concurrent processes marking the SAME webhook id.
+
+        With flock, exactly one of them must observe `inserted=True`, the rest False.
+        Uses threads (flock is per-fd, but our helper opens a fresh fd per call) plus
+        multiple ShopifyDedupStore instances sharing the same on-disk location.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        root = tmp_path / "dedup"
+        # Ensure the directory exists before threads race on it.
+        root.mkdir(parents=True, exist_ok=True)
+
+        stores = [ShopifyDedupStore(local_root=root) for _ in range(20)]
+
+        def worker(s):
+            return s.mark_seen_if_new("wh-race")
+
+        with ThreadPoolExecutor(max_workers=20) as pool:
+            results = list(pool.map(worker, stores))
+
+        assert sum(1 for r in results if r) == 1, f"expected exactly one winner, got {results!r}"
+
+    def test_corrupt_local_file_raises_dedup_error(self, tmp_path):
+        store = ShopifyDedupStore(local_root=tmp_path / "dedup")
+        store._local_file.write_text("{not valid json", encoding="utf-8")
+        with pytest.raises(DedupStoreError):
+            store.mark_seen_if_new("wh-1")
+
+
 class TestFactory:
     def test_factory_returns_local_store_without_azure_env(self, tmp_path, monkeypatch):
         monkeypatch.delenv("AZURE_STORAGE_ACCOUNT_URL", raising=False)

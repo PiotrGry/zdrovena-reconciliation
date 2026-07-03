@@ -168,6 +168,10 @@ class ShopifyDedupStore:
     def mark_seen(self, webhook_id: str) -> None:
         """Record a delivery id as processed. No-op for an empty id.
 
+        NOTE: this is a plain write — it can race with a concurrent is_duplicate()
+        check. Prefer :meth:`mark_seen_if_new` for the webhook flow, which does an
+        atomic check-and-set. Kept for callers that only want to record, unconditionally.
+
         Raises DedupStoreError on backend failure.
         """
         if not webhook_id:
@@ -192,6 +196,90 @@ class ShopifyDedupStore:
             self._local_save(data)
         except (OSError, ValueError) as exc:
             raise DedupStoreError(f"local store write failed: {exc}") from exc
+        finally:
+            self._release_lock(lock_fd)
+
+    def mark_seen_if_new(self, webhook_id: str) -> bool:
+        """Atomic check-and-set: returns True iff *this* call was the one to insert.
+
+        Returns False when the webhook_id was already recorded (still within TTL) or
+        when webhook_id is empty. Two concurrent calls with the same webhook_id can
+        never both return True — exactly one wins.
+
+        Azure branch: uses ``create_entity`` (INSERT, not upsert) and treats
+        ``ResourceExistsError`` as "already recorded". If the existing entity is
+        expired we DELETE+INSERT and count it as a fresh insert.
+
+        Local branch: holds the flock across load→check→save so no interleaving is
+        possible between processes on the same host.
+
+        Raises DedupStoreError on backend failure.
+        """
+        if not webhook_id:
+            return False
+        now = _now()
+        stamp = now.isoformat()
+
+        if self._use_table:  # pragma: no cover — Azure branch, live-only
+            from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
+
+            entity = {
+                "PartitionKey": PARTITION_KEY,
+                "RowKey": webhook_id,
+                "seen_at": stamp,
+            }
+            client = self._table_client()
+            try:
+                client.create_entity(entity=entity)
+                return True
+            except ResourceExistsError:
+                # Row exists — check whether it's expired; if so, delete + retry insert.
+                try:
+                    existing = client.get_entity(partition_key=PARTITION_KEY, row_key=webhook_id)
+                except ResourceNotFoundError:
+                    # Deleted between exists error and lookup — retry once as fresh.
+                    try:
+                        client.create_entity(entity=entity)
+                        return True
+                    except ResourceExistsError:
+                        return False
+                    except Exception as exc:
+                        raise DedupStoreError(f"table insert retry failed: {exc}") from exc
+                if not _is_expired(str(existing.get("seen_at", "")), now):
+                    return False
+                # Expired — delete + insert atomically enough (Azure Table has no CAS
+                # on create; two concurrent expirations may race, but at most one
+                # create_entity will succeed which is still exactly-once).
+                try:
+                    client.delete_entity(PARTITION_KEY, webhook_id)
+                except ResourceNotFoundError:
+                    pass
+                except Exception as exc:
+                    raise DedupStoreError(f"table expiry delete failed: {exc}") from exc
+                try:
+                    client.create_entity(entity=entity)
+                    return True
+                except ResourceExistsError:
+                    return False
+                except Exception as exc:
+                    raise DedupStoreError(f"table post-expiry insert failed: {exc}") from exc
+            except Exception as exc:
+                raise DedupStoreError(f"table create failed: {exc}") from exc
+
+        # Local branch — flock guarantees load→check→save is atomic per host.
+        lock_fd = self._acquire_lock()
+        try:
+            data = self._local_load()
+            existing = data.get(webhook_id)
+            if existing is not None and not _is_expired(existing, now):
+                return False
+            # Prune expired entries opportunistically.
+            data = {k: v for k, v in data.items() if not _is_expired(v, now)}
+            data[webhook_id] = stamp
+            self._local_save(data)
+            return True
+        except (OSError, ValueError) as exc:
+            raise DedupStoreError(f"local store atomic write failed: {exc}") from exc
         finally:
             self._release_lock(lock_fd)
 
