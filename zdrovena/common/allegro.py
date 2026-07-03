@@ -19,7 +19,7 @@ import logging
 import os
 import time
 from http import HTTPStatus
-from typing import Any
+from typing import Any, Protocol
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -47,6 +47,113 @@ _DEFAULT_TIMEOUT = int(os.environ.get("ALLEGRO_HTTP_TIMEOUT", "30"))
 _TOKEN_REFRESH_SKEW_S = 30
 
 
+class AllegroTokenStore(Protocol):
+    """Persistence contract for the OAuth refresh token.
+
+    Allegro rotates the refresh token on every use — if we do not persist
+    the new value, the first restart of the process loses it, and the
+    integration dies until manual re-auth. Every production deployment MUST
+    inject a real store (Key Vault / Table Storage). Tests may use the
+    in-memory default.
+    """
+
+    def load_refresh_token(self) -> str | None:  # pragma: no cover - protocol
+        ...
+
+    def save_refresh_token(self, token: str) -> bool:  # pragma: no cover - protocol
+        ...
+
+
+class InMemoryAllegroTokenStore:
+    """Trivial store — keeps the token in a single instance attribute.
+
+    Useful for tests and for the CLI where the process is short-lived. NOT
+    safe for long-running services (see AllegroTokenStore docstring).
+    """
+
+    def __init__(self, initial_token: str | None = None) -> None:
+        self._token = initial_token
+
+    def load_refresh_token(self) -> str | None:
+        return self._token
+
+    def save_refresh_token(self, token: str) -> bool:
+        self._token = token
+        return True
+
+
+class SecretsAllegroTokenStore:
+    """Persist rotated refresh tokens via ``zdrovena.common.secrets``.
+
+    Reads/writes go through ``get_secret`` / ``set_secret``, so the token
+    ends up in Key Vault (prod), keyring (dev), or env-var (last resort,
+    with a loud warning). Errors during save are logged and surfaced to
+    the caller as ``False`` — the caller is responsible for alerting when
+    persistence fails, because a lost rotated token = broken integration.
+    """
+
+    _SECRET_NAME = "allegro-refresh-token"
+
+    def load_refresh_token(self) -> str | None:
+        from zdrovena.common.secrets import get_secret
+
+        return get_secret(self._SECRET_NAME, required=False)
+
+    def save_refresh_token(self, token: str) -> bool:
+        from zdrovena.common.secrets import set_secret
+
+        return set_secret(self._SECRET_NAME, token)
+
+
+def _normalize_pickup_proposals(data: Any) -> list[dict[str, Any]]:
+    """Flatten Allegro pickup-proposals response into a single list of slots.
+
+    Handles three response shapes seen across Allegro API versions:
+
+    1. **New nested (post-2026-07-01)** — top-level list, each entry has
+       ``proposals[].pickupTimes[]``. Each pickupTime carries ``date`` /
+       ``minTime`` / ``maxTime`` and no ``id``.
+    2. **Legacy nested** — top-level list, each entry has
+       ``proposals[].proposalItems[]``, each with a legacy ``id``.
+    3. **Legacy flat** — top-level dict ``{"proposalItems": [...]}`` (older
+       sandbox/mocked responses).
+
+    Returns a flat list of dicts. New-format items include ``date``, ``minTime``,
+    ``maxTime`` (usable directly with ``create_ship_with_allegro_pickup``'s
+    ``pickup_time`` kwarg). Legacy items include ``id`` (usable with the
+    deprecated ``proposal_item_id`` kwarg). If both shapes coexist in one
+    response, both new AND legacy items are returned; callers should prefer
+    entries that carry ``date``.
+    """
+    if isinstance(data, dict):
+        legacy_flat = data.get("proposalItems")
+        if isinstance(legacy_flat, list):
+            return [item for item in legacy_flat if isinstance(item, dict)]
+        # Fall through: dict may also be a single entry from the nested shape.
+        entries: list[Any] = [data]
+    elif isinstance(data, list):
+        entries = data
+    else:
+        return []
+
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        for proposal in entry.get("proposals") or []:
+            if not isinstance(proposal, dict):
+                continue
+            # New format — pickupTimes[]
+            for pt in proposal.get("pickupTimes") or []:
+                if isinstance(pt, dict) and pt.get("date"):
+                    out.append({**pt, "shipmentId": proposal.get("shipmentId")})
+            # Legacy format — proposalItems[] (deprecated, kept for compat)
+            for pi in proposal.get("proposalItems") or []:
+                if isinstance(pi, dict) and pi.get("id"):
+                    out.append({**pi, "shipmentId": proposal.get("shipmentId")})
+    return out
+
+
 class AllegroClient:
     """Thin wrapper over Allegro REST API for orders + invoices flow.
 
@@ -62,10 +169,17 @@ class AllegroClient:
         refresh_token: str,
         env: str = "prod",
         timeout: int | None = None,
+        token_store: AllegroTokenStore | None = None,
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
-        self._refresh_token = refresh_token
+        # If a store is supplied AND it already holds a (possibly newer, rotated)
+        # token, prefer that — the value in `refresh_token` may be stale from env.
+        self._token_store: AllegroTokenStore = (
+            token_store or InMemoryAllegroTokenStore(refresh_token)
+        )
+        stored = self._token_store.load_refresh_token()
+        self._refresh_token = stored or refresh_token
         self._env = env
         if env == "sandbox":
             self._base_url = _BASE_URL_SANDBOX
@@ -114,10 +228,25 @@ class AllegroClient:
         self._access_token = token
         expires_in = int(payload.get("expires_in", 43200))
         self._expires_at = time.time() + max(expires_in - _TOKEN_REFRESH_SKEW_S, 0)
-        # Refresh tokens may rotate — persist the latest value in-memory.
+        # Refresh tokens rotate on every use. Persist the new one to the
+        # injected store so a process restart does not lose it. A failed
+        # persist is logged at ERROR by the store; we still keep the token
+        # in-memory so the current process can continue — but alerts should
+        # already fire and operators need to fix persistence before restart.
         new_rt = payload.get("refresh_token")
-        if new_rt:
+        if new_rt and new_rt != self._refresh_token:
             self._refresh_token = new_rt
+            try:
+                ok = self._token_store.save_refresh_token(new_rt)
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("AllegroTokenStore.save_refresh_token raised")
+                ok = False
+            if not ok:
+                logger.error(
+                    "Rotated Allegro refresh token could NOT be persisted. "
+                    "Current process is still authenticated, but a restart "
+                    "will break the integration — fix the token store now."
+                )
 
     def _get_token(self) -> str:
         if self._access_token is None or time.time() >= self._expires_at:
@@ -294,7 +423,24 @@ class AllegroClient:
     # Docs: developer.allegro.pl/tutorials/jak-zarzadzac-przesylkami-przez-wysylam-z-allegro-LRVjK7K21sY
 
     def get_delivery_services(self) -> list[dict[str, Any]]:
-        """List available delivery services (Allegro Standard + own agreements)."""
+        """List available delivery services (Allegro Standard + own agreements).
+
+        .. deprecated:: 2026-Q1 2027
+            This endpoint (``GET /shipment-management/delivery-services``) is
+            marked for removal in Q1 2027. ``deliveryMethodId`` is now optional
+            in ``create-commands`` — Allegro auto-derives it from the order.
+            Do not call this in the request path; move to an offline job if
+            you still need the list for UI/config.
+        """
+        import warnings
+
+        warnings.warn(
+            "AllegroClient.get_delivery_services is deprecated: Allegro is "
+            "removing GET /shipment-management/delivery-services in Q1 2027. "
+            "Rely on deliveryMethodId being auto-derived by the order.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         data = self._get("/shipment-management/delivery-services")
         return list(data.get("deliveryServices") or [])
 
@@ -307,12 +453,13 @@ class AllegroClient:
         *,
         command_id: str,
         order_id: str,
-        delivery_method_id: str,
         credentials_id: str | None,
         packages: list[dict[str, Any]],
         sender: dict[str, Any],
         receiver: dict[str, Any],
         additional_services: list[str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        delivery_method_id: str | None = None,
     ) -> dict[str, Any]:
         """POST /shipment-management/shipments/create-commands.
 
@@ -326,21 +473,36 @@ class AllegroClient:
             (``length``/``width``/``height``/``weight`` each a ``{"value", "unit"}``
             object — weight unit is the plural ``KILOGRAMS``).
           - ``additional_services`` is an Array of Allegro service strings.
+          - ``additional_properties`` is a dict of carrier-specific extras
+            (e.g. ``{"inpost#sendingMethod": "parcel_locker"}`` — see Allegro
+            issue #9915). Keys are namespaced by carrier; only sent when set.
 
         For Allegro Standard: pass credentials_id=None.
         For own agreements: pass the credentialsId returned by get_delivery_services.
+
+        .. note::
+            Since 2026-07-01 ``deliveryMethodId`` is optional — Allegro auto-
+            derives it from the order. Omit it (or pass None) to future-proof
+            against the Q1 2027 removal of GET /shipment-management/delivery-
+            services. Kept accepting an explicit value for callers that still
+            manage their own agreements manually.
         """
         input_body: dict[str, Any] = {
-            "deliveryMethodId": delivery_method_id,
             "sender": sender,
             "receiver": receiver,
             "referenceNumber": order_id,
             "packages": packages,
         }
+        if delivery_method_id:
+            # Kept for callers using own agreements; Allegro Standard should
+            # simply omit this and let the server pick.
+            input_body["deliveryMethodId"] = delivery_method_id
         if credentials_id is not None:
             input_body["credentialsId"] = credentials_id
         if additional_services:
             input_body["additionalServices"] = list(additional_services)
+        if additional_properties:
+            input_body["additionalProperties"] = dict(additional_properties)
 
         return self._post(
             "/shipment-management/shipments/create-commands",
@@ -413,30 +575,72 @@ class AllegroClient:
     def get_ship_with_allegro_pickup_proposals(
         self, shipment_ids: list[str]
     ) -> list[dict[str, Any]]:
-        """POST /shipment-management/pickup-proposals — available pickup slots."""
+        """POST /shipment-management/pickup-proposals — available pickup slots.
+
+        Since 2026-07-01 Allegro replaced ``proposalItems`` with ``pickupTimes``
+        (see https://developer.allegro.pl/news/wysylam-z-allegro-wprowadzilismy-
+        zmiany-na-zasobach-do-zarzadzania-wysylka-przesylek-i-ich-odbiorem-przez-
+        kuriera-oADdP41WVHA). The new response shape is::
+
+            [
+                {
+                    "proposals": [
+                        {
+                            "shipmentId": "...",
+                            "pickupTimes": [
+                                {"date": "2026-01-17",
+                                 "minTime": "08:00",
+                                 "maxTime": "12:00"}
+                            ]
+                        }
+                    ],
+                    "address": {...}
+                }
+            ]
+
+        Returned items are normalized to a flat list of dicts, each carrying at
+        minimum a ``date`` key (new format) and, if present, the legacy ``id``
+        (deprecated) — callers should prefer ``date``/``minTime``/``maxTime``.
+        """
         data = self._post(
             "/shipment-management/pickup-proposals",
             {"input": {"shipmentIds": list(shipment_ids)}},
         )
-        return list(data.get("proposalItems") or [])
+        return _normalize_pickup_proposals(data)
 
     def create_ship_with_allegro_pickup(
         self,
         *,
         command_id: str,
-        proposal_item_id: str,
         shipment_ids: list[str],
+        pickup_time: dict[str, str] | None = None,
+        proposal_item_id: str | None = None,
     ) -> dict[str, Any]:
-        """POST /shipment-management/pickups/create-commands — order courier pickup."""
+        """POST /shipment-management/pickups/create-commands — order courier pickup.
+
+        Since 2026-07-01 Allegro accepts one of two mutually-exclusive fields:
+
+        - ``pickupTime`` (preferred, new): ``{"date": "YYYY-MM-DD", "minTime":
+          "HH:MM", "maxTime": "HH:MM"}``
+        - ``pickupDateProposalId`` (deprecated): the ``id`` from the legacy
+          ``proposalItems``
+
+        At least one must be provided. If both are supplied, ``pickupTime`` wins.
+        """
+        if not pickup_time and not proposal_item_id:
+            raise ValueError(
+                "create_ship_with_allegro_pickup requires either pickup_time "
+                "(new format) or proposal_item_id (legacy)."
+            )
+        input_body: dict[str, Any] = {"shipmentIds": list(shipment_ids)}
+        if pickup_time:
+            input_body["pickupTime"] = dict(pickup_time)
+        else:
+            # legacy path — pre-2026-07-01 servers
+            input_body["pickupDateProposalId"] = proposal_item_id
         return self._post(
             "/shipment-management/pickups/create-commands",
-            {
-                "commandId": command_id,
-                "input": {
-                    "proposalItemId": proposal_item_id,
-                    "shipmentIds": list(shipment_ids),
-                },
-            },
+            {"commandId": command_id, "input": input_body},
         )
 
     def cancel_ship_with_allegro_shipment(

@@ -50,8 +50,10 @@ def get_secret(service: str, required: bool = True) -> str | None:
         If True (default) raise MissingSecretError when no value is found.
         If False return None silently.
     """
-    # 1. Environment variable
-    env_key = service.upper()
+    # 1. Environment variable. Convention: uppercase and normalize hyphens
+    #    to underscores so "allegro-refresh-token" -> "ALLEGRO_REFRESH_TOKEN"
+    #    (env-var names cannot contain '-').
+    env_key = service.upper().replace("-", "_")
     value = os.environ.get(env_key)
     if value:
         return value
@@ -77,3 +79,48 @@ def get_secret(service: str, required: bool = True) -> str | None:
     if required:
         raise MissingSecretError(service, KEYCHAIN_ACCOUNT)
     return None
+
+
+def set_secret(service: str, value: str) -> bool:
+    """Persist a rotated secret value.
+
+    Resolution order (mirror of get_secret, but reversed priority — the
+    most persistent store wins):
+
+    1. Azure Key Vault (if AZURE_KEYVAULT_URL is set)
+    2. macOS Keychain / system keyring (best-effort)
+    3. Env var override (in-process only; a warning is logged)
+
+    Returns True if at least one persistent store accepted the write, else
+    False. Never raises — the caller decides whether a failed persist is
+    fatal (typically it is, for a rotated OAuth refresh token).
+    """
+    persisted = False
+
+    keyvault_url = os.environ.get("AZURE_KEYVAULT_URL")
+    if keyvault_url:
+        from zdrovena.common._keyvault import set_keyvault_secret
+
+        if set_keyvault_secret(keyvault_url, service, value):
+            persisted = True
+
+    if _KEYRING_AVAILABLE:
+        try:
+            keyring.set_password(service, KEYCHAIN_ACCOUNT, value)
+            persisted = True
+        except Exception as exc:
+            logger.debug("Keyring set failed for %s: %s", service, exc)
+
+    if not persisted:
+        # In-process env var so this pid keeps working, but any restart is
+        # doomed. Log loud so operators notice. Env var names cannot contain
+        # '-' — mirror the get_secret convention of upper-casing the service
+        # name and normalize any hyphens to underscores.
+        os.environ[service.upper().replace("-", "_")] = value
+        logger.warning(
+            "Secret %s could not be persisted (no Key Vault, no keyring). "
+            "In-process env var updated — next restart WILL lose the value.",
+            service,
+        )
+
+    return persisted

@@ -26,6 +26,13 @@ PARTITION_KEY = "drafts"
 _LOCAL_FILE_NAME = "shipping-drafts.json"
 _DEFAULT_ROOT = Path.home() / ".zdrovena" / "storage"
 
+# Dead-letter queue for failed draft creation attempts (P1-9).
+# Entries hold the original payload + last error and can be retried via a
+# dedicated endpoint. Storage layout mirrors the drafts table.
+DLQ_TABLE_NAME = "shippingdraftsdlq"
+DLQ_PARTITION_KEY = "dlq"
+_DLQ_LOCAL_FILE_NAME = "shipping-drafts-dlq.json"
+
 
 def _table_endpoint(url: str) -> str:
     return url.replace(".blob.core.windows.net", ".table.core.windows.net")
@@ -224,6 +231,209 @@ class ShippingStore:
                 data = self._local_load()
                 data.pop(draft_id, None)
                 self._local_save(data)
+            finally:
+                self._release_lock(lock_fd)
+
+    # ── Dead-letter queue for failed drafts (P1-9) ────────────────────────────
+
+    @property
+    def _dlq_local_file(self) -> Path:
+        path = self._local_root / _DLQ_LOCAL_FILE_NAME
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _dlq_load_unlocked(self) -> dict[str, Any]:
+        if not self._dlq_local_file.exists():
+            return {}
+        try:
+            return json.loads(self._dlq_local_file.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _dlq_save_unlocked(self, data: dict[str, Any]) -> None:
+        temp_fd, temp_path = tempfile.mkstemp(
+            dir=str(self._local_root), prefix=".tmp-dlq-", suffix=".json"
+        )
+        try:
+            with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(temp_path, str(self._dlq_local_file))
+        except Exception:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            raise
+
+    def _dlq_table_client(self) -> Any:
+        from azure.data.tables import TableServiceClient
+        from azure.identity import DefaultAzureCredential
+
+        if self._account_url:
+            svc = TableServiceClient(
+                endpoint=_table_endpoint(self._account_url),
+                credential=DefaultAzureCredential(),
+            )
+        else:
+            if not self._connection_string:
+                raise RuntimeError(
+                    "ShippingStore: neither account_url nor connection_string is set"
+                )
+            svc = TableServiceClient.from_connection_string(self._connection_string)
+        return svc.create_table_if_not_exists(DLQ_TABLE_NAME)
+
+    @staticmethod
+    def _serialize_dlq_entry(entry: dict[str, Any]) -> dict[str, Any]:
+        entity: dict[str, Any] = {
+            "PartitionKey": DLQ_PARTITION_KEY,
+            "RowKey": entry["id"],
+        }
+        for k, v in entry.items():
+            if k == "id":
+                continue
+            if isinstance(v, (dict, list)):
+                entity[k] = json.dumps(v, ensure_ascii=False)
+            elif v is None:
+                entity[k] = ""
+            else:
+                entity[k] = v
+        return entity
+
+    @staticmethod
+    def _deserialize_dlq_entry(entity: dict[str, Any]) -> dict[str, Any]:
+        record: dict[str, Any] = {"id": entity["RowKey"]}
+        for k, v in entity.items():
+            if k in ("PartitionKey", "RowKey", "etag", "Timestamp"):
+                continue
+            if isinstance(v, str):
+                if v == "":
+                    v = None
+                else:
+                    try:
+                        parsed = json.loads(v)
+                        if isinstance(parsed, (dict, list)):
+                            v = parsed
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+            record[k] = v
+        return record
+
+    def enqueue_dlq(
+        self,
+        *,
+        payload: dict[str, Any],
+        error: str,
+        source: str = "shopify",
+        entry_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a failed draft-creation attempt for later retry.
+
+        Idempotent: if ``entry_id`` is provided and already exists, the entry is
+        updated in-place with the new error and an incremented ``retries`` counter.
+        Returns the stored entry.
+        """
+        import uuid as _uuid
+        from datetime import datetime as _dt, timezone as _tz
+
+        now = _dt.now(_tz.utc).isoformat()
+        eid = entry_id or str(_uuid.uuid4())
+
+        if self._use_table:
+            try:
+                client = self._dlq_table_client()
+                try:
+                    existing_entity = client.get_entity(
+                        partition_key=DLQ_PARTITION_KEY, row_key=eid
+                    )
+                    existing = self._deserialize_dlq_entry(dict(existing_entity))
+                    entry = {
+                        **existing,
+                        "last_error": error,
+                        "retries": int(existing.get("retries") or 0) + 1,
+                        "updated_at": now,
+                    }
+                except Exception:
+                    entry = {
+                        "id": eid,
+                        "created_at": now,
+                        "updated_at": now,
+                        "source": source,
+                        "payload": payload,
+                        "last_error": error,
+                        "retries": 0,
+                    }
+                client.upsert_entity(self._serialize_dlq_entry(entry))
+                return entry
+            except Exception as exc:
+                logger.error("DLQ enqueue failed for entry %s: %s", eid, exc)
+                raise
+        lock_fd = self._acquire_lock()
+        try:
+            data = self._dlq_load_unlocked()
+            if eid in data:
+                existing = data[eid]
+                entry = {
+                    **existing,
+                    "last_error": error,
+                    "retries": int(existing.get("retries") or 0) + 1,
+                    "updated_at": now,
+                }
+            else:
+                entry = {
+                    "id": eid,
+                    "created_at": now,
+                    "updated_at": now,
+                    "source": source,
+                    "payload": payload,
+                    "last_error": error,
+                    "retries": 0,
+                }
+            data[eid] = entry
+            self._dlq_save_unlocked(data)
+            return entry
+        finally:
+            self._release_lock(lock_fd)
+
+    def list_dlq(self, limit: int = 200) -> list[dict[str, Any]]:
+        if self._use_table:
+            try:
+                entities = list(
+                    self._dlq_table_client().query_entities(
+                        f"PartitionKey eq '{DLQ_PARTITION_KEY}'"
+                    )
+                )
+                records = [self._deserialize_dlq_entry(dict(e)) for e in entities]
+            except Exception as exc:
+                logger.warning("DLQ list failed: %s", exc)
+                return []
+        else:
+            records = list(self._dlq_load_unlocked().values())
+        records.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+        return records[:limit]
+
+    def get_dlq_entry(self, entry_id: str) -> dict[str, Any] | None:
+        if self._use_table:
+            try:
+                entity = self._dlq_table_client().get_entity(
+                    partition_key=DLQ_PARTITION_KEY, row_key=entry_id
+                )
+                return self._deserialize_dlq_entry(dict(entity))
+            except Exception:
+                return None
+        return self._dlq_load_unlocked().get(entry_id)
+
+    def delete_dlq_entry(self, entry_id: str) -> None:
+        if self._use_table:
+            try:
+                self._dlq_table_client().delete_entity(DLQ_PARTITION_KEY, entry_id)
+            except Exception:
+                pass
+        else:
+            lock_fd = self._acquire_lock()
+            try:
+                data = self._dlq_load_unlocked()
+                data.pop(entry_id, None)
+                self._dlq_save_unlocked(data)
             finally:
                 self._release_lock(lock_fd)
 

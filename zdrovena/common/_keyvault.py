@@ -81,6 +81,35 @@ def get_keyvault_secret(vault_url: str, service: str) -> str | None:
         return None
 
 
+def set_keyvault_secret(vault_url: str, service: str, value: str) -> bool:
+    """Store ``value`` under ``service`` name in Azure Key Vault.
+
+    Returns True on success, False on any error (import missing, network,
+    auth, quota). Errors are logged; callers decide how to react.
+
+    On success the in-process cache is refreshed so subsequent reads see
+    the new value without a round-trip.
+    """
+    try:
+        from azure.keyvault.secrets import SecretClient  # noqa: F401
+    except ImportError:
+        logger.debug("azure-keyvault-secrets not installed — cannot set secret")
+        return False
+
+    try:
+        client = _get_client(vault_url)
+        secret_name = _to_kv_name(service)
+        client.set_secret(secret_name, value)  # type: ignore[attr-defined]
+        # Refresh cache with the new value so we don’t hand out a stale one.
+        cache_key = f"{vault_url}:{service}"
+        _cache[cache_key] = (value, time.monotonic() + TTL_SECONDS)
+        logger.info("Key Vault secret %s updated", secret_name)
+        return True
+    except Exception as exc:
+        logger.error("Key Vault set failed for %s: %s", service, exc)
+        return False
+
+
 def ping_keyvault(vault_url: str) -> None:
     """Verify Key Vault connectivity by listing one secret page.
 

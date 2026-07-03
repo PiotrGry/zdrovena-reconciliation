@@ -25,6 +25,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Annotated, Any
 
 from fastapi import (
@@ -38,7 +39,7 @@ from fastapi import (
     Response,
     status,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, ShopifyDedupStoreDep, StorageDep
@@ -116,9 +117,40 @@ def _is_shopify_topic_allowed(topic: str) -> bool:
     return topic in ALLOWED_SHOPIFY_TOPICS
 
 
+def _is_production_env() -> bool:
+    """True when APP_ENV / DEPLOY_ENV / AZURE_ENV signals a production deploy.
+
+    We treat *any* of {production, prod, live} as production. Development,
+    sandbox, staging, and unset values are non-production. Case-insensitive.
+    """
+    for var in ("APP_ENV", "DEPLOY_ENV", "AZURE_ENV", "ENV"):
+        value = os.environ.get(var, "").strip().lower()
+        if value in {"production", "prod", "live"}:
+            return True
+    return False
+
+
 def _is_shopify_domain_allowed(shop_domain: str) -> bool:
+    """Return True when the shop domain is on the SHOPIFY_ALLOWED_DOMAINS whitelist.
+
+    Fail-closed policy:
+      * SHOPIFY_ALLOWED_DOMAINS unset in a **production** environment is a
+        misconfiguration — we reject the webhook rather than silently accept
+        every caller. Production is detected via APP_ENV/DEPLOY_ENV/AZURE_ENV/ENV
+        being one of {production, prod, live}.
+      * SHOPIFY_ALLOWED_DOMAINS unset in dev/sandbox/staging keeps the previous
+        permissive behaviour (with a warning) so local development doesn't
+        require boilerplate config.
+    """
     allowed = _allowed_shopify_domains()
     if allowed is None:
+        if _is_production_env():
+            logger.error(
+                "SHOPIFY_ALLOWED_DOMAINS is not configured in production — "
+                "rejecting webhook from %s",
+                shop_domain or "<missing>",
+            )
+            return False
         logger.warning(
             "SHOPIFY_ALLOWED_DOMAINS not configured — accepting webhook from %s (dev mode)",
             shop_domain or "<missing>",
@@ -197,7 +229,13 @@ def _allegro_carrier_id_for_courier(courier: str) -> str:
 
 
 def _get_allegro_client() -> Any | None:
-    """Build an AllegroClient from Key Vault secrets. Returns None if missing."""
+    """Build an AllegroClient from Key Vault secrets. Returns None if missing.
+
+    Uses ``SecretsAllegroTokenStore`` so rotated refresh tokens are persisted
+    back to Key Vault / keyring — without this, the first restart after a
+    rotation would break the integration (Allegro rotates refresh tokens on
+    every use).
+    """
     import os
 
     client_id = get_secret("allegro-client-id", required=False)
@@ -205,13 +243,14 @@ def _get_allegro_client() -> Any | None:
     refresh_token = get_secret("allegro-refresh-token", required=False)
     if not (client_id and client_secret and refresh_token):
         return None
-    from zdrovena.common.allegro import AllegroClient
+    from zdrovena.common.allegro import AllegroClient, SecretsAllegroTokenStore
 
     return AllegroClient(
         client_id=client_id,
         client_secret=client_secret,
         refresh_token=refresh_token,
         env=os.environ.get("ALLEGRO_ENV", "prod"),
+        token_store=SecretsAllegroTokenStore(),
     )
 
 
@@ -258,31 +297,128 @@ def _maybe_push_tracking_to_allegro(draft: dict[str, Any]) -> None:
         logger.exception("Failed to push tracking to Allegro for order %s", external_id)
 
 
+def _parse_title_map(raw: str) -> dict[str, str]:
+    """Parse env-var mapping in JSON or ``keyword=value;keyword=value`` format.
+
+    Keys are lowercased and stripped. Empty/invalid entries are ignored.
+    Returns an empty dict for empty input or parse failure.
+    """
+    if not raw or not raw.strip():
+        return {}
+    text = raw.strip()
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse title map as JSON, ignoring: %r", raw)
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        return {
+            str(k).strip().lower(): str(v).strip()
+            for k, v in parsed.items()
+            if str(k).strip() and str(v).strip()
+        }
+    result: dict[str, str] = {}
+    # accept both ';' and ',' as pair separators for operator convenience
+    for chunk in text.replace(",", ";").split(";"):
+        if "=" not in chunk:
+            continue
+        key, _, value = chunk.partition("=")
+        key = key.strip().lower()
+        value = value.strip()
+        if key and value:
+            result[key] = value
+    return result
+
+
+@lru_cache(maxsize=1)
+def _courier_title_map() -> dict[str, str]:
+    """Explicit shipping-line title → courier mapping from ``COURIER_TITLE_MAP``.
+
+    Example: ``COURIER_TITLE_MAP="inpost=inpost;paczkomat=inpost;dpd=apaczka"``.
+    Empty map preserves the substring-heuristic fallback.
+    """
+    return _parse_title_map(os.getenv("COURIER_TITLE_MAP", ""))
+
+
+@lru_cache(maxsize=1)
+def _inpost_service_title_map() -> dict[str, str]:
+    """Explicit title → InPost service mapping from ``INPOST_SERVICE_TITLE_MAP``.
+
+    Example: ``INPOST_SERVICE_TITLE_MAP="paczkomat=paczkomat;kurier=kurier"``.
+    """
+    return _parse_title_map(os.getenv("INPOST_SERVICE_TITLE_MAP", ""))
+
+
+def _reset_courier_maps_cache() -> None:
+    """Clear cached ENV mapping (test-only helper)."""
+    _courier_title_map.cache_clear()
+    _inpost_service_title_map.cache_clear()
+
+
 def _pick_courier(order: dict[str, Any]) -> str:
-    """Route to InPost only on explicit 'inpost' or 'paczkomat' keywords. 'kurier' alone → Apaczka."""
+    """Route shipping-line title to a courier backend.
+
+    Consults ``COURIER_TITLE_MAP`` env var first (explicit keyword→courier pairs);
+    falls back to the substring heuristic (``inpost``/``paczkomat`` → inpost,
+    otherwise apaczka) for backwards compatibility.
+    """
     lines = order.get("shipping_lines") or []
     title = (lines[0].get("title", "") if lines else "").lower()
+    explicit = _courier_title_map()
+    if explicit:
+        for keyword, courier in explicit.items():
+            if keyword and keyword in title:
+                return courier
     if "inpost" in title or "paczkomat" in title:
         return "inpost"
     return "apaczka"
 
 
 def _pick_inpost_service(title: str) -> str:
-    return "paczkomat" if "paczkomat" in title.lower() else "kurier"
+    """Pick InPost service (``paczkomat``/``kurier``) from shipping-line title.
+
+    Consults ``INPOST_SERVICE_TITLE_MAP`` first; falls back to substring match.
+    """
+    lowered = title.lower()
+    explicit = _inpost_service_title_map()
+    if explicit:
+        for keyword, service in explicit.items():
+            if keyword and keyword in lowered:
+                return service
+    return "paczkomat" if "paczkomat" in lowered else "kurier"
 
 
 # ── Courier execution helpers ─────────────────────────────────────────────────
 
 
 def _parcel_template(draft: dict[str, Any]) -> str:
-    """Derive InPost paczkomat template from packages_breakdown (bug #4)."""
-    from zdrovena.common.inpost import PARCEL_SPECS
+    """Derive InPost paczkomat template from packages_breakdown.
+
+    Preferred path (P2-1): compute total weight + largest package dims and let
+    ``pick_paczkomat_template`` choose the smallest fitting slot (cheaper for
+    orders that would fit in an A/B slot). Falls back to the largest box's
+    static ``paczkomat_template`` and finally to ``"large"`` for safety.
+    """
+    from zdrovena.common.inpost import PARCEL_SPECS, pick_paczkomat_template
 
     breakdown = draft.get("packages_breakdown") or []
+
+    # 1. auto-pick by dims + weight of the largest box (safest single-parcel pick)
+    total_weight, largest_dims = _parcel_weight_and_dims(draft)
+    if breakdown and largest_dims:
+        auto = pick_paczkomat_template(dict(largest_dims), total_weight)
+        if auto:
+            return auto
+
+    # 2. static fallback — largest box in the breakdown
     for box_type in ("3-pak", "szkło-2pak", "2-pak", "szkło", "1-pak", "pół-pak"):
         if any(b.get("type") == box_type for b in breakdown):
             tpl = PARCEL_SPECS.get(box_type, {}).get("paczkomat_template")
             return tpl if tpl else "large"
+
+    # 3. no breakdown — default to the biggest slot (guaranteed acceptance)
     return "large"
 
 
@@ -516,11 +652,13 @@ def _run_allegro_delivery(
         raise RuntimeError("Allegro credentials missing — cannot use Ship with Allegro")
 
     order_id = str(draft.get("external_order_id") or "")
-    delivery_method_id = draft.get("allegro_delivery_method_id")
-    if not order_id or not delivery_method_id:
-        raise RuntimeError(
-            "Ship with Allegro requires external_order_id and allegro_delivery_method_id"
-        )
+    if not order_id:
+        raise RuntimeError("Ship with Allegro requires external_order_id")
+    # deliveryMethodId is optional since 2026-07-01 — Allegro auto-derives it
+    # from the order. Kept read here so callers with own agreements can still
+    # force a specific method by populating allegro_delivery_method_id in the
+    # draft, but its absence must NOT abort the flow.
+    delivery_method_id = draft.get("allegro_delivery_method_id") or None
 
     # Build packages per Allegro create-commands contract: FLAT dimensions, each a
     # {"value", "unit"} object; weight unit is the plural "KILOGRAMS"; type is required.
@@ -546,10 +684,21 @@ def _run_allegro_delivery(
     if pickup_point_id:
         receiver["point"] = pickup_point_id
 
-    # TODO: map draft["allegro_sending_method"] to a valid Allegro additionalServices
-    # string once the courier→service mapping is confirmed. The previous
-    # "sendingAtPoint"/"parcel_locker" values were not valid API values, so we omit
-    # additionalServices for now rather than send a 400-inducing payload.
+    # Map InPost sending mode to Allegro additionalProperties.inpost#sendingMethod.
+    # Contract per Allegro issue #9915 (https://github.com/allegro/allegro-api/issues/9915):
+    # valid enum values are parcel_locker | dispatch_order | pop | any_point.
+    # Only sent for InPost draft s; other carriers derive the field from the order.
+    _ALLEGRO_INPOST_SENDING_METHODS = {
+        "parcel_locker",
+        "dispatch_order",
+        "pop",
+        "any_point",
+    }
+    additional_properties: dict[str, Any] | None = None
+    sending_method = draft.get("allegro_sending_method")
+    if sending_method and sending_method in _ALLEGRO_INPOST_SENDING_METHODS:
+        additional_properties = {"inpost#sendingMethod": sending_method}
+
     command_id = str(_uuid.uuid4())
 
     client.create_ship_with_allegro_shipment(
@@ -560,6 +709,7 @@ def _run_allegro_delivery(
         packages=packages,
         sender=sender,
         receiver=receiver,
+        additional_properties=additional_properties,
     )
 
     # Non-blocking: krótki polling ~3s. Jeśli create-command jeszcze IN_PROGRESS — zwracamy
@@ -592,13 +742,37 @@ def _run_allegro_delivery(
     if pickup_date:
         try:
             proposals = client.get_ship_with_allegro_pickup_proposals([shipment_id])
-            if proposals:
+            # Prefer new-format entries (with `date`); fall back to legacy `id`
+            # (deprecated but still accepted by servers pre-2026-07-01).
+            new_format = next(
+                (p for p in proposals if p.get("date")), None
+            )
+            legacy_format = next(
+                (p for p in proposals if p.get("id") and not p.get("date")),
+                None,
+            )
+            selected = new_format or legacy_format
+            if selected:
                 pu_cmd = str(_uuid.uuid4())
-                client.create_ship_with_allegro_pickup(
-                    command_id=pu_cmd,
-                    proposal_item_id=proposals[0].get("id"),
-                    shipment_ids=[shipment_id],
-                )
+                if selected.get("date"):
+                    pickup_time = {
+                        "date": selected["date"],
+                        "minTime": selected.get("minTime", "08:00"),
+                        "maxTime": selected.get("maxTime", "18:00"),
+                    }
+                    client.create_ship_with_allegro_pickup(
+                        command_id=pu_cmd,
+                        shipment_ids=[shipment_id],
+                        pickup_time=pickup_time,
+                    )
+                else:
+                    # Legacy path (deprecated post-2026-07-01) — kept for
+                    # sandbox/older-server compatibility.
+                    client.create_ship_with_allegro_pickup(
+                        command_id=pu_cmd,
+                        shipment_ids=[shipment_id],
+                        proposal_item_id=selected["id"],
+                    )
                 pickup_ordered = True
             else:
                 logger.warning(
@@ -625,6 +799,50 @@ def _run_allegro_delivery(
 # ── Background task: create draft on Shopify webhook ─────────────────────────
 
 
+def _assert_packages_fit_locker(
+    breakdown: list[dict[str, Any]],
+    *,
+    carrier: str = "inpost",
+) -> list[str]:
+    """Sanity-check that every box in ``breakdown`` fits the carrier's largest locker slot.
+
+    Returns a list of warning strings (empty if everything fits). We log each
+    warning but do NOT hard-fail — an oversized parcel still ships via
+    courier-to-door; we just can't hand it off at an automat. Used by
+    ``_calc_packages`` for P2-3 sanity assertions.
+    """
+    from zdrovena.common.inpost import LOCKER_LARGE_SLOT, PARCEL_SPECS
+
+    slot = LOCKER_LARGE_SLOT.get(carrier)
+    if not slot:
+        return []
+    warnings: list[str] = []
+    for box in breakdown:
+        box_type = box.get("type", "")
+        spec = PARCEL_SPECS.get(box_type)
+        if not spec:
+            continue
+        # Sort sides so we compare shortest-to-shortest, etc. (rotation-invariant)
+        pkg_sides = sorted([spec["length"], spec["width"], spec["height"]])
+        slot_sides = sorted([slot["height"], slot["width"], slot["depth"]])
+        if any(p > s for p, s in zip(pkg_sides, slot_sides)):
+            msg = (
+                f"box '{box_type}' ({spec['length']}×{spec['width']}×{spec['height']} cm) "
+                f"exceeds {carrier} locker large slot "
+                f"({slot['height']}×{slot['width']}×{slot['depth']} cm)"
+            )
+            warnings.append(msg)
+            logger.warning("_calc_packages: %s", msg)
+        if spec["weight_kg"] > slot["max_weight_kg"]:
+            msg = (
+                f"box '{box_type}' weight {spec['weight_kg']} kg exceeds "
+                f"{carrier} locker max {slot['max_weight_kg']} kg"
+            )
+            warnings.append(msg)
+            logger.warning("_calc_packages: %s", msg)
+    return warnings
+
+
 def _calc_packages(
     product_items: list[dict[str, Any]],
 ) -> tuple[int, list[dict[str, Any]]]:
@@ -632,6 +850,11 @@ def _calc_packages(
 
     Plastik: greedy largest-box-first (3-pak → 2-pak → 1-pak → pół-pak).
     Szkło: greedy 2-pak consolidation (szkło-2pak → szkło for remainder).
+
+    Post-condition (P2-3): every produced box is checked against the InPost
+    ``LOCKER_LARGE_SLOT`` catalogue and any overflow is logged as a warning so
+    operators can catch a mis-configured PARCEL_SPECS (e.g. a box larger than
+    the paczkomat slot) early.
     """
     plastic_qty = 0
     glass_qty = 0
@@ -664,7 +887,48 @@ def _calc_packages(
         breakdown.append({"type": "szkło", "qty": remaining_glass})
 
     total = sum(b["qty"] for b in breakdown)
+
+    # P2-3: sanity-check that every produced box fits the InPost large slot.
+    # We log warnings only — an oversized parcel is still valid, it just can't
+    # be handed off at a locker/automat.
+    _assert_packages_fit_locker(breakdown, carrier="inpost")
+
     return max(total, 1), breakdown
+
+
+def _create_draft_safely(
+    order: dict[str, Any],
+    shipping_store: ShippingStore,
+    storage: Any,
+    *,
+    source: str = "shopify",
+) -> None:
+    """Wrapper around ``_create_draft`` that DLQs any exception (P1-9).
+
+    ``BackgroundTasks`` provides no persistence — an exception here would be
+    silently swallowed and the order would be lost. Instead we capture the
+    payload + error to the DLQ so an operator can retry via
+    ``POST /shipping/drafts/dlq/{entry_id}/retry``.
+    """
+    try:
+        _create_draft(order, shipping_store, storage, source=source)
+    except Exception as exc:
+        logger.exception(
+            "Draft creation failed for order %s (source=%s) — enqueueing to DLQ",
+            order.get("id") or order.get("order_number"),
+            source,
+        )
+        try:
+            shipping_store.enqueue_dlq(
+                payload=order,
+                error=f"{type(exc).__name__}: {exc}",
+                source=source,
+            )
+        except Exception:
+            logger.exception(
+                "DLQ enqueue itself failed for order %s",
+                order.get("id") or order.get("order_number"),
+            )
 
 
 def _create_draft(
@@ -892,7 +1156,7 @@ async def shopify_order_created(
         return {"status": "skipped"}
 
     # 6. Heavy work off the request path (Shopify enforces a 5s timeout).
-    background_tasks.add_task(_create_draft, order, shipping_store, storage)
+    background_tasks.add_task(_create_draft_safely, order, shipping_store, storage)
     logger.info("Queued shipping draft for order %s", order.get("order_number") or order.get("id"))
     return {"status": "accepted"}
 
@@ -911,6 +1175,89 @@ def list_drafts(
 ) -> dict[str, Any]:
     drafts = shipping_store.list_drafts()
     return {"drafts": drafts}
+
+
+# ── Dead-letter queue (P1-9) ────────────────────────────────────────────────
+
+
+@router.get(
+    "/shipping/drafts/dlq",
+    summary="List failed draft-creation attempts (DLQ)",
+    responses={403: {"description": "Insufficient role"}},
+)
+def list_dlq(
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_viewer_or_above)],
+) -> dict[str, Any]:
+    return {"entries": shipping_store.list_dlq()}
+
+
+@router.post(
+    "/shipping/drafts/dlq/{entry_id}/retry",
+    summary="Retry a failed draft-creation attempt from DLQ",
+    responses={
+        403: {"description": "Insufficient role"},
+        404: {"description": "DLQ entry not found"},
+        502: {"description": "Retry failed — entry left in DLQ with updated error"},
+    },
+)
+def retry_dlq_entry(
+    entry_id: str,
+    shipping_store: ShippingStoreDep,
+    storage: StorageDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    entry = shipping_store.get_dlq_entry(entry_id)
+    if not entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="DLQ entry not found"
+        )
+    payload = entry.get("payload") or {}
+    source = entry.get("source") or "shopify"
+    try:
+        _create_draft(payload, shipping_store, storage, source=source)
+    except Exception as exc:
+        logger.exception("DLQ retry failed for entry %s", entry_id)
+        # bump retries + last_error; keep the entry in DLQ
+        try:
+            shipping_store.enqueue_dlq(
+                payload=payload,
+                error=f"{type(exc).__name__}: {exc}",
+                source=source,
+                entry_id=entry_id,
+            )
+        except Exception:
+            logger.exception("DLQ update after retry failure failed for %s", entry_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Retry failed: {type(exc).__name__}: {exc}",
+        ) from exc
+    # success → remove from DLQ
+    shipping_store.delete_dlq_entry(entry_id)
+    return {"status": "retried", "entry_id": entry_id}
+
+
+@router.delete(
+    "/shipping/drafts/dlq/{entry_id}",
+    summary="Discard a DLQ entry without retrying",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        403: {"description": "Insufficient role"},
+        404: {"description": "DLQ entry not found"},
+    },
+)
+def delete_dlq_entry(
+    entry_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> Response:
+    entry = shipping_store.get_dlq_entry(entry_id)
+    if not entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="DLQ entry not found"
+        )
+    shipping_store.delete_dlq_entry(entry_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ── Execute draft ─────────────────────────────────────────────────────────────
@@ -968,6 +1315,126 @@ def execute_draft(
         shipping_store.update_draft(draft_id, {"status": "error", "error": str(exc)})
         raise HTTPException(status_code=502, detail=f"Courier API error: {exc}") from exc
 
+    shipping_store.update_draft(draft_id, patch)
+    updated = shipping_store.get_draft(draft_id)
+    if updated:
+        _maybe_push_tracking_to_allegro(updated)
+    return updated or patch
+
+
+# ── Confirm pending Allegro create-command ───────────────────────────────────
+
+
+@router.post(
+    "/shipping/drafts/{draft_id}/confirm",
+    summary="Poll Allegro create-command and finalise a pending_confirmation draft",
+    responses={
+        403: {"description": "Insufficient role"},
+        404: {"description": "Draft not found"},
+        409: {"description": "Draft not in pending_confirmation state"},
+        202: {"description": "Still pending"},
+        502: {"description": "Allegro API error"},
+    },
+)
+def confirm_pending_command(
+    draft_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> Any:
+    """Poll an outstanding Allegro create-command and finalise the draft.
+
+    Ship-with-Allegro create-commands are asynchronous. ``execute_draft`` returns
+    ``pending_confirmation`` when the command is still IN_PROGRESS after the
+    short in-request polling window. This endpoint is the durable follow-up:
+    call it (via UI action or a cron/worker) to check the command status and
+    either promote the draft to ``created`` (SUCCESS) or ``error`` (ERROR).
+
+    Idempotent: safe to call multiple times. Returns the current draft.
+    """
+    draft = shipping_store.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if draft.get("status") != "pending_confirmation":
+        raise HTTPException(
+            status_code=409,
+            detail="Draft is not pending confirmation",
+        )
+
+    command_id = draft.get("allegro_command_id")
+    if not command_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Draft has no allegro_command_id",
+        )
+
+    if _MOCK_COURIER:
+        # Mock path: just flip to created so E2E tests can move on.
+        patch = {
+            "status": "created",
+            "courier_draft_id": f"mock-allegro-{draft.get('shopify_order_number', 'x')}",
+            "tracking_number": "AWA00000000",
+            "error": None,
+        }
+        shipping_store.update_draft(draft_id, patch)
+        return shipping_store.get_draft(draft_id) or patch
+
+    client = _get_allegro_client()
+    if client is None:
+        raise HTTPException(status_code=502, detail="Allegro credentials missing")
+
+    try:
+        status_payload = client.get_ship_with_allegro_command_status(str(command_id))
+    except (AllegroAuthError, CourierTransientError) as exc:
+        logger.exception("Confirm poll failed for draft %s", draft_id)
+        raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
+
+    status = (status_payload or {}).get("status")
+    if status == "IN_PROGRESS":
+        # Still pending — return 202 so operator/worker can poll again later.
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "pending_confirmation",
+                "allegro_command_id": str(command_id),
+                "draft_id": draft_id,
+            },
+        )
+    if status == "ERROR":
+        errors = status_payload.get("errors") or []
+        detail = "; ".join(str(e.get("message") or e) for e in errors) or "Allegro command failed"
+        patch = {
+            "status": "error",
+            "error": f"Allegro create-command {command_id} failed: {detail}",
+        }
+        shipping_store.update_draft(draft_id, patch)
+        raise HTTPException(status_code=502, detail=patch["error"])
+    if status != "SUCCESS":
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unexpected Allegro command status: {status!r}",
+        )
+
+    shipment_id = status_payload.get("shipmentId")
+    if not shipment_id:
+        raise HTTPException(
+            status_code=502,
+            detail="Allegro command SUCCESS but no shipmentId returned",
+        )
+
+    try:
+        shipment = client.get_ship_with_allegro_shipment(str(shipment_id))
+        _carrier_id, waybill = client.extract_shipment_waybill(shipment)
+    except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
+        logger.exception("Fetching shipment %s failed", shipment_id)
+        raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
+
+    patch = {
+        "status": "created",
+        "courier_draft_id": str(shipment_id),
+        "allegro_shipment_id": str(shipment_id),
+        "tracking_number": waybill,
+        "error": None,
+    }
     shipping_store.update_draft(draft_id, patch)
     updated = shipping_store.get_draft(draft_id)
     if updated:

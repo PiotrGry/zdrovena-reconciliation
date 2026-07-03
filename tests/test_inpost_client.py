@@ -358,34 +358,172 @@ class TestErrorHierarchy:
 # ── cancel_shipment ──────────────────────────────────────────────────────────
 
 
+def _ok_get_status(status_value: str = "confirmed") -> MagicMock:
+    """Build a mocked GET response for the cancel_shipment pre-flight."""
+    r = MagicMock(spec=requests.Response)
+    r.ok = True
+    r.status_code = 200
+    r.json.return_value = {"status": status_value}
+    return r
+
+
 class TestCancelShipment:
     def test_success_sends_delete_to_shipment_url(self):
         client = InPostClient(_TOKEN, _ORG)
-        r = MagicMock(spec=requests.Response)
-        r.ok = True
-        r.status_code = 204
-        with patch.object(client._session, "delete", return_value=r) as mock_delete:
-            result = client.cancel_shipment("ship-42")
+        get_resp = _ok_get_status("confirmed")
+        delete_resp = MagicMock(spec=requests.Response)
+        delete_resp.ok = True
+        delete_resp.status_code = 204
+        with patch.object(client._session, "get", return_value=get_resp):
+            with patch.object(client._session, "delete", return_value=delete_resp) as mock_delete:
+                result = client.cancel_shipment("ship-42")
         url = mock_delete.call_args.args[0]
         assert url.endswith("/v1/shipments/ship-42")
         assert result is None
 
-    def test_422_raises_already_dispatched(self):
+    def test_422_from_server_raises_not_cancellable(self):
+        """P1-4: server-side 422 on DELETE surfaces InPostShipmentNotCancellable."""
+        from zdrovena.common.shipping_exceptions import InPostShipmentNotCancellable
+
         client = InPostClient(_TOKEN, _ORG)
-        r = MagicMock(spec=requests.Response)
-        r.ok = False
-        r.status_code = 422
-        r.text = "Shipment already dispatched"
-        with patch.object(client._session, "delete", return_value=r):
-            with pytest.raises(InPostError, match="already dispatched"):
-                client.cancel_shipment("ship-42")
+        get_resp = _ok_get_status("confirmed")
+        del_resp = MagicMock(spec=requests.Response)
+        del_resp.ok = False
+        del_resp.status_code = 422
+        del_resp.text = '{"error":"already_dispatched","message":"..."}'
+        del_resp.json.return_value = {"error": "already_dispatched"}
+        with patch.object(client._session, "get", return_value=get_resp):
+            with patch.object(client._session, "delete", return_value=del_resp):
+                with pytest.raises(InPostShipmentNotCancellable):
+                    client.cancel_shipment("ship-42")
 
     def test_other_4xx_raises_with_status(self):
         client = InPostClient(_TOKEN, _ORG)
+        get_resp = _ok_get_status("confirmed")
+        del_resp = MagicMock(spec=requests.Response)
+        del_resp.ok = False
+        del_resp.status_code = 404
+        del_resp.text = "not found"
+        del_resp.json.side_effect = ValueError
+        with patch.object(client._session, "get", return_value=get_resp):
+            with patch.object(client._session, "delete", return_value=del_resp):
+                with pytest.raises(InPostError, match="404"):
+                    client.cancel_shipment("ship-42")
+
+    def test_preflight_blocks_dispatched_status(self):
+        """P1-4: pre-flight GET status detects dispatched -> raises without DELETE."""
+        from zdrovena.common.shipping_exceptions import InPostShipmentNotCancellable
+
+        client = InPostClient(_TOKEN, _ORG)
+        get_resp = _ok_get_status("dispatched_by_sender")
+        with patch.object(client._session, "get", return_value=get_resp):
+            with patch.object(client._session, "delete") as mock_delete:
+                with pytest.raises(InPostShipmentNotCancellable) as exc:
+                    client.cancel_shipment("ship-42")
+        mock_delete.assert_not_called()  # DELETE never attempted
+        assert exc.value.current_status == "dispatched_by_sender"
+        assert exc.value.shipment_id == "ship-42"
+
+    def test_preflight_blocks_delivered_status(self):
+        from zdrovena.common.shipping_exceptions import InPostShipmentNotCancellable
+
+        client = InPostClient(_TOKEN, _ORG)
+        get_resp = _ok_get_status("delivered")
+        with patch.object(client._session, "get", return_value=get_resp):
+            with patch.object(client._session, "delete") as mock_delete:
+                with pytest.raises(InPostShipmentNotCancellable):
+                    client.cancel_shipment("ship-42")
+        mock_delete.assert_not_called()
+
+    def test_preflight_404_falls_through_to_delete(self):
+        """If GET fails with 4xx (e.g. shipment gone), still attempt DELETE."""
+        client = InPostClient(_TOKEN, _ORG)
+        get_resp = MagicMock(spec=requests.Response)
+        get_resp.ok = False
+        get_resp.status_code = 404
+        get_resp.text = "not found"
+        get_resp.json.side_effect = ValueError
+        del_resp = MagicMock(spec=requests.Response)
+        del_resp.ok = True
+        del_resp.status_code = 204
+        with patch.object(client._session, "get", return_value=get_resp):
+            with patch.object(client._session, "delete", return_value=del_resp) as mock_delete:
+                # Any 4xx on GET raises InPostBusinessError inside cancel_shipment,
+                # which the method catches and falls through to DELETE.
+                client.cancel_shipment("ship-42")
+        mock_delete.assert_called_once()
+
+
+class TestOrganizationErrorSurfacing:
+    """P1-5: debt_collection / trucker_id_not_set surface as InPostOrganizationError."""
+
+    def test_debt_collection_raises_organization_error(self):
+        from zdrovena.common.shipping_exceptions import InPostOrganizationError
+
+        client = InPostClient(_TOKEN, _ORG)
         r = MagicMock(spec=requests.Response)
         r.ok = False
-        r.status_code = 404
-        r.text = "not found"
-        with patch.object(client._session, "delete", return_value=r):
-            with pytest.raises(InPostError, match="404"):
-                client.cancel_shipment("ship-42")
+        r.status_code = 400
+        r.text = '{"error":"debt_collection","message":"Account is on billing hold"}'
+        r.json.return_value = {
+            "error": "debt_collection",
+            "message": "Account is on billing hold",
+        }
+        with patch.object(client._session, "post", return_value=r):
+            with pytest.raises(InPostOrganizationError) as exc:
+                client.create_paczkomat_shipment(
+                    receiver_first_name="Jan",
+                    receiver_last_name="Kowalski",
+                    receiver_email="jk@example.com",
+                    receiver_phone="600000000",
+                    target_point="WAW01A",
+                    reference="ORD-1",
+                )
+        assert exc.value.code == "debt_collection"
+
+    def test_trucker_id_not_set_raises_organization_error(self):
+        from zdrovena.common.shipping_exceptions import InPostOrganizationError
+
+        client = InPostClient(_TOKEN, _ORG)
+        r = MagicMock(spec=requests.Response)
+        r.ok = False
+        r.status_code = 400
+        r.text = '{"error":"trucker_id_not_set"}'
+        r.json.return_value = {"error": "trucker_id_not_set"}
+        with patch.object(client._session, "post", return_value=r):
+            with pytest.raises(InPostOrganizationError) as exc:
+                client.create_paczkomat_shipment(
+                    receiver_first_name="Jan",
+                    receiver_last_name="Kowalski",
+                    receiver_email="jk@example.com",
+                    receiver_phone="600000000",
+                    target_point="WAW01A",
+                    reference="ORD-1",
+                )
+        assert exc.value.code == "trucker_id_not_set"
+
+    def test_unknown_error_code_still_business_error(self):
+        """Non-org 4xx codes stay as plain InPostBusinessError."""
+        client = InPostClient(_TOKEN, _ORG)
+        r = MagicMock(spec=requests.Response)
+        r.ok = False
+        r.status_code = 400
+        r.text = '{"error":"validation_failed"}'
+        r.json.return_value = {"error": "validation_failed"}
+        with patch.object(client._session, "post", return_value=r):
+            from zdrovena.common.shipping_exceptions import (
+                InPostBusinessError,
+                InPostOrganizationError,
+            )
+
+            with pytest.raises(InPostBusinessError) as exc:
+                client.create_paczkomat_shipment(
+                    receiver_first_name="Jan",
+                    receiver_last_name="Kowalski",
+                    receiver_email="jk@example.com",
+                    receiver_phone="600000000",
+                    target_point="WAW01A",
+                    reference="ORD-1",
+                )
+            # Must NOT be the organisation subclass
+            assert not isinstance(exc.value, InPostOrganizationError)
