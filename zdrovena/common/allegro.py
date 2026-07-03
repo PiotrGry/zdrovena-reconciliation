@@ -19,7 +19,7 @@ import logging
 import os
 import time
 from http import HTTPStatus
-from typing import Any
+from typing import Any, Protocol
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -45,6 +45,64 @@ _DEFAULT_TIMEOUT = int(os.environ.get("ALLEGRO_HTTP_TIMEOUT", "30"))
 
 # Refresh window before actual expiry so we never hand out an about-to-expire token.
 _TOKEN_REFRESH_SKEW_S = 30
+
+
+class AllegroTokenStore(Protocol):
+    """Persistence contract for the OAuth refresh token.
+
+    Allegro rotates the refresh token on every use — if we do not persist
+    the new value, the first restart of the process loses it, and the
+    integration dies until manual re-auth. Every production deployment MUST
+    inject a real store (Key Vault / Table Storage). Tests may use the
+    in-memory default.
+    """
+
+    def load_refresh_token(self) -> str | None:  # pragma: no cover - protocol
+        ...
+
+    def save_refresh_token(self, token: str) -> bool:  # pragma: no cover - protocol
+        ...
+
+
+class InMemoryAllegroTokenStore:
+    """Trivial store — keeps the token in a single instance attribute.
+
+    Useful for tests and for the CLI where the process is short-lived. NOT
+    safe for long-running services (see AllegroTokenStore docstring).
+    """
+
+    def __init__(self, initial_token: str | None = None) -> None:
+        self._token = initial_token
+
+    def load_refresh_token(self) -> str | None:
+        return self._token
+
+    def save_refresh_token(self, token: str) -> bool:
+        self._token = token
+        return True
+
+
+class SecretsAllegroTokenStore:
+    """Persist rotated refresh tokens via ``zdrovena.common.secrets``.
+
+    Reads/writes go through ``get_secret`` / ``set_secret``, so the token
+    ends up in Key Vault (prod), keyring (dev), or env-var (last resort,
+    with a loud warning). Errors during save are logged and surfaced to
+    the caller as ``False`` — the caller is responsible for alerting when
+    persistence fails, because a lost rotated token = broken integration.
+    """
+
+    _SECRET_NAME = "allegro-refresh-token"
+
+    def load_refresh_token(self) -> str | None:
+        from zdrovena.common.secrets import get_secret
+
+        return get_secret(self._SECRET_NAME, required=False)
+
+    def save_refresh_token(self, token: str) -> bool:
+        from zdrovena.common.secrets import set_secret
+
+        return set_secret(self._SECRET_NAME, token)
 
 
 def _normalize_pickup_proposals(data: Any) -> list[dict[str, Any]]:
@@ -111,10 +169,17 @@ class AllegroClient:
         refresh_token: str,
         env: str = "prod",
         timeout: int | None = None,
+        token_store: AllegroTokenStore | None = None,
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
-        self._refresh_token = refresh_token
+        # If a store is supplied AND it already holds a (possibly newer, rotated)
+        # token, prefer that — the value in `refresh_token` may be stale from env.
+        self._token_store: AllegroTokenStore = (
+            token_store or InMemoryAllegroTokenStore(refresh_token)
+        )
+        stored = self._token_store.load_refresh_token()
+        self._refresh_token = stored or refresh_token
         self._env = env
         if env == "sandbox":
             self._base_url = _BASE_URL_SANDBOX
@@ -163,10 +228,25 @@ class AllegroClient:
         self._access_token = token
         expires_in = int(payload.get("expires_in", 43200))
         self._expires_at = time.time() + max(expires_in - _TOKEN_REFRESH_SKEW_S, 0)
-        # Refresh tokens may rotate — persist the latest value in-memory.
+        # Refresh tokens rotate on every use. Persist the new one to the
+        # injected store so a process restart does not lose it. A failed
+        # persist is logged at ERROR by the store; we still keep the token
+        # in-memory so the current process can continue — but alerts should
+        # already fire and operators need to fix persistence before restart.
         new_rt = payload.get("refresh_token")
-        if new_rt:
+        if new_rt and new_rt != self._refresh_token:
             self._refresh_token = new_rt
+            try:
+                ok = self._token_store.save_refresh_token(new_rt)
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("AllegroTokenStore.save_refresh_token raised")
+                ok = False
+            if not ok:
+                logger.error(
+                    "Rotated Allegro refresh token could NOT be persisted. "
+                    "Current process is still authenticated, but a restart "
+                    "will break the integration — fix the token store now."
+                )
 
     def _get_token(self) -> str:
         if self._access_token is None or time.time() >= self._expires_at:

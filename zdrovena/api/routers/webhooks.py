@@ -197,7 +197,13 @@ def _allegro_carrier_id_for_courier(courier: str) -> str:
 
 
 def _get_allegro_client() -> Any | None:
-    """Build an AllegroClient from Key Vault secrets. Returns None if missing."""
+    """Build an AllegroClient from Key Vault secrets. Returns None if missing.
+
+    Uses ``SecretsAllegroTokenStore`` so rotated refresh tokens are persisted
+    back to Key Vault / keyring — without this, the first restart after a
+    rotation would break the integration (Allegro rotates refresh tokens on
+    every use).
+    """
     import os
 
     client_id = get_secret("allegro-client-id", required=False)
@@ -205,13 +211,14 @@ def _get_allegro_client() -> Any | None:
     refresh_token = get_secret("allegro-refresh-token", required=False)
     if not (client_id and client_secret and refresh_token):
         return None
-    from zdrovena.common.allegro import AllegroClient
+    from zdrovena.common.allegro import AllegroClient, SecretsAllegroTokenStore
 
     return AllegroClient(
         client_id=client_id,
         client_secret=client_secret,
         refresh_token=refresh_token,
         env=os.environ.get("ALLEGRO_ENV", "prod"),
+        token_store=SecretsAllegroTokenStore(),
     )
 
 
