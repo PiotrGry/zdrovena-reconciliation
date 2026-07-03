@@ -116,9 +116,40 @@ def _is_shopify_topic_allowed(topic: str) -> bool:
     return topic in ALLOWED_SHOPIFY_TOPICS
 
 
+def _is_production_env() -> bool:
+    """True when APP_ENV / DEPLOY_ENV / AZURE_ENV signals a production deploy.
+
+    We treat *any* of {production, prod, live} as production. Development,
+    sandbox, staging, and unset values are non-production. Case-insensitive.
+    """
+    for var in ("APP_ENV", "DEPLOY_ENV", "AZURE_ENV", "ENV"):
+        value = os.environ.get(var, "").strip().lower()
+        if value in {"production", "prod", "live"}:
+            return True
+    return False
+
+
 def _is_shopify_domain_allowed(shop_domain: str) -> bool:
+    """Return True when the shop domain is on the SHOPIFY_ALLOWED_DOMAINS whitelist.
+
+    Fail-closed policy:
+      * SHOPIFY_ALLOWED_DOMAINS unset in a **production** environment is a
+        misconfiguration — we reject the webhook rather than silently accept
+        every caller. Production is detected via APP_ENV/DEPLOY_ENV/AZURE_ENV/ENV
+        being one of {production, prod, live}.
+      * SHOPIFY_ALLOWED_DOMAINS unset in dev/sandbox/staging keeps the previous
+        permissive behaviour (with a warning) so local development doesn't
+        require boilerplate config.
+    """
     allowed = _allowed_shopify_domains()
     if allowed is None:
+        if _is_production_env():
+            logger.error(
+                "SHOPIFY_ALLOWED_DOMAINS is not configured in production — "
+                "rejecting webhook from %s",
+                shop_domain or "<missing>",
+            )
+            return False
         logger.warning(
             "SHOPIFY_ALLOWED_DOMAINS not configured — accepting webhook from %s (dev mode)",
             shop_domain or "<missing>",
