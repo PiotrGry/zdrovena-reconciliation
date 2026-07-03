@@ -225,9 +225,7 @@ class TestInvoiceCreationWiring:
         store.upsert_draft.side_effect = RuntimeError("store down")
         fakturownia = MagicMock()
 
-        with patch(
-            "zdrovena.api.routers.allegro_poller.create_invoice_for_order"
-        ) as mock_invoicer:
+        with patch("zdrovena.api.routers.allegro_poller.create_invoice_for_order") as mock_invoicer:
             poll_orders_once(
                 client=client,
                 shipping_store=store,
@@ -247,9 +245,7 @@ class TestInvoiceCreationWiring:
         ]
         fakturownia = MagicMock()
 
-        with patch(
-            "zdrovena.api.routers.allegro_poller.create_invoice_for_order"
-        ) as mock_invoicer:
+        with patch("zdrovena.api.routers.allegro_poller.create_invoice_for_order") as mock_invoicer:
             poll_orders_once(
                 client=client,
                 shipping_store=store,
@@ -292,9 +288,7 @@ class TestInvoiceCreationWiring:
         store = MagicMock()
         store.list_drafts.return_value = []
 
-        with patch(
-            "zdrovena.api.routers.allegro_poller.create_invoice_for_order"
-        ) as mock_invoicer:
+        with patch("zdrovena.api.routers.allegro_poller.create_invoice_for_order") as mock_invoicer:
             stats = poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
 
         mock_invoicer.assert_not_called()

@@ -119,9 +119,7 @@ def poll_orders_once(
                 # next order's draft — create_invoice_for_order already logs
                 # and alerts internally, this only guards against a bug in
                 # the orchestrator itself raising instead of returning "error".
-                logger.exception(
-                    "create_invoice_for_order raised for Allegro order %s", allegro_id
-                )
+                logger.exception("create_invoice_for_order raised for Allegro order %s", allegro_id)
                 stats["invoice_errors"] += 1
 
         # Bezpieczny default: NIE oznaczamy zamówienia jako PROCESSING po samym utworzeniu draftu —

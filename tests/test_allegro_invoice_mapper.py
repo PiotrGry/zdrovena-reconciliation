@@ -67,9 +67,7 @@ class TestCompanyBuyer:
         order = _order(
             invoice={
                 "required": True,
-                "address": {
-                    "company": {"name": "Nazwa Firmy Sp. z o.o.", "taxId": "5252674798"}
-                },
+                "address": {"company": {"name": "Nazwa Firmy Sp. z o.o.", "taxId": "5252674798"}},
             }
         )
         invoice = allegro_order_to_fakturownia_invoice(order)

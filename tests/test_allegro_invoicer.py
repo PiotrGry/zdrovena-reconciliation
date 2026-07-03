@@ -89,9 +89,7 @@ class TestFailureAlerts:
         fakturownia.create_invoice.side_effect = RuntimeError("Fakturownia 500")
         allegro = MagicMock()
 
-        with patch(
-            "zdrovena.api.routers.allegro_invoicer._alert_invoice_failure"
-        ) as mock_alert:
+        with patch("zdrovena.api.routers.allegro_invoicer._alert_invoice_failure") as mock_alert:
             result = create_invoice_for_order(
                 _order(), fakturownia_client=fakturownia, allegro_client=allegro
             )
@@ -115,9 +113,7 @@ class TestFailureAlerts:
         allegro = MagicMock()
         allegro.create_invoice_declaration.side_effect = RuntimeError("Allegro 502")
 
-        with patch(
-            "zdrovena.api.routers.allegro_invoicer._alert_invoice_failure"
-        ) as mock_alert:
+        with patch("zdrovena.api.routers.allegro_invoicer._alert_invoice_failure") as mock_alert:
             result = create_invoice_for_order(
                 _order(), fakturownia_client=fakturownia, allegro_client=allegro
             )

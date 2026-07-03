@@ -154,11 +154,11 @@ class TestCreateInvoice:
         payload = {
             "kind": "vat",
             "buyer_name": "Anna Nowak",
-            "positions": [{"name": "HUMIO 6 PET", "tax": 8, "total_price_gross": 73.00, "quantity": 1}],
+            "positions": [
+                {"name": "HUMIO 6 PET", "tax": 8, "total_price_gross": 73.00, "quantity": 1}
+            ],
         }
-        with patch(
-            "requests.Session.request", return_value=_resp({"id": 777, **payload})
-        ) as mock:
+        with patch("requests.Session.request", return_value=_resp({"id": 777, **payload})) as mock:
             out = client.create_invoice(payload)
             _, kwargs = mock.call_args
             assert kwargs["method"] == "POST"
