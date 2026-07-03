@@ -18,6 +18,7 @@ import logging
 import os
 from typing import Any
 
+from zdrovena.api.routers.allegro_invoicer import create_invoice_for_order
 from zdrovena.api.routers.webhooks import _create_draft
 from zdrovena.common.allegro_mapper import allegro_to_shopify_order
 
@@ -42,14 +43,23 @@ def poll_orders_once(
     client: Any,
     shipping_store: Any,
     storage: Any,
+    fakturownia_client: Any = None,
     status: str = "READY_FOR_PROCESSING",
 ) -> dict[str, int]:
-    """One polling cycle. Returns per-cycle stats."""
+    """One polling cycle. Returns per-cycle stats.
+
+    fakturownia_client is optional: pass it to also create + push a Fakturownia
+    invoice for each newly-created draft (see allegro_invoicer.py). Omit it
+    (or pass None) to skip invoicing entirely — e.g. in environments without
+    Fakturownia credentials configured.
+    """
     stats = {
         "fetched": 0,
         "created": 0,
         "skipped_duplicate": 0,
         "errors": 0,
+        "invoices_created": 0,
+        "invoice_errors": 0,
     }
     try:
         forms = client.list_orders(status=status)
@@ -96,6 +106,23 @@ def poll_orders_once(
             continue
 
         stats["created"] += 1
+
+        if fakturownia_client is not None:
+            try:
+                invoice_result = create_invoice_for_order(
+                    form, fakturownia_client=fakturownia_client, allegro_client=client
+                )
+                if invoice_result["status"] == "created":
+                    stats["invoices_created"] += 1
+            except Exception:
+                # Resilience boundary: an invoicing failure must not block the
+                # next order's draft — create_invoice_for_order already logs
+                # and alerts internally, this only guards against a bug in
+                # the orchestrator itself raising instead of returning "error".
+                logger.exception(
+                    "create_invoice_for_order raised for Allegro order %s", allegro_id
+                )
+                stats["invoice_errors"] += 1
 
         # Bezpieczny default: NIE oznaczamy zamówienia jako PROCESSING po samym utworzeniu draftu —
         # sam draft nie oznacza jeszcze nadania. Docelowo oznaczenie powinno paść w execute_draft po
