@@ -30,19 +30,19 @@
   },
   "sender": {
     "id": 5665638875,
-    "name": "JAN KOWALSKI",
-    "company_name": "Maria Gryzło ZDROVENA",
-    "first_name": "MARIA",
-    "last_name": "GRYZŁO",
+    "name": "Jan Kowalski",
+    "company_name": "Fikcyjne Firma SA",
+    "first_name": "Jan",
+    "last_name": "Kamiński",
     "email": "biuro@wodahumio.pl",
-    "phone": "723624437",
+    "phone": "568408015",
     "address": {
       "id": 4019729439,
-      "street": "Cieszyńska",
+      "street": "ul. Testowa 1",
       "building_number": "6/12",
       "line1": null,
       "line2": null,
-      "city": "Kraków",
+      "city": "Wrocław",
       "post_code": "30-015",
       "country_code": "PL"
     }
@@ -50,18 +50,18 @@
   "receiver": {
     "id": 5665638873,
     "name": "Jan Kowalski",
-    "company_name": "Coaching Szkolenia",
-    "first_name": "Anna",
-    "last_name": "Jurewicz",
-    "email": "mnfg8iqklv+767626a64@allegromail.pl",
-    "phone": "605436304",
+    "company_name": "Fikcyjne Firma SA",
+    "first_name": "Jan",
+    "last_name": "Wójcik",
+    "email": "buyerdb68e4ea3c@allegromail.pl",
+    "phone": "576457308",
     "address": {
       "id": 4019729437,
-      "street": "Fiałki",
+      "street": "ul. Mock 4",
       "building_number": "20",
       "line1": null,
       "line2": null,
-      "city": "Górzno, Polska",
+      "city": "Wrocław",
       "post_code": "87-320",
       "country_code": "PL"
     }

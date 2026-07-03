@@ -4,7 +4,7 @@
   "response": {
     "orders": [
       {
-        "id": "479337741",
+        "id": "586008366",
         "service_id": "23",
         "service_name": "DPD Pickup Drzwi-Punkt",
         "waybill_number": "1046066011656U",
@@ -21,8 +21,8 @@
           "phone": "REDACTED",
           "line1": "REDACTED",
           "line2": "",
-          "postal_code": "REDACTED",
-          "city": "REDACTED",
+          "postal_code": "80-001",
+          "city": "Gdańsk",
           "country_code": "PL",
           "foreign_address_id": "PL63666"
         },
@@ -32,7 +32,7 @@
         "supplier": "dpd"
       },
       {
-        "id": "479280890",
+        "id": "508533791",
         "service_id": "23",
         "service_name": "DPD Pickup Drzwi-Punkt",
         "waybill_number": "1045980577174U",
@@ -49,8 +49,8 @@
           "phone": "REDACTED",
           "line1": "REDACTED",
           "line2": "",
-          "postal_code": "REDACTED",
-          "city": "REDACTED",
+          "postal_code": "80-001",
+          "city": "Gdańsk",
           "country_code": "PL",
           "foreign_address_id": "PL62986"
         },
@@ -60,7 +60,7 @@
         "supplier": "dpd"
       },
       {
-        "id": "479215517",
+        "id": "540988961",
         "service_id": "23",
         "service_name": "DPD Pickup Drzwi-Punkt",
         "waybill_number": "1045838810254U",
@@ -77,8 +77,8 @@
           "phone": "REDACTED",
           "line1": "REDACTED",
           "line2": "",
-          "postal_code": "REDACTED",
-          "city": "REDACTED",
+          "postal_code": "80-001",
+          "city": "Gdańsk",
           "country_code": "PL",
           "foreign_address_id": "PL70354"
         },
@@ -88,7 +88,7 @@
         "supplier": "dpd"
       },
       {
-        "id": "479166644",
+        "id": "528036430",
         "service_id": "64",
         "service_name": "Pocztex Kurier Drzwi-Punkt",
         "waybill_number": "PX7588995195",
@@ -105,8 +105,8 @@
           "phone": "REDACTED",
           "line1": "REDACTED",
           "line2": null,
-          "postal_code": "REDACTED",
-          "city": "REDACTED",
+          "postal_code": "80-001",
+          "city": "Gdańsk",
           "country_code": "PL",
           "foreign_address_id": "367682"
         },
@@ -116,7 +116,7 @@
         "supplier": "poczta"
       },
       {
-        "id": "478489557",
+        "id": "533389735",
         "service_id": "64",
         "service_name": "Pocztex Kurier Drzwi-Punkt",
         "waybill_number": "PX7568853427",
@@ -133,8 +133,8 @@
           "phone": "REDACTED",
           "line1": "REDACTED",
           "line2": null,
-          "postal_code": "REDACTED",
-          "city": "REDACTED",
+          "postal_code": "80-001",
+          "city": "Gdańsk",
           "country_code": "PL",
           "foreign_address_id": "932456"
         },
@@ -144,7 +144,7 @@
         "supplier": "poczta"
       },
       {
-        "id": "478430696",
+        "id": "525742489",
         "service_id": "64",
         "service_name": "Pocztex Kurier Drzwi-Punkt",
         "waybill_number": "PX7567151283",
@@ -161,8 +161,8 @@
           "phone": "REDACTED",
           "line1": "REDACTED",
           "line2": null,
-          "postal_code": "REDACTED",
-          "city": "REDACTED",
+          "postal_code": "80-001",
+          "city": "Gdańsk",
           "country_code": "PL",
           "foreign_address_id": "932456"
         },
@@ -172,7 +172,7 @@
         "supplier": "poczta"
       },
       {
-        "id": "478357744",
+        "id": "537965008",
         "service_id": "23",
         "service_name": "DPD Pickup Drzwi-Punkt",
         "waybill_number": "1044564020493U",
@@ -189,8 +189,8 @@
           "phone": "REDACTED",
           "line1": "REDACTED",
           "line2": "",
-          "postal_code": "REDACTED",
-          "city": "REDACTED",
+          "postal_code": "80-001",
+          "city": "Gdańsk",
           "country_code": "PL",
           "foreign_address_id": "PL85132"
         },
@@ -200,7 +200,7 @@
         "supplier": "dpd"
       },
       {
-        "id": "478270996",
+        "id": "516197236",
         "service_id": "23",
         "service_name": "DPD Pickup Drzwi-Punkt",
         "waybill_number": "1044452459086U",
@@ -217,8 +217,8 @@
           "phone": "REDACTED",
           "line1": "REDACTED",
           "line2": "",
-          "postal_code": "REDACTED",
-          "city": "REDACTED",
+          "postal_code": "80-001",
+          "city": "Gdańsk",
           "country_code": "PL",
           "foreign_address_id": "PL64019"
         },
@@ -228,7 +228,7 @@
         "supplier": "dpd"
       },
       {
-        "id": "478270912",
+        "id": "537667750",
         "service_id": "23",
         "service_name": "DPD Pickup Drzwi-Punkt",
         "waybill_number": "1044452331552U",
@@ -245,8 +245,8 @@
           "phone": "REDACTED",
           "line1": "REDACTED",
           "line2": "",
-          "postal_code": "REDACTED",
-          "city": "REDACTED",
+          "postal_code": "80-001",
+          "city": "Gdańsk",
           "country_code": "PL",
           "foreign_address_id": "PL65774"
         },
@@ -256,7 +256,7 @@
         "supplier": "dpd"
       },
       {
-        "id": "478270706",
+        "id": "533326728",
         "service_id": "23",
         "service_name": "DPD Pickup Drzwi-Punkt",
         "waybill_number": "1044452058590U",
@@ -273,8 +273,8 @@
           "phone": "REDACTED",
           "line1": "REDACTED",
           "line2": "",
-          "postal_code": "REDACTED",
-          "city": "REDACTED",
+          "postal_code": "80-001",
+          "city": "Gdańsk",
           "country_code": "PL",
           "foreign_address_id": "PL87732"
         },

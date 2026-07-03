@@ -3,10 +3,10 @@
   "messageToSeller": null,
   "buyer": {
     "id": "53252673",
-    "email": "abqsn58id1+48f7f6069@allegromail.pl",
+    "email": "buyer44e3bd7e9c@allegromail.pl",
     "login": "Client:53252673",
-    "firstName": "Agnieszka",
-    "lastName": "Wojtczak",
+    "firstName": "Jan",
+    "lastName": "Nowak",
     "companyName": null,
     "guest": false,
     "personalIdentity": null,
@@ -15,9 +15,9 @@
       "language": "pl-PL"
     },
     "address": {
-      "street": "Różana, 17",
-      "city": "Sieradz",
-      "postCode": "98-200",
+      "street": "ul. Testowa 1",
+      "city": "Wrocław",
+      "postCode": "50-001",
       "countryCode": "PL"
     }
   },
@@ -45,14 +45,14 @@
   },
   "delivery": {
     "address": {
-      "firstName": "Agnieszka",
-      "lastName": "Wojtczak",
-      "street": "Różana, 17",
-      "city": "Sieradz",
+      "firstName": "Jan",
+      "lastName": "Nowak",
+      "street": "ul. Testowa 1",
+      "city": "Wrocław",
       "zipCode": "98-200",
       "countryCode": "PL",
       "companyName": null,
-      "phoneNumber": "+48697102046",
+      "phoneNumber": "+4814234825",
       "modifiedAt": null
     },
     "method": {
@@ -64,9 +64,9 @@
       "name": "Allegro One Box - AL012ESI",
       "description": "Obok siłowni \"Studio Relaks\"",
       "address": {
-        "street": "Organizacji Katyń 11",
+        "street": "ul. Fikcyjna 3",
         "zipCode": "98-200",
-        "city": "Sieradz",
+        "city": "Wrocław",
         "countryCode": "PL"
       }
     },

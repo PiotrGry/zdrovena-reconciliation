@@ -5,10 +5,10 @@
       "messageToSeller": null,
       "buyer": {
         "id": "53252673",
-        "email": "abqsn58id1+48f7f6069@allegromail.pl",
+        "email": "buyer44e3bd7e9c@allegromail.pl",
         "login": "Client:53252673",
-        "firstName": "Agnieszka",
-        "lastName": "Wojtczak",
+        "firstName": "Jan",
+        "lastName": "Nowak",
         "companyName": null,
         "guest": false,
         "personalIdentity": null,
@@ -17,9 +17,9 @@
           "language": "pl-PL"
         },
         "address": {
-          "street": "Różana, 17",
-          "city": "Sieradz",
-          "postCode": "98-200",
+          "street": "ul. Testowa 1",
+          "city": "Wrocław",
+          "postCode": "50-001",
           "countryCode": "PL"
         }
       },
@@ -47,14 +47,14 @@
       },
       "delivery": {
         "address": {
-          "firstName": "Agnieszka",
-          "lastName": "Wojtczak",
-          "street": "Różana, 17",
-          "city": "Sieradz",
+          "firstName": "Jan",
+          "lastName": "Nowak",
+          "street": "ul. Testowa 1",
+          "city": "Wrocław",
           "zipCode": "98-200",
           "countryCode": "PL",
           "companyName": null,
-          "phoneNumber": "+48697102046",
+          "phoneNumber": "+4814234825",
           "modifiedAt": null
         },
         "method": {
@@ -66,9 +66,9 @@
           "name": "Allegro One Box - AL012ESI",
           "description": "Obok siłowni \"Studio Relaks\"",
           "address": {
-            "street": "Organizacji Katyń 11",
+            "street": "ul. Fikcyjna 3",
             "zipCode": "98-200",
-            "city": "Sieradz",
+            "city": "Wrocław",
             "countryCode": "PL"
           }
         },
@@ -157,10 +157,10 @@
       "messageToSeller": null,
       "buyer": {
         "id": "34685383",
-        "email": "mnfg8iqklv+767626a64@allegromail.pl",
+        "email": "buyerdb68e4ea3c@allegromail.pl",
         "login": "Client:34685383",
-        "firstName": "Anna",
-        "lastName": "Jurewicz",
+        "firstName": "Jan",
+        "lastName": "Wójcik",
         "companyName": null,
         "guest": false,
         "personalIdentity": null,
@@ -169,9 +169,9 @@
           "language": "pl-PL"
         },
         "address": {
-          "street": "Bydgoska 78/1",
-          "city": "Toruń",
-          "postCode": "87-100",
+          "street": "ul. Przykładowa 2",
+          "city": "Wrocław",
+          "postCode": "80-001",
           "countryCode": "PL"
         }
       },
@@ -199,14 +199,14 @@
       },
       "delivery": {
         "address": {
-          "firstName": "Anna",
-          "lastName": "Jurewicz",
-          "street": "Fiałki 20",
-          "city": "Górzno, Polska",
+          "firstName": "Jan",
+          "lastName": "Wójcik",
+          "street": "ul. Mock 4",
+          "city": "Wrocław",
           "zipCode": "87-320",
           "countryCode": "PL",
           "companyName": "Coaching Szkolenia",
-          "phoneNumber": "+48605436304",
+          "phoneNumber": "+4843253216",
           "modifiedAt": null
         },
         "method": {
@@ -218,9 +218,9 @@
           "name": "Paczkomat GRN01BAPP",
           "description": "Market Dino",
           "address": {
-            "street": "Polna 18",
+            "street": "ul. Przykładowa 2",
             "zipCode": "87-320",
-            "city": "Górzno",
+            "city": "Wrocław",
             "countryCode": "PL"
           }
         },
@@ -308,11 +308,11 @@
       "id": "592e64a0-72d1-11f1-aea2-cb14c532efdc",
       "messageToSeller": null,
       "buyer": {
-        "id": "102510974",
-        "email": "5xugjs8i6s+1c24b1287@allegromail.pl",
+        "id": "580859525",
+        "email": "buyer9a463e35d5@allegromail.pl",
         "login": "Client:102510974",
-        "firstName": "Marek",
-        "lastName": "Kwieciński",
+        "firstName": "Jan",
+        "lastName": "Kowalczyk",
         "companyName": null,
         "guest": false,
         "personalIdentity": null,
@@ -321,9 +321,9 @@
           "language": "pl-PL"
         },
         "address": {
-          "street": "Kraszewskiego 10",
-          "city": "Leżajsk",
-          "postCode": "37-300",
+          "street": "ul. Mock 4",
+          "city": "Gdańsk",
+          "postCode": "30-001",
           "countryCode": "PL"
         }
       },
@@ -351,14 +351,14 @@
       },
       "delivery": {
         "address": {
-          "firstName": "Marek",
-          "lastName": "Kwieciński",
-          "street": "Kraszewskiego 10",
-          "city": "Leżajsk",
+          "firstName": "Jan",
+          "lastName": "Kowalczyk",
+          "street": "ul. Mock 4",
+          "city": "Gdańsk",
           "zipCode": "37-300",
           "countryCode": "PL",
           "companyName": null,
-          "phoneNumber": "+48690123436",
+          "phoneNumber": "+4876483510",
           "modifiedAt": null
         },
         "method": {
@@ -370,9 +370,9 @@
           "name": "Automat ORLEN Paczka",
           "description": "Automat paczkowy na parkingu przy lokalu usługowym",
           "address": {
-            "street": "Jagiełły 2A",
+            "street": "ul. Mock 4",
             "zipCode": "37-300",
-            "city": "Leżajsk",
+            "city": "Gdańsk",
             "countryCode": "PL"
           }
         },

@@ -21,7 +21,7 @@
   "company": null,
   "confirmation_number": "LA0MYPLPN",
   "confirmed": true,
-  "contact_email": "userkatr6193@example.com",
+  "contact_email": "userfe6aaa64a1@example.com",
   "created_at": "2026-05-14T08:55:35+02:00",
   "currency": "PLN",
   "current_subtotal_price": "85.00",
@@ -74,7 +74,7 @@
   "device_id": null,
   "discount_codes": [],
   "duties_included": false,
-  "email": "userkatr6193@example.com",
+  "email": "userfe6aaa64a1@example.com",
   "estimated_taxes": false,
   "financial_status": "paid",
   "fulfillment_status": "fulfilled",
@@ -116,15 +116,15 @@
     },
     {
       "name": "customer_email",
-      "value": "userkatr6193@example.com"
+      "value": "userfe6aaa64a1@example.com"
     },
     {
       "name": "customer_first_name",
-      "value": "Katarzyna"
+      "value": "Jan"
     },
     {
       "name": "customer_last_name",
-      "value": "Malinowska"
+      "value": "Kowalczyk"
     },
     {
       "name": "shipping_street",
@@ -286,14 +286,14 @@
   "updated_at": "2026-05-14T09:01:44+02:00",
   "user_id": null,
   "billing_address": {
-    "first_name": "Katarzyna",
-    "address1": "gostyńska 42a",
-    "phone": "+48602345678",
-    "city": "śrem",
-    "zip": "63-100",
+    "first_name": "Jan",
+    "address1": "ul. Mock 4",
+    "phone": "+4824908703",
+    "city": "Wrocław",
+    "zip": "60-001",
     "province": null,
     "country": "Poland",
-    "last_name": "Malinowska",
+    "last_name": "Kowalczyk",
     "address2": null,
     "company": null,
     "latitude": 52.0790917,
@@ -467,14 +467,14 @@
   "payment_terms": null,
   "refunds": [],
   "shipping_address": {
-    "first_name": "Katarzyna",
-    "address1": "Gostyńska 51",
-    "phone": "+48602345678",
-    "city": "Śrem",
-    "zip": "63-100",
+    "first_name": "Jan",
+    "address1": "ul. Mock 4",
+    "phone": "+4824908703",
+    "city": "Wrocław",
+    "zip": "60-001",
     "province": "",
     "country": "Poland",
-    "last_name": "Malinowska",
+    "last_name": "Kowalczyk",
     "address2": "",
     "company": "DPD - DPD Pickup- \"Sklep Żabka\" - PL72095",
     "latitude": 52.0778907,

@@ -847,22 +847,22 @@
     "options": {
       "11": {
         "type": "bool",
-        "name": "Zwrot dokumentów",
+        "name": "Jan Nowak",
         "desc": "Zwrot dokumentów"
       },
       "19": {
         "type": "bool",
-        "name": "Dostawa w sobotę",
+        "name": "Adam Wiśniewski",
         "desc": "Dla wybranych przewoźników"
       },
       "31": {
         "type": "bool",
-        "name": "Powiadomienie SMS",
+        "name": "Magdalena Nowak",
         "desc": ""
       },
       "44": {
         "type": "bool",
-        "name": "Doręczenie do rąk własnych",
+        "name": "Adam Wiśniewski",
         "desc": "Doręczenie do rąk własnych aka Bezpośrednie doręczenie"
       },
       "58": {
@@ -877,7 +877,7 @@
       },
       "85": {
         "type": "bool",
-        "name": "Podjazd z listem",
+        "name": "Adam Wiśniewski",
         "desc": "Kurier przywiezie list przewozowy dla twojej przesyłki."
       },
       "88": {
@@ -887,42 +887,42 @@
       },
       "91": {
         "type": "bool",
-        "name": "Nadanie na umowie własnej",
+        "name": "Jan Nowak",
         "desc": ""
       },
       "92": {
         "type": "bool",
-        "name": "Nadanie bez etykiety",
+        "name": "Adam Wiśniewski",
         "desc": ""
       },
       "128": {
         "type": "bool",
-        "name": "Przedmioty kruche",
+        "name": "Adam Wiśniewski",
         "desc": ""
       },
       "129": {
         "type": "bool",
-        "name": "Płyny lub gazy",
+        "name": "Adam Wiśniewski",
         "desc": ""
       },
       "130": {
         "type": "bool",
-        "name": "Żywe owady",
+        "name": "Magdalena Nowak",
         "desc": ""
       },
       "131": {
         "type": "bool",
-        "name": "Żywe ptaki",
+        "name": "Magdalena Nowak",
         "desc": ""
       },
       "132": {
         "type": "bool",
-        "name": "Żywe rośliny",
+        "name": "Jan Nowak",
         "desc": ""
       },
       "134": {
         "type": "bool",
-        "name": "Sprawdzenie zawartości",
+        "name": "Adam Wiśniewski",
         "desc": "Sprawdzenie zawartości przy odbiorze"
       }
     },
