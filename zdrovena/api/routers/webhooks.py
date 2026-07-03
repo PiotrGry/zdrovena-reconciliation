@@ -38,7 +38,7 @@ from fastapi import (
     Response,
     status,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, ShopifyDedupStoreDep, StorageDep
@@ -1013,6 +1013,126 @@ def execute_draft(
         shipping_store.update_draft(draft_id, {"status": "error", "error": str(exc)})
         raise HTTPException(status_code=502, detail=f"Courier API error: {exc}") from exc
 
+    shipping_store.update_draft(draft_id, patch)
+    updated = shipping_store.get_draft(draft_id)
+    if updated:
+        _maybe_push_tracking_to_allegro(updated)
+    return updated or patch
+
+
+# ── Confirm pending Allegro create-command ───────────────────────────────────
+
+
+@router.post(
+    "/shipping/drafts/{draft_id}/confirm",
+    summary="Poll Allegro create-command and finalise a pending_confirmation draft",
+    responses={
+        403: {"description": "Insufficient role"},
+        404: {"description": "Draft not found"},
+        409: {"description": "Draft not in pending_confirmation state"},
+        202: {"description": "Still pending"},
+        502: {"description": "Allegro API error"},
+    },
+)
+def confirm_pending_command(
+    draft_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> Any:
+    """Poll an outstanding Allegro create-command and finalise the draft.
+
+    Ship-with-Allegro create-commands are asynchronous. ``execute_draft`` returns
+    ``pending_confirmation`` when the command is still IN_PROGRESS after the
+    short in-request polling window. This endpoint is the durable follow-up:
+    call it (via UI action or a cron/worker) to check the command status and
+    either promote the draft to ``created`` (SUCCESS) or ``error`` (ERROR).
+
+    Idempotent: safe to call multiple times. Returns the current draft.
+    """
+    draft = shipping_store.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if draft.get("status") != "pending_confirmation":
+        raise HTTPException(
+            status_code=409,
+            detail="Draft is not pending confirmation",
+        )
+
+    command_id = draft.get("allegro_command_id")
+    if not command_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Draft has no allegro_command_id",
+        )
+
+    if _MOCK_COURIER:
+        # Mock path: just flip to created so E2E tests can move on.
+        patch = {
+            "status": "created",
+            "courier_draft_id": f"mock-allegro-{draft.get('shopify_order_number', 'x')}",
+            "tracking_number": "AWA00000000",
+            "error": None,
+        }
+        shipping_store.update_draft(draft_id, patch)
+        return shipping_store.get_draft(draft_id) or patch
+
+    client = _get_allegro_client()
+    if client is None:
+        raise HTTPException(status_code=502, detail="Allegro credentials missing")
+
+    try:
+        status_payload = client.get_ship_with_allegro_command_status(str(command_id))
+    except (AllegroAuthError, CourierTransientError) as exc:
+        logger.exception("Confirm poll failed for draft %s", draft_id)
+        raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
+
+    status = (status_payload or {}).get("status")
+    if status == "IN_PROGRESS":
+        # Still pending — return 202 so operator/worker can poll again later.
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "pending_confirmation",
+                "allegro_command_id": str(command_id),
+                "draft_id": draft_id,
+            },
+        )
+    if status == "ERROR":
+        errors = status_payload.get("errors") or []
+        detail = "; ".join(str(e.get("message") or e) for e in errors) or "Allegro command failed"
+        patch = {
+            "status": "error",
+            "error": f"Allegro create-command {command_id} failed: {detail}",
+        }
+        shipping_store.update_draft(draft_id, patch)
+        raise HTTPException(status_code=502, detail=patch["error"])
+    if status != "SUCCESS":
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unexpected Allegro command status: {status!r}",
+        )
+
+    shipment_id = status_payload.get("shipmentId")
+    if not shipment_id:
+        raise HTTPException(
+            status_code=502,
+            detail="Allegro command SUCCESS but no shipmentId returned",
+        )
+
+    try:
+        shipment = client.get_ship_with_allegro_shipment(str(shipment_id))
+        _carrier_id, waybill = client.extract_shipment_waybill(shipment)
+    except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
+        logger.exception("Fetching shipment %s failed", shipment_id)
+        raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
+
+    patch = {
+        "status": "created",
+        "courier_draft_id": str(shipment_id),
+        "allegro_shipment_id": str(shipment_id),
+        "tracking_number": waybill,
+        "error": None,
+    }
     shipping_store.update_draft(draft_id, patch)
     updated = shipping_store.get_draft(draft_id)
     if updated:
