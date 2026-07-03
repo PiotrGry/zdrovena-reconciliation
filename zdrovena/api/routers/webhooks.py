@@ -523,11 +523,13 @@ def _run_allegro_delivery(
         raise RuntimeError("Allegro credentials missing — cannot use Ship with Allegro")
 
     order_id = str(draft.get("external_order_id") or "")
-    delivery_method_id = draft.get("allegro_delivery_method_id")
-    if not order_id or not delivery_method_id:
-        raise RuntimeError(
-            "Ship with Allegro requires external_order_id and allegro_delivery_method_id"
-        )
+    if not order_id:
+        raise RuntimeError("Ship with Allegro requires external_order_id")
+    # deliveryMethodId is optional since 2026-07-01 — Allegro auto-derives it
+    # from the order. Kept read here so callers with own agreements can still
+    # force a specific method by populating allegro_delivery_method_id in the
+    # draft, but its absence must NOT abort the flow.
+    delivery_method_id = draft.get("allegro_delivery_method_id") or None
 
     # Build packages per Allegro create-commands contract: FLAT dimensions, each a
     # {"value", "unit"} object; weight unit is the plural "KILOGRAMS"; type is required.

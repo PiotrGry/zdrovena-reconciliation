@@ -423,7 +423,24 @@ class AllegroClient:
     # Docs: developer.allegro.pl/tutorials/jak-zarzadzac-przesylkami-przez-wysylam-z-allegro-LRVjK7K21sY
 
     def get_delivery_services(self) -> list[dict[str, Any]]:
-        """List available delivery services (Allegro Standard + own agreements)."""
+        """List available delivery services (Allegro Standard + own agreements).
+
+        .. deprecated:: 2026-Q1 2027
+            This endpoint (``GET /shipment-management/delivery-services``) is
+            marked for removal in Q1 2027. ``deliveryMethodId`` is now optional
+            in ``create-commands`` — Allegro auto-derives it from the order.
+            Do not call this in the request path; move to an offline job if
+            you still need the list for UI/config.
+        """
+        import warnings
+
+        warnings.warn(
+            "AllegroClient.get_delivery_services is deprecated: Allegro is "
+            "removing GET /shipment-management/delivery-services in Q1 2027. "
+            "Rely on deliveryMethodId being auto-derived by the order.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         data = self._get("/shipment-management/delivery-services")
         return list(data.get("deliveryServices") or [])
 
@@ -436,12 +453,12 @@ class AllegroClient:
         *,
         command_id: str,
         order_id: str,
-        delivery_method_id: str,
         credentials_id: str | None,
         packages: list[dict[str, Any]],
         sender: dict[str, Any],
         receiver: dict[str, Any],
         additional_services: list[str] | None = None,
+        delivery_method_id: str | None = None,
     ) -> dict[str, Any]:
         """POST /shipment-management/shipments/create-commands.
 
@@ -458,14 +475,24 @@ class AllegroClient:
 
         For Allegro Standard: pass credentials_id=None.
         For own agreements: pass the credentialsId returned by get_delivery_services.
+
+        .. note::
+            Since 2026-07-01 ``deliveryMethodId`` is optional — Allegro auto-
+            derives it from the order. Omit it (or pass None) to future-proof
+            against the Q1 2027 removal of GET /shipment-management/delivery-
+            services. Kept accepting an explicit value for callers that still
+            manage their own agreements manually.
         """
         input_body: dict[str, Any] = {
-            "deliveryMethodId": delivery_method_id,
             "sender": sender,
             "receiver": receiver,
             "referenceNumber": order_id,
             "packages": packages,
         }
+        if delivery_method_id:
+            # Kept for callers using own agreements; Allegro Standard should
+            # simply omit this and let the server pick.
+            input_body["deliveryMethodId"] = delivery_method_id
         if credentials_id is not None:
             input_body["credentialsId"] = credentials_id
         if additional_services:

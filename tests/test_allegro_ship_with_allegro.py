@@ -183,6 +183,49 @@ class TestCreateShipmentCommand:
         assert "pickupPointId" not in body["input"]
         assert "credentialsId" not in body["input"] or body["input"]["credentialsId"] is None
 
+    def test_omits_delivery_method_id_when_none(self):
+        """Since 2026-07-01 deliveryMethodId is optional — Allegro derives it.
+
+        Verify we do NOT send the field when not supplied. Future-proof against
+        Q1 2027 removal of GET /shipment-management/delivery-services.
+        """
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(201, {"commandId": "x", "status": "IN_PROGRESS"}),
+        ) as m:
+            c.create_ship_with_allegro_shipment(
+                command_id="x",
+                order_id="O1",
+                credentials_id=None,
+                sender=_SENDER,
+                receiver=_RECEIVER,
+                packages=[_PACKAGE],
+            )
+        body = m.call_args[1]["json"]
+        assert "deliveryMethodId" not in body["input"]
+
+    def test_still_sends_delivery_method_id_when_explicitly_set(self):
+        """Callers with own agreements can still pin a specific method."""
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(201, {"commandId": "x", "status": "IN_PROGRESS"}),
+        ) as m:
+            c.create_ship_with_allegro_shipment(
+                command_id="x",
+                order_id="O1",
+                delivery_method_id="own-agreement-method",
+                credentials_id="creds-1",
+                sender=_SENDER,
+                receiver=_RECEIVER,
+                packages=[_PACKAGE],
+            )
+        body = m.call_args[1]["json"]
+        assert body["input"]["deliveryMethodId"] == "own-agreement-method"
+
     def test_additional_services_is_array_of_strings(self):
         c = _mock_client()
         with patch.object(
