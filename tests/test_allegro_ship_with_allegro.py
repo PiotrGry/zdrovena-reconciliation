@@ -265,6 +265,67 @@ class TestCreateShipmentCommand:
         body = m.call_args[1]["json"]
         assert "additionalServices" not in body["input"]
 
+    def test_additional_properties_inpost_sending_method_sent(self):
+        """P1-2: InPost sendingMethod goes to additionalProperties (issue #9915)."""
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(201, {"commandId": "x", "status": "IN_PROGRESS"}),
+        ) as m:
+            c.create_ship_with_allegro_shipment(
+                command_id="x",
+                order_id="O1",
+                credentials_id=None,
+                sender=_SENDER,
+                receiver=_RECEIVER,
+                packages=[_PACKAGE],
+                additional_properties={"inpost#sendingMethod": "parcel_locker"},
+            )
+        body = m.call_args[1]["json"]
+        assert body["input"]["additionalProperties"] == {
+            "inpost#sendingMethod": "parcel_locker"
+        }
+
+    def test_additional_properties_omitted_by_default(self):
+        """P1-2: additionalProperties key must be absent when not provided."""
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(201, {"commandId": "x", "status": "IN_PROGRESS"}),
+        ) as m:
+            c.create_ship_with_allegro_shipment(
+                command_id="x",
+                order_id="O1",
+                credentials_id=None,
+                sender=_SENDER,
+                receiver=_RECEIVER,
+                packages=[_PACKAGE],
+            )
+        body = m.call_args[1]["json"]
+        assert "additionalProperties" not in body["input"]
+
+    def test_additional_properties_empty_dict_treated_as_omitted(self):
+        """Empty dict should not produce a payload key."""
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(201, {"commandId": "x", "status": "IN_PROGRESS"}),
+        ) as m:
+            c.create_ship_with_allegro_shipment(
+                command_id="x",
+                order_id="O1",
+                credentials_id=None,
+                sender=_SENDER,
+                receiver=_RECEIVER,
+                packages=[_PACKAGE],
+                additional_properties={},
+            )
+        body = m.call_args[1]["json"]
+        assert "additionalProperties" not in body["input"]
+
     def test_own_agreement_passes_credentials_id(self):
         c = _mock_client()
         with patch.object(

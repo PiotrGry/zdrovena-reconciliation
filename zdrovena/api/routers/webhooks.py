@@ -555,10 +555,21 @@ def _run_allegro_delivery(
     if pickup_point_id:
         receiver["point"] = pickup_point_id
 
-    # TODO: map draft["allegro_sending_method"] to a valid Allegro additionalServices
-    # string once the courier→service mapping is confirmed. The previous
-    # "sendingAtPoint"/"parcel_locker" values were not valid API values, so we omit
-    # additionalServices for now rather than send a 400-inducing payload.
+    # Map InPost sending mode to Allegro additionalProperties.inpost#sendingMethod.
+    # Contract per Allegro issue #9915 (https://github.com/allegro/allegro-api/issues/9915):
+    # valid enum values are parcel_locker | dispatch_order | pop | any_point.
+    # Only sent for InPost draft s; other carriers derive the field from the order.
+    _ALLEGRO_INPOST_SENDING_METHODS = {
+        "parcel_locker",
+        "dispatch_order",
+        "pop",
+        "any_point",
+    }
+    additional_properties: dict[str, Any] | None = None
+    sending_method = draft.get("allegro_sending_method")
+    if sending_method and sending_method in _ALLEGRO_INPOST_SENDING_METHODS:
+        additional_properties = {"inpost#sendingMethod": sending_method}
+
     command_id = str(_uuid.uuid4())
 
     client.create_ship_with_allegro_shipment(
@@ -569,6 +580,7 @@ def _run_allegro_delivery(
         packages=packages,
         sender=sender,
         receiver=receiver,
+        additional_properties=additional_properties,
     )
 
     # Non-blocking: krótki polling ~3s. Jeśli create-command jeszcze IN_PROGRESS — zwracamy

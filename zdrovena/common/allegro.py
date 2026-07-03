@@ -458,6 +458,7 @@ class AllegroClient:
         sender: dict[str, Any],
         receiver: dict[str, Any],
         additional_services: list[str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
         delivery_method_id: str | None = None,
     ) -> dict[str, Any]:
         """POST /shipment-management/shipments/create-commands.
@@ -472,6 +473,9 @@ class AllegroClient:
             (``length``/``width``/``height``/``weight`` each a ``{"value", "unit"}``
             object — weight unit is the plural ``KILOGRAMS``).
           - ``additional_services`` is an Array of Allegro service strings.
+          - ``additional_properties`` is a dict of carrier-specific extras
+            (e.g. ``{"inpost#sendingMethod": "parcel_locker"}`` — see Allegro
+            issue #9915). Keys are namespaced by carrier; only sent when set.
 
         For Allegro Standard: pass credentials_id=None.
         For own agreements: pass the credentialsId returned by get_delivery_services.
@@ -497,6 +501,8 @@ class AllegroClient:
             input_body["credentialsId"] = credentials_id
         if additional_services:
             input_body["additionalServices"] = list(additional_services)
+        if additional_properties:
+            input_body["additionalProperties"] = dict(additional_properties)
 
         return self._post(
             "/shipment-management/shipments/create-commands",

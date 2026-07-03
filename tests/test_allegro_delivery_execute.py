@@ -136,8 +136,54 @@ class TestRunAllegroDelivery:
         # sender/receiver blocks come from the delivery proposal.
         assert call.kwargs["sender"] == _PROPOSAL["senderData"]
         assert call.kwargs["receiver"]["name"] == _PROPOSAL["receiverData"]["name"]
-        # sending_method mapping was removed (invalid API value).
-        assert "sending_method" not in call.kwargs
+        # sending_method is now mapped to additionalProperties; when None it's omitted.
+        assert call.kwargs.get("additional_properties") is None
+
+    def test_maps_sending_method_to_additional_properties(self):
+        """P1-2: draft.allegro_sending_method -> additionalProperties.inpost#sendingMethod."""
+        client = MagicMock()
+        client.get_delivery_proposal.return_value = _PROPOSAL
+        client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-1"}
+        client.wait_for_ship_with_allegro_shipment.return_value = "ship-1"
+        client.get_ship_with_allegro_shipment.return_value = {
+            "packages": [{"transportingInfo": [{"carrierId": "INPOST", "carrierWaybill": "W1"}]}]
+        }
+        client.extract_shipment_waybill = MagicMock(return_value=("INPOST", "W1"))
+
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client",
+            return_value=client,
+        ):
+            # default _draft() already sets allegro_sending_method='parcel_locker'
+            _run_allegro_delivery(self._draft(), MagicMock())
+
+        call = client.create_ship_with_allegro_shipment.call_args
+        assert call.kwargs["additional_properties"] == {
+            "inpost#sendingMethod": "parcel_locker"
+        }
+
+    def test_ignores_unknown_sending_method(self):
+        """P1-2: unknown allegro_sending_method values are silently dropped."""
+        client = MagicMock()
+        client.get_delivery_proposal.return_value = _PROPOSAL
+        client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-1"}
+        client.wait_for_ship_with_allegro_shipment.return_value = "ship-1"
+        client.get_ship_with_allegro_shipment.return_value = {
+            "packages": [{"transportingInfo": [{"carrierId": "INPOST", "carrierWaybill": "W1"}]}]
+        }
+        client.extract_shipment_waybill = MagicMock(return_value=("INPOST", "W1"))
+
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client",
+            return_value=client,
+        ):
+            _run_allegro_delivery(
+                self._draft(allegro_sending_method="bogus_value"),
+                MagicMock(),
+            )
+
+        call = client.create_ship_with_allegro_shipment.call_args
+        assert call.kwargs.get("additional_properties") is None
 
     def test_passes_pickup_point_for_locker(self):
         client = MagicMock()
