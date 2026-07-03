@@ -40,7 +40,7 @@
         "company_name": "TEST Seller Sp. z o.o.",
         "first_name": "TEST",
         "last_name": "Buyer",
-        "email": "biuro@wodahumio.pl",
+        "email": "test@example.com",
         "phone": "000000000",
         "address": {
           "id": 4019729439,
@@ -180,7 +180,7 @@
         "company_name": "TEST Seller Sp. z o.o.",
         "first_name": "TEST",
         "last_name": "Buyer",
-        "email": "biuro@wodahumio.pl",
+        "email": "test@example.com",
         "phone": "000000000",
         "address": {
           "id": 3993626022,

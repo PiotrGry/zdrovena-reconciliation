@@ -63,8 +63,8 @@ def fake_email(seed: str) -> str:
         # Preserve allegromail domain so any parser that keys on it still works
         if "@allegromail.pl" in seed:
             return "buyer@allegromail.pl"
-        if "@wodahumio.pl" in seed or "@zdrovena" in seed:
-            return seed
+        # Scrub even seller emails (@wodahumio.pl / @zdrovena.pl) — fixtures
+        # committed to git must be uniformly "obviously testowe".
         return "test@example.com"
     tag = hashlib.sha256(seed.encode()).hexdigest()[:10]
     # Preserve allegromail suffix pattern so tests keying on it still work
@@ -127,14 +127,21 @@ _EXTRA_PERSON_FIELDS = {
     "contact_person",
 }
 
-# Domains / values that should be preserved intact
-_KEEP = {
-    "info@wodahumio.pl",
-    "biuro@wodahumio.pl",
-    "biuro@zdrovena.pl",
-    "info@zdrovena.pl",
-    "kontakt@zdrovena.pl",
-}
+# Domains / values that should be preserved intact.
+# In TEST_MODE we intentionally scrub even the seller's own contact info so
+# committed fixtures look uniformly "obviously testowe" — no reviewer should
+# mistake any string in a committed fixture for real production data.
+_KEEP: set[str] = (
+    set()
+    if TEST_MODE
+    else {
+        "info@wodahumio.pl",
+        "biuro@wodahumio.pl",
+        "biuro@zdrovena.pl",
+        "info@zdrovena.pl",
+        "kontakt@zdrovena.pl",
+    }
+)
 
 
 def _sanitize_str(s: str) -> str:
@@ -222,6 +229,21 @@ _PII_FIELD_NAMES = {
     "buyer_company_name",
     "company_name",
     "name",  # careful — used at top level in Allegro checkout form
+    # Fakturownia seller_* block — not customer PII but still real company info
+    # that a reviewer shouldn't confuse with production data.
+    "seller_name",
+    "seller_street",
+    "seller_city",
+    "seller_post_code",
+    "seller_country",
+    "seller_phone",
+    "seller_email",
+    "seller_fax",
+    "seller_www",
+    "seller_bank",
+    "seller_tax_no",
+    "seller_bdo_no",
+    "seller_bank_account",
 }
 
 # Parent-key contexts where 'name' means a product/service/etc — NOT a person.
@@ -258,7 +280,6 @@ _NAME_SAFE_PARENTS = {
     "currency",
     "status",
     "buyer_bank_account",
-    "seller_bank_account",
     "warehouse",
     "pickup_point",
     "pickupPoint",
@@ -285,7 +306,6 @@ _NAME_SAFE_PARENTS = {
     "buyer_delivery_point",
     "buyer_pickup_point",
     "customer_pickup_point",
-    "seller_bank",
     "buyer_bank",
 }
 
@@ -302,11 +322,18 @@ def _pick_replacement(field: str, seed_val: str) -> str | None:
             return "TEST"
         if field in ("last_name", "lastName", "buyer_last_name", "recipient_last_name"):
             return "Buyer"
-        if field in ("city", "buyer_city", "recipient_city"):
+        if field in ("city", "buyer_city", "recipient_city", "seller_city"):
             return "Warszawa"
-        if field in ("street", "street1", "address1", "buyer_street", "recipient_street"):
+        if field in (
+            "street",
+            "street1",
+            "address1",
+            "buyer_street",
+            "recipient_street",
+            "seller_street",
+        ):
             return "ul. Testowa 1"
-        if field in ("phoneNumber", "phone_number"):
+        if field in ("phoneNumber", "phone_number", "seller_phone"):
             return "+48000000000"
         if field in ("street2", "address2"):
             return ""
@@ -320,12 +347,32 @@ def _pick_replacement(field: str, seed_val: str) -> str | None:
             "buyer_post_code",
             "buyer_zip_code",
             "recipient_post_code",
+            "seller_post_code",
         ):
             return "00-000"
-        if field in ("company_name", "buyer_company_name", "recipient_company_name"):
+        if field in (
+            "company_name",
+            "buyer_company_name",
+            "recipient_company_name",
+            "seller_name",
+        ):
             return "TEST Seller Sp. z o.o."
         if field in ("buyer_name", "recipient_name", "name"):
             return "TEST Buyer"
+        if field == "seller_person":
+            return "TEST Buyer"
+        if field == "seller_email":
+            return "test@example.com"
+        if field == "seller_country":
+            return "PL"
+        if field == "seller_bank":
+            return "TEST Bank"
+        if field == "seller_tax_no":
+            return "0000000000"
+        if field == "seller_bank_account":
+            return "PL00000000000000000000000000"
+        if field in ("seller_fax", "seller_www", "seller_bdo_no"):
+            return ""
         return None
 
     if field in ("first_name", "firstName", "buyer_first_name", "recipient_first_name"):
