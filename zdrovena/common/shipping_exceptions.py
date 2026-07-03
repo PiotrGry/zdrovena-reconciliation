@@ -267,6 +267,67 @@ class InPostInvalidServiceError(InPostBusinessError):
         )
 
 
+class InPostShipmentNotCancellable(InPostBusinessError):
+    """Shipment is in a status that no longer allows cancellation.
+
+    Raised by ``InPostClient.cancel_shipment`` when the pre-flight status
+    check reveals the shipment has already been handed off to the courier
+    (statuses like ``dispatched_by_sender``, ``sent_from_source_branch``,
+    ``delivered``). Also raised when the server responds with a 422 to the
+    DELETE call — kept as a dedicated subclass so callers can distinguish
+    "you missed the window" from generic 4xx failures.
+    """
+
+    def __init__(
+        self,
+        shipment_id: str = "",
+        current_status: str = "",
+        order_id: str = "",
+    ) -> None:
+        message = (
+            f"InPost shipment {shipment_id!r} cannot be cancelled"
+            + (f" (status={current_status!r})" if current_status else "")
+        )
+        super().__init__(
+            message,
+            order_id=order_id,
+            courier="inpost",
+            action="cancel_shipment",
+            payload_snippet=current_status or shipment_id,
+        )
+        self.shipment_id = shipment_id
+        self.current_status = current_status
+
+
+class InPostOrganizationError(InPostBusinessError):
+    """Non-recoverable organisation-level error surfaced by the InPost API.
+
+    Covers cases like ``debt_collection`` (billing hold) and
+    ``trucker_id_not_set`` (missing carrier assignment on the organisation).
+    These are configuration/business issues that block *any* shipment for the
+    organisation — no amount of retrying will fix them, so they are surfaced
+    as their own subclass rather than looking like a transient 4xx.
+    """
+
+    def __init__(
+        self,
+        code: str = "",
+        detail: str = "",
+        order_id: str = "",
+        action: str = "create_shipment",
+    ) -> None:
+        message = f"InPost organisation error {code!r}: {detail or '(no detail)'}"
+        super().__init__(
+            message,
+            order_id=order_id,
+            courier="inpost",
+            action=action,
+            payload_snippet=code,
+        )
+        self.code = code
+        self.detail = detail
+
+
 class ApaczkaServiceUnavailableError(ApaczkaBusinessError):
     def __init__(self, service_id: str = "", order_id: str = "") -> None:
         super().__init__(

@@ -17,6 +17,8 @@ from zdrovena.common.shipping_exceptions import (
     InPostAuthError,
     InPostBusinessError,
     InPostError,
+    InPostOrganizationError,
+    InPostShipmentNotCancellable,
     InPostTransientError,
 )
 
@@ -29,6 +31,54 @@ _TIMEOUT = int(os.environ.get("INPOST_TIMEOUT", "15"))
 # without a contract must use inpost_courier_c2c. Set the env var only on
 # sandbox; in production leave it unset to keep the standard service.
 _COURIER_SERVICE = os.environ.get("INPOST_COURIER_SERVICE", "inpost_courier_standard")
+
+# Organisation-level error codes surfaced as InPostOrganizationError.
+# These are business/config problems that block ALL shipments for the account
+# — no amount of retrying at the shipment level will unblock them.
+_INPOST_ORG_ERROR_CODES = frozenset(
+    {
+        "debt_collection",  # organisation account is on billing hold
+        "trucker_id_not_set",  # missing carrier assignment (kurier account)
+    }
+)
+
+# Shipment statuses beyond which a cancel is no longer possible.
+# Source: ShipX API status glossary. Anything at or past `dispatched_by_sender`
+# means the parcel has been handed to the courier network.
+_INPOST_UNCANCELLABLE_STATUSES = frozenset(
+    {
+        "dispatched_by_sender",
+        "collected_from_sender",
+        "taken_by_courier",
+        "sent_from_source_branch",
+        "adopted_at_source_branch",
+        "out_for_delivery",
+        "ready_to_pickup",
+        "delivered",
+        "returned_to_sender",
+        "canceled",
+    }
+)
+
+
+def _extract_error_code(resp: requests.Response) -> str:
+    """Best-effort pull of the InPost error code from a 4xx response body.
+
+    ShipX 4xx envelopes look like ``{"error": "...", "message": "...", ...}``
+    or occasionally ``{"code": "...", "details": {...}}``. Returns "" if we
+    can't parse JSON or find a known key.
+    """
+    try:
+        payload = resp.json()
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("error", "code"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
 
 # Physical dimensions and weights per package type produced by _calc_packages.
 # Dimensions in cm; weight_kg is gross weight of a single box.
@@ -159,6 +209,20 @@ class InPostClient:
                 action=action,
             )
         if status >= HTTPStatus.BAD_REQUEST:
+            # Surface known organisation-level codes as their own exception so
+            # callers don't have to grep response bodies. InPost puts the code
+            # in the top-level `error` field on ShipX 4xx envelopes.
+            code = _extract_error_code(resp)
+            if code in _INPOST_ORG_ERROR_CODES:
+                raise InPostOrganizationError(
+                    code=code,
+                    detail=body,
+                    action=action,
+                )
+            if action == "cancel_shipment" and status == HTTPStatus.UNPROCESSABLE_ENTITY:
+                # Server told us the shipment can't be cancelled (usually because
+                # it's already been dispatched). Surface the dedicated subclass.
+                raise InPostShipmentNotCancellable(current_status=code or "")
             raise InPostBusinessError(
                 f"InPost {status}: {body}",
                 courier="inpost",
@@ -305,11 +369,41 @@ class InPostClient:
 
     # ── Cancel ────────────────────────────────────────────────────────────────
 
-    def cancel_shipment(self, shipment_id: str) -> None:
-        """Cancel a shipment. Only possible while status is created/confirmed.
+    def get_shipment(self, shipment_id: str) -> dict[str, Any]:
+        """Return the ShipX shipment envelope. Includes the current ``status``.
 
-        A 422 (already dispatched) surfaces as InPostBusinessError via _request.
+        Used as the pre-flight for cancel_shipment; also useful for reconciliation
+        workers polling status transitions.
         """
+        url = f"{_BASE}/v1/shipments/{shipment_id}"
+        resp = self._request("GET", url, action="get_shipment")
+        return resp.json()
+
+    def cancel_shipment(self, shipment_id: str) -> None:
+        """Cancel a shipment.
+
+        Guard order:
+          1. Pre-flight: GET the shipment and inspect ``status``. If it is one of
+             the ``_INPOST_UNCANCELLABLE_STATUSES`` (already dispatched, delivered,
+             etc.), raise :class:`InPostShipmentNotCancellable` *without* hitting
+             DELETE — avoids the noisy 422 and gives callers a typed error.
+          2. Send DELETE. If the server still returns 422 (race condition, or a
+             status transition we haven't enumerated), ``_request`` surfaces the
+             same :class:`InPostShipmentNotCancellable` exception.
+        """
+        try:
+            existing = self.get_shipment(shipment_id)
+        except InPostBusinessError:
+            # get_shipment 404 or similar — fall through to DELETE which will
+            # surface the definitive error. Never silently swallow.
+            existing = {}
+        current_status = str(existing.get("status") or "").strip()
+        if current_status in _INPOST_UNCANCELLABLE_STATUSES:
+            raise InPostShipmentNotCancellable(
+                shipment_id=shipment_id,
+                current_status=current_status,
+            )
+
         url = f"{_BASE}/v1/shipments/{shipment_id}"
         self._request("DELETE", url, action="cancel_shipment")
         logger.info("InPost shipment cancelled: id=%s", shipment_id)
