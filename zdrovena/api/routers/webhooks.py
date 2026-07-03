@@ -25,6 +25,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Annotated, Any
 
 from fastapi import (
@@ -296,17 +297,97 @@ def _maybe_push_tracking_to_allegro(draft: dict[str, Any]) -> None:
         logger.exception("Failed to push tracking to Allegro for order %s", external_id)
 
 
+def _parse_title_map(raw: str) -> dict[str, str]:
+    """Parse env-var mapping in JSON or ``keyword=value;keyword=value`` format.
+
+    Keys are lowercased and stripped. Empty/invalid entries are ignored.
+    Returns an empty dict for empty input or parse failure.
+    """
+    if not raw or not raw.strip():
+        return {}
+    text = raw.strip()
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse title map as JSON, ignoring: %r", raw)
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        return {
+            str(k).strip().lower(): str(v).strip()
+            for k, v in parsed.items()
+            if str(k).strip() and str(v).strip()
+        }
+    result: dict[str, str] = {}
+    # accept both ';' and ',' as pair separators for operator convenience
+    for chunk in text.replace(",", ";").split(";"):
+        if "=" not in chunk:
+            continue
+        key, _, value = chunk.partition("=")
+        key = key.strip().lower()
+        value = value.strip()
+        if key and value:
+            result[key] = value
+    return result
+
+
+@lru_cache(maxsize=1)
+def _courier_title_map() -> dict[str, str]:
+    """Explicit shipping-line title → courier mapping from ``COURIER_TITLE_MAP``.
+
+    Example: ``COURIER_TITLE_MAP="inpost=inpost;paczkomat=inpost;dpd=apaczka"``.
+    Empty map preserves the substring-heuristic fallback.
+    """
+    return _parse_title_map(os.getenv("COURIER_TITLE_MAP", ""))
+
+
+@lru_cache(maxsize=1)
+def _inpost_service_title_map() -> dict[str, str]:
+    """Explicit title → InPost service mapping from ``INPOST_SERVICE_TITLE_MAP``.
+
+    Example: ``INPOST_SERVICE_TITLE_MAP="paczkomat=paczkomat;kurier=kurier"``.
+    """
+    return _parse_title_map(os.getenv("INPOST_SERVICE_TITLE_MAP", ""))
+
+
+def _reset_courier_maps_cache() -> None:
+    """Clear cached ENV mapping (test-only helper)."""
+    _courier_title_map.cache_clear()
+    _inpost_service_title_map.cache_clear()
+
+
 def _pick_courier(order: dict[str, Any]) -> str:
-    """Route to InPost only on explicit 'inpost' or 'paczkomat' keywords. 'kurier' alone → Apaczka."""
+    """Route shipping-line title to a courier backend.
+
+    Consults ``COURIER_TITLE_MAP`` env var first (explicit keyword→courier pairs);
+    falls back to the substring heuristic (``inpost``/``paczkomat`` → inpost,
+    otherwise apaczka) for backwards compatibility.
+    """
     lines = order.get("shipping_lines") or []
     title = (lines[0].get("title", "") if lines else "").lower()
+    explicit = _courier_title_map()
+    if explicit:
+        for keyword, courier in explicit.items():
+            if keyword and keyword in title:
+                return courier
     if "inpost" in title or "paczkomat" in title:
         return "inpost"
     return "apaczka"
 
 
 def _pick_inpost_service(title: str) -> str:
-    return "paczkomat" if "paczkomat" in title.lower() else "kurier"
+    """Pick InPost service (``paczkomat``/``kurier``) from shipping-line title.
+
+    Consults ``INPOST_SERVICE_TITLE_MAP`` first; falls back to substring match.
+    """
+    lowered = title.lower()
+    explicit = _inpost_service_title_map()
+    if explicit:
+        for keyword, service in explicit.items():
+            if keyword and keyword in lowered:
+                return service
+    return "paczkomat" if "paczkomat" in lowered else "kurier"
 
 
 # ── Courier execution helpers ─────────────────────────────────────────────────
