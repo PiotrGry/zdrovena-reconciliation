@@ -39,3 +39,18 @@ def send_new_order_sms(
     courier_label = "InPost" if courier == "inpost" else "Apaczka"
     msg = f"Nowe zam. #{order_number} ({customer_name}) - {packages_count} paczek, {courier_label}. Do realizacji!"
     _send(notify_phone, msg, token)
+
+
+def send_invoice_failure_sms(
+    notify_phone: str,
+    allegro_order_id: str,
+    reason: str,
+    token: str,
+) -> None:
+    """Alert the operator that Allegro invoice creation/push failed and needs
+    manual attention — a missing/wrong invoice is a compliance issue, not
+    just an operational one, so this fires immediately rather than waiting
+    for someone to notice it in logs.
+    """
+    msg = f"BLAD faktury Allegro #{allegro_order_id}: {reason[:100]}. Sprawdz recznie w Fakturowni."
+    _send(notify_phone, msg, token)
