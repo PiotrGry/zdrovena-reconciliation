@@ -111,14 +111,14 @@ class TestPositionsAndDeposit:
         pos = invoice["positions"][0]
         assert pos["name"] == "HUMIO - Alkaliczna Woda Humusowa 500ml x 12"
         assert pos["quantity"] == 2
-        assert pos["total_price_gross"] == 73.00
+        assert pos["total_price_gross"] == 146.00
         assert pos["tax"] == 8
 
     def test_deposit_becomes_settlement_position_charge(self):
         order = _order()
         invoice = allegro_order_to_fakturownia_invoice(order)
         assert invoice["settlement_positions"] == [
-            {"kind": "charge", "amount": "6.00", "description": "Kaucja za opakowania zwrotne"}
+            {"kind": "charge", "amount": "12.00", "description": "Kaucja za opakowania zwrotne"}
         ]
 
     def test_no_settlement_positions_key_when_no_deposit(self):
@@ -141,7 +141,7 @@ class TestPositionsAndDeposit:
         invoice = allegro_order_to_fakturownia_invoice(order)
         assert len(invoice["positions"]) == 2
         assert invoice["settlement_positions"] == [
-            {"kind": "charge", "amount": "9.00", "description": "Kaucja za opakowania zwrotne"}
+            {"kind": "charge", "amount": "15.00", "description": "Kaucja za opakowania zwrotne"}
         ]
 
     def test_tax_rate_converted_to_integer_percent(self):
@@ -149,3 +149,17 @@ class TestPositionsAndDeposit:
         order["lineItems"][0]["tax"]["rate"] = "23.00"
         invoice = allegro_order_to_fakturownia_invoice(order)
         assert invoice["positions"][0]["tax"] == 23
+
+
+class TestQuantityMultiplication:
+    def test_price_and_deposit_multiplied_by_quantity_matches_real_order_total(self):
+        """Regression test pinned to a real production order:
+        quantity=2, price.amount="73.00", deposit.price.amount="6.00",
+        order.summary.totalToPay="158.00" (no shipping). Confirms
+        (73.00 + 6.00) * 2 == 158.00, proving both fields are per-unit.
+        """
+        order = _order()  # default fixture: quantity=2, price 73.00, deposit 6.00
+        invoice = allegro_order_to_fakturownia_invoice(order)
+        product_total = invoice["positions"][0]["total_price_gross"]
+        deposit_total = float(invoice["settlement_positions"][0]["amount"])
+        assert product_total + deposit_total == 158.00

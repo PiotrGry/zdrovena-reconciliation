@@ -11,6 +11,13 @@ kaucja via a "kaucja" substring in the line item title, because Shopify has
 no native deposit concept), Allegro models deposits structurally, so no
 heuristic matching is needed here.
 
+Both `lineItems[i].price.amount` and `lineItems[i].deposit.price.amount`
+are PER-UNIT values in Allegro's schema, not line totals — confirmed
+against a real production order (quantity=2, price.amount="73.00",
+deposit.price.amount="6.00") whose `summary.totalToPay` of "158.00" only
+matches `(73.00 + 6.00) * 2`, not `73.00 + 6.00`. Both fields are
+multiplied by `quantity` below.
+
 Returns None when the buyer did not request a VAT invoice at all
 (`invoice.required` is False or missing) — Allegro lets buyers opt for a
 receipt/paragon instead, which is a normal case, not an error.
@@ -40,26 +47,28 @@ def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any
     for item in order.get("lineItems") or []:
         offer = item.get("offer") or {}
         quantity = int(item.get("quantity", 1) or 1)
-        price = Decimal(str((item.get("price") or {}).get("amount", "0")))
+        unit_price = Decimal(str((item.get("price") or {}).get("amount", "0")))
         tax_rate = Decimal(str((item.get("tax") or {}).get("rate", "23")))
+        line_total = unit_price * quantity
         positions.append(
             {
                 "name": offer.get("name", ""),
                 "quantity": quantity,
-                "total_price_gross": float(price),
+                "total_price_gross": float(line_total),
                 "tax": int(tax_rate),
             }
         )
         deposit = item.get("deposit")
         if deposit:
-            # ASSUMPTION (unverified against a real multi-quantity deposit
-            # order as of this writing): deposit.price.amount is the TOTAL
-            # deposit for this line (matching how price.amount is also a
-            # line total), not a per-unit amount. If a real order shows
-            # otherwise, this needs `* quantity`. See the manual verification
-            # step in docs/superpowers/plans/2026-07-03-allegro-invoice-creation.md
-            # (Task 8) before trusting this on a multi-quantity deposit order.
-            deposit_total += Decimal(str((deposit.get("price") or {}).get("amount", "0")))
+            # Verified against a real production order (quantity=2,
+            # price.amount="73.00", deposit.price.amount="6.00",
+            # order.summary.totalToPay="158.00"): both price.amount and
+            # deposit.price.amount are PER-UNIT values in Allegro's schema,
+            # not line totals. (73.00 + 6.00) * 2 = 158.00 matches exactly;
+            # treating them as already-line-totals (73.00 + 6.00 = 79.00)
+            # does not. Both must be multiplied by quantity.
+            unit_deposit = Decimal(str((deposit.get("price") or {}).get("amount", "0")))
+            deposit_total += unit_deposit * quantity
 
     invoice: dict[str, Any] = {
         "kind": "vat",
