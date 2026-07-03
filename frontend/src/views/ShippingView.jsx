@@ -178,7 +178,7 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, busy, canManage, selected, onToggleSelect, forceOpen }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, busy, canManage, selected, onToggleSelect, forceOpen }) {
     const { t, lang } = useT()
     const T = t[lang]
     const [open, setOpen] = useState(false)
@@ -244,10 +244,17 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, b
                 <span><Pill kind={courierPillKind(draft)}>{courierLabel(draft)}</Pill></span>
                 <span className="mono dim" style={{ fontSize: '0.85em' }}>{fmtDate(draft.created_at)}</span>
                 <span>
-                    <Pill kind={draft.status === 'created' ? 'ok' : draft.status === 'pending' ? 'default' : draft.status === 'needs_review' ? 'warn' : 'warn'}>
+                    <Pill kind={
+                        draft.status === 'created' ? 'ok'
+                            : draft.status === 'pending' ? 'default'
+                            : draft.status === 'needs_review' ? 'warn'
+                            : draft.status === 'pending_confirmation' ? 'info'
+                            : 'warn'
+                    }>
                         {draft.status === 'pending' ? (T.sh_status_pending ?? 'oczekujące')
                             : draft.status === 'created' ? (T.sh_status_created ?? 'nadane')
                             : draft.status === 'needs_review' ? (T.sh_status_needs_review ?? 'do sprawdzenia')
+                            : draft.status === 'pending_confirmation' ? (T.sh_status_pending_confirmation ?? 'czeka na Allegro')
                             : (T.sh_status_error ?? 'błąd')}
                     </Pill>
                 </span>
@@ -365,6 +372,20 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, b
                             >
                                 <Icon name="printer" size={13} />
                                 Drukuj etykietę
+                            </button>
+                        )}
+
+                        {draft.status === 'pending_confirmation' && (
+                            <button
+                                className="btn btn-secondary"
+                                onClick={() => onConfirmPending(draft)}
+                                disabled={isBusy}
+                                title="Allegro jeszcze przetwarza tę przesyłkę — sprawdzane automatycznie co 5s, albo kliknij żeby sprawdzić od razu"
+                            >
+                                {isBusy
+                                    ? <><Icon name="loader" size={13} className="spin" /> {T.sh_confirm_pending_busy ?? 'Sprawdzanie…'}</>
+                                    : <><Icon name="refresh" size={13} /> {T.sh_confirm_pending ?? 'Sprawdź status'}</>
+                                }
                             </button>
                         )}
 
@@ -548,6 +569,48 @@ export default function ShippingView() {
         })()
     }
 
+    function handleConfirmPending(draft) {
+        return withBusy(draft.id, async () => {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}/confirm`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            // 202 = Allegro still processing, not an error — the auto-poll below
+            // (or another manual click) will check again.
+            if (!res.ok && res.status !== 202) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(body.detail || `${res.status}`)
+            }
+        })()
+    }
+
+    // Auto-poll drafts stuck in pending_confirmation (Allegro create-command still
+    // IN_PROGRESS) so the operator doesn't have to keep clicking "Sprawdź status".
+    const pendingConfirmationKey = drafts
+        .filter(d => d.status === 'pending_confirmation')
+        .map(d => d.id)
+        .join(',')
+
+    useEffect(() => {
+        if (!pendingConfirmationKey) return
+        const ids = pendingConfirmationKey.split(',')
+        const interval = setInterval(async () => {
+            try {
+                const token = await getToken()
+                await Promise.all(ids.map(id =>
+                    fetch(`/api/shipping/drafts/${id}/confirm`, {
+                        method: 'POST',
+                        headers: { Authorization: `Bearer ${token}` },
+                    }).catch(() => {})
+                ))
+                load()
+            } catch { /* retry on next tick */ }
+        }, 5000)
+        return () => clearInterval(interval)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pendingConfirmationKey])
+
     function handleMarkFulfilled(draft) {
         const isAllegro = draft.source === 'allegro'
         const message = isAllegro
@@ -662,6 +725,7 @@ export default function ShippingView() {
                         <option value="all">{T.sh_filter_all_status ?? 'Wszystkie statusy'}</option>
                         <option value="pending">{T.sh_status_pending ?? 'oczekujące'}</option>
                         <option value="created">{T.sh_status_created ?? 'nadane'}</option>
+                        <option value="pending_confirmation">{T.sh_status_pending_confirmation ?? 'czeka na Allegro'}</option>
                         <option value="error">{T.sh_status_error ?? 'błąd'}</option>
                     </select>
                     <select value={filterCourier} onChange={e => setFilterCourier(e.target.value)}
@@ -792,6 +856,7 @@ export default function ShippingView() {
                         onExecute={handleExecute}
                         onPickup={handlePickup}
                         onMarkFulfilled={handleMarkFulfilled}
+                        onConfirmPending={handleConfirmPending}
                         selected={selectedDraftIds.has(draft.id)}
                         onToggleSelect={handleToggleSelect}
                         forceOpen={expandAll}
