@@ -112,7 +112,7 @@ class TestInPostKurierFullFlow:
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
         resp = client.post(
-            "/api/webhooks/shopify/order-created",
+            "/api/webhooks/shopify/order-create",
             content=body,
             headers=_shopify_headers(body),
         )
@@ -131,7 +131,7 @@ class TestInPostKurierFullFlow:
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
         client.post(
-            "/api/webhooks/shopify/order-created",
+            "/api/webhooks/shopify/order-create",
             content=body,
             headers=_shopify_headers(body),
         )
@@ -165,7 +165,7 @@ class TestInPostKurierFullFlow:
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
         client.post(
-            "/api/webhooks/shopify/order-created",
+            "/api/webhooks/shopify/order-create",
             content=body,
             headers=_shopify_headers(body),
         )
@@ -193,7 +193,7 @@ class TestHmacEndToEnd:
         secret = "live-secret-xyz"
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=secret):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=body,
                 headers=_shopify_headers(body, secret=secret),
             )
@@ -205,7 +205,7 @@ class TestHmacEndToEnd:
         body = json.dumps(order).encode()
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value="real"):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=body,
                 headers={
                     "Content-Type": "application/json",
@@ -235,12 +235,12 @@ class TestWebhookIdempotency:
         body = json.dumps(order).encode()
         # Two distinct deliveries (distinct webhook ids) carrying the same order.
         client.post(
-            "/api/webhooks/shopify/order-created",
+            "/api/webhooks/shopify/order-create",
             content=body,
             headers=_shopify_headers(body, webhook_id="wh-int-dup-a"),
         )
         client.post(
-            "/api/webhooks/shopify/order-created",
+            "/api/webhooks/shopify/order-create",
             content=body,
             headers=_shopify_headers(body, webhook_id="wh-int-dup-b"),
         )
@@ -256,10 +256,10 @@ class TestWebhookIdempotency:
         body = json.dumps(order).encode()
         headers = _shopify_headers(body, webhook_id="wh-int-retry")
         first = client.post(
-            "/api/webhooks/shopify/order-created", content=body, headers=headers
+            "/api/webhooks/shopify/order-create", content=body, headers=headers
         )
         second = client.post(
-            "/api/webhooks/shopify/order-created", content=body, headers=headers
+            "/api/webhooks/shopify/order-create", content=body, headers=headers
         )
         assert first.status_code == 200
         assert first.json()["status"] == "accepted"
@@ -278,7 +278,7 @@ class TestExecuteFailurePersistsErrorOnStore:
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
         client.post(
-            "/api/webhooks/shopify/order-created",
+            "/api/webhooks/shopify/order-create",
             content=body,
             headers=_shopify_headers(body),
         )
@@ -301,7 +301,7 @@ class TestExecuteFailurePersistsErrorOnStore:
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
         client.post(
-            "/api/webhooks/shopify/order-created",
+            "/api/webhooks/shopify/order-create",
             content=body,
             headers=_shopify_headers(body),
         )

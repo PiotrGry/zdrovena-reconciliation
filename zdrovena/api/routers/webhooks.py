@@ -1,6 +1,6 @@
 """zdrovena.api.routers.webhooks — Shopify webhooks + shipping drafts + label endpoints.
 
-POST /webhooks/shopify/order-created          — Shopify order webhook (HMAC-validated)
+POST /webhooks/shopify/order-create          — Shopify order webhook (HMAC-validated)
 GET  /shipping/drafts                         — list shipping drafts from Table Storage
 GET  /shipping/drafts/{id}/label              — stream label PDF from courier
 POST /shipping/drafts/{id}/execute            — (re)create courier shipment for a draft
@@ -786,7 +786,7 @@ def _create_draft(
 
 
 @router.post(
-    "/webhooks/shopify/order-created",
+    "/webhooks/shopify/order-create",
     status_code=status.HTTP_200_OK,
     summary="Shopify order webhook — creates shipping draft",
     include_in_schema=False,

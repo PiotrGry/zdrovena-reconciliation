@@ -153,7 +153,7 @@ class TestWebhookEndpoint:
     def test_no_shipping_lines_returns_skipped(self, client):
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=_ORDER_NO_SHIPPING,
                 headers=_shopify_headers(_ORDER_NO_SHIPPING, webhook_id="wh-skip"),
             )
@@ -164,7 +164,7 @@ class TestWebhookEndpoint:
         """No configured secret → 503 (no unsigned bypass exists anymore)."""
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=_ORDER_WITH_SHIPPING,
                 headers=_shopify_headers(_ORDER_WITH_SHIPPING),
             )
@@ -175,7 +175,7 @@ class TestWebhookEndpoint:
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
             with patch("zdrovena.api.routers.webhooks._create_draft"):
                 resp = client.post(
-                    "/api/webhooks/shopify/order-created",
+                    "/api/webhooks/shopify/order-create",
                     content=_ORDER_WITH_SHIPPING,
                     headers=_shopify_headers(_ORDER_WITH_SHIPPING),
                 )
@@ -185,7 +185,7 @@ class TestWebhookEndpoint:
     def test_invalid_hmac_rejected(self, client):
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=_ORDER_WITH_SHIPPING,
                 headers={
                     "Content-Type": "application/json",
@@ -198,7 +198,7 @@ class TestWebhookEndpoint:
     def test_missing_hmac_header_with_secret_configured_rejected(self, client):
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=_ORDER_WITH_SHIPPING,
                 headers={"Content-Type": "application/json", "X-Shopify-Topic": "orders/create"},
             )
@@ -208,7 +208,7 @@ class TestWebhookEndpoint:
         bad = b"not-json"
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=bad,
                 headers=_shopify_headers(bad, webhook_id="wh-badjson"),
             )
@@ -217,7 +217,7 @@ class TestWebhookEndpoint:
     def test_disallowed_topic_rejected_403(self, client):
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=_ORDER_WITH_SHIPPING,
                 headers=_shopify_headers(_ORDER_WITH_SHIPPING, topic="products/create"),
             )
@@ -231,7 +231,7 @@ class TestWebhookEndpoint:
         }
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=_ORDER_WITH_SHIPPING,
                 headers=headers,
             )
@@ -241,7 +241,7 @@ class TestWebhookEndpoint:
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
             with patch("zdrovena.api.routers.webhooks._create_draft"):
                 resp = client.post(
-                    "/api/webhooks/shopify/order-created",
+                    "/api/webhooks/shopify/order-create",
                     content=_ORDER_WITH_SHIPPING,
                     headers=_shopify_headers(
                         _ORDER_WITH_SHIPPING, topic="orders/updated", webhook_id="wh-upd"
@@ -256,7 +256,7 @@ class TestWebhookEndpoint:
                 headers = _shopify_headers(_ORDER_WITH_SHIPPING)
                 headers["X-Shopify-Shop-Domain"] = "evil.myshopify.com"
                 resp = client.post(
-                    "/api/webhooks/shopify/order-created",
+                    "/api/webhooks/shopify/order-create",
                     content=_ORDER_WITH_SHIPPING,
                     headers=headers,
                 )
@@ -270,7 +270,7 @@ class TestWebhookEndpoint:
                     headers = _shopify_headers(_ORDER_WITH_SHIPPING)
                     headers["X-Shopify-Shop-Domain"] = "zdrovena.myshopify.com"
                     resp = client.post(
-                        "/api/webhooks/shopify/order-created",
+                        "/api/webhooks/shopify/order-create",
                         content=_ORDER_WITH_SHIPPING,
                         headers=headers,
                     )
@@ -282,12 +282,12 @@ class TestWebhookEndpoint:
             with patch("zdrovena.api.routers.webhooks._create_draft") as mock_create:
                 headers = _shopify_headers(_ORDER_WITH_SHIPPING, webhook_id="wh-dup-1")
                 first = client.post(
-                    "/api/webhooks/shopify/order-created",
+                    "/api/webhooks/shopify/order-create",
                     content=_ORDER_WITH_SHIPPING,
                     headers=headers,
                 )
                 second = client.post(
-                    "/api/webhooks/shopify/order-created",
+                    "/api/webhooks/shopify/order-create",
                     content=_ORDER_WITH_SHIPPING,
                     headers=headers,
                 )
@@ -303,7 +303,7 @@ class TestWebhookEndpoint:
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
             with patch("zdrovena.api.routers.webhooks._create_draft"):
                 resp = client.post(
-                    "/api/webhooks/shopify/order-created",
+                    "/api/webhooks/shopify/order-create",
                     content=_ORDER_WITH_SHIPPING,
                     headers=_shopify_headers(_ORDER_WITH_SHIPPING, webhook_id=None),
                 )
@@ -318,7 +318,7 @@ class TestWebhookEndpoint:
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
             with patch("zdrovena.api.deps._shopify_dedup_singleton", return_value=broken):
                 resp = client.post(
-                    "/api/webhooks/shopify/order-created",
+                    "/api/webhooks/shopify/order-create",
                     content=_ORDER_WITH_SHIPPING,
                     headers=_shopify_headers(_ORDER_WITH_SHIPPING, webhook_id="wh-fail"),
                 )
