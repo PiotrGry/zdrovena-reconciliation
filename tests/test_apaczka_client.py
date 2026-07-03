@@ -24,6 +24,17 @@ from zdrovena.common.apaczka import (
     ApaczkaError,
     _sign,
 )
+from zdrovena.common.shipping_exceptions import (
+    ApaczkaAuthError,
+    ApaczkaBusinessError,
+    ApaczkaInsufficientBalanceError,
+    ApaczkaSignatureError,
+    ApaczkaTransientError,
+    CourierAuthError,
+    CourierBusinessError,
+    CourierTransientError,
+    ZdrovenaShippingError,
+)
 
 _APP_ID = "app1"
 _SECRET = "sec1"
@@ -66,18 +77,46 @@ class TestSignVector:
 
         result = _sign(_APP_ID, _SECRET, "order_send", {"a": 1})
 
-        # Computed manually:
+        # Computed manually (verified against live Apaczka API 2026-07):
         #   request_json = '{"a":1}'  (no spaces; separators=(",", ":"))
         #   expires = 1700000000 + 1800 = 1700001800
-        #   msg = "app1:order_send:{\"a\":1}:1700001800"
-        #   hmac.new(b"sec1", msg.encode(), hashlib.sha256).hexdigest()
+        #   route = "order_send/"  (trailing slash REQUIRED by Apaczka)
+        #   msg = "app1:order_send/:{\"a\":1}:1700001800"
+        #   hmac.new(b"sec1", msg.encode("utf-8"), hashlib.sha256).hexdigest()
         assert result["app_id"] == _APP_ID
         assert result["expires"] == "1700001800"
         assert result["request"] == '{"a":1}'
         assert (
             result["signature"]
-            == "f13f5a7705a0042227b195a71fe5fb384ac4acba74f9dddbb9d05388d3827886"
+            == "df4b76c9797a5a59c1e49b760203a4ddb79e5dcb601026d12a0722b23d879664"
         )
+
+    def test_route_gets_trailing_slash(self, monkeypatch):
+        """Regression: signature must include the trailing slash on the endpoint.
+
+        Verified 2026-07 against live Apaczka API — signing bare
+        \"service_structure\" returns 'Signature doesn't match', while
+        \"service_structure/\" is accepted.
+        """
+        import hashlib as _hashlib
+        import hmac as _hmac
+
+        monkeypatch.setattr("zdrovena.common.apaczka.time.time", lambda: 1700000000)
+        # Endpoint passed WITHOUT trailing slash — _sign must add it.
+        result = _sign(_APP_ID, _SECRET, "service_structure", {})
+
+        expected_msg = f"{_APP_ID}:service_structure/:{{}}:1700001800"
+        expected_sig = _hmac.new(
+            _SECRET.encode(), expected_msg.encode("utf-8"), _hashlib.sha256
+        ).hexdigest()
+        assert result["signature"] == expected_sig
+
+    def test_route_slash_idempotent(self, monkeypatch):
+        """Passing endpoint already ending in / must not produce a double slash."""
+        monkeypatch.setattr("zdrovena.common.apaczka.time.time", lambda: 1700000000)
+        a = _sign(_APP_ID, _SECRET, "order_send", {"a": 1})
+        b = _sign(_APP_ID, _SECRET, "order_send/", {"a": 1})
+        assert a["signature"] == b["signature"]
 
     def test_request_json_uses_compact_separators(self, monkeypatch):
         """Apaczka spec requires JSON with no spaces between separators."""
@@ -102,6 +141,40 @@ class TestSignVector:
         s1 = _sign(_APP_ID, "secretA", "ep", {})
         s2 = _sign(_APP_ID, "secretB", "ep", {})
         assert s1["signature"] != s2["signature"]
+
+    def test_polish_characters_not_escaped(self, monkeypatch):
+        """Regression: json.dumps must use ensure_ascii=False.
+
+        Apaczka's PHP server uses json_encode with JSON_UNESCAPED_UNICODE.
+        If we sign the ASCII-escaped variant (\\u0142) but send the raw UTF-8
+        bytes (ł), the server re-computes a different signature and rejects
+        the request with \"Signature doesn't match\".
+        """
+        monkeypatch.setattr("zdrovena.common.apaczka.time.time", lambda: 1700000000)
+        result = _sign(_APP_ID, _SECRET, "order_send", {"city": "Kraków", "name": "Piotr Gryzło"})
+
+        # Must contain raw UTF-8 Polish chars, NOT \uXXXX escapes.
+        assert "Kraków" in result["request"]
+        assert "Gryzło" in result["request"]
+        assert "\\u" not in result["request"]
+
+    def test_polish_signature_matches_utf8_bytes(self, monkeypatch):
+        """Signature is computed over UTF-8 bytes of the unescaped JSON."""
+        import hashlib as _hashlib
+        import hmac as _hmac
+
+        monkeypatch.setattr("zdrovena.common.apaczka.time.time", lambda: 1700000000)
+        data = {"city": "Kraków"}
+        result = _sign(_APP_ID, _SECRET, "order_send", data)
+
+        expected_json = '{"city":"Kraków"}'  # unescaped
+        expected_msg = f"{_APP_ID}:order_send/:{expected_json}:1700001800"
+        expected_sig = _hmac.new(
+            _SECRET.encode(), expected_msg.encode("utf-8"), _hashlib.sha256
+        ).hexdigest()
+
+        assert result["request"] == expected_json
+        assert result["signature"] == expected_sig
 
 
 # ── _call — error mapping ─────────────────────────────────────────────────────
@@ -349,3 +422,100 @@ class TestGetLabel:
         with patch.object(client._session, "post", return_value=api_response):
             with pytest.raises(ApaczkaError):
                 client.get_label("missing")
+
+
+# ── error hierarchy: both classification axes must catch ─────────────────────
+
+
+class TestErrorHierarchy:
+    """F-A4 regression: Apaczka errors must live inside ZdrovenaShippingError so the
+    shared `except ZdrovenaShippingError` handler catches them (not bare 500s), and
+    also under the per-courier ApaczkaError marker + the handling-semantics axis."""
+
+    def test_403_is_auth_and_apaczka_and_shipping(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        with patch.object(client._session, "post", return_value=_err_response(403, "denied")):
+            with pytest.raises(ApaczkaAuthError) as exc_info:
+                client._call("order_send", {})
+        err = exc_info.value
+        assert isinstance(err, ApaczkaError)
+        assert isinstance(err, CourierAuthError)
+        assert isinstance(err, ZdrovenaShippingError)
+
+    def test_4xx_is_business_and_apaczka_and_shipping(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        with patch.object(client._session, "post", return_value=_err_response(404, "nope")):
+            with pytest.raises(ApaczkaError) as exc_info:
+                client._call("order_send", {})
+        err = exc_info.value
+        assert isinstance(err, ApaczkaBusinessError)
+        assert isinstance(err, CourierBusinessError)
+        assert isinstance(err, ZdrovenaShippingError)
+
+    def test_5xx_is_transient_and_apaczka_and_shipping(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        with patch.object(client._session, "post", return_value=_err_response(500, "oops")):
+            with pytest.raises(ApaczkaError) as exc_info:
+                client._call("order_send", {})
+        err = exc_info.value
+        assert isinstance(err, ApaczkaTransientError)
+        assert isinstance(err, CourierTransientError)
+        assert isinstance(err, ZdrovenaShippingError)
+
+    def test_network_error_mapped_to_transient(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        with patch.object(client._session, "post", side_effect=requests.ConnectionError("refused")):
+            with pytest.raises(ApaczkaTransientError, match="network error"):
+                client._call("order_send", {})
+
+    def test_signature_rejection_in_body_is_auth(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        body = {"status": 401, "message": "Invalid signature provided"}
+        with patch.object(client._session, "post", return_value=_ok_response(body)):
+            with pytest.raises(ApaczkaSignatureError) as exc_info:
+                client._call("order_send", {})
+        assert isinstance(exc_info.value, ApaczkaAuthError)
+
+    def test_insufficient_balance_in_body_is_auth(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        body = {"status": 402, "message": "Insufficient account balance"}
+        with patch.object(client._session, "post", return_value=_ok_response(body)):
+            with pytest.raises(ApaczkaInsufficientBalanceError) as exc_info:
+                client._call("order_send", {})
+        assert isinstance(exc_info.value, ApaczkaAuthError)
+
+    def test_apaczka_error_is_shipping_error_subclass(self):
+        assert issubclass(ApaczkaError, ZdrovenaShippingError)
+
+
+# ── cancel_shipment ──────────────────────────────────────────────────────────
+
+
+class TestCancelShipment:
+    def test_posts_to_cancel_order_endpoint(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        api_response = _ok_response({"status": 200, "response": {"cancelled": True}})
+        with patch.object(client._session, "post", return_value=api_response) as mock_post:
+            client.cancel_shipment("ord-99")
+
+        url = mock_post.call_args.args[0]
+        assert url.endswith("/cancel_order/")
+
+    def test_passes_order_id_in_payload(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        api_response = _ok_response({"status": 200, "response": {}})
+        with patch.object(client._session, "post", return_value=api_response) as mock_post:
+            client.cancel_shipment("ord-99")
+
+        form_data = mock_post.call_args.kwargs["data"]
+        import json
+
+        request_payload = json.loads(form_data["request"])
+        assert request_payload["order_id"] == "ord-99"
+
+    def test_business_error_propagates(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        api_response = _ok_response({"status": 400, "message": "Already delivered"})
+        with patch.object(client._session, "post", return_value=api_response):
+            with pytest.raises(ApaczkaError, match="Already delivered"):
+                client.cancel_shipment("ord-99")

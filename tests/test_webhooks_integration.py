@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import itertools
 import json
 import os
 from pathlib import Path
@@ -25,9 +26,12 @@ os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 
 from zdrovena.api.main import app
 from zdrovena.common.shipping_store import ShippingStore
+from zdrovena.common.shopify_dedup_store import ShopifyDedupStore
 from zdrovena.common.storage import LocalStorageService
 
 _FIXTURES = Path(__file__).parent / "fixtures"
+_SECRET = "integration-webhook-secret"
+_webhook_id_counter = itertools.count(1)
 
 
 def _load_fixture(name: str) -> dict:
@@ -38,17 +42,39 @@ def _sign_shopify(body: bytes, secret: str) -> str:
     return base64.b64encode(hmac.new(secret.encode(), body, hashlib.sha256).digest()).decode()
 
 
-@pytest.fixture(autouse=True)
-def _allow_unsigned_shopify_webhooks(monkeypatch):
-    """Opt these integration tests out of the fail-closed unsigned-webhook policy.
+def _shopify_headers(
+    body: bytes,
+    *,
+    secret: str = _SECRET,
+    topic: str = "orders/create",
+    webhook_id: str | None = None,
+) -> dict[str, str]:
+    """Build valid Shopify webhook headers (HMAC + topic + delivery id).
 
-    Production behaviour: when ``_get_webhook_secret()`` returns None and the
-    ``ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS`` flag is not set, the webhook endpoint
-    returns 503. These tests focus on the post-HMAC pipeline (store → execute
-    → label), so we set the flag here and selectively patch the secret in
-    individual tests when verifying HMAC behaviour itself.
+    A fresh webhook_id is minted per call unless one is supplied, so distinct
+    deliveries are not rejected by the delivery-dedup store.
     """
-    monkeypatch.setenv("ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS", "true")
+    if webhook_id is None:
+        webhook_id = f"wh-int-{next(_webhook_id_counter)}"
+    return {
+        "Content-Type": "application/json",
+        "X-Shopify-Hmac-Sha256": _sign_shopify(body, secret),
+        "X-Shopify-Topic": topic,
+        "X-Shopify-Webhook-Id": webhook_id,
+    }
+
+
+@pytest.fixture(autouse=True)
+def _configure_webhook_secret():
+    """Configure a known HMAC secret for the whole module.
+
+    The production endpoint is fail-closed: unsigned webhooks are rejected. These
+    integration tests focus on the post-HMAC pipeline (store → execute → label),
+    so we patch the secret to a known value and sign bodies with it. Tests that
+    verify HMAC behaviour itself re-patch the secret inside the test body.
+    """
+    with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_SECRET):
+        yield
 
 
 @pytest.fixture()
@@ -62,12 +88,18 @@ def storage(tmp_path) -> LocalStorageService:
 
 
 @pytest.fixture()
-def client(store, storage):
+def dedup_store(tmp_path) -> ShopifyDedupStore:
+    return ShopifyDedupStore(local_root=tmp_path / "dedup")
+
+
+@pytest.fixture()
+def client(store, storage, dedup_store):
     """TestClient wired to the real ShippingStore + LocalStorageService."""
     with patch("zdrovena.api.deps._storage_singleton", return_value=storage):
         with patch("zdrovena.api.deps._shipping_store_singleton", return_value=store):
-            with TestClient(app, raise_server_exceptions=True) as c:
-                yield c
+            with patch("zdrovena.api.deps._shopify_dedup_singleton", return_value=dedup_store):
+                with TestClient(app, raise_server_exceptions=True) as c:
+                    yield c
 
 
 # ── Flow: InPost kurier — webhook → list → execute → label ────────────────────
@@ -77,12 +109,11 @@ class TestInPostKurierFullFlow:
     def test_webhook_creates_persistent_draft(self, client, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            resp = client.post(
-                "/api/webhooks/shopify/order-created",
-                content=body,
-                headers={"Content-Type": "application/json"},
-            )
+        resp = client.post(
+            "/api/webhooks/shopify/order-create",
+            content=body,
+            headers=_shopify_headers(body),
+        )
         assert resp.status_code == 200
 
         # Real store should contain exactly one draft now (background task ran)
@@ -97,12 +128,11 @@ class TestInPostKurierFullFlow:
         # Seed a pending draft directly via the real store
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            client.post(
-                "/api/webhooks/shopify/order-created",
-                content=body,
-                headers={"Content-Type": "application/json"},
-            )
+        client.post(
+            "/api/webhooks/shopify/order-create",
+            content=body,
+            headers=_shopify_headers(body),
+        )
         draft_id = store.list_drafts()[0]["id"]
 
         # Execute with the courier client stubbed at session level
@@ -132,12 +162,11 @@ class TestInPostKurierFullFlow:
     def test_execute_then_409_on_second_execute(self, client, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            client.post(
-                "/api/webhooks/shopify/order-created",
-                content=body,
-                headers={"Content-Type": "application/json"},
-            )
+        client.post(
+            "/api/webhooks/shopify/order-create",
+            content=body,
+            headers=_shopify_headers(body),
+        )
         draft_id = store.list_drafts()[0]["id"]
 
         with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
@@ -160,15 +189,11 @@ class TestHmacEndToEnd:
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
         secret = "live-secret-xyz"
-        sig = _sign_shopify(body, secret)
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=secret):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Shopify-Hmac-Sha256": sig,
-                },
+                headers=_shopify_headers(body, secret=secret),
             )
         assert resp.status_code == 200
         assert len(store.list_drafts()) == 1
@@ -178,11 +203,13 @@ class TestHmacEndToEnd:
         body = json.dumps(order).encode()
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value="real"):
             resp = client.post(
-                "/api/webhooks/shopify/order-created",
+                "/api/webhooks/shopify/order-create",
                 content=body,
                 headers={
                     "Content-Type": "application/json",
                     "X-Shopify-Hmac-Sha256": "fake-sig",
+                    "X-Shopify-Topic": "orders/create",
+                    "X-Shopify-Webhook-Id": "wh-int-bad-sig",
                 },
             )
         assert resp.status_code == 401
@@ -190,35 +217,51 @@ class TestHmacEndToEnd:
         assert store.list_drafts() == []
 
 
-# ── TDD-red: idempotent webhook by shopify_order_id ──────────────────────────
+# ── Idempotent webhook by shopify_order_id ───────────────────────────────────
 
 
 class TestWebhookIdempotency:
-    """**TDD-red** — Shopify retries webhooks on timeouts. Same order arriving
-    twice produces two drafts because _create_draft generates a fresh UUID
-    each time (webhooks.py:339). Target: dedup on shopify_order_id.
+    """Shopify retries webhooks on timeouts. The same order arriving twice — even
+    as two *distinct* deliveries (different X-Shopify-Webhook-Id) — must yield a
+    single draft, deduped on shopify_order_id at the store layer.
 
-    Audit \u00a77.4 + audit \u00a77.5.
+    Audit §7.4 + audit §7.5.
     """
 
     def test_duplicate_webhook_produces_single_draft(self, client, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            client.post(
-                "/api/webhooks/shopify/order-created",
-                content=body,
-                headers={"Content-Type": "application/json"},
-            )
-            # Shopify resends the exact same payload
-            client.post(
-                "/api/webhooks/shopify/order-created",
-                content=body,
-                headers={"Content-Type": "application/json"},
-            )
+        # Two distinct deliveries (distinct webhook ids) carrying the same order.
+        client.post(
+            "/api/webhooks/shopify/order-create",
+            content=body,
+            headers=_shopify_headers(body, webhook_id="wh-int-dup-a"),
+        )
+        client.post(
+            "/api/webhooks/shopify/order-create",
+            content=body,
+            headers=_shopify_headers(body, webhook_id="wh-int-dup-b"),
+        )
 
         drafts = [d for d in store.list_drafts() if d["shopify_order_id"] == str(order["id"])]
         assert len(drafts) == 1, f"Expected single draft for repeated webhook, got {len(drafts)}"
+
+    def test_redelivered_webhook_id_is_skipped(self, client, store):
+        """A genuine Shopify retry reuses the same X-Shopify-Webhook-Id; the
+        second delivery is short-circuited by the dedup store and never reaches
+        the pipeline."""
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        body = json.dumps(order).encode()
+        headers = _shopify_headers(body, webhook_id="wh-int-retry")
+        first = client.post("/api/webhooks/shopify/order-create", content=body, headers=headers)
+        second = client.post("/api/webhooks/shopify/order-create", content=body, headers=headers)
+        assert first.status_code == 200
+        assert first.json()["status"] == "accepted"
+        assert second.status_code == 200
+        assert second.json()["status"] == "duplicate"
+
+        drafts = [d for d in store.list_drafts() if d["shopify_order_id"] == str(order["id"])]
+        assert len(drafts) == 1
 
 
 # ── Error paths against the real store ───────────────────────────────────────
@@ -228,12 +271,11 @@ class TestExecuteFailurePersistsErrorOnStore:
     def test_courier_exception_writes_error_field_to_real_store(self, client, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            client.post(
-                "/api/webhooks/shopify/order-created",
-                content=body,
-                headers={"Content-Type": "application/json"},
-            )
+        client.post(
+            "/api/webhooks/shopify/order-create",
+            content=body,
+            headers=_shopify_headers(body),
+        )
         draft_id = store.list_drafts()[0]["id"]
 
         with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
@@ -252,12 +294,11 @@ class TestExecuteFailurePersistsErrorOnStore:
     def test_label_endpoint_404_when_no_courier_draft_id(self, client, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
-            client.post(
-                "/api/webhooks/shopify/order-created",
-                content=body,
-                headers={"Content-Type": "application/json"},
-            )
+        client.post(
+            "/api/webhooks/shopify/order-create",
+            content=body,
+            headers=_shopify_headers(body),
+        )
         draft_id = store.list_drafts()[0]["id"]
         # Draft is "pending" with courier_draft_id=None — label must 404
         resp = client.get(f"/api/shipping/drafts/{draft_id}/label")

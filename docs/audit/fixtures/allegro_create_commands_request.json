@@ -1,0 +1,58 @@
+{
+  "_source": "https://developer.allegro.pl/documentation/#operation/createShipmentCreateCommandUsingPUT",
+  "_fetched_at": "2026-07-02",
+  "_note": "POST /shipment-management/shipments/create-commands. Note wrapper: {commandId, input: {...}}. Packages are FLAT (not nested in `dimensions`). Weight/dim use `.value` (not `.amount`). Weight unit is `KILOGRAMS` (plural), NOT `KILOGRAM`.",
+  "commandId": "14e142cf-e8e0-48cc-bcf6-399b5fd90b32",
+  "input": {
+    "deliveryMethodId": "c3066682-97a3-42fe-9eb5-3beeccab840c",
+    "credentialsId": "c9e6f40a-3d25-48fc-838c-055ceb1c5bc0",
+    "sender": {
+      "name": "Jan Kowalski",
+      "company": "Allegro.pl sp. z o.o.",
+      "street": "Główna 30",
+      "postalCode": "10-200",
+      "city": "Warszawa",
+      "state": "AL",
+      "countryCode": "PL",
+      "email": "email@mail.com",
+      "phone": "500600700",
+      "point": "A1234567"
+    },
+    "receiver": {
+      "name": "Jan Kowalski",
+      "company": "Allegro.pl sp. z o.o.",
+      "street": "Główna 30",
+      "postalCode": "10-200",
+      "city": "Warszawa",
+      "state": "AL",
+      "countryCode": "PL",
+      "email": "email@mail.com",
+      "phone": "500600700",
+      "point": "A1234567"
+    },
+    "referenceNumber": "abcd1234",
+    "packages": [
+      {
+        "type": "PACKAGE",
+        "length": {"value": 12, "unit": "CENTIMETER"},
+        "width":  {"value": 12, "unit": "CENTIMETER"},
+        "height": {"value": 12, "unit": "CENTIMETER"},
+        "weight": {"value": 12.45, "unit": "KILOGRAMS"},
+        "textOnLabel": "Smartphones"
+      }
+    ],
+    "additionalServices": ["ADDITIONAL_HANDLING"],
+    "additionalProperties": {
+      "additionalPropertyId1": "EXTERNAL_CARRIER_WAYBILL",
+      "additionalPropertyId2": "EXTERNAL_CARRIER_WAYBILL"
+    },
+    "insurance": {"amount": "23.47", "currency": "PLN"},
+    "cashOnDelivery": {
+      "amount": "2.50",
+      "currency": "PLN",
+      "ownerName": "Jan Kowalski",
+      "iban": "PL48109024022441789739167589"
+    },
+    "labelFormat": "ZPL"
+  }
+}

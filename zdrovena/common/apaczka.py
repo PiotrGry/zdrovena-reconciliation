@@ -7,15 +7,38 @@ Secrets: apaczka-app-id, apaczka-app-secret, apaczka-service-id (Key Vault).
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
+import io
 import json
 import logging
 import time
 from datetime import datetime, timezone
+from http import HTTPStatus
 from typing import Any
 
 import requests
+
+from zdrovena.common.shipping_exceptions import (
+    ApaczkaAuthError,
+    ApaczkaBusinessError,
+    ApaczkaError,
+    ApaczkaInsufficientBalanceError,
+    ApaczkaSignatureError,
+    ApaczkaTransientError,
+)
+
+# Re-exported for backward compat: callers import ApaczkaError from this module.
+__all__ = [
+    "ApaczkaAuthError",
+    "ApaczkaBusinessError",
+    "ApaczkaClient",
+    "ApaczkaError",
+    "ApaczkaInsufficientBalanceError",
+    "ApaczkaSignatureError",
+    "ApaczkaTransientError",
+]
 
 logger = logging.getLogger("zdrovena.common.apaczka")
 
@@ -23,17 +46,26 @@ _BASE = "https://www.apaczka.pl/api/v2"
 _TIMEOUT = 15
 _SERVICE_CACHE_KEY = "apaczka/service_structure.json"
 _SERVICE_CACHE_TTL_H = 23
-
-
-class ApaczkaError(Exception):
-    pass
+# Apaczka signals in-body success with status == 200 (independent of the HTTP status).
+_APACZKA_BODY_OK = 200
 
 
 def _sign(app_id: str, secret: str, endpoint: str, data: dict[str, Any]) -> dict[str, Any]:
-    request_json = json.dumps(data, separators=(",", ":"))
+    # Apaczka signature format (verified against live API 2026-07):
+    #   msg = "{app_id}:{endpoint}/:{request_json}:{expires}"
+    # Notes:
+    #   * The route MUST include a trailing slash (matches the URL path
+    #     the server dispatches to). Signing bare "service_structure"
+    #     instead of "service_structure/" returns "Signature doesn't match".
+    #   * request_json uses compact separators and ensure_ascii=False so
+    #     the byte sequence we sign equals the byte sequence sent in the
+    #     form body (Apaczka's PHP server uses JSON_UNESCAPED_UNICODE).
+    #   * hmac.new digests the raw UTF-8 bytes of the message.
+    request_json = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
     expires = str(int(time.time()) + 1800)
-    msg = f"{app_id}:{endpoint}:{request_json}:{expires}"
-    sig = hmac.new(secret.encode(), msg.encode(), hashlib.sha256).hexdigest()
+    route = endpoint if endpoint.endswith("/") else f"{endpoint}/"
+    msg = f"{app_id}:{route}:{request_json}:{expires}"
+    sig = hmac.new(secret.encode(), msg.encode("utf-8"), hashlib.sha256).hexdigest()
     return {
         "app_id": app_id,
         "request": request_json,
@@ -51,29 +83,70 @@ class ApaczkaClient:
         self._session = requests.Session()
 
     def _call(self, endpoint: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Sign + POST to Apaczka, mapping failures onto the shared hierarchy.
+
+        Transport: 401/403 -> auth, 5xx -> transient, other 4xx -> business.
+        Network failures (timeout/connection) -> ApaczkaTransientError (retryable).
+        In-body: status != 200 is a business error, except HMAC signature rejection
+        (auth) and insufficient balance (auth) which are routed to their subclasses.
+        """
         body = _sign(self._app_id, self._secret, endpoint, data)
-        resp = self._session.post(f"{_BASE}/{endpoint}/", data=body, timeout=_TIMEOUT)
+        try:
+            resp = self._session.post(f"{_BASE}/{endpoint}/", data=body, timeout=_TIMEOUT)
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            raise ApaczkaTransientError(
+                f"Apaczka network error ({endpoint}): {exc}",
+                courier="apaczka",
+                action=endpoint,
+            ) from exc
+
         if not resp.ok:
-            raise ApaczkaError(f"Apaczka {endpoint} failed {resp.status_code}: {resp.text[:300]}")
+            status = resp.status_code
+            detail = (resp.text or "")[:300]
+            if status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
+                raise ApaczkaAuthError(
+                    f"Apaczka {endpoint} failed {status}: {detail}",
+                    courier="apaczka",
+                    action=endpoint,
+                )
+            if status >= HTTPStatus.INTERNAL_SERVER_ERROR:
+                raise ApaczkaTransientError(
+                    f"Apaczka {endpoint} server error {status}: {detail}",
+                    courier="apaczka",
+                    action=endpoint,
+                )
+            raise ApaczkaBusinessError(
+                f"Apaczka {endpoint} failed {status}: {detail}",
+                courier="apaczka",
+                action=endpoint,
+            )
+
         result = resp.json()
-        if result.get("status") != 200:
-            raise ApaczkaError(f"Apaczka {endpoint} error: {result}")
+        if result.get("status") != _APACZKA_BODY_OK:
+            message = str(result.get("message", "")).lower()
+            if "signature" in message or "podpis" in message:
+                raise ApaczkaSignatureError(detail=str(result))
+            if "balance" in message or "saldo" in message or "insufficient" in message:
+                raise ApaczkaInsufficientBalanceError
+            raise ApaczkaBusinessError(
+                f"Apaczka {endpoint} error: {result}",
+                courier="apaczka",
+                action=endpoint,
+            )
         return result
 
     # ── Service structure cache ───────────────────────────────────────────────
 
     def _get_service_structure(self) -> list[dict[str, Any]]:
         try:
-            import io
-
             cached_bytes = b"".join(self._storage.stream(_SERVICE_CACHE_KEY))  # type: ignore[arg-type]
             cached = json.loads(cached_bytes)
             fetched_at = datetime.fromisoformat(cached["fetched_at"])
             age_h = (datetime.now(timezone.utc) - fetched_at).total_seconds() / 3600
             if age_h < _SERVICE_CACHE_TTL_H:
                 return cached["services"]  # type: ignore[return-value]
-        except Exception:
-            pass
+        except (OSError, ValueError, KeyError) as exc:
+            logger.debug("Apaczka service_structure cache miss/unreadable: %s", exc)
 
         logger.info("Fetching Apaczka service_structure (cache miss)")
         result = self._call("service_structure", {})
@@ -83,13 +156,11 @@ class ApaczkaClient:
             "services": services,
         }
         try:
-            import io
-
             json_bytes = json.dumps(cache_doc).encode()
             self._storage.upload_stream(
                 io.BytesIO(json_bytes), _SERVICE_CACHE_KEY, "application/json"
             )  # type: ignore[attr-defined]
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             logger.warning("Failed to cache Apaczka service_structure: %s", exc)
         return services  # type: ignore[return-value]
 
@@ -173,17 +244,21 @@ class ApaczkaClient:
 
     def cancel_shipment(self, order_id: str) -> dict[str, Any]:
         """Cancel an Apaczka shipment by order_id."""
-        result = self._call("order_cancel", {"order_id": order_id})
+        # Apaczka endpoint is /api/v2/cancel_order/, not /api/v2/order_cancel/.
+        # Verified via panel.apaczka.pl API docs.
+        result = self._call("cancel_order", {"order_id": order_id})
         logger.info("Apaczka shipment cancelled: order_id=%s", order_id)
         return result.get("response", result)
 
     # ── Label ─────────────────────────────────────────────────────────────────
 
     def get_label(self, order_id: str) -> bytes:
-        import base64
-
         result = self._call("waybill", {"order_id": order_id})
         encoded = result.get("response", {}).get("waybill") or result.get("response", "")
         if not encoded:
-            raise ApaczkaError(f"No waybill in Apaczka response for order {order_id}")
+            raise ApaczkaBusinessError(
+                f"No waybill in Apaczka response for order {order_id}",
+                courier="apaczka",
+                action="waybill",
+            )
         return base64.b64decode(encoded)

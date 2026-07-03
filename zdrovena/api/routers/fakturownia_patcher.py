@@ -97,8 +97,10 @@ def patch_allegro_invoices_once(
 
     try:
         drafts = shipping_store.list_drafts()
-    except Exception as exc:
-        logger.error("shipping_store.list_drafts failed: %s", exc)
+    # Resilience boundary: this worker must never crash a cycle (see docstring).
+    # Any storage backend failure is counted and the cycle aborts cleanly.
+    except Exception:
+        logger.exception("shipping_store.list_drafts failed")
         stats["errors"] += 1
         return stats
 
@@ -110,15 +112,20 @@ def patch_allegro_invoices_once(
     for order_id in order_ids:
         try:
             allegro_invoices = allegro_client.list_order_invoices(order_id)
-        except Exception as exc:
-            logger.error("Allegro list_order_invoices(%s) failed: %s", order_id, exc)
+        # Resilience boundary: a single order failure must not abort the whole cycle.
+        except Exception:
+            logger.exception("Allegro list_order_invoices(%s) failed", order_id)
             stats["errors"] += 1
             continue
 
         for allegro_inv in allegro_invoices or []:
-            invoice_number = (allegro_inv.get("number") or "").strip()
+            # Allegro's GET /invoices returns `invoiceNumber` (NOT `number`); see
+            # docs/audit/fixtures/allegro_get_invoices.json.
+            invoice_number = (allegro_inv.get("invoiceNumber") or "").strip()
             if not invoice_number:
-                logger.warning("Allegro invoice for order %s has no `number` — skipping", order_id)
+                logger.warning(
+                    "Allegro invoice for order %s has no `invoiceNumber` — skipping", order_id
+                )
                 stats["errors"] += 1
                 continue
 
@@ -129,12 +136,12 @@ def patch_allegro_invoices_once(
                     invoice_number=invoice_number,
                     stats=stats,
                 )
-            except Exception as exc:
-                logger.error(
-                    "Fakturownia patch failed for invoice %s (order %s): %s",
+            # Resilience boundary: a single invoice failure must not abort the cycle.
+            except Exception:
+                logger.exception(
+                    "Fakturownia patch failed for invoice %s (order %s)",
                     invoice_number,
                     order_id,
-                    exc,
                 )
                 stats["errors"] += 1
 

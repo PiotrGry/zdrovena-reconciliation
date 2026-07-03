@@ -80,7 +80,7 @@ class TestHappyPath:
         """1 order → 1 invoice → 12 PET bottles → 6.00 PLN kaucja added."""
         shipping_store.list_drafts.return_value = [_draft(external_order_id="ORD-1")]
         allegro_client.list_order_invoices.return_value = [
-            {"id": "inv-1", "number": "FV/2025/100", "fileType": "VAT"},
+            {"id": "inv-1", "invoiceNumber": "FV/2025/100", "fileType": "VAT"},
         ]
         fakturownia_client.list_invoices.return_value = [
             _fakturownia_invoice(
@@ -125,8 +125,8 @@ class TestHappyPath:
             _draft(external_order_id="ORD-2"),
         ]
         allegro_client.list_order_invoices.side_effect = [
-            [{"id": "inv-1", "number": "FV/2025/101"}],
-            [{"id": "inv-2", "number": "FV/2025/102"}],
+            [{"id": "inv-1", "invoiceNumber": "FV/2025/101"}],
+            [{"id": "inv-2", "invoiceNumber": "FV/2025/102"}],
         ]
         fakturownia_client.list_invoices.side_effect = [
             [
@@ -184,7 +184,7 @@ class TestIdempotency:
     def test_skip_when_already_patched(self, allegro_client, fakturownia_client, shipping_store):
         shipping_store.list_drafts.return_value = [_draft(external_order_id="ORD-1")]
         allegro_client.list_order_invoices.return_value = [
-            {"id": "inv-1", "number": "FV/2025/100"},
+            {"id": "inv-1", "invoiceNumber": "FV/2025/100"},
         ]
         fakturownia_client.list_invoices.return_value = [
             _fakturownia_invoice(
@@ -223,7 +223,7 @@ class TestNoPetBottles:
     ):
         shipping_store.list_drafts.return_value = [_draft(external_order_id="ORD-1")]
         allegro_client.list_order_invoices.return_value = [
-            {"id": "inv-1", "number": "FV/2025/100"},
+            {"id": "inv-1", "invoiceNumber": "FV/2025/100"},
         ]
         # "szkle" → glass, glass has NO kaucja
         fakturownia_client.list_invoices.return_value = [
@@ -264,7 +264,7 @@ class TestErrorIsolation:
         ]
         allegro_client.list_order_invoices.side_effect = [
             RuntimeError("Allegro API down"),  # 1st call fails
-            [{"id": "inv-2", "number": "FV/2025/102"}],  # 2nd OK
+            [{"id": "inv-2", "invoiceNumber": "FV/2025/102"}],  # 2nd OK
         ]
         fakturownia_client.list_invoices.return_value = [
             _fakturownia_invoice(
@@ -297,8 +297,8 @@ class TestErrorIsolation:
             _draft(external_order_id="ORD-2"),
         ]
         allegro_client.list_order_invoices.side_effect = [
-            [{"id": "inv-1", "number": "FV/2025/101"}],
-            [{"id": "inv-2", "number": "FV/2025/102"}],
+            [{"id": "inv-1", "invoiceNumber": "FV/2025/101"}],
+            [{"id": "inv-2", "invoiceNumber": "FV/2025/102"}],
         ]
         fakturownia_client.list_invoices.side_effect = [
             [
@@ -356,12 +356,12 @@ class TestInvoiceMatching:
     def test_matches_fakturownia_invoice_by_number(
         self, allegro_client, fakturownia_client, shipping_store
     ):
-        """Allegro's list_order_invoices returns invoice with `number`;
+        """Allegro's list_order_invoices returns invoice with `invoiceNumber`;
         we must query Fakturownia by that number to find the corresponding
         Fakturownia invoice id."""
         shipping_store.list_drafts.return_value = [_draft(external_order_id="ORD-1")]
         allegro_client.list_order_invoices.return_value = [
-            {"id": "allegro-inv-1", "number": "FV/2025/999"},
+            {"id": "allegro-inv-1", "invoiceNumber": "FV/2025/999"},
         ]
         # Fakturownia returns invoice matching that number
         fakturownia_client.list_invoices.return_value = [
@@ -392,7 +392,7 @@ class TestInvoiceMatching:
     ):
         shipping_store.list_drafts.return_value = [_draft(external_order_id="ORD-1")]
         allegro_client.list_order_invoices.return_value = [
-            {"id": "allegro-inv-1", "number": "FV/2025/999"},
+            {"id": "allegro-inv-1", "invoiceNumber": "FV/2025/999"},
         ]
         fakturownia_client.list_invoices.return_value = []  # not found
 
@@ -410,7 +410,7 @@ class TestInvoiceMatching:
         (nie ryzykujemy dopisania kaucji do złej). Zliczane w skipped_ambiguous_match."""
         shipping_store.list_drafts.return_value = [_draft(external_order_id="ORD-1")]
         allegro_client.list_order_invoices.return_value = [
-            {"id": "allegro-inv-1", "number": "FV/2025/999"},
+            {"id": "allegro-inv-1", "invoiceNumber": "FV/2025/999"},
         ]
         # Dwie różne faktury zwrócone dla tego samego numeru (patologia, ale możliwa)
         fakturownia_client.list_invoices.return_value = [

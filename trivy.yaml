@@ -1,0 +1,4 @@
+scan:
+  # .env.local is in .gitignore and never committed — local-only dev credentials
+  skip-files:
+    - .env.local

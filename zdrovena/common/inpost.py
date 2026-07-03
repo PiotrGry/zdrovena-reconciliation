@@ -8,14 +8,27 @@ from __future__ import annotations
 
 import logging
 import os
+from http import HTTPStatus
 from typing import Any
 
 import requests
 
+from zdrovena.common.shipping_exceptions import (
+    InPostAuthError,
+    InPostBusinessError,
+    InPostError,
+    InPostTransientError,
+)
+
 logger = logging.getLogger("zdrovena.common.inpost")
 
 _BASE = os.environ.get("INPOST_BASE_URL", "https://api-shipx-pl.easypack24.net")
-_TIMEOUT = 15
+_TIMEOUT = int(os.environ.get("INPOST_TIMEOUT", "15"))
+# Courier service slug. Production accounts with a signed contract use
+# inpost_courier_standard (requires trucker_id). Sandbox / prepaid accounts
+# without a contract must use inpost_courier_c2c. Set the env var only on
+# sandbox; in production leave it unset to keep the standard service.
+_COURIER_SERVICE = os.environ.get("INPOST_COURIER_SERVICE", "inpost_courier_standard")
 
 # Physical dimensions and weights per package type produced by _calc_packages.
 # Dimensions in cm; weight_kg is gross weight of a single box.
@@ -104,16 +117,58 @@ LOCKER_LARGE_SLOT: dict[str, dict] = {
 _DEFAULT_DIMS = PARCEL_SPECS["1-pak"]
 
 
-class InPostError(Exception):
-    pass
-
-
 class InPostClient:
     def __init__(self, api_token: str, organization_id: str) -> None:
         self._org_id = organization_id
         self._session = requests.Session()
         self._session.headers.update(
             {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
+        )
+
+    # ── Low-level HTTP with typed error mapping ────────────────────────────────
+
+    def _request(self, method: str, url: str, *, action: str, **kwargs: Any) -> requests.Response:
+        """Perform a request and map failures onto the shared shipping hierarchy.
+
+        Status mapping: 401/403 -> auth, other 4xx -> business, 5xx -> transient.
+        Network failures (timeout/connection) are mapped to InPostTransientError so
+        callers can retry them like any other transient courier error.
+        """
+        kwargs.setdefault("timeout", _TIMEOUT)
+        verb = getattr(self._session, method.lower())
+        try:
+            resp = verb(url, **kwargs)
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            raise InPostTransientError(
+                f"InPost network error ({action}): {exc}",
+                courier="inpost",
+                action=action,
+            ) from exc
+
+        if resp.ok:
+            return resp
+
+        status = resp.status_code
+        body = (resp.text or "")[:300]
+        if status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
+            raise InPostAuthError(detail=body)
+        if status >= HTTPStatus.INTERNAL_SERVER_ERROR:
+            raise InPostTransientError(
+                f"InPost server error {status}: {body}",
+                courier="inpost",
+                action=action,
+            )
+        if status >= HTTPStatus.BAD_REQUEST:
+            raise InPostBusinessError(
+                f"InPost {status}: {body}",
+                courier="inpost",
+                action=action,
+            )
+        # Non-2xx that is neither 4xx nor 5xx (e.g. unexpected 3xx) — fall back to base.
+        raise InPostError(
+            f"InPost unexpected status {status}: {body}",
+            courier="inpost",
+            action=action,
         )
 
     # ── Shipment creation ─────────────────────────────────────────────────────
@@ -164,7 +219,7 @@ class InPostClient:
     ) -> dict[str, Any]:
         dims = dimensions or _DEFAULT_DIMS
         payload = {
-            "service": "inpost_courier_standard",
+            "service": _COURIER_SERVICE,
             "reference": reference,
             "receiver": {
                 "first_name": receiver_first_name,
@@ -197,11 +252,7 @@ class InPostClient:
 
     def _post_shipment(self, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{_BASE}/v1/organizations/{self._org_id}/shipments"
-        resp = self._session.post(url, json=payload, timeout=_TIMEOUT)
-        if not resp.ok:
-            raise InPostError(
-                f"InPost shipment creation failed {resp.status_code}: {resp.text[:300]}"
-            )
+        resp = self._request("POST", url, action="create_shipment", json=payload)
         data = resp.json()
         logger.info(
             "InPost shipment created: id=%s tracking=%s service=%s",
@@ -247,9 +298,7 @@ class InPostClient:
             payload["pickup_from"] = pickup_from
         if pickup_to:
             payload["pickup_to"] = pickup_to
-        resp = self._session.post(url, json=payload, timeout=_TIMEOUT)
-        if not resp.ok:
-            raise InPostError(f"InPost dispatch order failed {resp.status_code}: {resp.text[:300]}")
+        resp = self._request("POST", url, action="create_dispatch_order", json=payload)
         data = resp.json()
         logger.info("InPost dispatch order created: id=%s", data.get("id"))
         return data
@@ -257,38 +306,26 @@ class InPostClient:
     # ── Cancel ────────────────────────────────────────────────────────────────
 
     def cancel_shipment(self, shipment_id: str) -> None:
-        """Cancel a shipment. Only possible while status is created/confirmed."""
+        """Cancel a shipment. Only possible while status is created/confirmed.
+
+        A 422 (already dispatched) surfaces as InPostBusinessError via _request.
+        """
         url = f"{_BASE}/v1/shipments/{shipment_id}"
-        resp = self._session.delete(url, timeout=_TIMEOUT)
-        if not resp.ok:
-            if resp.status_code == 422:
-                raise InPostError(
-                    f"InPost cancel shipment rejected (already dispatched?): {resp.text[:200]}"
-                )
-            raise InPostError(
-                f"InPost cancel shipment failed {resp.status_code}: {resp.text[:200]}"
-            )
+        self._request("DELETE", url, action="cancel_shipment")
         logger.info("InPost shipment cancelled: id=%s", shipment_id)
 
     def cancel_dispatch_order(self, dispatch_order_id: str) -> None:
-        """Cancel a dispatch order. Only possible before courier accepts the pickup."""
+        """Cancel a dispatch order. Only possible before courier accepts the pickup.
+
+        A 422 (already accepted) surfaces as InPostBusinessError via _request.
+        """
         url = f"{_BASE}/v1/organizations/{self._org_id}/dispatch_orders/{dispatch_order_id}"
-        resp = self._session.delete(url, timeout=_TIMEOUT)
-        if not resp.ok:
-            if resp.status_code == 422:
-                raise InPostError(
-                    f"InPost cancel dispatch rejected (already accepted by courier?): {resp.text[:200]}"
-                )
-            raise InPostError(
-                f"InPost cancel dispatch failed {resp.status_code}: {resp.text[:200]}"
-            )
+        self._request("DELETE", url, action="cancel_dispatch_order")
         logger.info("InPost dispatch order cancelled: id=%s", dispatch_order_id)
 
     # ── Label ─────────────────────────────────────────────────────────────────
 
     def get_label(self, shipment_id: str) -> bytes:
         url = f"{_BASE}/v1/shipments/{shipment_id}/label"
-        resp = self._session.get(url, timeout=_TIMEOUT)
-        if not resp.ok:
-            raise InPostError(f"InPost label fetch failed {resp.status_code}: {resp.text[:200]}")
+        resp = self._request("GET", url, action="get_label")
         return resp.content

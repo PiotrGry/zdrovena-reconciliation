@@ -1,0 +1,139 @@
+{
+  "href": "https://api-shipx-pl.easypack24.net/v1/shipments/2794334708",
+  "id": 2794334708,
+  "status": "delivered",
+  "tracking_number": "620999683962817433511891",
+  "return_tracking_number": null,
+  "service": "inpost_courier_allegro",
+  "reference": "woda but. 12",
+  "is_return": false,
+  "application_id": 111053,
+  "created_by_id": null,
+  "external_customer_id": null,
+  "sending_method": "dispatch_order",
+  "end_of_week_collection": false,
+  "comments": null,
+  "mpk": null,
+  "additional_services": [],
+  "custom_attributes": {
+    "sending_method": "dispatch_order",
+    "dispatch_order_id": 14832941
+  },
+  "cod": {
+    "amount": 97.07,
+    "currency": "PLN"
+  },
+  "insurance": {
+    "amount": 5000.0,
+    "currency": "PLN"
+  },
+  "sender": {
+    "id": 5588790355,
+    "name": "Jan Kowalski",
+    "company_name": "TEST Seller Sp. z o.o.",
+    "first_name": "TEST",
+    "last_name": "Buyer",
+    "email": "test@example.com",
+    "phone": "000000000",
+    "address": {
+      "id": 3960943255,
+      "street": "ul. Testowa 1",
+      "building_number": "6/12",
+      "line1": null,
+      "line2": null,
+      "city": "Warszawa",
+      "post_code": "30-015",
+      "country_code": "PL"
+    }
+  },
+  "receiver": {
+    "id": 5588790354,
+    "name": "TEST Buyer",
+    "company_name": "TEST Seller Sp. z o.o.",
+    "first_name": "TEST",
+    "last_name": "Buyer",
+    "email": "buyer@allegromail.pl",
+    "phone": "000000000",
+    "address": {
+      "id": 3960943254,
+      "street": "ul. Testowa 1",
+      "building_number": "85N",
+      "line1": null,
+      "line2": null,
+      "city": "Warszawa",
+      "post_code": "62-817",
+      "country_code": "PL"
+    }
+  },
+  "selected_offer": {
+    "id": 2809513684,
+    "status": "bought",
+    "expires_at": null,
+    "rate": null,
+    "currency": "PLN",
+    "additional_services": [],
+    "carrier": {
+      "id": "inpost_locker",
+      "name": "InPost Paczkomaty",
+      "description": "InPost Paczkomaty - Przesyłki paczkomatowe"
+    },
+    "service": {
+      "id": "inpost_courier_allegro",
+      "name": "Allegro Kurier24 InPost",
+      "description": "Przesyłka kurierska Allegro Kurier24 InPost"
+    },
+    "unavailability_reasons": null
+  },
+  "offers": [
+    {
+      "id": 2809513684,
+      "status": "bought",
+      "expires_at": null,
+      "rate": null,
+      "currency": "PLN",
+      "additional_services": [],
+      "carrier": {
+        "id": "inpost_locker",
+        "name": "InPost Paczkomaty",
+        "description": "InPost Paczkomaty - Przesyłki paczkomatowe"
+      },
+      "service": {
+        "id": "inpost_courier_allegro",
+        "name": "Allegro Kurier24 InPost",
+        "description": "Przesyłka kurierska Allegro Kurier24 InPost"
+      },
+      "unavailability_reasons": null
+    }
+  ],
+  "transactions": [
+    {
+      "id": 2552992602,
+      "status": "success",
+      "offer_id": 2809513684,
+      "details": {},
+      "created_at": "2026-06-10T10:08:21.408+02:00",
+      "updated_at": "2026-06-10T10:08:21.871+02:00"
+    }
+  ],
+  "parcels": [
+    {
+      "id": 2805331254,
+      "identify_number": "woda but. 12",
+      "tracking_number": "620999683962817433511891",
+      "is_non_standard": false,
+      "template": null,
+      "dimensions": {
+        "length": 300.0,
+        "width": 200.0,
+        "height": 200.0,
+        "unit": "mm"
+      },
+      "weight": {
+        "amount": 7.0,
+        "unit": "kg"
+      }
+    }
+  ],
+  "created_at": "2026-06-10T10:08:21.249+02:00",
+  "updated_at": "2026-06-11T10:54:21.717+02:00"
+}
