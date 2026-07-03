@@ -30,6 +30,12 @@ from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_
 from zdrovena.api.deps import ShippingStoreDep, StorageDep
 from zdrovena.audit.bottles import SKIP_RE, is_glass
 from zdrovena.common.secrets import get_secret
+from zdrovena.common.shipping_exceptions import (
+    AllegroAuthError,
+    AllegroBusinessError,
+    AllegroCommandPending,
+    CourierTransientError,
+)
 from zdrovena.common.shipping_format import (
     extract_locker_id_from_title,
     normalize_pl_phone,
@@ -452,22 +458,35 @@ def _run_allegro_delivery(
             "Ship with Allegro requires external_order_id and allegro_delivery_method_id"
         )
 
-    # Build packages: weight from breakdown + safe defaults for dims.
+    # Build packages per Allegro create-commands contract: FLAT dimensions, each a
+    # {"value", "unit"} object; weight unit is the plural "KILOGRAMS"; type is required.
     weight_kg, dims = _parcel_weight_and_dims(draft)
     packages = [
         {
-            "weight": {"amount": round(weight_kg, 2), "unit": "KILOGRAM"},
-            "dimensions": {
-                "length": {"amount": dims["length"], "unit": "CENTIMETER"},
-                "width": {"amount": dims["width"], "unit": "CENTIMETER"},
-                "height": {"amount": dims["height"], "unit": "CENTIMETER"},
-            },
+            "type": "PACKAGE",
+            "length": {"value": dims["length"], "unit": "CENTIMETER"},
+            "width": {"value": dims["width"], "unit": "CENTIMETER"},
+            "height": {"value": dims["height"], "unit": "CENTIMETER"},
+            "weight": {"value": round(weight_kg, 2), "unit": "KILOGRAMS"},
         }
     ]
 
-    command_id = str(_uuid.uuid4())
+    # sender/receiver blocks are required by the API. Pull them from the order's
+    # delivery proposal (prefilled with the buyer's address by Allegro).
+    proposal = client.get_delivery_proposal(order_id)
+    sender = proposal.get("senderData") or {}
+    receiver = dict(proposal.get("receiverData") or {})
+
+    # Pickup-point / locker code lives inside the receiver block as `point`.
     pickup_point_id = (draft.get("receiver") or {}).get("locker_id") or None
-    sending_method = draft.get("allegro_sending_method")
+    if pickup_point_id:
+        receiver["point"] = pickup_point_id
+
+    # TODO: map draft["allegro_sending_method"] to a valid Allegro additionalServices
+    # string once the courier→service mapping is confirmed. The previous
+    # "sendingAtPoint"/"parcel_locker" values were not valid API values, so we omit
+    # additionalServices for now rather than send a 400-inducing payload.
+    command_id = str(_uuid.uuid4())
 
     client.create_ship_with_allegro_shipment(
         command_id=command_id,
@@ -475,15 +494,13 @@ def _run_allegro_delivery(
         delivery_method_id=delivery_method_id,
         credentials_id=draft.get("allegro_credentials_id"),
         packages=packages,
-        pickup_point_id=pickup_point_id,
-        sending_method=sending_method,
+        sender=sender,
+        receiver=receiver,
     )
 
     # Non-blocking: krótki polling ~3s. Jeśli create-command jeszcze IN_PROGRESS — zwracamy
     # status='pending_confirmation' i zostawiamy dopytanie o waybill oddzielnemu workerowi.
     # Unikamy trzymania HTTP requesta na kilkadziesiąt sekund (poprzedni problem z InPost sync).
-    from zdrovena.common.shipping_exceptions import AllegroCommandPending
-
     try:
         shipment_id = client.wait_for_ship_with_allegro_shipment(
             command_id, max_attempts=3, interval_s=1.0
@@ -525,11 +542,14 @@ def _run_allegro_delivery(
                     shipment_id,
                     pickup_date,
                 )
-        except Exception as exc:
-            logger.warning("Allegro Delivery pickup failed for %s: %s", shipment_id, exc)
+        except (AllegroBusinessError, AllegroAuthError, CourierTransientError):
+            # Pickup is best-effort: the shipment is already created, so a pickup
+            # failure must not abort the flow — operator can retry the pickup.
+            logger.exception("Allegro Delivery pickup failed for %s", shipment_id)
 
     return {
         "courier_draft_id": shipment_id,
+        "allegro_shipment_id": shipment_id,
         "tracking_number": waybill,
         "status": "created",
         "pickup_ordered": pickup_ordered,
@@ -1001,20 +1021,36 @@ def get_label(
     shipping_store: ShippingStoreDep,
     storage: StorageDep,
     principal: Annotated[Principal, Depends(require_viewer_or_above)],
-    courier: str = Query(None, description="inpost or apaczka (defaults to draft's courier)"),
+    courier: str = Query(
+        None, description="inpost, apaczka, or allegro_delivery (defaults to draft's courier)"
+    ),
 ) -> StreamingResponse:
     draft = shipping_store.get_draft(draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
 
-    courier_draft_id = draft.get("courier_draft_id")
-    if not courier_draft_id:
-        raise HTTPException(status_code=404, detail="No courier draft ID — draft may have failed")
-
     # Prefer the stored draft courier over the query param (prevents mismatch)
     courier = draft.get("courier") or courier
-    if courier not in ("inpost", "apaczka"):
-        raise HTTPException(status_code=400, detail="courier must be 'inpost' or 'apaczka'")
+    if courier not in ("inpost", "apaczka", "allegro_delivery"):
+        raise HTTPException(
+            status_code=400,
+            detail="courier must be 'inpost', 'apaczka', or 'allegro_delivery'",
+        )
+
+    # allegro_delivery: label is fetched by allegro shipment_id, not courier_draft_id
+    if courier == "allegro_delivery":
+        shipment_id = draft.get("allegro_shipment_id")
+        if not shipment_id:
+            raise HTTPException(
+                status_code=404,
+                detail="No Allegro shipment id — dispatch may not be created yet",
+            )
+    else:
+        courier_draft_id = draft.get("courier_draft_id")
+        if not courier_draft_id:
+            raise HTTPException(
+                status_code=404, detail="No courier draft ID — draft may have failed"
+            )
 
     try:
         if courier == "inpost":
@@ -1032,6 +1068,17 @@ def get_label(
             pdf_bytes = ApaczkaClient(app_id, app_secret, service_id, storage).get_label(
                 courier_draft_id
             )
+        elif courier == "allegro_delivery":
+            client = _get_allegro_client()
+            if client is None:
+                raise HTTPException(status_code=502, detail="Allegro credentials missing")
+            try:
+                pdf_bytes = client.get_ship_with_allegro_label(shipment_id)
+            except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
+                logger.exception("Allegro get_label failed for draft %s", draft_id)
+                raise HTTPException(
+                    status_code=502, detail=f"Allegro API error: {exc}"
+                ) from exc
         else:
             raise HTTPException(status_code=400, detail=f"Unknown courier: {courier}")
     except HTTPException:
@@ -1047,3 +1094,159 @@ def get_label(
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
+
+
+# ─── Ship-with-Allegro cancel & manual mark-processed (operator actions) ──────
+
+
+@router.delete(
+    "/shipping/drafts/{draft_id}/shipment",
+    summary="Cancel a Ship-with-Allegro shipment before dispatch",
+    responses={
+        403: {"description": "Insufficient role"},
+        404: {"description": "Draft not found"},
+        409: {"description": "No Allegro shipment to cancel"},
+        502: {"description": "Allegro API error"},
+    },
+)
+def cancel_shipment(
+    draft_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    """Cancel the Allegro shipment created for this draft (before it is dispatched)."""
+    draft = shipping_store.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    shipment_id = draft.get("allegro_shipment_id") or draft.get("courier_draft_id")
+    if not shipment_id:
+        raise HTTPException(status_code=409, detail="No Allegro shipment to cancel")
+
+    if not _MOCK_COURIER:
+        client = _get_allegro_client()
+        if client is None:
+            raise HTTPException(status_code=502, detail="Allegro credentials missing")
+        try:
+            client.cancel_ship_with_allegro_shipment(
+                command_id=str(uuid.uuid4()), shipment_id=str(shipment_id)
+            )
+        except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
+            logger.exception("Allegro cancel shipment failed for draft %s", draft_id)
+            raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
+
+    shipping_store.update_draft(draft_id, {"status": "cancelled", "allegro_shipment_id": None})
+    return {"status": "cancelled", "draft_id": draft_id, "shipment_id": str(shipment_id)}
+
+
+@router.delete(
+    "/shipping/drafts/{draft_id}/dispatch",
+    summary="Cancel a Ship-with-Allegro dispatch (pickup) before acceptance",
+    responses={
+        403: {"description": "Insufficient role"},
+        404: {"description": "Draft not found"},
+        409: {"description": "No Allegro dispatch to cancel"},
+        502: {"description": "Allegro API error"},
+    },
+)
+def cancel_dispatch(
+    draft_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    """Cancel the Allegro dispatch (pickup) order created for this draft."""
+    draft = shipping_store.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    dispatch_id = draft.get("allegro_dispatch_id")
+    if not dispatch_id:
+        raise HTTPException(status_code=409, detail="No Allegro dispatch to cancel")
+
+    if not _MOCK_COURIER:
+        client = _get_allegro_client()
+        if client is None:
+            raise HTTPException(status_code=502, detail="Allegro credentials missing")
+        try:
+            client.cancel_ship_with_allegro_dispatch(
+                command_id=str(uuid.uuid4()), dispatch_id=str(dispatch_id)
+            )
+        except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
+            logger.exception("Allegro cancel dispatch failed for draft %s", draft_id)
+            raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
+
+    shipping_store.update_draft(draft_id, {"pickup_ordered": False, "allegro_dispatch_id": None})
+    return {"status": "dispatch_cancelled", "draft_id": draft_id, "dispatch_id": str(dispatch_id)}
+
+
+@router.post(
+    "/shipping/drafts/{draft_id}/mark-allegro-processed",
+    summary="Manually mark the Allegro order as PROCESSING (operator action)",
+    responses={
+        400: {"description": "Draft is not an Allegro draft"},
+        403: {"description": "Insufficient role"},
+        404: {"description": "Draft not found"},
+        409: {"description": "Draft has no external Allegro order id"},
+        502: {"description": "Allegro API error"},
+    },
+)
+def mark_allegro_processed(
+    draft_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    """Idempotent operator action to mark an Allegro order as PROCESSING.
+
+    We deliberately do NOT do this automatically after draft creation - a draft only
+    represents "we intend to ship", not "we shipped". The operator confirms via the
+    UI once the parcel actually leaves. Re-running this endpoint is safe: if the
+    draft is already marked processed we return 200 without hitting Allegro.
+    """
+    draft = shipping_store.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    if draft.get("source") != "allegro":
+        raise HTTPException(status_code=400, detail="Draft is not an Allegro draft")
+
+    external_order_id = draft.get("external_order_id") or draft.get("allegro_order_id")
+    if not external_order_id:
+        raise HTTPException(status_code=409, detail="Draft has no external Allegro order id")
+
+    # Idempotency - a second click is a no-op that reports the existing state.
+    if draft.get("allegro_fulfillment_status") == "PROCESSING":
+        return {
+            "status": "already_processed",
+            "draft_id": draft_id,
+            "external_order_id": external_order_id,
+            "marked_at": draft.get("allegro_marked_processed_at"),
+            "marked_by": draft.get("allegro_marked_processed_by"),
+        }
+
+    if not _MOCK_COURIER:
+        client = _get_allegro_client()
+        if client is None:
+            raise HTTPException(status_code=502, detail="Allegro credentials missing")
+        try:
+            client.mark_order_processed(str(external_order_id))
+        except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
+            logger.exception("Allegro mark_order_processed failed for draft %s", draft_id)
+            raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
+
+    marked_at = datetime.now(timezone.utc).isoformat()
+    marked_by = principal.email or principal.sub
+    shipping_store.update_draft(
+        draft_id,
+        {
+            "allegro_fulfillment_status": "PROCESSING",
+            "allegro_marked_processed_at": marked_at,
+            "allegro_marked_processed_by": marked_by,
+        },
+    )
+    return {
+        "status": "marked_processed",
+        "draft_id": draft_id,
+        "external_order_id": external_order_id,
+        "marked_at": marked_at,
+        "marked_by": marked_by,
+    }

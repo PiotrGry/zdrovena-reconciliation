@@ -178,7 +178,7 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, selected, onToggleSelect, forceOpen }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkAllegroProcessed, busy, canManage, selected, onToggleSelect, forceOpen }) {
     const { t, lang } = useT()
     const T = t[lang]
     const [open, setOpen] = useState(false)
@@ -387,6 +387,27 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, busy, canManage, s
                                 Podjazd zamówiony
                             </span>
                         )}
+
+                        {canManage && draft.source === 'allegro' && draft.status === 'created' && (
+                            draft.allegro_fulfillment_status === 'PROCESSING' ? (
+                                <span className="pickup-badge" title={draft.allegro_marked_processed_at || ''}>
+                                    <Icon name="check" size={12} />
+                                    Oznaczone w Allegro
+                                </span>
+                            ) : (
+                                <button
+                                    className="btn btn-secondary"
+                                    onClick={() => onMarkAllegroProcessed(draft)}
+                                    disabled={isBusy}
+                                    title="Zmienia status zamówienia w Allegro na PROCESSING"
+                                >
+                                    {isBusy
+                                        ? <><Icon name="loader" size={13} className="spin" /> Oznaczanie…</>
+                                        : <><Icon name="check" size={13} /> Oznacz w Allegro jako zrealizowane</>
+                                    }
+                                </button>
+                            )
+                        )}
                     </div>
 
                     {pickupModal && (
@@ -522,6 +543,22 @@ export default function ShippingView() {
                 const body = await res.json().catch(() => ({}))
                 throw new Error(body.detail || `${res.status}`)
             }
+        })()
+    }
+
+    function handleMarkAllegroProcessed(draft) {
+        if (!window.confirm('Oznaczyć zamówienie Allegro jako zrealizowane? To wywoła side-effect po stronie Allegro (status PROCESSING) i nie da się cofnąć.')) return
+        return withBusy(draft.id, async () => {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}/mark-allegro-processed`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(body.detail || `${res.status}`)
+            }
+            await load()
         })()
     }
 
@@ -748,6 +785,7 @@ export default function ShippingView() {
                         onPrintLabel={handlePrintLabel}
                         onExecute={handleExecute}
                         onPickup={handlePickup}
+                        onMarkAllegroProcessed={handleMarkAllegroProcessed}
                         selected={selectedDraftIds.has(draft.id)}
                         onToggleSelect={handleToggleSelect}
                         forceOpen={expandAll}

@@ -16,6 +16,29 @@ from zdrovena.api.routers.webhooks import (
     _maybe_push_tracking_to_allegro,
     _run_allegro_delivery,
 )
+from zdrovena.common.shipping_exceptions import CourierServerError
+
+_PROPOSAL = {
+    "senderData": {
+        "name": "Nadawca",
+        "street": "Główna 30",
+        "postalCode": "10-200",
+        "city": "Warszawa",
+        "countryCode": "PL",
+        "email": "sender@mail.com",
+        "phone": "500600700",
+    },
+    "receiverData": {
+        "name": "Jan Kowalski",
+        "street": "Testowa 1",
+        "postalCode": "00-001",
+        "city": "Warszawa",
+        "countryCode": "PL",
+        "email": "j@k.pl",
+        "phone": "600000000",
+    },
+}
+
 
 # ── _run_allegro_delivery ─────────────────────────────────────────────────────
 
@@ -51,6 +74,7 @@ class TestRunAllegroDelivery:
     def test_full_success_flow(self):
         """Happy path: create → poll SUCCESS → get shipment → extract waybill → label."""
         client = MagicMock()
+        client.get_delivery_proposal.return_value = _PROPOSAL
         client.create_ship_with_allegro_shipment.return_value = {
             "commandId": "cmd-1",
             "status": "IN_PROGRESS",
@@ -84,6 +108,7 @@ class TestRunAllegroDelivery:
 
     def test_passes_delivery_method_and_sending_method(self):
         client = MagicMock()
+        client.get_delivery_proposal.return_value = _PROPOSAL
         client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-1"}
         client.wait_for_ship_with_allegro_shipment.return_value = "ship-1"
         client.get_ship_with_allegro_shipment.return_value = {
@@ -108,11 +133,15 @@ class TestRunAllegroDelivery:
         assert call.kwargs["delivery_method_id"] == "svc-dpd"
         assert call.kwargs["credentials_id"] == "own-agreement-42"
         assert call.kwargs["order_id"] == "ORD-1"
-        # No sendingMethod for non-InPost
-        assert call.kwargs.get("sending_method") is None
+        # sender/receiver blocks come from the delivery proposal.
+        assert call.kwargs["sender"] == _PROPOSAL["senderData"]
+        assert call.kwargs["receiver"]["name"] == _PROPOSAL["receiverData"]["name"]
+        # sending_method mapping was removed (invalid API value).
+        assert "sending_method" not in call.kwargs
 
     def test_passes_pickup_point_for_locker(self):
         client = MagicMock()
+        client.get_delivery_proposal.return_value = _PROPOSAL
         client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-1"}
         client.wait_for_ship_with_allegro_shipment.return_value = "ship-1"
         client.get_ship_with_allegro_shipment.return_value = {
@@ -127,11 +156,14 @@ class TestRunAllegroDelivery:
             _run_allegro_delivery(self._draft(), MagicMock())
 
         call = client.create_ship_with_allegro_shipment.call_args
-        assert call.kwargs["pickup_point_id"] == "WAW01A"
+        # Locker code is now carried inside the receiver block as `point`.
+        assert call.kwargs["receiver"]["point"] == "WAW01A"
+        assert "pickup_point_id" not in call.kwargs
 
     def test_creates_pickup_when_requested(self):
         """When pickup_date is provided, order courier pickup after shipment creation."""
         client = MagicMock()
+        client.get_delivery_proposal.return_value = _PROPOSAL
         client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-1"}
         client.wait_for_ship_with_allegro_shipment.return_value = "ship-42"
         client.get_ship_with_allegro_shipment.return_value = {
@@ -165,6 +197,7 @@ class TestRunAllegroDelivery:
 
     def test_no_pickup_when_pickup_date_absent(self):
         client = MagicMock()
+        client.get_delivery_proposal.return_value = _PROPOSAL
         client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-1"}
         client.wait_for_ship_with_allegro_shipment.return_value = "ship-42"
         client.get_ship_with_allegro_shipment.return_value = {
@@ -185,13 +218,16 @@ class TestRunAllegroDelivery:
     def test_pickup_failure_does_not_abort_shipment(self):
         """If pickup fails after shipment is created, we still return the shipment info."""
         client = MagicMock()
+        client.get_delivery_proposal.return_value = _PROPOSAL
         client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-1"}
         client.wait_for_ship_with_allegro_shipment.return_value = "ship-42"
         client.get_ship_with_allegro_shipment.return_value = {
             "packages": [{"transportingInfo": [{"carrierId": "X", "carrierWaybill": "W"}]}]
         }
         client.extract_shipment_waybill = MagicMock(return_value=("X", "W"))
-        client.get_ship_with_allegro_pickup_proposals.side_effect = RuntimeError("pickup api down")
+        client.get_ship_with_allegro_pickup_proposals.side_effect = CourierServerError(
+            courier="allegro", status=503
+        )
 
         with patch(
             "zdrovena.api.routers.webhooks._get_allegro_client",
@@ -263,6 +299,7 @@ class TestPendingConfirmation:
         from zdrovena.common.shipping_exceptions import AllegroCommandPending
 
         client = MagicMock()
+        client.get_delivery_proposal.return_value = _PROPOSAL
         client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-async-1"}
         client.wait_for_ship_with_allegro_shipment.side_effect = AllegroCommandPending(
             command_id="cmd-async-1",
@@ -312,6 +349,7 @@ class TestPendingConfirmation:
         from zdrovena.common.shipping_exceptions import AllegroBusinessError
 
         client = MagicMock()
+        client.get_delivery_proposal.return_value = _PROPOSAL
         client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-err"}
         client.wait_for_ship_with_allegro_shipment.side_effect = AllegroBusinessError(
             detail="create-command ERROR: invalid method",

@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from http import HTTPStatus
 from typing import Any
 
 import requests
@@ -163,14 +164,14 @@ class AllegroClient:
         except requests.ConnectionError as exc:
             raise CourierConnectionError(courier="allegro", detail=str(exc)) from exc
 
-        if resp.status_code in (401, 403):
+        if resp.status_code in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
             raise AllegroAuthError(detail=(resp.text or "")[:200])
-        if 400 <= resp.status_code < 500:
+        if HTTPStatus.BAD_REQUEST <= resp.status_code < HTTPStatus.INTERNAL_SERVER_ERROR:
             raise AllegroBusinessError(
                 detail=f"{resp.status_code} {(resp.text or '')[:200]}",
                 action=path,
             )
-        if resp.status_code >= 500:
+        if resp.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
             raise CourierServerError(courier="allegro", status=resp.status_code)
         return resp
 
@@ -179,7 +180,7 @@ class AllegroClient:
 
     def _post(self, path: str, json_body: dict[str, Any]) -> dict[str, Any]:
         resp = self._request("POST", path, json_body=json_body)
-        if resp.status_code == 204:
+        if resp.status_code == HTTPStatus.NO_CONTENT:
             return {}
         try:
             return resp.json() or {}
@@ -188,7 +189,7 @@ class AllegroClient:
 
     def _put_json(self, path: str, json_body: dict[str, Any]) -> dict[str, Any]:
         resp = self._request("PUT", path, json_body=json_body)
-        if resp.status_code == 204:
+        if resp.status_code == HTTPStatus.NO_CONTENT:
             return {}
         try:
             return resp.json() or {}
@@ -309,32 +310,37 @@ class AllegroClient:
         delivery_method_id: str,
         credentials_id: str | None,
         packages: list[dict[str, Any]],
-        pickup_point_id: str | None = None,
-        sending_method: str | None = None,
-        additional_services: dict[str, Any] | None = None,
+        sender: dict[str, Any],
+        receiver: dict[str, Any],
+        additional_services: list[str] | None = None,
     ) -> dict[str, Any]:
         """POST /shipment-management/shipments/create-commands.
 
+        Contract (see docs/audit/fixtures/allegro_create_commands_request.json):
+          - order_id is sent as ``referenceNumber`` (there is no ``orderId`` field).
+          - ``sender`` / ``receiver`` are required address blocks (name, company,
+            street, postalCode, city, state, countryCode, email, phone, point?).
+            For pickup-point / locker deliveries put the point code in
+            ``receiver["point"]``.
+          - Each package must carry ``type: "PACKAGE"`` and FLAT dimensions
+            (``length``/``width``/``height``/``weight`` each a ``{"value", "unit"}``
+            object — weight unit is the plural ``KILOGRAMS``).
+          - ``additional_services`` is an Array of Allegro service strings.
+
         For Allegro Standard: pass credentials_id=None.
         For own agreements: pass the credentialsId returned by get_delivery_services.
-        For InPost: pass sending_method one of 'parcel_locker' | 'dispatch_order' |
-        'pop' | 'any_point' — mapped to additionalServices.sendingAtPoint.
         """
         input_body: dict[str, Any] = {
-            "orderId": order_id,
             "deliveryMethodId": delivery_method_id,
+            "sender": sender,
+            "receiver": receiver,
+            "referenceNumber": order_id,
             "packages": packages,
         }
         if credentials_id is not None:
             input_body["credentialsId"] = credentials_id
-        if pickup_point_id:
-            input_body["pickupPointId"] = pickup_point_id
-
-        add_services = dict(additional_services or {})
-        if sending_method:
-            add_services["sendingAtPoint"] = sending_method
-        if add_services:
-            input_body["additionalServices"] = add_services
+        if additional_services:
+            input_body["additionalServices"] = list(additional_services)
 
         return self._post(
             "/shipment-management/shipments/create-commands",
@@ -431,6 +437,30 @@ class AllegroClient:
                     "shipmentIds": list(shipment_ids),
                 },
             },
+        )
+
+    def cancel_ship_with_allegro_shipment(
+        self, *, command_id: str, shipment_id: str
+    ) -> dict[str, Any]:
+        """POST /shipment-management/shipments/cancel-commands.
+
+        Cancels a created shipment before it is dispatched.
+        """
+        return self._post(
+            "/shipment-management/shipments/cancel-commands",
+            {"commandId": command_id, "input": {"shipmentId": shipment_id}},
+        )
+
+    def cancel_ship_with_allegro_dispatch(
+        self, *, command_id: str, dispatch_id: str
+    ) -> dict[str, Any]:
+        """POST /shipment-management/dispatches/cancel-commands.
+
+        Cancels a dispatch (pickup) order before it is accepted by the courier.
+        """
+        return self._post(
+            "/shipment-management/dispatches/cancel-commands",
+            {"commandId": command_id, "input": {"dispatchId": dispatch_id}},
         )
 
     def get_ship_with_allegro_label(self, shipment_id: str) -> bytes:
