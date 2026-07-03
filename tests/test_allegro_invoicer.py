@@ -98,6 +98,7 @@ class TestFailureAlerts:
 
         assert result["status"] == "error"
         assert "Fakturownia 500" in result["error"]
+        assert "fakturownia_invoice_id" not in result
         mock_alert.assert_called_once()
         assert mock_alert.call_args.kwargs["allegro_order_id"] == "af1"
         allegro.create_invoice_declaration.assert_not_called()

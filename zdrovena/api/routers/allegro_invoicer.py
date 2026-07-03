@@ -117,7 +117,7 @@ def create_invoice_for_order(
         )
     except Exception as exc:
         logger.exception(
-            "Pushing Fakturownia invoice %s to Allegro failed for order %s",
+            "Fetching or pushing Fakturownia invoice %s to Allegro failed for order %s",
             fakturownia_invoice_id,
             allegro_order_id,
         )
