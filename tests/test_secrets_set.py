@@ -27,20 +27,14 @@ def _isolate_env(monkeypatch):
 class TestSetSecretKeyVault:
     def test_writes_to_keyvault_when_url_set(self, monkeypatch):
         monkeypatch.setenv("AZURE_KEYVAULT_URL", "https://vault.example/")
-        with patch(
-            "zdrovena.common._keyvault.set_keyvault_secret", return_value=True
-        ) as kv:
+        with patch("zdrovena.common._keyvault.set_keyvault_secret", return_value=True) as kv:
             with patch.object(secrets_mod, "_KEYRING_AVAILABLE", False):
                 assert secrets_mod.set_secret("allegro-refresh-token", "rt-1") is True
-        kv.assert_called_once_with(
-            "https://vault.example/", "allegro-refresh-token", "rt-1"
-        )
+        kv.assert_called_once_with("https://vault.example/", "allegro-refresh-token", "rt-1")
 
     def test_returns_false_when_keyvault_fails_and_no_keyring(self, monkeypatch, caplog):
         monkeypatch.setenv("AZURE_KEYVAULT_URL", "https://vault.example/")
-        with patch(
-            "zdrovena.common._keyvault.set_keyvault_secret", return_value=False
-        ):
+        with patch("zdrovena.common._keyvault.set_keyvault_secret", return_value=False):
             with patch.object(secrets_mod, "_KEYRING_AVAILABLE", False):
                 with caplog.at_level(logging.WARNING, logger="zdrovena.common.secrets"):
                     result = secrets_mod.set_secret("allegro-refresh-token", "rt-1")

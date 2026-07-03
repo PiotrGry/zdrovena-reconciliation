@@ -284,9 +284,8 @@ class InPostShipmentNotCancellable(InPostBusinessError):
         current_status: str = "",
         order_id: str = "",
     ) -> None:
-        message = (
-            f"InPost shipment {shipment_id!r} cannot be cancelled"
-            + (f" (status={current_status!r})" if current_status else "")
+        message = f"InPost shipment {shipment_id!r} cannot be cancelled" + (
+            f" (status={current_status!r})" if current_status else ""
         )
         super().__init__(
             message,

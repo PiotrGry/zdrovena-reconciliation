@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from zdrovena.api.routers.webhooks import (
@@ -71,16 +69,10 @@ class TestPickCourierFallback:
     """Substring heuristics preserved when ENV unset (backwards compat)."""
 
     def test_inpost_keyword_routes_to_inpost(self) -> None:
-        assert (
-            _pick_courier({"shipping_lines": [{"title": "InPost Paczkomat"}]})
-            == "inpost"
-        )
+        assert _pick_courier({"shipping_lines": [{"title": "InPost Paczkomat"}]}) == "inpost"
 
     def test_paczkomat_keyword_routes_to_inpost(self) -> None:
-        assert (
-            _pick_courier({"shipping_lines": [{"title": "Paczkomat 24/7"}]})
-            == "inpost"
-        )
+        assert _pick_courier({"shipping_lines": [{"title": "Paczkomat 24/7"}]}) == "inpost"
 
     def test_kurier_alone_routes_to_apaczka(self) -> None:
         assert _pick_courier({"shipping_lines": [{"title": "Kurier DPD"}]}) == "apaczka"
@@ -91,15 +83,10 @@ class TestPickCourierFallback:
 
 
 class TestPickCourierExplicitMap:
-    def test_env_mapping_takes_precedence(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_mapping_takes_precedence(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("COURIER_TITLE_MAP", "dpd=apaczka;inpost=inpost")
         _reset_courier_maps_cache()
-        assert (
-            _pick_courier({"shipping_lines": [{"title": "DPD Standard"}]})
-            == "apaczka"
-        )
+        assert _pick_courier({"shipping_lines": [{"title": "DPD Standard"}]}) == "apaczka"
 
     def test_env_mapping_can_override_default_heuristic(
         self, monkeypatch: pytest.MonkeyPatch
@@ -107,20 +94,12 @@ class TestPickCourierExplicitMap:
         # operator points 'inpost' at apaczka (unusual but explicit)
         monkeypatch.setenv("COURIER_TITLE_MAP", "inpost=apaczka")
         _reset_courier_maps_cache()
-        assert (
-            _pick_courier({"shipping_lines": [{"title": "InPost Kurier"}]})
-            == "apaczka"
-        )
+        assert _pick_courier({"shipping_lines": [{"title": "InPost Kurier"}]}) == "apaczka"
 
-    def test_env_mapping_supports_new_courier_names(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_mapping_supports_new_courier_names(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("COURIER_TITLE_MAP", "gls=apaczka;fedex=apaczka")
         _reset_courier_maps_cache()
-        assert (
-            _pick_courier({"shipping_lines": [{"title": "GLS ekspres"}]})
-            == "apaczka"
-        )
+        assert _pick_courier({"shipping_lines": [{"title": "GLS ekspres"}]}) == "apaczka"
 
     def test_env_mapping_falls_back_to_heuristic_on_miss(
         self, monkeypatch: pytest.MonkeyPatch
@@ -128,10 +107,7 @@ class TestPickCourierExplicitMap:
         monkeypatch.setenv("COURIER_TITLE_MAP", "gls=apaczka")
         _reset_courier_maps_cache()
         # title matches no ENV key → heuristic still routes InPost → inpost
-        assert (
-            _pick_courier({"shipping_lines": [{"title": "InPost paczkomat"}]})
-            == "inpost"
-        )
+        assert _pick_courier({"shipping_lines": [{"title": "InPost paczkomat"}]}) == "inpost"
 
     def test_json_env_mapping(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(
@@ -139,13 +115,8 @@ class TestPickCourierExplicitMap:
             '{"dpd": "apaczka", "paczkomat": "inpost"}',
         )
         _reset_courier_maps_cache()
-        assert (
-            _pick_courier({"shipping_lines": [{"title": "Paczkomat"}]}) == "inpost"
-        )
-        assert (
-            _pick_courier({"shipping_lines": [{"title": "DPD kurier"}]})
-            == "apaczka"
-        )
+        assert _pick_courier({"shipping_lines": [{"title": "Paczkomat"}]}) == "inpost"
+        assert _pick_courier({"shipping_lines": [{"title": "DPD kurier"}]}) == "apaczka"
 
 
 # ── _pick_inpost_service ─────────────────────────────────────────────────────
@@ -160,26 +131,18 @@ class TestPickInpostServiceFallback:
 
 
 class TestPickInpostServiceExplicitMap:
-    def test_env_mapping_takes_precedence(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv(
-            "INPOST_SERVICE_TITLE_MAP", "paczkomat=paczkomat;kurier=kurier"
-        )
+    def test_env_mapping_takes_precedence(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("INPOST_SERVICE_TITLE_MAP", "paczkomat=paczkomat;kurier=kurier")
         _reset_courier_maps_cache()
         assert _pick_inpost_service("Paczkomat 24/7") == "paczkomat"
         assert _pick_inpost_service("Kurier") == "kurier"
 
-    def test_env_mapping_supports_new_names(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_mapping_supports_new_names(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("INPOST_SERVICE_TITLE_MAP", "pop=paczkomat")
         _reset_courier_maps_cache()
         assert _pick_inpost_service("POP odbiór") == "paczkomat"
 
-    def test_falls_back_to_heuristic_on_miss(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_falls_back_to_heuristic_on_miss(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("INPOST_SERVICE_TITLE_MAP", "pop=paczkomat")
         _reset_courier_maps_cache()
         # no keyword matches → heuristic returns 'kurier'

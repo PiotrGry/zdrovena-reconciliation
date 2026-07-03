@@ -283,9 +283,7 @@ class TestCreateShipmentCommand:
                 additional_properties={"inpost#sendingMethod": "parcel_locker"},
             )
         body = m.call_args[1]["json"]
-        assert body["input"]["additionalProperties"] == {
-            "inpost#sendingMethod": "parcel_locker"
-        }
+        assert body["input"]["additionalProperties"] == {"inpost#sendingMethod": "parcel_locker"}
 
     def test_additional_properties_omitted_by_default(self):
         """P1-2: additionalProperties key must be absent when not provided."""
@@ -612,9 +610,7 @@ class TestPickupProposals:
                 "address": {},
             }
         ]
-        with patch.object(
-            c._session, "request", return_value=_mock_response(200, payload)
-        ):
+        with patch.object(c._session, "request", return_value=_mock_response(200, payload)):
             proposals = c.get_ship_with_allegro_pickup_proposals(["ship-99"])
         assert len(proposals) == 1
         assert proposals[0]["id"] == "2023071210001300"
@@ -629,9 +625,7 @@ class TestPickupProposals:
                         "pickupTimes": [
                             {"date": "2026-07-05", "minTime": "08:00", "maxTime": "12:00"}
                         ],
-                        "proposalItems": [
-                            {"id": "legacy-id", "name": "legacy"}
-                        ],
+                        "proposalItems": [{"id": "legacy-id", "name": "legacy"}],
                     }
                 ]
             }

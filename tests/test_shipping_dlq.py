@@ -66,9 +66,7 @@ class TestShippingStoreDlq:
     def test_enqueue_with_existing_id_bumps_retries(self, store):
         first = store.enqueue_dlq(payload={"id": 1}, error="err-1", entry_id="stable-id")
         assert first["retries"] == 0
-        second = store.enqueue_dlq(
-            payload={"id": 1}, error="err-2", entry_id="stable-id"
-        )
+        second = store.enqueue_dlq(payload={"id": 1}, error="err-2", entry_id="stable-id")
         assert second["id"] == "stable-id"
         assert second["retries"] == 1
         assert second["last_error"] == "err-2"

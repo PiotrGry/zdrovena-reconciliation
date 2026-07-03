@@ -333,7 +333,8 @@ class ShippingStore:
         Returns the stored entry.
         """
         import uuid as _uuid
-        from datetime import datetime as _dt, timezone as _tz
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
 
         now = _dt.now(_tz.utc).isoformat()
         eid = entry_id or str(_uuid.uuid4())

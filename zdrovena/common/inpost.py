@@ -80,6 +80,7 @@ def _extract_error_code(resp: requests.Response) -> str:
             return value
     return ""
 
+
 # Physical dimensions and weights per package type produced by _calc_packages.
 # Dimensions in cm; weight_kg is gross weight of a single box.
 # szkło-2pak = two szkło boxes → same per-box spec, sent as qty=2 in parcels list.
@@ -136,9 +137,9 @@ PARCEL_SPECS: dict[str, dict] = {
 # given package by volume + weight (P2-1). All slots share the same weight
 # limit (25 kg) so the picker is effectively volume-driven.
 PACZKOMAT_SLOTS: dict[str, dict] = {
-    "small": {"height": 8, "width": 38, "depth": 64, "max_weight_kg": 25},   # slot A
+    "small": {"height": 8, "width": 38, "depth": 64, "max_weight_kg": 25},  # slot A
     "medium": {"height": 19, "width": 38, "depth": 64, "max_weight_kg": 25},  # slot B
-    "large": {"height": 41, "width": 38, "depth": 64, "max_weight_kg": 25},   # slot C
+    "large": {"height": 41, "width": 38, "depth": 64, "max_weight_kg": 25},  # slot C
 }
 
 # Ordered smallest-first (cheapest) for the auto-picker.

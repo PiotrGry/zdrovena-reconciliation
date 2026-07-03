@@ -158,9 +158,7 @@ class TestRunAllegroDelivery:
             _run_allegro_delivery(self._draft(), MagicMock())
 
         call = client.create_ship_with_allegro_shipment.call_args
-        assert call.kwargs["additional_properties"] == {
-            "inpost#sendingMethod": "parcel_locker"
-        }
+        assert call.kwargs["additional_properties"] == {"inpost#sendingMethod": "parcel_locker"}
 
     def test_ignores_unknown_sending_method(self):
         """P1-2: unknown allegro_sending_method values are silently dropped."""
