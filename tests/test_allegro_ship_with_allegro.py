@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from zdrovena.common.allegro import AllegroClient
+from zdrovena.common.allegro import AllegroClient, _normalize_pickup_proposals
 from zdrovena.common.shipping_exceptions import AllegroBusinessError
 
 
@@ -427,7 +427,8 @@ class TestGetShipmentDetails:
 
 
 class TestPickupProposals:
-    def test_posts_shipment_ids(self):
+    def test_posts_shipment_ids_legacy_flat(self):
+        """Older sandbox/mock shape: top-level proposalItems (deprecated)."""
         c = _mock_client()
         with patch.object(
             c._session,
@@ -450,9 +451,139 @@ class TestPickupProposals:
         body = m.call_args[1]["json"]
         assert body["input"]["shipmentIds"] == ["ship-99"]
 
+    def test_parses_new_nested_pickup_times(self):
+        """Post-2026-07-01 shape: nested proposals[].pickupTimes[]."""
+        c = _mock_client()
+        payload = [
+            {
+                "proposals": [
+                    {
+                        "shipmentId": "ba88f0fb-acf3-438a-877e-580da50c0874",
+                        "pickupTimes": [
+                            {
+                                "date": "2026-07-05",
+                                "minTime": "08:00",
+                                "maxTime": "12:00",
+                            },
+                            {
+                                "date": "2026-07-06",
+                                "minTime": "10:00",
+                                "maxTime": "14:00",
+                            },
+                        ],
+                    }
+                ],
+                "address": {"street": "Foo 1"},
+            }
+        ]
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(200, payload),
+        ):
+            proposals = c.get_ship_with_allegro_pickup_proposals(["ship-99"])
+        assert len(proposals) == 2
+        assert proposals[0]["date"] == "2026-07-05"
+        assert proposals[0]["minTime"] == "08:00"
+        assert proposals[0]["shipmentId"] == "ba88f0fb-acf3-438a-877e-580da50c0874"
+        # No legacy id should be synthesized
+        assert "id" not in proposals[0]
+
+    def test_parses_legacy_nested_proposal_items(self):
+        """Older prod shape (still supported by Allegro until end of June 2026)."""
+        c = _mock_client()
+        payload = [
+            {
+                "proposals": [
+                    {
+                        "shipmentId": "ship-99",
+                        "proposalItems": [
+                            {
+                                "id": "2023071210001300",
+                                "name": "2023-07-12 10:00-13:00",
+                            }
+                        ],
+                    }
+                ],
+                "address": {},
+            }
+        ]
+        with patch.object(
+            c._session, "request", return_value=_mock_response(200, payload)
+        ):
+            proposals = c.get_ship_with_allegro_pickup_proposals(["ship-99"])
+        assert len(proposals) == 1
+        assert proposals[0]["id"] == "2023071210001300"
+
+    def test_parses_mixed_shape_prefers_pickup_times(self):
+        """Server returning both new and legacy shapes side-by-side."""
+        payload = [
+            {
+                "proposals": [
+                    {
+                        "shipmentId": "s",
+                        "pickupTimes": [
+                            {"date": "2026-07-05", "minTime": "08:00", "maxTime": "12:00"}
+                        ],
+                        "proposalItems": [
+                            {"id": "legacy-id", "name": "legacy"}
+                        ],
+                    }
+                ]
+            }
+        ]
+        proposals = _normalize_pickup_proposals(payload)
+        # Both surfaces returned; caller picks by presence of `date` (new) first.
+        assert any(p.get("date") == "2026-07-05" for p in proposals)
+        assert any(p.get("id") == "legacy-id" for p in proposals)
+
+    def test_normalize_handles_empty_and_malformed_input(self):
+        assert _normalize_pickup_proposals(None) == []
+        assert _normalize_pickup_proposals({}) == []
+        assert _normalize_pickup_proposals([]) == []
+        assert _normalize_pickup_proposals({"unrelated": "payload"}) == []
+        assert _normalize_pickup_proposals("garbage") == []
+
 
 class TestCreatePickupCommand:
-    def test_posts_pickup_command(self):
+    def test_posts_pickup_command_new_format(self):
+        """New-format pickupTime (post-2026-07-01) is sent as-is."""
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(
+                201,
+                {"commandId": "pu-cmd-1", "status": "IN_PROGRESS"},
+            ),
+        ) as m:
+            result = c.create_ship_with_allegro_pickup(
+                command_id="pu-cmd-1",
+                shipment_ids=["ship-99"],
+                pickup_time={
+                    "date": "2026-07-05",
+                    "minTime": "08:00",
+                    "maxTime": "12:00",
+                },
+            )
+        assert result["commandId"] == "pu-cmd-1"
+        body = m.call_args[1]["json"]
+        assert body["commandId"] == "pu-cmd-1"
+        assert body["input"]["pickupTime"] == {
+            "date": "2026-07-05",
+            "minTime": "08:00",
+            "maxTime": "12:00",
+        }
+        assert body["input"]["shipmentIds"] == ["ship-99"]
+        # New-format must NOT include legacy field.
+        assert "pickupDateProposalId" not in body["input"]
+        assert "proposalItemId" not in body["input"]
+
+    def test_posts_pickup_command_legacy_format(self):
+        """Legacy proposal_item_id maps to the deprecated pickupDateProposalId.
+
+        Kept working for sandbox / pre-2026-07-01 servers that still accept it.
+        """
         c = _mock_client()
         with patch.object(
             c._session,
@@ -470,8 +601,33 @@ class TestCreatePickupCommand:
         assert result["commandId"] == "pu-cmd-1"
         body = m.call_args[1]["json"]
         assert body["commandId"] == "pu-cmd-1"
-        assert body["input"]["proposalItemId"] == "prop-1"
+        assert body["input"]["pickupDateProposalId"] == "prop-1"
         assert body["input"]["shipmentIds"] == ["ship-99"]
+
+    def test_rejects_missing_pickup_selector(self):
+        c = _mock_client()
+        with pytest.raises(ValueError, match="pickup_time"):
+            c.create_ship_with_allegro_pickup(
+                command_id="pu-cmd-1",
+                shipment_ids=["ship-99"],
+            )
+
+    def test_pickup_time_wins_over_proposal_id_when_both(self):
+        c = _mock_client()
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(201, {"commandId": "x"}),
+        ) as m:
+            c.create_ship_with_allegro_pickup(
+                command_id="x",
+                shipment_ids=["s"],
+                pickup_time={"date": "2026-07-05", "minTime": "08:00", "maxTime": "12:00"},
+                proposal_item_id="legacy-should-be-ignored",
+            )
+        body = m.call_args[1]["json"]
+        assert "pickupTime" in body["input"]
+        assert "pickupDateProposalId" not in body["input"]
 
 
 # ── cancel shipment / dispatch ────────────────────────────────────────────────

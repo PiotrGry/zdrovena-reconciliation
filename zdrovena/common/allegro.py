@@ -47,6 +47,55 @@ _DEFAULT_TIMEOUT = int(os.environ.get("ALLEGRO_HTTP_TIMEOUT", "30"))
 _TOKEN_REFRESH_SKEW_S = 30
 
 
+def _normalize_pickup_proposals(data: Any) -> list[dict[str, Any]]:
+    """Flatten Allegro pickup-proposals response into a single list of slots.
+
+    Handles three response shapes seen across Allegro API versions:
+
+    1. **New nested (post-2026-07-01)** — top-level list, each entry has
+       ``proposals[].pickupTimes[]``. Each pickupTime carries ``date`` /
+       ``minTime`` / ``maxTime`` and no ``id``.
+    2. **Legacy nested** — top-level list, each entry has
+       ``proposals[].proposalItems[]``, each with a legacy ``id``.
+    3. **Legacy flat** — top-level dict ``{"proposalItems": [...]}`` (older
+       sandbox/mocked responses).
+
+    Returns a flat list of dicts. New-format items include ``date``, ``minTime``,
+    ``maxTime`` (usable directly with ``create_ship_with_allegro_pickup``'s
+    ``pickup_time`` kwarg). Legacy items include ``id`` (usable with the
+    deprecated ``proposal_item_id`` kwarg). If both shapes coexist in one
+    response, both new AND legacy items are returned; callers should prefer
+    entries that carry ``date``.
+    """
+    if isinstance(data, dict):
+        legacy_flat = data.get("proposalItems")
+        if isinstance(legacy_flat, list):
+            return [item for item in legacy_flat if isinstance(item, dict)]
+        # Fall through: dict may also be a single entry from the nested shape.
+        entries: list[Any] = [data]
+    elif isinstance(data, list):
+        entries = data
+    else:
+        return []
+
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        for proposal in entry.get("proposals") or []:
+            if not isinstance(proposal, dict):
+                continue
+            # New format — pickupTimes[]
+            for pt in proposal.get("pickupTimes") or []:
+                if isinstance(pt, dict) and pt.get("date"):
+                    out.append({**pt, "shipmentId": proposal.get("shipmentId")})
+            # Legacy format — proposalItems[] (deprecated, kept for compat)
+            for pi in proposal.get("proposalItems") or []:
+                if isinstance(pi, dict) and pi.get("id"):
+                    out.append({**pi, "shipmentId": proposal.get("shipmentId")})
+    return out
+
+
 class AllegroClient:
     """Thin wrapper over Allegro REST API for orders + invoices flow.
 
@@ -413,30 +462,72 @@ class AllegroClient:
     def get_ship_with_allegro_pickup_proposals(
         self, shipment_ids: list[str]
     ) -> list[dict[str, Any]]:
-        """POST /shipment-management/pickup-proposals — available pickup slots."""
+        """POST /shipment-management/pickup-proposals — available pickup slots.
+
+        Since 2026-07-01 Allegro replaced ``proposalItems`` with ``pickupTimes``
+        (see https://developer.allegro.pl/news/wysylam-z-allegro-wprowadzilismy-
+        zmiany-na-zasobach-do-zarzadzania-wysylka-przesylek-i-ich-odbiorem-przez-
+        kuriera-oADdP41WVHA). The new response shape is::
+
+            [
+                {
+                    "proposals": [
+                        {
+                            "shipmentId": "...",
+                            "pickupTimes": [
+                                {"date": "2026-01-17",
+                                 "minTime": "08:00",
+                                 "maxTime": "12:00"}
+                            ]
+                        }
+                    ],
+                    "address": {...}
+                }
+            ]
+
+        Returned items are normalized to a flat list of dicts, each carrying at
+        minimum a ``date`` key (new format) and, if present, the legacy ``id``
+        (deprecated) — callers should prefer ``date``/``minTime``/``maxTime``.
+        """
         data = self._post(
             "/shipment-management/pickup-proposals",
             {"input": {"shipmentIds": list(shipment_ids)}},
         )
-        return list(data.get("proposalItems") or [])
+        return _normalize_pickup_proposals(data)
 
     def create_ship_with_allegro_pickup(
         self,
         *,
         command_id: str,
-        proposal_item_id: str,
         shipment_ids: list[str],
+        pickup_time: dict[str, str] | None = None,
+        proposal_item_id: str | None = None,
     ) -> dict[str, Any]:
-        """POST /shipment-management/pickups/create-commands — order courier pickup."""
+        """POST /shipment-management/pickups/create-commands — order courier pickup.
+
+        Since 2026-07-01 Allegro accepts one of two mutually-exclusive fields:
+
+        - ``pickupTime`` (preferred, new): ``{"date": "YYYY-MM-DD", "minTime":
+          "HH:MM", "maxTime": "HH:MM"}``
+        - ``pickupDateProposalId`` (deprecated): the ``id`` from the legacy
+          ``proposalItems``
+
+        At least one must be provided. If both are supplied, ``pickupTime`` wins.
+        """
+        if not pickup_time and not proposal_item_id:
+            raise ValueError(
+                "create_ship_with_allegro_pickup requires either pickup_time "
+                "(new format) or proposal_item_id (legacy)."
+            )
+        input_body: dict[str, Any] = {"shipmentIds": list(shipment_ids)}
+        if pickup_time:
+            input_body["pickupTime"] = dict(pickup_time)
+        else:
+            # legacy path — pre-2026-07-01 servers
+            input_body["pickupDateProposalId"] = proposal_item_id
         return self._post(
             "/shipment-management/pickups/create-commands",
-            {
-                "commandId": command_id,
-                "input": {
-                    "proposalItemId": proposal_item_id,
-                    "shipmentIds": list(shipment_ids),
-                },
-            },
+            {"commandId": command_id, "input": input_body},
         )
 
     def cancel_ship_with_allegro_shipment(

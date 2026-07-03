@@ -592,13 +592,37 @@ def _run_allegro_delivery(
     if pickup_date:
         try:
             proposals = client.get_ship_with_allegro_pickup_proposals([shipment_id])
-            if proposals:
+            # Prefer new-format entries (with `date`); fall back to legacy `id`
+            # (deprecated but still accepted by servers pre-2026-07-01).
+            new_format = next(
+                (p for p in proposals if p.get("date")), None
+            )
+            legacy_format = next(
+                (p for p in proposals if p.get("id") and not p.get("date")),
+                None,
+            )
+            selected = new_format or legacy_format
+            if selected:
                 pu_cmd = str(_uuid.uuid4())
-                client.create_ship_with_allegro_pickup(
-                    command_id=pu_cmd,
-                    proposal_item_id=proposals[0].get("id"),
-                    shipment_ids=[shipment_id],
-                )
+                if selected.get("date"):
+                    pickup_time = {
+                        "date": selected["date"],
+                        "minTime": selected.get("minTime", "08:00"),
+                        "maxTime": selected.get("maxTime", "18:00"),
+                    }
+                    client.create_ship_with_allegro_pickup(
+                        command_id=pu_cmd,
+                        shipment_ids=[shipment_id],
+                        pickup_time=pickup_time,
+                    )
+                else:
+                    # Legacy path (deprecated post-2026-07-01) — kept for
+                    # sandbox/older-server compatibility.
+                    client.create_ship_with_allegro_pickup(
+                        command_id=pu_cmd,
+                        shipment_ids=[shipment_id],
+                        proposal_item_id=selected["id"],
+                    )
                 pickup_ordered = True
             else:
                 logger.warning(

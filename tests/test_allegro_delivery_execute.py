@@ -160,8 +160,8 @@ class TestRunAllegroDelivery:
         assert call.kwargs["receiver"]["point"] == "WAW01A"
         assert "pickup_point_id" not in call.kwargs
 
-    def test_creates_pickup_when_requested(self):
-        """When pickup_date is provided, order courier pickup after shipment creation."""
+    def test_creates_pickup_new_format(self):
+        """pickup_date + new-format pickupTimes -> passes pickup_time to client."""
         client = MagicMock()
         client.get_delivery_proposal.return_value = _PROPOSAL
         client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-1"}
@@ -172,10 +172,48 @@ class TestRunAllegroDelivery:
         client.extract_shipment_waybill = MagicMock(return_value=("INPOST", "W1"))
         client.get_ship_with_allegro_pickup_proposals.return_value = [
             {
-                "id": "prop-1",
-                "pickupDate": "2026-07-02",
-                "timeSlot": {"from": "10:00", "to": "14:00"},
+                "date": "2026-07-05",
+                "minTime": "08:00",
+                "maxTime": "12:00",
+                "shipmentId": "ship-42",
             }
+        ]
+
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client",
+            return_value=client,
+        ):
+            result = _run_allegro_delivery(
+                self._draft(),
+                MagicMock(),
+                pickup_date="2026-07-05",
+            )
+
+        client.get_ship_with_allegro_pickup_proposals.assert_called_once_with(["ship-42"])
+        client.create_ship_with_allegro_pickup.assert_called_once()
+        pickup_call = client.create_ship_with_allegro_pickup.call_args
+        assert pickup_call.kwargs["pickup_time"] == {
+            "date": "2026-07-05",
+            "minTime": "08:00",
+            "maxTime": "12:00",
+        }
+        assert pickup_call.kwargs["shipment_ids"] == ["ship-42"]
+        # Legacy field must not be passed.
+        assert "proposal_item_id" not in pickup_call.kwargs
+        assert result["pickup_ordered"] is True
+
+    def test_creates_pickup_legacy_fallback(self):
+        """Sandbox / older-server response with only proposal_item id — legacy path."""
+        client = MagicMock()
+        client.get_delivery_proposal.return_value = _PROPOSAL
+        client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-1"}
+        client.wait_for_ship_with_allegro_shipment.return_value = "ship-42"
+        client.get_ship_with_allegro_shipment.return_value = {
+            "packages": [{"transportingInfo": [{"carrierId": "INPOST", "carrierWaybill": "W1"}]}]
+        }
+        client.extract_shipment_waybill = MagicMock(return_value=("INPOST", "W1"))
+        client.get_ship_with_allegro_pickup_proposals.return_value = [
+            {"id": "prop-1", "shipmentId": "ship-42"}
         ]
 
         with patch(
@@ -188,11 +226,9 @@ class TestRunAllegroDelivery:
                 pickup_date="2026-07-02",
             )
 
-        client.get_ship_with_allegro_pickup_proposals.assert_called_once_with(["ship-42"])
-        client.create_ship_with_allegro_pickup.assert_called_once()
         pickup_call = client.create_ship_with_allegro_pickup.call_args
         assert pickup_call.kwargs["proposal_item_id"] == "prop-1"
-        assert pickup_call.kwargs["shipment_ids"] == ["ship-42"]
+        assert "pickup_time" not in pickup_call.kwargs
         assert result["pickup_ordered"] is True
 
     def test_no_pickup_when_pickup_date_absent(self):
