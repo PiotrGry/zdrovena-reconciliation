@@ -188,6 +188,10 @@ def pick_paczkomat_template(dims: dict, weight_kg: float) -> str | None:
 # Max package dimensions that fit in the "large" slot of each carrier's locker/automat.
 # Dimensions: height × width × depth (cm), max_weight_kg.
 # ✅ = verified against carrier/aggregator website; ❓ = unverified, use with caution.
+#
+# P2-2: DPD dimensions verified 2026-07 against dpd.com FAQ, apaczka.pl and
+# polkurier.pl (all agreed on 50×44×59 for the automat and 64×41×38 for the
+# Żabka punkt). Sources cited on each entry.
 LOCKER_LARGE_SLOT: dict[str, dict] = {
     "inpost": {
         "height": 41,
@@ -208,15 +212,32 @@ LOCKER_LARGE_SLOT: dict[str, dict] = {
         "width": 44,
         "depth": 59,
         "max_weight_kg": 20,
-        "verified": False,
-    },  # ❓ DPD nie publikuje wymiarów skrytki
+        "verified": True,
+    },  # ✅ dpd.com/pl/pl/faq (2025-06); apaczka.pl DPD Pickup Station guide (2026)
     "dpd_punkt": {
         "height": 64,
         "width": 41,
         "depth": 38,
         "max_weight_kg": 20,
-        "verified": False,
-    },  # ❓ DPD nie publikuje wymiarów skrytki
+        "verified": True,
+    },  # ✅ apaczka.pl “DPD Pickup (Drzwi-Punkt)” (sieć Żabka: 64×41×38)
+}
+
+# Per-carrier locker slot catalogue — used by _calc_packages to sanity-check
+# that a computed shipment can physically be handed off (P2-3).
+# Each carrier lists slots ordered smallest → largest.
+CARRIER_LOCKER_SLOTS: dict[str, list[dict]] = {
+    "inpost": [
+        {"name": "A", "height": 8, "width": 38, "depth": 64, "max_weight_kg": 25},
+        {"name": "B", "height": 19, "width": 38, "depth": 64, "max_weight_kg": 25},
+        {"name": "C", "height": 41, "width": 38, "depth": 64, "max_weight_kg": 25},
+    ],
+    "dpd_automat": [
+        # ✅ dpd.com FAQ 2026: 11×44×59 (S), 24×44×59 (M), 50×44×59 (L)
+        {"name": "S", "height": 11, "width": 44, "depth": 59, "max_weight_kg": 20},
+        {"name": "M", "height": 24, "width": 44, "depth": 59, "max_weight_kg": 20},
+        {"name": "L", "height": 50, "width": 44, "depth": 59, "max_weight_kg": 20},
+    ],
 }
 
 _DEFAULT_DIMS = PARCEL_SPECS["1-pak"]
