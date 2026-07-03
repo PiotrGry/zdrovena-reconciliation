@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import logging
 
-import pytest
-
 from zdrovena.api.routers.webhooks import (
     _assert_packages_fit_locker,
     _calc_packages,
 )
-
 
 # ── _assert_packages_fit_locker ──────────────────────────────────────────────
 
@@ -30,20 +27,17 @@ class TestAssertPackagesFitLocker:
         assert warnings == []
 
     def test_unknown_box_type_is_skipped_silently(self):
-        assert _assert_packages_fit_locker(
-            [{"type": "unknown", "qty": 1}], carrier="inpost"
-        ) == []
+        assert _assert_packages_fit_locker([{"type": "unknown", "qty": 1}], carrier="inpost") == []
 
     def test_unknown_carrier_returns_empty(self):
-        assert _assert_packages_fit_locker(
-            [{"type": "3-pak", "qty": 1}], carrier="does-not-exist"
-        ) == []
+        assert (
+            _assert_packages_fit_locker([{"type": "3-pak", "qty": 1}], carrier="does-not-exist")
+            == []
+        )
 
     def test_dpd_automat_fits_all_current_boxes(self):
         # DPD large: 50×44×59, 20 kg. 3-pak weight 18 kg fits.
-        warnings = _assert_packages_fit_locker(
-            [{"type": "3-pak", "qty": 1}], carrier="dpd_automat"
-        )
+        warnings = _assert_packages_fit_locker([{"type": "3-pak", "qty": 1}], carrier="dpd_automat")
         assert warnings == []
 
     def test_oversized_box_produces_warning(self, monkeypatch, caplog):
@@ -68,9 +62,7 @@ class TestAssertPackagesFitLocker:
         assert len(warnings) >= 1
         assert any("monster-box" in w for w in warnings)
         # Also emitted to logger
-        assert any(
-            "monster-box" in rec.message for rec in caplog.records
-        )
+        assert any("monster-box" in rec.message for rec in caplog.records)
 
 
 # ── _calc_packages emits warnings for mis-configured specs ───────────────────
@@ -79,12 +71,10 @@ class TestAssertPackagesFitLocker:
 class TestCalcPackagesPostCondition:
     def test_normal_order_produces_no_warnings(self, caplog):
         caplog.set_level(logging.WARNING)
-        count, breakdown = _calc_packages([{"name": "Woda 1L", "quantity": 6}])
+        count, _breakdown = _calc_packages([{"name": "Woda 1L", "quantity": 6}])
         assert count >= 1
         # No 'exceeds' warnings from the assertion helper
-        assert not any(
-            "exceeds" in rec.message for rec in caplog.records
-        )
+        assert not any("exceeds" in rec.message for rec in caplog.records)
 
     def test_calc_packages_warns_when_spec_oversized(self, monkeypatch, caplog):
         from zdrovena.common import inpost

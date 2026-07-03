@@ -175,8 +175,8 @@ class AllegroClient:
         self._client_secret = client_secret
         # If a store is supplied AND it already holds a (possibly newer, rotated)
         # token, prefer that — the value in `refresh_token` may be stale from env.
-        self._token_store: AllegroTokenStore = (
-            token_store or InMemoryAllegroTokenStore(refresh_token)
+        self._token_store: AllegroTokenStore = token_store or InMemoryAllegroTokenStore(
+            refresh_token
         )
         stored = self._token_store.load_refresh_token()
         self._refresh_token = stored or refresh_token

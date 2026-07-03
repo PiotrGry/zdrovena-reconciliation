@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from zdrovena.api.routers.webhooks import _parcel_template
 from zdrovena.common.inpost import (
     PACZKOMAT_SLOTS,
@@ -11,7 +9,6 @@ from zdrovena.common.inpost import (
     _fits_in_slot,
     pick_paczkomat_template,
 )
-
 
 # ── _fits_in_slot ────────────────────────────────────────────────────────────
 
@@ -55,43 +52,21 @@ class TestFitsInSlot:
 
 class TestPickPaczkomatTemplate:
     def test_flat_package_picks_small(self):
-        assert (
-            pick_paczkomat_template(
-                {"length": 30, "width": 20, "height": 5}, 1.0
-            )
-            == "small"
-        )
+        assert pick_paczkomat_template({"length": 30, "width": 20, "height": 5}, 1.0) == "small"
 
     def test_medium_package_picks_medium(self):
-        assert (
-            pick_paczkomat_template(
-                {"length": 40, "width": 30, "height": 15}, 5.0
-            )
-            == "medium"
-        )
+        assert pick_paczkomat_template({"length": 40, "width": 30, "height": 15}, 5.0) == "medium"
 
     def test_tall_package_picks_large(self):
-        assert (
-            pick_paczkomat_template(
-                {"length": 40, "width": 30, "height": 25}, 5.0
-            )
-            == "large"
-        )
+        assert pick_paczkomat_template({"length": 40, "width": 30, "height": 25}, 5.0) == "large"
 
     def test_oversized_returns_none(self):
-        assert (
-            pick_paczkomat_template(
-                {"length": 100, "width": 100, "height": 100}, 5.0
-            )
-            is None
-        )
+        assert pick_paczkomat_template({"length": 100, "width": 100, "height": 100}, 5.0) is None
 
     def test_current_1pak_fits_large(self):
         # 30 × 20 × 20 @ 6kg — shortest 20 > medium (19), so → large
         spec = PARCEL_SPECS["1-pak"]
-        assert (
-            pick_paczkomat_template(dict(spec), spec["weight_kg"]) == "large"
-        )
+        assert pick_paczkomat_template(dict(spec), spec["weight_kg"]) == "large"
 
     def test_current_box_types_route_correctly(self):
         # Box types documented as paczkomat-shippable must fit somewhere.
@@ -116,18 +91,12 @@ class TestParcelTemplateIntegration:
 
     def test_pol_pak_auto_picks_medium(self):
         # pół-pak: 20 × 15 × 20 @ 3kg — shortest 15 > small (8) → medium (19)
-        assert (
-            _parcel_template({"packages_breakdown": [{"type": "pół-pak", "qty": 1}]})
-            == "medium"
-        )
+        assert _parcel_template({"packages_breakdown": [{"type": "pół-pak", "qty": 1}]}) == "medium"
 
     def test_3pak_falls_back_to_static_large(self):
         # 3-pak does not fit any paczkomat slot; auto returns None so
         # _parcel_template falls back to the static 'large' spec.
-        assert (
-            _parcel_template({"packages_breakdown": [{"type": "3-pak", "qty": 1}]})
-            == "large"
-        )
+        assert _parcel_template({"packages_breakdown": [{"type": "3-pak", "qty": 1}]}) == "large"
 
     def test_mixed_breakdown_uses_largest_box(self):
         draft = {
@@ -141,7 +110,4 @@ class TestParcelTemplateIntegration:
 
     def test_unknown_box_type_falls_back_to_large(self):
         # unknown type → no dims → auto returns None → static loop misses → 'large'
-        assert (
-            _parcel_template({"packages_breakdown": [{"type": "unknown", "qty": 1}]})
-            == "large"
-        )
+        assert _parcel_template({"packages_breakdown": [{"type": "unknown", "qty": 1}]}) == "large"

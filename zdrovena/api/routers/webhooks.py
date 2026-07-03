@@ -744,9 +744,7 @@ def _run_allegro_delivery(
             proposals = client.get_ship_with_allegro_pickup_proposals([shipment_id])
             # Prefer new-format entries (with `date`); fall back to legacy `id`
             # (deprecated but still accepted by servers pre-2026-07-01).
-            new_format = next(
-                (p for p in proposals if p.get("date")), None
-            )
+            new_format = next((p for p in proposals if p.get("date")), None)
             legacy_format = next(
                 (p for p in proposals if p.get("id") and not p.get("date")),
                 None,
@@ -825,7 +823,7 @@ def _assert_packages_fit_locker(
         # Sort sides so we compare shortest-to-shortest, etc. (rotation-invariant)
         pkg_sides = sorted([spec["length"], spec["width"], spec["height"]])
         slot_sides = sorted([slot["height"], slot["width"], slot["depth"]])
-        if any(p > s for p, s in zip(pkg_sides, slot_sides)):
+        if any(p > s for p, s in zip(pkg_sides, slot_sides, strict=True)):
             msg = (
                 f"box '{box_type}' ({spec['length']}×{spec['width']}×{spec['height']} cm) "
                 f"exceeds {carrier} locker large slot "
@@ -1209,9 +1207,7 @@ def retry_dlq_entry(
 ) -> dict[str, Any]:
     entry = shipping_store.get_dlq_entry(entry_id)
     if not entry:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="DLQ entry not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="DLQ entry not found")
     payload = entry.get("payload") or {}
     source = entry.get("source") or "shopify"
     try:
@@ -1253,9 +1249,7 @@ def delete_dlq_entry(
 ) -> Response:
     entry = shipping_store.get_dlq_entry(entry_id)
     if not entry:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="DLQ entry not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="DLQ entry not found")
     shipping_store.delete_dlq_entry(entry_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

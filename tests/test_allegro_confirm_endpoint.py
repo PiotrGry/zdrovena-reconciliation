@@ -87,9 +87,7 @@ class TestConfirmPendingCommand:
         draft_id = _seed_pending_draft(store)
 
         allegro_client = MagicMock()
-        allegro_client.get_ship_with_allegro_command_status.return_value = {
-            "status": "IN_PROGRESS"
-        }
+        allegro_client.get_ship_with_allegro_command_status.return_value = {"status": "IN_PROGRESS"}
 
         with patch(
             "zdrovena.api.routers.webhooks._get_allegro_client",

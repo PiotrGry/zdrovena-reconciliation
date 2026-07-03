@@ -18,8 +18,6 @@ from __future__ import annotations
 import logging
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from zdrovena.common.allegro import (
     AllegroClient,
     InMemoryAllegroTokenStore,
@@ -150,9 +148,7 @@ class TestInjectedStore:
         # In-memory token still rotated so current process keeps working
         assert c._refresh_token == "rotated-rt"
         # But operator got a loud warning
-        assert any(
-            "could NOT be persisted" in r.message for r in caplog.records
-        )
+        assert any("could NOT be persisted" in r.message for r in caplog.records)
 
     def test_save_raising_exception_is_swallowed_and_logged(self, caplog):
         store = MagicMock(spec=InMemoryAllegroTokenStore)
