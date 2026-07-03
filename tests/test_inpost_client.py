@@ -60,9 +60,7 @@ class TestInPostClientInit:
         assert client._session.headers["Authorization"] == f"Bearer {_TOKEN}"
         assert client._session.headers["Content-Type"] == "application/json"
 
-    def test_does_not_leak_token_into_url(self):
-        client = InPostClient(_TOKEN, _ORG)
-        # Base URL must not embed credentials
+    def test_base_url_has_no_embedded_credentials(self):
         from zdrovena.common.inpost import _BASE
 
         assert "@" not in _BASE
