@@ -104,7 +104,7 @@ class TestGetDeliveryProposal:
         c = _mock_client()
         proposal = {
             "deliveryMethodId": "svc-inpost-locker",
-            "receiver": {"name": "Anna Nowak"},
+            "receiver": {"name": "Jan Nowak"},
             "packages": [{"dimensions": {"length": 30, "width": 20, "height": 15}}],
         }
         with patch.object(
@@ -125,7 +125,7 @@ _SENDER = {
     "name": "Nadawca",
     "street": "Główna 30",
     "postalCode": "10-200",
-    "city": "Warszawa",
+    "city": "Wrocław",
     "countryCode": "PL",
     "email": "sender@mail.com",
     "phone": "500600700",
@@ -134,7 +134,7 @@ _RECEIVER = {
     "name": "Odbiorca",
     "street": "Testowa 1",
     "postalCode": "00-001",
-    "city": "Kraków",
+    "city": "Wrocław",
     "countryCode": "PL",
     "email": "buyer@mail.com",
     "phone": "600700800",
@@ -485,9 +485,7 @@ class TestCancelShipment:
             "request",
             return_value=_mock_response(201, {"commandId": "cxl-1", "status": "IN_PROGRESS"}),
         ) as m:
-            result = c.cancel_ship_with_allegro_shipment(
-                command_id="cxl-1", shipment_id="ship-42"
-            )
+            result = c.cancel_ship_with_allegro_shipment(command_id="cxl-1", shipment_id="ship-42")
         assert result["commandId"] == "cxl-1"
         url = m.call_args[0][1]
         assert "/shipment-management/shipments/cancel-commands" in url
@@ -514,9 +512,7 @@ class TestCancelDispatch:
             "request",
             return_value=_mock_response(201, {"commandId": "cxl-2", "status": "IN_PROGRESS"}),
         ) as m:
-            result = c.cancel_ship_with_allegro_dispatch(
-                command_id="cxl-2", dispatch_id="disp-9"
-            )
+            result = c.cancel_ship_with_allegro_dispatch(command_id="cxl-2", dispatch_id="disp-9")
         assert result["commandId"] == "cxl-2"
         url = m.call_args[0][1]
         assert "/shipment-management/dispatches/cancel-commands" in url

@@ -97,9 +97,7 @@ def client(store, storage, dedup_store):
     """TestClient wired to the real ShippingStore + LocalStorageService."""
     with patch("zdrovena.api.deps._storage_singleton", return_value=storage):
         with patch("zdrovena.api.deps._shipping_store_singleton", return_value=store):
-            with patch(
-                "zdrovena.api.deps._shopify_dedup_singleton", return_value=dedup_store
-            ):
+            with patch("zdrovena.api.deps._shopify_dedup_singleton", return_value=dedup_store):
                 with TestClient(app, raise_server_exceptions=True) as c:
                     yield c
 
@@ -255,12 +253,8 @@ class TestWebhookIdempotency:
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
         headers = _shopify_headers(body, webhook_id="wh-int-retry")
-        first = client.post(
-            "/api/webhooks/shopify/order-create", content=body, headers=headers
-        )
-        second = client.post(
-            "/api/webhooks/shopify/order-create", content=body, headers=headers
-        )
+        first = client.post("/api/webhooks/shopify/order-create", content=body, headers=headers)
+        second = client.post("/api/webhooks/shopify/order-create", content=body, headers=headers)
         assert first.status_code == 200
         assert first.json()["status"] == "accepted"
         assert second.status_code == 200

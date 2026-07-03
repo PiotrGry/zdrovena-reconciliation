@@ -182,6 +182,24 @@ class TestWebhookEndpoint:
         assert resp.status_code == 200
         assert resp.json() == {"status": "accepted"}
 
+    def test_legacy_order_created_alias_accepted(self, client):
+        """Legacy alias /order-created must route to the same handler as /order-create.
+
+        Ensures existing Shopify webhook subscriptions pointing at the old URL
+        keep working — not a breaking change.
+        """
+        with patch(
+            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+        ):
+            with patch("zdrovena.api.routers.webhooks._create_draft"):
+                resp = client.post(
+                    "/api/webhooks/shopify/order-created",
+                    content=_ORDER_WITH_SHIPPING,
+                    headers=_shopify_headers(_ORDER_WITH_SHIPPING, webhook_id="wh-legacy-alias"),
+                )
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "accepted"}
+
     def test_invalid_hmac_rejected(self, client):
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
             resp = client.post(
@@ -237,18 +255,23 @@ class TestWebhookEndpoint:
             )
         assert resp.status_code == 403
 
-    def test_orders_updated_topic_allowed(self, client):
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
-            with patch("zdrovena.api.routers.webhooks._create_draft"):
-                resp = client.post(
-                    "/api/webhooks/shopify/order-create",
-                    content=_ORDER_WITH_SHIPPING,
-                    headers=_shopify_headers(
-                        _ORDER_WITH_SHIPPING, topic="orders/updated", webhook_id="wh-upd"
-                    ),
-                )
-        assert resp.status_code == 200
-        assert resp.json() == {"status": "accepted"}
+    def test_orders_updated_topic_rejected(self, client):
+        """orders/updated used to be whitelisted but is now rejected — the handler
+        creates a draft, which would produce unwanted duplicates on every order edit.
+        Re-add it once a dedicated update handler exists.
+        """
+        with patch(
+            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+        ):
+            resp = client.post(
+                "/api/webhooks/shopify/order-create",
+                content=_ORDER_WITH_SHIPPING,
+                headers=_shopify_headers(
+                    _ORDER_WITH_SHIPPING, topic="orders/updated", webhook_id="wh-upd"
+                ),
+            )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "Topic not allowed"
 
     def test_disallowed_domain_rejected_403(self, client):
         with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
@@ -314,8 +337,11 @@ class TestWebhookEndpoint:
         from zdrovena.common.shopify_dedup_store import DedupStoreError
 
         broken = MagicMock()
-        broken.is_duplicate.side_effect = DedupStoreError("backend down")
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET):
+        # The endpoint now uses the atomic check-and-set method.
+        broken.mark_seen_if_new.side_effect = DedupStoreError("backend down")
+        with patch(
+            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+        ):
             with patch("zdrovena.api.deps._shopify_dedup_singleton", return_value=broken):
                 resp = client.post(
                     "/api/webhooks/shopify/order-create",
@@ -772,6 +798,105 @@ class TestCancelDispatchEndpoint:
         ):
             resp = client.delete(f"/api/shipping/drafts/{draft['id']}/dispatch")
         assert resp.status_code == 502
+
+
+# ── Manual Allegro fulfillment marking ──────────────────────────────────────
+
+
+class TestMarkAllegroProcessed:
+    def _seed(self, store, **overrides):
+        draft = {
+            "id": "draft-map-1",
+            "created_at": "2026-05-20T10:00:00+00:00",
+            "source": "allegro",
+            "shopify_order_number": "3300",
+            "courier": "inpost",
+            "status": "created",
+            "external_order_id": "allegro-order-42",
+        }
+        draft.update(overrides)
+        store.upsert_draft(draft)
+        return draft
+
+    def test_404_for_missing_draft(self, client):
+        resp = client.post("/api/shipping/drafts/nonexistent/mark-allegro-processed")
+        assert resp.status_code == 404
+
+    def test_400_when_draft_is_not_allegro(self, client, store):
+        draft = self._seed(store, source="shopify", external_order_id=None)
+        resp = client.post(f"/api/shipping/drafts/{draft['id']}/mark-allegro-processed")
+        assert resp.status_code == 400
+
+    def test_409_when_no_external_order_id(self, client, store):
+        draft = self._seed(store, external_order_id=None)
+        resp = client.post(f"/api/shipping/drafts/{draft['id']}/mark-allegro-processed")
+        assert resp.status_code == 409
+
+    def test_successful_mark_calls_allegro_and_persists(self, client, store):
+        draft = self._seed(store)
+        allegro = MagicMock()
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/mark-allegro-processed")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "marked_processed"
+        assert body["external_order_id"] == "allegro-order-42"
+        assert body["marked_at"]
+        allegro.mark_order_processed.assert_called_once_with("allegro-order-42")
+        updated = store.get_draft(draft["id"])
+        assert updated["allegro_fulfillment_status"] == "PROCESSING"
+        assert updated["allegro_marked_processed_at"]
+
+    def test_idempotent_second_call_is_noop(self, client, store):
+        draft = self._seed(
+            store,
+            allegro_fulfillment_status="PROCESSING",
+            allegro_marked_processed_at="2026-06-01T10:00:00+00:00",
+        )
+        allegro = MagicMock()
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/mark-allegro-processed")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "already_processed"
+        allegro.mark_order_processed.assert_not_called()
+
+    def test_502_on_allegro_error(self, client, store):
+        from zdrovena.common.shipping_exceptions import AllegroBusinessError
+
+        draft = self._seed(store)
+        allegro = MagicMock()
+        allegro.mark_order_processed.side_effect = AllegroBusinessError(
+            detail="not found", action="mark-processed"
+        )
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/mark-allegro-processed")
+        assert resp.status_code == 502
+
+    def test_502_when_allegro_client_missing(self, client, store):
+        draft = self._seed(store)
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=None):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/mark-allegro-processed")
+        assert resp.status_code == 502
+
+    def test_mock_courier_bypasses_allegro_call(self, client, store, monkeypatch):
+        draft = self._seed(store)
+        monkeypatch.setattr("zdrovena.api.routers.webhooks._MOCK_COURIER", True)
+        allegro = MagicMock()
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/mark-allegro-processed")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "marked_processed"
+        allegro.mark_order_processed.assert_not_called()
+        updated = store.get_draft(draft["id"])
+        assert updated["allegro_fulfillment_status"] == "PROCESSING"
+
+    def test_falls_back_to_allegro_order_id_field(self, client, store):
+        draft = self._seed(store, external_order_id=None, allegro_order_id="allegro-legacy-9")
+        allegro = MagicMock()
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/mark-allegro-processed")
+        assert resp.status_code == 200
+        allegro.mark_order_processed.assert_called_once_with("allegro-legacy-9")
 
 
 # ── Update packages_count ─────────────────────────────────────────────────────
@@ -1240,6 +1365,67 @@ class TestGetLabel:
             ):
                 resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
         assert resp.status_code == 502
+
+
+class TestGetLabelAllegroDelivery:
+    def _seed(self, store, **overrides):
+        draft = {
+            "id": "draft-lbl-allegro-1",
+            "created_at": "2026-05-20T10:00:00+00:00",
+            "source": "allegro",
+            "shopify_order_number": "5500",
+            "customer_name": "Test",
+            "courier": "allegro_delivery",
+            "status": "created",
+            "allegro_shipment_id": "ship-lbl-777",
+            "courier_draft_id": "ship-lbl-777",
+        }
+        draft.update(overrides)
+        store.upsert_draft(draft)
+        return draft
+
+    def test_allegro_delivery_label_returns_pdf(self, client, store):
+        draft = self._seed(store)
+        allegro = MagicMock()
+        allegro.get_ship_with_allegro_label.return_value = b"%PDF-1.4 allegro"
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/label")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/pdf"
+        assert resp.content == b"%PDF-1.4 allegro"
+        allegro.get_ship_with_allegro_label.assert_called_once_with("ship-lbl-777")
+
+    def test_allegro_delivery_falls_back_to_courier_draft_id(self, client, store):
+        draft = self._seed(store, allegro_shipment_id=None, courier_draft_id="fallback-id-9")
+        allegro = MagicMock()
+        allegro.get_ship_with_allegro_label.return_value = b"%PDF-fallback"
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/label")
+        assert resp.status_code == 200
+        allegro.get_ship_with_allegro_label.assert_called_once_with("fallback-id-9")
+
+    def test_allegro_delivery_502_on_business_error(self, client, store):
+        from zdrovena.common.shipping_exceptions import AllegroBusinessError
+
+        draft = self._seed(store)
+        allegro = MagicMock()
+        allegro.get_ship_with_allegro_label.side_effect = AllegroBusinessError(
+            detail="not ready", action="label"
+        )
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/label")
+        assert resp.status_code == 502
+
+    def test_allegro_delivery_502_when_client_missing(self, client, store):
+        draft = self._seed(store)
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=None):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/label")
+        assert resp.status_code == 502
+
+    def test_allegro_delivery_404_when_no_shipment_id(self, client, store):
+        draft = self._seed(store, allegro_shipment_id=None, courier_draft_id=None)
+        resp = client.get(f"/api/shipping/drafts/{draft['id']}/label")
+        assert resp.status_code == 404
 
 
 # ── Additional coverage tests ─────────────────────────────────────────────────

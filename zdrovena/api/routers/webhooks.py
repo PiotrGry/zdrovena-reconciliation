@@ -1,6 +1,7 @@
 """zdrovena.api.routers.webhooks — Shopify webhooks + shipping drafts + label endpoints.
 
 POST /webhooks/shopify/order-create          — Shopify order webhook (HMAC-validated)
+POST /webhooks/shopify/order-created         — legacy alias for order-create (compat)
 GET  /shipping/drafts                         — list shipping drafts from Table Storage
 GET  /shipping/drafts/{id}/label              — stream label PDF from courier
 POST /shipping/drafts/{id}/execute            — (re)create courier shipment for a draft
@@ -93,7 +94,11 @@ def _get_webhook_secret() -> str | None:
 # Topics we actually process. A HMAC-valid payload from any other topic (e.g. a
 # mis-configured products/create subscription) would crash _create_draft, so we
 # reject unknown topics as defense-in-depth after HMAC.
-ALLOWED_SHOPIFY_TOPICS = frozenset({"orders/create", "orders/updated"})
+# NOTE: only `orders/create` is accepted today. `orders/updated` was previously
+# whitelisted, but the current handler creates a shipping draft — firing that on
+# every order update would produce unwanted duplicate drafts. Once we have a
+# dedicated update-handler with clear semantics we can re-add `orders/updated`.
+ALLOWED_SHOPIFY_TOPICS = frozenset({"orders/create"})
 
 
 def _allowed_shopify_domains() -> frozenset[str] | None:
@@ -801,6 +806,16 @@ def _create_draft(
     summary="Shopify order webhook — creates shipping draft",
     include_in_schema=False,
 )
+@router.post(
+    # Legacy alias. Some Shopify webhook subscriptions in the shop admin still
+    # point at /order-created (Shopify's own topic key is `orders/create`, but
+    # the endpoint URL is operator-defined). Both paths execute the same
+    # handler so renaming the primary path is never a breaking change.
+    "/webhooks/shopify/order-created",
+    status_code=status.HTTP_200_OK,
+    summary="Shopify order webhook — legacy alias",
+    include_in_schema=False,
+)
 async def shopify_order_created(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -835,10 +850,14 @@ async def shopify_order_created(
 
     # 2. Whitelist topic + shop domain (defense-in-depth after HMAC).
     if not _is_shopify_topic_allowed(topic):
-        logger.warning("Shopify webhook with disallowed topic %r (id=%s) — rejected", topic, webhook_id)
+        logger.warning(
+            "Shopify webhook with disallowed topic %r (id=%s) — rejected", topic, webhook_id
+        )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Topic not allowed")
     if not _is_shopify_domain_allowed(shop_domain):
-        logger.warning("Shopify webhook from disallowed shop %r (id=%s) — rejected", shop_domain, webhook_id)
+        logger.warning(
+            "Shopify webhook from disallowed shop %r (id=%s) — rejected", shop_domain, webhook_id
+        )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Shop domain not allowed")
 
     # 3. Parse the (now trusted) body.
@@ -847,21 +866,23 @@ async def shopify_order_created(
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON") from exc
 
-    # 4. Deduplicate by X-Shopify-Webhook-Id. Save the id BEFORE processing so a
-    #    retry of the same delivery is a no-op. Fail-closed (503) if the dedup store
-    #    is unavailable so Shopify retries rather than us risking a duplicate draft.
+    # 4. Deduplicate by X-Shopify-Webhook-Id atomically. `mark_seen_if_new` does
+    #    a single check-and-set (Azure: create_entity+ResourceExistsError, local:
+    #    load→check→save under flock) so two concurrent deliveries can never both
+    #    proceed. Fail-closed (503) if the dedup store is unavailable so Shopify
+    #    retries rather than us risking a duplicate draft.
     if webhook_id:
         try:
-            if dedup_store.is_duplicate(webhook_id):
-                logger.info("Duplicate Shopify webhook %s — skipping", webhook_id)
-                return {"status": "duplicate", "webhook_id": webhook_id}
-            dedup_store.mark_seen(webhook_id)
+            inserted = dedup_store.mark_seen_if_new(webhook_id)
         except DedupStoreError:
             logger.exception("Shopify dedup store unavailable for webhook %s", webhook_id)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Dedup store unavailable",
             ) from None
+        if not inserted:
+            logger.info("Duplicate Shopify webhook %s — skipping", webhook_id)
+            return {"status": "duplicate", "webhook_id": webhook_id}
     else:
         logger.warning("Shopify webhook missing X-Shopify-Webhook-Id — dedup skipped")
 
@@ -1054,9 +1075,7 @@ def cancel_shipment(
             logger.exception("Allegro cancel shipment failed for draft %s", draft_id)
             raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
 
-    shipping_store.update_draft(
-        draft_id, {"status": "cancelled", "allegro_shipment_id": None}
-    )
+    shipping_store.update_draft(draft_id, {"status": "cancelled", "allegro_shipment_id": None})
     return {"status": "cancelled", "draft_id": draft_id, "shipment_id": str(shipment_id)}
 
 
@@ -1096,13 +1115,83 @@ def cancel_dispatch(
             logger.exception("Allegro cancel dispatch failed for draft %s", draft_id)
             raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
 
-    shipping_store.update_draft(
-        draft_id, {"pickup_ordered": False, "allegro_dispatch_id": None}
-    )
+    shipping_store.update_draft(draft_id, {"pickup_ordered": False, "allegro_dispatch_id": None})
     return {"status": "dispatch_cancelled", "draft_id": draft_id, "dispatch_id": str(dispatch_id)}
 
 
 # ── Cancel (raw courier id: InPost / Apaczka) ─────────────────────────────────
+
+
+# Manual Allegro fulfillment marking
+
+
+@router.post(
+    "/shipping/drafts/{draft_id}/mark-allegro-processed",
+    summary="Manually mark the Allegro order as PROCESSING (operator action)",
+    responses={
+        400: {"description": "Draft is not an Allegro draft"},
+        403: {"description": "Insufficient role"},
+        404: {"description": "Draft not found"},
+        409: {"description": "Draft has no external Allegro order id"},
+        502: {"description": "Allegro API error"},
+    },
+)
+def mark_allegro_processed(
+    draft_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    """Idempotent operator action to mark an Allegro order as PROCESSING.
+
+    We deliberately do NOT do this automatically after draft creation - a draft only
+    represents "we intend to ship", not "we shipped". The operator confirms via the
+    UI once the parcel actually leaves. Re-running this endpoint is safe: if the
+    draft is already marked processed we return 200 without hitting Allegro.
+    """
+    draft = shipping_store.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    if draft.get("source") != "allegro":
+        raise HTTPException(status_code=400, detail="Draft is not an Allegro draft")
+
+    external_order_id = draft.get("external_order_id") or draft.get("allegro_order_id")
+    if not external_order_id:
+        raise HTTPException(status_code=409, detail="Draft has no external Allegro order id")
+
+    # Idempotency - a second click is a no-op that reports the existing state.
+    if draft.get("allegro_fulfillment_status") == "PROCESSING":
+        return {
+            "status": "already_processed",
+            "draft_id": draft_id,
+            "external_order_id": external_order_id,
+            "marked_at": draft.get("allegro_marked_processed_at"),
+        }
+
+    if not _MOCK_COURIER:
+        client = _get_allegro_client()
+        if client is None:
+            raise HTTPException(status_code=502, detail="Allegro credentials missing")
+        try:
+            client.mark_order_processed(str(external_order_id))
+        except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
+            logger.exception("Allegro mark_order_processed failed for draft %s", draft_id)
+            raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
+
+    marked_at = datetime.now(timezone.utc).isoformat()
+    shipping_store.update_draft(
+        draft_id,
+        {
+            "allegro_fulfillment_status": "PROCESSING",
+            "allegro_marked_processed_at": marked_at,
+        },
+    )
+    return {
+        "status": "marked_processed",
+        "draft_id": draft_id,
+        "external_order_id": external_order_id,
+        "marked_at": marked_at,
+    }
 
 
 def _courier_cancel_http_status(exc: ZdrovenaShippingError) -> int:
@@ -1278,20 +1367,31 @@ def get_label(
     shipping_store: ShippingStoreDep,
     storage: StorageDep,
     principal: Annotated[Principal, Depends(require_viewer_or_above)],
-    courier: str = Query(None, description="inpost or apaczka (defaults to draft's courier)"),
+    courier: str = Query(
+        None, description="inpost, apaczka, or allegro_delivery (defaults to draft's courier)"
+    ),
 ) -> StreamingResponse:
     draft = shipping_store.get_draft(draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
 
-    courier_draft_id = draft.get("courier_draft_id")
-    if not courier_draft_id:
-        raise HTTPException(status_code=404, detail="No courier draft ID — draft may have failed")
-
     # Prefer the stored draft courier over the query param (prevents mismatch)
     courier = draft.get("courier") or courier
-    if courier not in ("inpost", "apaczka"):
-        raise HTTPException(status_code=400, detail="courier must be 'inpost' or 'apaczka'")
+    _SUPPORTED_COURIERS = ("inpost", "apaczka", "allegro_delivery")
+    if courier not in _SUPPORTED_COURIERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"courier must be one of: {', '.join(_SUPPORTED_COURIERS)}",
+        )
+
+    # For Ship-with-Allegro the label id is the shipment_id, stored under courier_draft_id
+    # (set by _run_allegro_delivery) and mirrored to allegro_shipment_id.
+    if courier == "allegro_delivery":
+        label_id = draft.get("allegro_shipment_id") or draft.get("courier_draft_id")
+    else:
+        label_id = draft.get("courier_draft_id")
+    if not label_id:
+        raise HTTPException(status_code=404, detail="No courier draft ID — draft may have failed")
 
     try:
         if courier == "inpost":
@@ -1299,16 +1399,23 @@ def get_label(
 
             token = get_secret("inpost_api_token")
             org_id = get_secret("inpost_organization_id")
-            pdf_bytes = InPostClient(token, org_id).get_label(courier_draft_id)
+            pdf_bytes = InPostClient(token, org_id).get_label(label_id)
         elif courier == "apaczka":
             from zdrovena.common.apaczka import ApaczkaClient
 
             app_id = get_secret("apaczka_app_id")
             app_secret = get_secret("apaczka_app_secret")
             service_id = get_secret("apaczka_service_id")
-            pdf_bytes = ApaczkaClient(app_id, app_secret, service_id, storage).get_label(
-                courier_draft_id
-            )
+            pdf_bytes = ApaczkaClient(app_id, app_secret, service_id, storage).get_label(label_id)
+        elif courier == "allegro_delivery":
+            client = _get_allegro_client()
+            if client is None:
+                raise HTTPException(status_code=502, detail="Allegro credentials missing")
+            try:
+                pdf_bytes = client.get_ship_with_allegro_label(str(label_id))
+            except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
+                logger.exception("Allegro label fetch failed for draft %s", draft_id)
+                raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
         else:
             raise HTTPException(status_code=400, detail=f"Unknown courier: {courier}")
     except HTTPException:

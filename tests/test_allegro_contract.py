@@ -22,9 +22,7 @@ def _load(name: str) -> dict:
 
 
 def _client() -> AllegroClient:
-    return AllegroClient(
-        client_id="cid", client_secret="csec", refresh_token="rt", env="prod"
-    )
+    return AllegroClient(client_id="cid", client_secret="csec", refresh_token="rt", env="prod")
 
 
 class TestAllegroCheckoutFormsList:
@@ -47,9 +45,10 @@ class TestAllegroCheckoutFormDetail:
         assert form["status"] == "READY_FOR_PROCESSING"
 
         buyer = form["buyer"]
-        assert buyer["address"]["city"] == "Sieradz"
+        # Structure assertions only — concrete PII values are sanitized in the fixture.
+        assert isinstance(buyer["address"]["city"], str) and buyer["address"]["city"]
         # Buyer address uses `postCode` (delivery address uses `zipCode` — different!).
-        assert buyer["address"]["postCode"] == "98-200"
+        assert isinstance(buyer["address"]["postCode"], str) and buyer["address"]["postCode"]
 
         line_items = form["lineItems"]
         assert len(line_items) >= 1
@@ -60,7 +59,8 @@ class TestAllegroCheckoutFormDetail:
         assert delivery["method"]["name"] == "Allegro One Box, DPD"
         assert delivery["method"]["id"]
         # Delivery address uses `zipCode`, not `zip` / `postCode`.
-        assert delivery["address"]["zipCode"] == "98-200"
+        assert "zipCode" in delivery["address"]
+        assert isinstance(delivery["address"]["zipCode"], str)
 
         assert form["payment"]["type"] == "ONLINE"
 
@@ -96,17 +96,19 @@ class TestAllegroMapperOnRealOrder:
         order = allegro_to_shopify_order(form)
 
         assert order["id"] == form["id"]
-        assert order["email"] == "abqsn58id1+48f7f6069@allegromail.pl"
+        # Structural checks — fixture PII is sanitized, so compare against the fixture.
+        assert order["email"] == form["buyer"]["email"]
         # Phone sourced from delivery.address.phoneNumber.
-        assert order["phone"] == "+48697102046"
+        assert order["phone"] == form["delivery"]["address"]["phoneNumber"]
 
         shipping = order["shipping_address"]
-        assert shipping["first_name"] == "Agnieszka"
-        assert shipping["last_name"] == "Wojtczak"
-        assert shipping["name"] == "Agnieszka Wojtczak"
-        assert shipping["address1"] == "Różana, 17"
-        assert shipping["city"] == "Sieradz"
-        assert shipping["zip"] == "98-200"
+        assert shipping["first_name"] == form["delivery"]["address"]["firstName"]
+        assert shipping["last_name"] == form["delivery"]["address"]["lastName"]
+        assert shipping["name"] == f"{shipping['first_name']} {shipping['last_name']}"
+        # address1 stitched from street + house number.
+        assert isinstance(shipping["address1"], str) and shipping["address1"]
+        assert shipping["city"] == form["delivery"]["address"]["city"]
+        assert shipping["zip"] == form["delivery"]["address"]["zipCode"]
         assert shipping["country_code"] == "PL"
 
         # Line items mapped with sku from offer.external.id ("PET").
