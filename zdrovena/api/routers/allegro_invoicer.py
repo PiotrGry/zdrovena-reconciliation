@@ -76,13 +76,13 @@ def _check_total_matches_allegro(order: dict[str, Any], payload: dict[str, Any])
     cross-check against a real order's totalToPay — this automates that
     check going forward.
     """
-    total_to_pay_amount = ((order.get("summary") or {}).get("totalToPay") or {}).get("amount")
-    if total_to_pay_amount is None:
-        return
-
-    delivery_cost_amount = ((order.get("delivery") or {}).get("cost") or {}).get("amount", "0")
-
     try:
+        total_to_pay_amount = ((order.get("summary") or {}).get("totalToPay") or {}).get("amount")
+        if total_to_pay_amount is None:
+            return
+
+        delivery_cost_amount = ((order.get("delivery") or {}).get("cost") or {}).get("amount", "0")
+
         expected = Decimal(str(total_to_pay_amount)) - Decimal(str(delivery_cost_amount))
         computed = sum(
             (Decimal(str(p["total_price_gross"])) for p in payload.get("positions", [])),
@@ -92,7 +92,7 @@ def _check_total_matches_allegro(order: dict[str, Any], payload: dict[str, Any])
             (Decimal(s["amount"]) for s in payload.get("settlement_positions", [])),
             start=Decimal("0"),
         )
-    except (InvalidOperation, KeyError, TypeError, ValueError):
+    except (AttributeError, InvalidOperation, KeyError, TypeError, ValueError):
         return
 
     if abs(computed - expected) > _TOTAL_MISMATCH_TOLERANCE:

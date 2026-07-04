@@ -209,3 +209,45 @@ class TestTotalSanityCheck:
 
         assert result["status"] == "created"
         assert not any("mismatch" in r.message.lower() for r in caplog.records)
+
+    def test_malformed_summary_shape_does_not_raise(self, caplog):
+        """order.summary is present but not dict-shaped (e.g. a list) — must
+        not raise AttributeError, must not warn (nothing meaningful to
+        compare), and invoice creation must still succeed.
+        """
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = []
+        fakturownia.create_invoice.return_value = {"id": 999, "number": "FV/2026/999"}
+        fakturownia.get_invoice_pdf.return_value = b"%PDF-1.4 fake"
+        allegro = MagicMock()
+        allegro.create_invoice_declaration.return_value = {"id": "alg-inv-1"}
+
+        order = _order()
+        order["summary"] = ["unexpected", "shape"]  # malformed: not a dict
+        with caplog.at_level(logging.WARNING, logger="zdrovena.api.routers.allegro_invoicer"):
+            result = create_invoice_for_order(
+                order, fakturownia_client=fakturownia, allegro_client=allegro
+            )
+
+        assert result["status"] == "created"
+        assert not any("mismatch" in r.message.lower() for r in caplog.records)
+
+    def test_unparseable_total_does_not_raise(self, caplog):
+        """totalToPay.amount is present but not a valid number — must not
+        raise, must not warn, invoice creation must still succeed.
+        """
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = []
+        fakturownia.create_invoice.return_value = {"id": 999, "number": "FV/2026/999"}
+        fakturownia.get_invoice_pdf.return_value = b"%PDF-1.4 fake"
+        allegro = MagicMock()
+        allegro.create_invoice_declaration.return_value = {"id": "alg-inv-1"}
+
+        order = _order_with_summary(total_to_pay="not-a-number")
+        with caplog.at_level(logging.WARNING, logger="zdrovena.api.routers.allegro_invoicer"):
+            result = create_invoice_for_order(
+                order, fakturownia_client=fakturownia, allegro_client=allegro
+            )
+
+        assert result["status"] == "created"
+        assert not any("mismatch" in r.message.lower() for r in caplog.records)
