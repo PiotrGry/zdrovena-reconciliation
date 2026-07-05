@@ -9,6 +9,7 @@ tests/test_local_secret_fallback.py). Uses tmp_path for .env.local /
 
 from __future__ import annotations
 
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -162,6 +163,39 @@ class TestEncrypt:
         assert "--input-type" in args and "dotenv" in args
         assert args[-1] == str(sync.ENV_LOCAL_PATH)
 
+    def test_surfaces_called_process_error_stderr(self, tmp_path, capsys):
+        sync.ENV_LOCAL_PATH.write_text("KEY=value\n")
+        exc = subprocess.CalledProcessError(1, ["sops", "-e"], stderr="boom: bad age key")
+        with patch("shutil.which", return_value="/usr/bin/sops"):
+            with patch("subprocess.run", side_effect=exc):
+                rc = sync.cmd_encrypt(None)
+
+        assert rc == 1
+        assert "boom: bad age key" in capsys.readouterr().err
+        # Failure must not leave a partial/corrupt .env.local.sops behind.
+        assert not sync.SOPS_PATH.exists()
+
+    def test_handles_timeout_gracefully(self, tmp_path, capsys):
+        sync.ENV_LOCAL_PATH.write_text("KEY=value\n")
+        exc = subprocess.TimeoutExpired(cmd=["sops", "-e"], timeout=30)
+        with patch("shutil.which", return_value="/usr/bin/sops"):
+            with patch("subprocess.run", side_effect=exc):
+                rc = sync.cmd_encrypt(None)
+
+        assert rc == 1
+        assert "error" in capsys.readouterr().err.lower()
+        assert not sync.SOPS_PATH.exists()
+
+    def test_handles_binary_vanishing_gracefully(self, tmp_path, capsys):
+        sync.ENV_LOCAL_PATH.write_text("KEY=value\n")
+        with patch("shutil.which", return_value="/usr/bin/sops"):
+            with patch("subprocess.run", side_effect=FileNotFoundError("sops")):
+                rc = sync.cmd_encrypt(None)
+
+        assert rc == 1
+        assert "error" in capsys.readouterr().err.lower()
+        assert not sync.SOPS_PATH.exists()
+
 
 class TestDecrypt:
     def test_errors_when_sops_missing(self, tmp_path):
@@ -199,3 +233,36 @@ class TestDecrypt:
         captured = capsys.readouterr()
         assert "warning" in captured.out.lower()
         assert sync.ENV_LOCAL_PATH.read_text() == "NEW_KEY=new\n"
+
+    def test_surfaces_called_process_error_stderr(self, tmp_path, capsys):
+        sync.SOPS_PATH.write_text("encrypted-content")
+        exc = subprocess.CalledProcessError(1, ["sops", "-d"], stderr="boom: no age key")
+        with patch("shutil.which", return_value="/usr/bin/sops"):
+            with patch("subprocess.run", side_effect=exc):
+                rc = sync.cmd_decrypt(None)
+
+        assert rc == 1
+        assert "boom: no age key" in capsys.readouterr().err
+        # Failure must not leave a partial/corrupt .env.local behind.
+        assert not sync.ENV_LOCAL_PATH.exists()
+
+    def test_handles_timeout_gracefully(self, tmp_path, capsys):
+        sync.SOPS_PATH.write_text("encrypted-content")
+        exc = subprocess.TimeoutExpired(cmd=["sops", "-d"], timeout=30)
+        with patch("shutil.which", return_value="/usr/bin/sops"):
+            with patch("subprocess.run", side_effect=exc):
+                rc = sync.cmd_decrypt(None)
+
+        assert rc == 1
+        assert "error" in capsys.readouterr().err.lower()
+        assert not sync.ENV_LOCAL_PATH.exists()
+
+    def test_handles_binary_vanishing_gracefully(self, tmp_path, capsys):
+        sync.SOPS_PATH.write_text("encrypted-content")
+        with patch("shutil.which", return_value="/usr/bin/sops"):
+            with patch("subprocess.run", side_effect=FileNotFoundError("sops")):
+                rc = sync.cmd_decrypt(None)
+
+        assert rc == 1
+        assert "error" in capsys.readouterr().err.lower()
+        assert not sync.ENV_LOCAL_PATH.exists()

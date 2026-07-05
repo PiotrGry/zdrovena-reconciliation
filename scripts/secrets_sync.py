@@ -33,9 +33,10 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
-# Pozwól importować zdrovena/scripts bez instalacji pakietu
+# Allow importing zdrovena/scripts without installing the package
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.secrets_manifest import ENV_LOCAL_SECRETS
@@ -62,11 +63,33 @@ def _read_lines(path: Path) -> list[str]:
     return path.read_text(encoding="utf-8").splitlines()
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Write `content` to `path` atomically via temp file + os.replace.
+
+    Matches the pattern in zdrovena.common._local_secret_fallback.
+    write_local_fallback — the temp file is created in the same directory
+    as the target (required for os.replace to be atomic across
+    filesystems) so a crash mid-write never leaves the target holding a
+    partial/corrupted file.
+    """
+    fd, tmp_path_str = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_path, path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
 def _write_lines(path: Path, lines: list[str]) -> None:
     content = "\n".join(lines)
     if content:
         content += "\n"
-    path.write_text(content, encoding="utf-8")
+    _atomic_write_text(path, content)
 
 
 def _parse_env_map(lines: list[str]) -> dict[str, str]:
@@ -202,8 +225,15 @@ def cmd_encrypt(_args: argparse.Namespace) -> int:
     except subprocess.CalledProcessError as exc:
         print(f"error: sops encrypt failed: {exc.stderr}", file=sys.stderr)
         return 1
+    except Exception as exc:
+        # Covers subprocess.TimeoutExpired (sops hung past the timeout),
+        # FileNotFoundError (binary vanished after the shutil.which check),
+        # and any other OSError — none of these are CalledProcessError
+        # subclasses, so without this they'd propagate as raw tracebacks.
+        print(f"error: sops encrypt failed: {exc}", file=sys.stderr)
+        return 1
 
-    SOPS_PATH.write_text(result.stdout, encoding="utf-8")
+    _atomic_write_text(SOPS_PATH, result.stdout)
     print(f"encrypted {ENV_LOCAL_PATH} -> {SOPS_PATH}")
     return 0
 
@@ -230,8 +260,13 @@ def cmd_decrypt(_args: argparse.Namespace) -> int:
     except subprocess.CalledProcessError as exc:
         print(f"error: sops decrypt failed: {exc.stderr}", file=sys.stderr)
         return 1
+    except Exception as exc:
+        # Covers subprocess.TimeoutExpired, FileNotFoundError, and any
+        # other OSError — see the matching comment in cmd_encrypt.
+        print(f"error: sops decrypt failed: {exc}", file=sys.stderr)
+        return 1
 
-    ENV_LOCAL_PATH.write_text(result.stdout, encoding="utf-8")
+    _atomic_write_text(ENV_LOCAL_PATH, result.stdout)
     print(f"decrypted {SOPS_PATH} -> {ENV_LOCAL_PATH}")
     return 0
 
