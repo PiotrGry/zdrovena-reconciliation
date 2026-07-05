@@ -16,7 +16,7 @@ if printf '%s\n' "$tracked_files" | grep -Eq '(^|/)([^/]*\.agekey|[^/]*\.agekey\
   fail "private age key file is tracked by Git"
 fi
 
-if git grep -n -I 'AGE-SECRET-KEY-' -- . ':!*.md' ':!docs/**/*.md' >/tmp/sops-age-private-key-matches.txt; then
+if git grep -n -I -E 'AGE-SECRET-KEY-1[A-Z0-9]{58}' -- . >/tmp/sops-age-private-key-matches.txt; then
   cat /tmp/sops-age-private-key-matches.txt >&2
   fail "private age key material was found in tracked files"
 fi
