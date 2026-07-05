@@ -1,4 +1,14 @@
 repos:
+  # SOPS/age guardrails for GitOps-managed encrypted files
+  - repo: local
+    hooks:
+      - id: sops-age-secrets
+        name: sops age secrets guard
+        entry: scripts/check-sops-secrets.sh
+        language: system
+        pass_filenames: false
+        stages: [commit]
+
   # Python linting (ruff) — check only, no auto-fix to preserve Python 3.10 compatibility
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: "v0.8.0"

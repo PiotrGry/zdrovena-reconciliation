@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+fail() {
+  printf 'sops check failed: %s\n' "$1" >&2
+  exit 1
+}
+
+tracked_files="$(git ls-files)"
+
+if printf '%s\n' "$tracked_files" | grep -Eq '(^|/)([^/]*\.agekey|[^/]*\.agekey\.txt|age[^/]*\.key|keys\.txt)$'; then
+  printf '%s\n' "$tracked_files" | grep -E '(^|/)([^/]*\.agekey|[^/]*\.agekey\.txt|age[^/]*\.key|keys\.txt)$' >&2
+  fail "private age key file is tracked by Git"
+fi
+
+if git grep -n -I 'AGE-SECRET-KEY-' -- . ':!*.md' ':!docs/**/*.md' >/tmp/sops-age-private-key-matches.txt; then
+  cat /tmp/sops-age-private-key-matches.txt >&2
+  fail "private age key material was found in tracked files"
+fi
+
+status=0
+while IFS= read -r file; do
+  if ! grep -q '^sops:' "$file"; then
+    printf '%s: missing top-level sops metadata\n' "$file" >&2
+    status=1
+  fi
+  if ! grep -q 'ENC\[' "$file"; then
+    printf '%s: missing encrypted ENC[...] values\n' "$file" >&2
+    status=1
+  fi
+done < <(printf '%s\n' "$tracked_files" | grep -E '\.sops\.(ya?ml|json)$' || true)
+
+if [[ "$status" -ne 0 ]]; then
+  fail "one or more *.sops.yaml/*.sops.json files are not encrypted"
+fi
+
+printf 'sops check passed\n'

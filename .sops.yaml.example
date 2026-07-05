@@ -1,0 +1,26 @@
+# Copy this file to .sops.yaml after generating real age public keys.
+# Never commit AGE-SECRET-KEY-* private keys.
+creation_rules:
+  # Production Kubernetes Secrets and config files.
+  - path_regex: ^clusters/prod/.*\.sops\.(ya?ml|json)$
+    encrypted_regex: '^(data|stringData)$'
+    age: age1REPLACE_WITH_PROD_PUBLIC_KEY
+    mac_only_encrypted: true
+
+  # Staging Kubernetes Secrets and config files.
+  - path_regex: ^clusters/staging/.*\.sops\.(ya?ml|json)$
+    encrypted_regex: '^(data|stringData)$'
+    age: age1REPLACE_WITH_STAGING_PUBLIC_KEY
+    mac_only_encrypted: true
+
+  # Development and default local GitOps secrets.
+  - path_regex: ^clusters/dev/.*\.sops\.(ya?ml|json)$
+    encrypted_regex: '^(data|stringData)$'
+    age: age1REPLACE_WITH_DEV_PUBLIC_KEY
+    mac_only_encrypted: true
+
+  # Fallback for other SOPS-managed files in this repository.
+  - path_regex: .*\.sops\.(ya?ml|json)$
+    encrypted_regex: '^(data|stringData)$'
+    age: age1REPLACE_WITH_DEV_OR_BREAK_GLASS_PUBLIC_KEY
+    mac_only_encrypted: true
