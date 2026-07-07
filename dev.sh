@@ -9,6 +9,18 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 DEV_MODE="${DEV_MODE:-docker}"
 MOCK_COURIER="${MOCK_COURIER:-1}"  # 1 = pomija prawdziwe API kuriera (InPost/Apaczka)
 
+# ── Secret reconciliation (best-effort, non-blocking) ──────────────────────────
+# Push any local secret changes (SOPS+age fallback tier, see
+# docs/devops/sops-age.md) back up to Key Vault whenever connectivity is
+# available. Runs in the background so a slow or unreachable Key Vault
+# (DefaultAzureCredential probing multiple credential sources) never delays
+# dev server startup. On failure, scripts/secrets_sync.py prints its own
+# error to stderr — that's the intended visibility, nothing else to do here.
+if [ -n "${AZURE_KEYVAULT_URL:-}" ]; then
+  echo "Reconciling local secrets to Key Vault in the background..."
+  uv run python "$ROOT/scripts/secrets_sync.py" push &
+fi
+
 if [ "$DEV_MODE" = "docker" ]; then
   echo "Starting Azurite + API via Docker Compose..."
   [ "$MOCK_COURIER" = "1" ] && echo "  ⚠  MOCK_COURIER=1 — kurierzy zamokowany"
