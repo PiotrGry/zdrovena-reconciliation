@@ -206,32 +206,44 @@ def cmd_encrypt(_args: argparse.Namespace) -> int:
         print(f"error: {ENV_LOCAL_PATH} does not exist — nothing to encrypt", file=sys.stderr)
         return 1
 
+    # sops selects its creation_rules by matching the INPUT file path
+    # against each rule's path_regex — NOT by --output/--output-type.
+    # .sops.yaml's rule only matches paths ending in ".env.local.sops", so
+    # running sops directly on ".env.local" fails with "no matching
+    # creation rules found". Route the plaintext through a temp file whose
+    # name ends in ".env.local.sops" instead — same trick
+    # zdrovena.common._local_secret_fallback.write_local_fallback already
+    # uses for its encrypt step.
+    plaintext = ENV_LOCAL_PATH.read_text(encoding="utf-8")
+    tmp_fd, tmp_path_str = tempfile.mkstemp(
+        suffix=".env.local.sops", dir=str(ENV_LOCAL_PATH.parent)
+    )
+    tmp_path = Path(tmp_path_str)
     try:
-        result = subprocess.run(
-            [
-                "sops",
-                "-e",
-                "--input-type",
-                "dotenv",
-                "--output-type",
-                "dotenv",
-                str(ENV_LOCAL_PATH),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=_SUBPROCESS_TIMEOUT,
-            check=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        print(f"error: sops encrypt failed: {exc.stderr}", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        # Covers subprocess.TimeoutExpired (sops hung past the timeout),
-        # FileNotFoundError (binary vanished after the shutil.which check),
-        # and any other OSError — none of these are CalledProcessError
-        # subclasses, so without this they'd propagate as raw tracebacks.
-        print(f"error: sops encrypt failed: {exc}", file=sys.stderr)
-        return 1
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            f.write(plaintext)
+
+        try:
+            result = subprocess.run(
+                ["sops", "-e", "--input-type", "dotenv", "--output-type", "dotenv", str(tmp_path)],
+                capture_output=True,
+                text=True,
+                timeout=_SUBPROCESS_TIMEOUT,
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            print(f"error: sops encrypt failed: {exc.stderr}", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            # Covers subprocess.TimeoutExpired (sops hung past the timeout),
+            # FileNotFoundError (binary vanished after the shutil.which
+            # check), and any other OSError — none of these are
+            # CalledProcessError subclasses, so without this they'd
+            # propagate as raw tracebacks.
+            print(f"error: sops encrypt failed: {exc}", file=sys.stderr)
+            return 1
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
     _atomic_write_text(SOPS_PATH, result.stdout)
     print(f"encrypted {ENV_LOCAL_PATH} -> {SOPS_PATH}")
