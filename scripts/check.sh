@@ -138,6 +138,12 @@ else
 fi
 
 step "gitleaks — skanowanie sekretów"
+if [[ -x "$REPO_ROOT/scripts/check-sops-secrets.sh" ]]; then
+  "$REPO_ROOT/scripts/check-sops-secrets.sh" && ok "sops age guard" || fail "sops age guard failed"
+else
+  echo -e "${SKIP} scripts/check-sops-secrets.sh nie jest wykonywalny"
+fi
+
 if command -v gitleaks >/dev/null 2>&1; then
   gitleaks detect --no-banner 2>&1 | tail -1 && ok "gitleaks" || fail "gitleaks: wykryto sekrety w kodzie"
 else

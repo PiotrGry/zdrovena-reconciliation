@@ -17,6 +17,10 @@ on:
       - "Dockerfile"
       - "e2e/**"
       - "frontend/**"
+      - ".sops.yaml"
+      - ".sops.yaml.example"
+      - ".env.local.sops"
+      - "docs/devops/**"
       - ".github/workflows/pr-validate.yml"
       - ".github/workflows/_quality-gate.yml"
       # infra/** intentionally omitted — terraform.yml runs plan for those

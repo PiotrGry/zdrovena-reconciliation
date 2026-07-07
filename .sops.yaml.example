@@ -1,0 +1,10 @@
+# Copy this file to .sops.yaml and replace the placeholder with your real
+# age public key (generate a keypair with scripts/sops-age-bootstrap.sh).
+# Never commit AGE-SECRET-KEY-* private keys.
+creation_rules:
+  # Local dev secrets fallback — see docs/devops/sops-age.md.
+  # Whole-file dotenv encryption (no encrypted_regex/mac_only_encrypted:
+  # those are Kubernetes-Secret-YAML-specific partial-encryption knobs that
+  # don't apply to dotenv-mode sops output).
+  - path_regex: \.env\.local\.sops$
+    age: age1REPLACE_WITH_YOUR_PUBLIC_KEY

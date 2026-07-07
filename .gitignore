@@ -1,1 +1,72 @@
-.sops.yaml
+# macOS SMB filesystem artifacts
+.smbdelete*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+.venv
+venv/
+venv
+
+# Node
+node_modules/
+frontend/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets
+.env
+.env.local
+.env.*.local
+*.agekey
+*.agekey.txt
+age*.key
+keys.txt
+
+# OS
+.DS_Store
+._*
+__MACOSX/
+Thumbs.db
+
+# CSV output (generated)
+csv/
+
+# Logs
+*.log
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.backup
+infra/terraform/*.tfplan
+infra/terraform/tfplan
+infra/terraform/terraform.tfvars
+# backend.hcl intentionally NOT gitignored — values are Azure resource names,
+# not secrets. Backend security is RBAC + storage_use_azuread, not concealment.
+infra/terraform/.terraform.lock.hcl
+
+# Coverage
+.coverage
+htmlcov/
+.claude/
+
+# Docker local dev
+.env.local.template.bak
+.gstack/
+.env.smoke
+.venv-local
+
+# git worktrees (superpowers subagent-driven-development)
+.worktrees/
