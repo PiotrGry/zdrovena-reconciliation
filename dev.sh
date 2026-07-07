@@ -14,11 +14,14 @@ MOCK_COURIER="${MOCK_COURIER:-1}"  # 1 = pomija prawdziwe API kuriera (InPost/Ap
 # docs/devops/sops-age.md) back up to Key Vault whenever connectivity is
 # available. Runs in the background so a slow or unreachable Key Vault
 # (DefaultAzureCredential probing multiple credential sources) never delays
-# dev server startup. On failure, scripts/secrets_sync.py prints its own
-# error to stderr — that's the intended visibility, nothing else to do here.
-if [ -n "${AZURE_KEYVAULT_URL:-}" ]; then
-  echo "Reconciling local secrets to Key Vault in the background..."
-  uv run python "$ROOT/scripts/secrets_sync.py" push &
+# dev server startup. Requires `uv` on PATH (same guard as scripts/check.sh);
+# skipped silently if it's missing, e.g. on a docker-only dev setup. On
+# failure (including a stale `az login` session) scripts/secrets_sync.py
+# logs an ERROR per secret to stderr — expected/harmless, not a sign
+# something is broken; safe to ignore for local dev.
+if [ -n "${AZURE_KEYVAULT_URL:-}" ] && command -v uv >/dev/null 2>&1; then
+  echo "Reconciling local secrets to Key Vault in the background (failures here are safe to ignore for local dev)..."
+  uv run --project "$ROOT" python "$ROOT/scripts/secrets_sync.py" push &
 fi
 
 if [ "$DEV_MODE" = "docker" ]; then
