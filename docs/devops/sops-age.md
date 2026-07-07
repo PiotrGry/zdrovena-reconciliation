@@ -12,6 +12,9 @@ service's secrets (Allegro, InPost, Apaczka, Shopify, SMS).
 > live-Key-Vault-fetch pattern via `.env.template` + `az login`. That is
 > untouched by anything on this page.
 
+Unless otherwise noted, every command in this doc is run from the repository
+root.
+
 ## 1. Overview
 
 **The problem this solves:** an Allegro OAuth refresh token rotated while a
@@ -42,7 +45,13 @@ being silently lost. (B) is the tool you reach for deliberately.
 own machines, not a multi-environment (dev/staging/prod) setup. One age
 keypair; the public key lives in the committed `.sops.yaml`; the private key
 is placed manually, out of band, at `~/.config/sops/age/keys.txt` on every
-machine you use.
+machine you use. This is deliberately simpler than a per-environment key
+scheme: this is a solo-developer setup, not a team with per-environment
+blast-radius concerns, and Azure Key Vault — not `.env.local.sops` — is
+already the actual single source of truth in production. The local
+SOPS+age tier exists only to survive temporary disconnection from Key
+Vault, so splitting it into multiple keys would add operational complexity
+without a corresponding security benefit here.
 
 ## 2. One-time setup
 
@@ -94,7 +103,7 @@ Store the private key in the team secret manager, then remove the local repo cop
 after copying it to ~/.config/sops/age/keys.txt or another secure location.
 ```
 
-### Configure the repo
+### Configure the repo (first machine only)
 
 ```bash
 cp .sops.yaml.example .sops.yaml
@@ -113,6 +122,11 @@ creation_rules:
 for Kubernetes Secret YAML and don't apply to whole-file dotenv encryption.
 
 ### Get the private key onto a second/third machine
+
+On any machine after the first, `.sops.yaml` already exists — it comes from
+`git pull` along with the rest of the repo. Do **not** recreate it or
+generate a new keypair; the only thing you need to set up locally is the
+existing shared private key.
 
 The private key never travels through Git. Copy
 `~/.config/sops/age/keys.txt` (or the raw `AGE-SECRET-KEY-...` line) to the
@@ -195,7 +209,7 @@ uv run python scripts/secrets_sync.py decrypt   # .env.local.sops -> .env.local
 
 The set of secrets `pull`/`push` operate on is the canonical list in
 [`scripts/secrets_manifest.py`](../../scripts/secrets_manifest.py)'s
-`ENV_LOCAL_SECRETS` (~20 names: Allegro, Shopify, InPost, Apaczka, SMS, and
+`ENV_LOCAL_SECRETS` (20 names: Allegro, Shopify, InPost, Apaczka, SMS, and
 sender-address secrets).
 
 | Subcommand | Needs Key Vault? | Use it when... |
@@ -210,10 +224,10 @@ sender-address secrets).
 working local age private key.
 
 `push` doubles as the Key Vault backfill mechanism: as of this writing, none
-of the ~20 `ENV_LOCAL_SECRETS` exist in Key Vault yet (see the "Sekret AKV"
-status table in `TODOS.md`), so the first real `push` run performs that
-migration as a side effect — every secret with a value in `.env.local` gets
-uploaded, whether or not it existed in Key Vault before.
+of the 20 `ENV_LOCAL_SECRETS` exist in Key Vault yet (see the "Sekret AKV"
+status table in [`TODOS.md`](../../TODOS.md)), so the first real `push` run
+performs that migration as a side effect — every secret with a value in
+`.env.local` gets uploaded, whether or not it existed in Key Vault before.
 
 Sample `pull` output (some secrets not yet backfilled):
 
@@ -298,9 +312,13 @@ everyone uses to encrypt/decrypt `.env.local.sops`:
    ```bash
    sops updatekeys -y --input-type dotenv .env.local.sops
    ```
-   (the `--input-type dotenv` flag is required — without it `sops` can't
-   guess the format from the `.env.local.sops` filename and fails), or, more
-   simply, decrypt with the old key and re-encrypt with the new one:
+   (this requires the OLD private key to still be present at
+   `~/.config/sops/age/keys.txt` — `updatekeys` has to unwrap the existing
+   data key with it before re-wrapping for the new recipient; the
+   `--input-type dotenv` flag is also required, since without it `sops`
+   can't guess the format from the `.env.local.sops` filename and fails),
+   or, more simply, decrypt with the old key and re-encrypt with the new
+   one:
    ```bash
    uv run python scripts/secrets_sync.py decrypt   # while the OLD key is still at ~/.config/sops/age/keys.txt
    # swap in the new private key, update .sops.yaml as in step 2
@@ -316,7 +334,8 @@ everyone uses to encrypt/decrypt `.env.local.sops`:
 
 ## 8. Troubleshooting
 
-**`error loading config: no matching creation rules found`**
+### `error loading config: no matching creation rules found`
+
 `.sops.yaml` is missing, or its `path_regex` doesn't match the path you
 passed to `sops`. Important: sops matches `creation_rules` against the
 *input* file path you give it as an argument — not `--output`. Running
@@ -326,13 +345,15 @@ why both `_local_secret_fallback.py` and `secrets_sync.py`'s `encrypt`
 command route plaintext through a temp file whose name ends in
 `.env.local.sops` before invoking `sops -e`.
 
-**Permission errors on `~/.config/sops/age/keys.txt`**
+### Permission errors on `~/.config/sops/age/keys.txt`
+
 It should be `chmod 600` (readable/writable by you only):
 ```bash
 chmod 600 ~/.config/sops/age/keys.txt
 ```
 
-**How do I check whether the automatic fallback tier (§3) is even active?**
+### How do I check whether the automatic fallback tier (§3) is even active?
+
 ```bash
 python -c "
 import shutil
