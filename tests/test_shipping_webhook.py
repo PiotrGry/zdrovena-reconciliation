@@ -939,6 +939,49 @@ class TestUpdateDraft:
         assert resp.status_code == 409
         assert "requires review" in resp.json()["detail"].lower()
 
+    def test_sets_apaczka_service_id(self, client, store):
+        draft = self._seed_draft(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}", json={"apaczka_service_id": "21"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["apaczka_service_id"] == "21"
+        updated = store.get_draft(draft["id"])
+        assert updated["apaczka_service_id"] == "21"
+
+    def test_rejects_unknown_apaczka_service_id(self, client, store):
+        draft = self._seed_draft(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}", json={"apaczka_service_id": "999999"}
+        )
+        assert resp.status_code == 400
+        assert "apaczka_service_id" in resp.json()["detail"].lower()
+
+    def test_apaczka_service_id_does_not_auto_clear_needs_review(self, client, store):
+        """Matches existing service/locker_id behavior: setting the field
+        alone does not flip status — the operator still confirms separately
+        via reviewed=True."""
+        draft = self._seed_draft(store)
+        store.update_draft(draft["id"], {"status": "needs_review"})
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}", json={"apaczka_service_id": "21"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "needs_review"
+
+    def test_apaczka_service_id_and_reviewed_together_clears_needs_review(
+        self, client, store
+    ):
+        draft = self._seed_draft(store)
+        store.update_draft(draft["id"], {"status": "needs_review"})
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"apaczka_service_id": "21", "reviewed": True},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["apaczka_service_id"] == "21"
+        assert resp.json()["status"] == "pending"
+
     def test_after_reviewed_execute_not_blocked_by_review(self, client, store):
         draft = self._seed_draft(store)
         store.update_draft(draft["id"], {"status": "needs_review"})
