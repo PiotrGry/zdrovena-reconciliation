@@ -1186,6 +1186,17 @@ class TestRunApaczka:
         MockClient.assert_not_called()
 
 
+class TestListApaczkaServices:
+    def test_returns_full_catalog(self, client):
+        from zdrovena.common.apaczka import APACZKA_SERVICE_CATALOG
+
+        resp = client.get("/api/shipping/apaczka-services")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["services"]) == len(APACZKA_SERVICE_CATALOG)
+        assert {"service_id": "21", "label": "DPD Kurier"} in body["services"]
+
+
 class TestCreateDraft:
     def test_inpost_kurier_draft_stored_on_success(self, store, tmp_path):
         from zdrovena.api.routers.webhooks import _create_draft

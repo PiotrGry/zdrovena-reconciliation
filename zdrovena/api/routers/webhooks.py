@@ -1226,6 +1226,24 @@ def list_drafts(
     return {"drafts": drafts}
 
 
+@router.get(
+    "/shipping/apaczka-services",
+    summary="List the curated Apaczka courier services available for draft selection",
+    responses={403: {"description": "Insufficient role"}},
+)
+def list_apaczka_services(
+    principal: Annotated[Principal, Depends(require_viewer_or_above)],
+) -> dict[str, Any]:
+    from zdrovena.common.apaczka import APACZKA_SERVICE_CATALOG
+
+    return {
+        "services": [
+            {"service_id": service_id, "label": label}
+            for service_id, label in APACZKA_SERVICE_CATALOG.items()
+        ]
+    }
+
+
 # ── Dead-letter queue (P1-9) ────────────────────────────────────────────────
 
 
