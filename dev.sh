@@ -35,6 +35,9 @@ if [ "$DEV_MODE" = "docker" ]; then
     sleep 1
   done
 
+  echo "Zapewniam istnienie kontenera Azure Blob..."
+  docker compose exec -T api python3 /app/scripts/ensure-storage-container.py
+
   echo "Seeduję testowe dane wysyłek..."
   docker compose exec -T api python3 /app/scripts/seed-shipping-drafts.py
 
@@ -53,6 +56,9 @@ else
 
   echo "Czekam aż API będzie gotowe..."
   until curl -sf http://localhost:8000/health > /dev/null 2>&1; do sleep 1; done
+
+  echo "Zapewniam istnienie kontenera Azure Blob..."
+  python3 "$ROOT/scripts/ensure-storage-container.py"
 
   echo "Seeduję testowe dane wysyłek..."
   python3 "$ROOT/scripts/seed-shipping-drafts.py"
