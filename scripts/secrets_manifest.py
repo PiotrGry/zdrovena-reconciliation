@@ -21,7 +21,6 @@ ENV_LOCAL_SECRETS: list[str] = [
     "inpost-organization-id",
     "apaczka-app-id",
     "apaczka-app-secret",
-    "apaczka-service-id",
     "smsapi-token",
     "notify-phone",
     "sender-name",
