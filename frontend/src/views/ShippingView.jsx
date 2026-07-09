@@ -18,7 +18,7 @@ function fmtDate(iso) {
     }
 }
 
-function courierLabel(draft) {
+function courierLabel(draft, apaczkaServices = []) {
     if (draft.courier === 'allegro_delivery') {
         if (draft.allegro_sending_method === 'parcel_locker') return 'Wysyłam z Allegro (Paczkomat)'
         if (draft.allegro_sending_method === 'dispatch_order') return 'Wysyłam z Allegro (Kurier InPost)'
@@ -28,6 +28,10 @@ function courierLabel(draft) {
         if (draft.service === 'inpost_locker_standard') return 'InPost Paczkomat'
         if (draft.service === 'inpost_courier_standard') return 'InPost Kurier'
         return 'InPost'
+    }
+    if (draft.apaczka_service_id) {
+        const match = apaczkaServices.find(s => s.service_id === draft.apaczka_service_id)
+        if (match) return `Apaczka — ${match.label}`
     }
     return 'Apaczka'
 }
@@ -178,10 +182,11 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, busy, canManage, selected, onToggleSelect, forceOpen }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen }) {
     const { t, lang } = useT()
     const T = t[lang]
     const [open, setOpen] = useState(false)
+    const [selectedApaczkaService, setSelectedApaczkaService] = useState('')
 
     useEffect(() => {
         if (forceOpen !== undefined && forceOpen !== null) setOpen(forceOpen)
@@ -241,7 +246,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                     {draft.receiver?.phone || ''}
                 </span>
                 <span style={{ display: 'flex', gap: 4, flexWrap: 'nowrap', overflow: 'hidden' }}><MaterialTags draft={draft} /></span>
-                <span><Pill kind={courierPillKind(draft)}>{courierLabel(draft)}</Pill></span>
+                <span><Pill kind={courierPillKind(draft)}>{courierLabel(draft, apaczkaServices)}</Pill></span>
                 <span className="mono dim" style={{ fontSize: '0.85em' }}>{fmtDate(draft.created_at)}</span>
                 <span>
                     <Pill kind={
@@ -339,6 +344,37 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                             ) : <span className="dim">—</span>}
                         </div>
                     </div>
+
+                    {draft.courier === 'apaczka' && (
+                        <div style={{ marginTop: 12 }}>
+                            <div className="detail-label">{T.sh_apaczka_service_label ?? 'Serwis Apaczka'}</div>
+                            {draft.apaczka_service_id ? (
+                                <div>{apaczkaServices.find(s => s.service_id === draft.apaczka_service_id)?.label || draft.apaczka_service_id}</div>
+                            ) : (
+                                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+                                    <select
+                                        value={selectedApaczkaService}
+                                        onChange={e => setSelectedApaczkaService(e.target.value)}
+                                        disabled={isBusy}
+                                    >
+                                        <option value="">{T.sh_apaczka_service_placeholder ?? '— wybierz serwis —'}</option>
+                                        {apaczkaServices.map(s => (
+                                            <option key={s.service_id} value={s.service_id}>{s.label}</option>
+                                        ))}
+                                    </select>
+                                    <button
+                                        className="btn btn-secondary"
+                                        disabled={isBusy || !selectedApaczkaService}
+                                        onClick={() => onSetApaczkaService(draft, selectedApaczkaService)}
+                                    >
+                                        {isBusy
+                                            ? (T.sh_apaczka_service_save_busy ?? 'Zapisywanie…')
+                                            : (T.sh_apaczka_service_save ?? 'Zapisz')}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     {draft.error && (
                         <div className="error-banner" style={{ marginTop: 8 }}>
@@ -470,6 +506,7 @@ export default function ShippingView() {
     const [bulkProgress, setBulkProgress] = useState(null)
     const [bulkPickupModal, setBulkPickupModal] = useState(false)
     const [expandAll, setExpandAll] = useState(null)
+    const [apaczkaServices, setApaczkaServices] = useState([])
 
     const load = useCallback(async () => {
         setLoading(true)
@@ -510,6 +547,25 @@ export default function ShippingView() {
         }
         run()
         return () => { cancelled = true }
+    }, [getToken])
+
+    useEffect(() => {
+        async function loadApaczkaServices() {
+            try {
+                const token = await getToken()
+                const res = await fetch('/api/shipping/apaczka-services', {
+                    headers: { Authorization: `Bearer ${token}` },
+                })
+                if (res.ok) {
+                    const body = await res.json()
+                    setApaczkaServices(body.services || [])
+                }
+            } catch {
+                // Non-critical: dropdown stays empty; PATCH still works via
+                // curl/Postman with a known service_id if this fetch fails.
+            }
+        }
+        loadApaczkaServices()
     }, [getToken])
 
     function withBusy(draftId, fn) {
@@ -561,6 +617,21 @@ export default function ShippingView() {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
                 body: schedule ? JSON.stringify(schedule) : null,
+            })
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(body.detail || `${res.status}`)
+            }
+        })()
+    }
+
+    function handleSetApaczkaService(draft, serviceId) {
+        return withBusy(draft.id, async () => {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ apaczka_service_id: serviceId, reviewed: true }),
             })
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
@@ -857,6 +928,8 @@ export default function ShippingView() {
                         onPickup={handlePickup}
                         onMarkFulfilled={handleMarkFulfilled}
                         onConfirmPending={handleConfirmPending}
+                        onSetApaczkaService={handleSetApaczkaService}
+                        apaczkaServices={apaczkaServices}
                         selected={selectedDraftIds.has(draft.id)}
                         onToggleSelect={handleToggleSelect}
                         forceOpen={expandAll}
