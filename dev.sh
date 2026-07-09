@@ -9,6 +9,21 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 DEV_MODE="${DEV_MODE:-docker}"
 MOCK_COURIER="${MOCK_COURIER:-1}"  # 1 = pomija prawdziwe API kuriera (InPost/Apaczka)
 
+# ── Secret reconciliation (best-effort, non-blocking) ──────────────────────────
+# Push any local secret changes (SOPS+age fallback tier, see
+# docs/devops/sops-age.md) back up to Key Vault whenever connectivity is
+# available. Runs in the background so a slow or unreachable Key Vault
+# (DefaultAzureCredential probing multiple credential sources) never delays
+# dev server startup. Requires `uv` on PATH (same guard as scripts/check.sh);
+# skipped silently if it's missing, e.g. on a docker-only dev setup. On
+# failure (including a stale `az login` session) scripts/secrets_sync.py
+# logs an ERROR per secret to stderr — expected/harmless, not a sign
+# something is broken; safe to ignore for local dev.
+if [ -n "${AZURE_KEYVAULT_URL:-}" ] && command -v uv >/dev/null 2>&1; then
+  echo "Reconciling local secrets to Key Vault in the background (failures here are safe to ignore for local dev)..."
+  uv run --project "$ROOT" python "$ROOT/scripts/secrets_sync.py" push &
+fi
+
 if [ "$DEV_MODE" = "docker" ]; then
   echo "Starting Azurite + API via Docker Compose..."
   [ "$MOCK_COURIER" = "1" ] && echo "  ⚠  MOCK_COURIER=1 — kurierzy zamokowany"
@@ -19,6 +34,9 @@ if [ "$DEV_MODE" = "docker" ]; then
   until docker compose exec -T api python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" 2>/dev/null; do
     sleep 1
   done
+
+  echo "Zapewniam istnienie kontenera Azure Blob..."
+  docker compose exec -T api python3 /app/scripts/ensure-storage-container.py
 
   echo "Seeduję testowe dane wysyłek..."
   docker compose exec -T api python3 /app/scripts/seed-shipping-drafts.py
@@ -38,6 +56,9 @@ else
 
   echo "Czekam aż API będzie gotowe..."
   until curl -sf http://localhost:8000/health > /dev/null 2>&1; do sleep 1; done
+
+  echo "Zapewniam istnienie kontenera Azure Blob..."
+  python3 "$ROOT/scripts/ensure-storage-container.py"
 
   echo "Seeduję testowe dane wysyłek..."
   python3 "$ROOT/scripts/seed-shipping-drafts.py"

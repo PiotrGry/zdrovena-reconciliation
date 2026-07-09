@@ -19,6 +19,10 @@ on:
       - "Dockerfile"
       - "e2e/**"
       - "frontend/**"
+      - ".sops.yaml"
+      - ".sops.yaml.example"
+      - ".env.local.sops"
+      - "docs/devops/**"
       - ".github/workflows/develop-gate.yml"
       - ".github/workflows/_quality-gate.yml"
   workflow_dispatch:

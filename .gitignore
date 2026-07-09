@@ -29,6 +29,10 @@ frontend/dist/
 .env
 .env.local
 .env.*.local
+*.agekey
+*.agekey.txt
+age*.key
+keys.txt
 
 # OS
 .DS_Store
