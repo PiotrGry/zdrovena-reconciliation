@@ -351,10 +351,36 @@ def _inpost_service_title_map() -> dict[str, str]:
     return _parse_title_map(os.getenv("INPOST_SERVICE_TITLE_MAP", ""))
 
 
+@lru_cache(maxsize=1)
+def _apaczka_service_title_map() -> dict[str, str]:
+    """Explicit title → Apaczka service_id mapping from ``APACZKA_SERVICE_TITLE_MAP``.
+
+    Example: ``APACZKA_SERVICE_TITLE_MAP="dpd kurier=21;orlen paczka=53"``.
+    """
+    return _parse_title_map(os.getenv("APACZKA_SERVICE_TITLE_MAP", ""))
+
+
+def _pick_apaczka_service(title: str) -> str | None:
+    """Map a Shopify shipping-line title to an Apaczka service_id.
+
+    Unlike ``_pick_courier``/``_pick_inpost_service`` there is no
+    substring-heuristic fallback: Apaczka's title strings are
+    business-configured Shopify shipping-method names, not consistently
+    predictable substrings. No configured match -> None, which routes the
+    draft to needs_review (see Task 3) instead of guessing.
+    """
+    lowered = title.lower()
+    for keyword, service_id in _apaczka_service_title_map().items():
+        if keyword and keyword in lowered:
+            return service_id
+    return None
+
+
 def _reset_courier_maps_cache() -> None:
     """Clear cached ENV mapping (test-only helper)."""
     _courier_title_map.cache_clear()
     _inpost_service_title_map.cache_clear()
+    _apaczka_service_title_map.cache_clear()
 
 
 def _pick_courier(order: dict[str, Any]) -> str:

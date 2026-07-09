@@ -6,6 +6,7 @@ import pytest
 
 from zdrovena.api.routers.webhooks import (
     _parse_title_map,
+    _pick_apaczka_service,
     _pick_courier,
     _pick_inpost_service,
     _reset_courier_maps_cache,
@@ -17,6 +18,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Clear ENV + cache between tests."""
     monkeypatch.delenv("COURIER_TITLE_MAP", raising=False)
     monkeypatch.delenv("INPOST_SERVICE_TITLE_MAP", raising=False)
+    monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
     _reset_courier_maps_cache()
     yield
     _reset_courier_maps_cache()
@@ -148,3 +150,40 @@ class TestPickInpostServiceExplicitMap:
         # no keyword matches → heuristic returns 'kurier'
         assert _pick_inpost_service("InPost Standard") == "kurier"
         assert _pick_inpost_service("Paczkomat 24/7") == "paczkomat"
+
+
+# ── _pick_apaczka_service ────────────────────────────────────────────────────
+
+
+class TestPickApaczkaService:
+    def test_no_env_configured_returns_none(self) -> None:
+        assert _pick_apaczka_service("Apaczka DPD") is None
+
+    def test_env_mapping_match_returns_service_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21;orlen paczka=53")
+        _reset_courier_maps_cache()
+        assert _pick_apaczka_service("Apaczka DPD") == "21"
+
+    def test_env_mapping_is_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "orlen paczka=53")
+        _reset_courier_maps_cache()
+        assert _pick_apaczka_service("ORLEN PACZKA - punkt odbioru") == "53"
+
+    def test_no_match_in_configured_map_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21")
+        _reset_courier_maps_cache()
+        assert _pick_apaczka_service("UPS Express") is None
+
+    def test_json_env_mapping(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", '{"dpd": "21", "ups": "1"}')
+        _reset_courier_maps_cache()
+        assert _pick_apaczka_service("UPS Standard") == "1"
+
+    def test_no_substring_heuristic_fallback(self) -> None:
+        """Unlike _pick_courier/_pick_inpost_service, there is no heuristic here —
+        Apaczka title strings aren't predictable substrings like inpost/paczkomat."""
+        assert _pick_apaczka_service("Kurier ekspresowy XYZ") is None
