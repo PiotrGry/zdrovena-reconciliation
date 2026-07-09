@@ -550,6 +550,7 @@ export default function ShippingView() {
     }, [getToken])
 
     useEffect(() => {
+        let cancelled = false
         async function loadApaczkaServices() {
             try {
                 const token = await getToken()
@@ -558,7 +559,7 @@ export default function ShippingView() {
                 })
                 if (res.ok) {
                     const body = await res.json()
-                    setApaczkaServices(body.services || [])
+                    if (!cancelled) setApaczkaServices(body.services || [])
                 }
             } catch {
                 // Non-critical: dropdown stays empty; PATCH still works via
@@ -566,6 +567,7 @@ export default function ShippingView() {
             }
         }
         loadApaczkaServices()
+        return () => { cancelled = true }
     }, [getToken])
 
     function withBusy(draftId, fn) {
