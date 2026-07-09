@@ -11,6 +11,9 @@ build/
 
 # Virtual environment
 .venv/
+.venv
+venv/
+venv
 
 # Node
 node_modules/
@@ -26,6 +29,10 @@ frontend/dist/
 .env
 .env.local
 .env.*.local
+*.agekey
+*.agekey.txt
+age*.key
+keys.txt
 
 # OS
 .DS_Store
@@ -59,3 +66,7 @@ htmlcov/
 .env.local.template.bak
 .gstack/
 .env.smoke
+.venv-local
+
+# git worktrees (superpowers subagent-driven-development)
+.worktrees/

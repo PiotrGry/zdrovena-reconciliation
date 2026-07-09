@@ -1,0 +1,633 @@
+{
+  "id": 8026427162971,
+  "admin_graphql_api_id": "gid://shopify/Order/8026427162971",
+  "app_id": 1354745,
+  "browser_ip": "91.150.209.36",
+  "buyer_accepts_marketing": true,
+  "cancel_reason": null,
+  "cancelled_at": null,
+  "cart_token": null,
+  "checkout_id": 48967279182171,
+  "checkout_token": "41195465b6e38813dd1e0d6d34020cde",
+  "client_details": {
+    "accept_language": null,
+    "browser_height": null,
+    "browser_ip": "91.150.209.36",
+    "browser_width": null,
+    "session_hash": null,
+    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.4 Safari/605.1.15"
+  },
+  "closed_at": null,
+  "company": null,
+  "confirmation_number": "TZH0I8D1M",
+  "confirmed": true,
+  "contact_email": "jan.kowalczyk@example.com",
+  "created_at": "2026-05-14T14:13:17+02:00",
+  "currency": "PLN",
+  "current_subtotal_price": "568.00",
+  "current_subtotal_price_set": {
+    "shop_money": {
+      "amount": "568.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "568.00",
+      "currency_code": "PLN"
+    }
+  },
+  "current_total_additional_fees_set": null,
+  "current_total_discounts": "0.00",
+  "current_total_discounts_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "current_total_duties_set": null,
+  "current_total_price": "568.00",
+  "current_total_price_set": {
+    "shop_money": {
+      "amount": "568.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "568.00",
+      "currency_code": "PLN"
+    }
+  },
+  "current_total_tax": "38.52",
+  "current_total_tax_set": {
+    "shop_money": {
+      "amount": "38.52",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "38.52",
+      "currency_code": "PLN"
+    }
+  },
+  "customer_locale": "pl-PL",
+  "device_id": null,
+  "discount_codes": [],
+  "duties_included": false,
+  "email": "jan.kowalczyk@example.com",
+  "estimated_taxes": false,
+  "financial_status": "paid",
+  "fulfillment_status": null,
+  "landing_site": null,
+  "landing_site_ref": null,
+  "location_id": null,
+  "merchant_business_entity_id": "MTkxODc4OTQ5MjEx",
+  "merchant_of_record_app_id": null,
+  "name": "#1556",
+  "note": null,
+  "note_attributes": [],
+  "number": 556,
+  "order_number": 1556,
+  "order_status_url": "https://wodahumio.pl/91878949211/orders/7dc91fd4a8bebe67c3bfc094f179050d/authenticate?key=4260a777ea157e74a8cf9318a8a569ba",
+  "original_total_additional_fees_set": null,
+  "original_total_duties_set": null,
+  "payment_gateway_names": [
+    "manual"
+  ],
+  "phone": null,
+  "po_number": null,
+  "presentment_currency": "PLN",
+  "processed_at": "2026-05-14T14:13:17+02:00",
+  "reference": null,
+  "referring_site": null,
+  "source_identifier": null,
+  "source_name": "shopify_draft_order",
+  "source_url": null,
+  "subtotal_price": "568.00",
+  "subtotal_price_set": {
+    "shop_money": {
+      "amount": "568.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "568.00",
+      "currency_code": "PLN"
+    }
+  },
+  "tags": "",
+  "tax_exempt": false,
+  "tax_lines": [
+    {
+      "price": "38.52",
+      "rate": 0.08,
+      "title": "PL VAT",
+      "price_set": {
+        "shop_money": {
+          "amount": "38.52",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "38.52",
+          "currency_code": "PLN"
+        }
+      },
+      "channel_liable": false
+    }
+  ],
+  "taxes_included": true,
+  "test": false,
+  "token": "7dc91fd4a8bebe67c3bfc094f179050d",
+  "total_cash_rounding_payment_adjustment_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_cash_rounding_refund_adjustment_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_discounts": "0.00",
+  "total_discounts_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_line_items_price": "568.00",
+  "total_line_items_price_set": {
+    "shop_money": {
+      "amount": "568.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "568.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_outstanding": "0.00",
+  "total_price": "568.00",
+  "total_price_set": {
+    "shop_money": {
+      "amount": "568.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "568.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_shipping_price_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_tax": "38.52",
+  "total_tax_set": {
+    "shop_money": {
+      "amount": "38.52",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "38.52",
+      "currency_code": "PLN"
+    }
+  },
+  "total_tip_received": "0.00",
+  "total_weight": 66000,
+  "updated_at": "2026-05-14T14:13:18+02:00",
+  "user_id": 119163158875,
+  "billing_address": {
+    "first_name": "Jan",
+    "address1": "Krakowska 24",
+    "phone": "+48601234567",
+    "city": "Nowy Sącz",
+    "zip": "33-300",
+    "province": null,
+    "country": "Poland",
+    "last_name": "Kowalczyk",
+    "address2": null,
+    "company": null,
+    "latitude": 49.6293516,
+    "longitude": 20.6833609,
+    "name": "Jan Kowalczyk",
+    "country_code": "PL",
+    "province_code": null
+  },
+  "customer": {
+    "id": 8832404783451,
+    "created_at": "2025-02-13T13:43:24+01:00",
+    "updated_at": "2026-05-14T14:13:18+02:00",
+    "first_name": "Jan",
+    "last_name": "Kowalczyk",
+    "state": "disabled",
+    "note": null,
+    "verified_email": true,
+    "multipass_identifier": null,
+    "tax_exempt": false,
+    "email_marketing_consent": {
+      "state": "subscribed",
+      "opt_in_level": "single_opt_in",
+      "consent_updated_at": "2025-02-13T13:54:03+01:00"
+    },
+    "sms_marketing_consent": null,
+    "tags": "",
+    "email": "jan.kowalczyk@example.com",
+    "phone": null,
+    "currency": "PLN",
+    "tax_exemptions": [],
+    "admin_graphql_api_id": "gid://shopify/Customer/8832404783451",
+    "default_address": {
+      "id": 14004310376795,
+      "customer_id": 8832404783451,
+      "first_name": "Jan",
+      "last_name": "Kowalczyk",
+      "company": null,
+      "address1": "Krakowska 24",
+      "address2": null,
+      "city": "Nowy Sącz",
+      "province": null,
+      "country": "Poland",
+      "zip": "33-300",
+      "phone": "+48601234567",
+      "name": "Jan Kowalczyk",
+      "province_code": null,
+      "country_code": "PL",
+      "country_name": "Poland",
+      "default": true
+    }
+  },
+  "discount_applications": [],
+  "fulfillments": [],
+  "line_items": [
+    {
+      "id": 19153167221083,
+      "admin_graphql_api_id": "gid://shopify/LineItem/19153167221083",
+      "attributed_staffs": [],
+      "current_quantity": 2,
+      "fulfillable_quantity": 2,
+      "fulfillment_service": "manual",
+      "fulfillment_status": null,
+      "gift_card": false,
+      "grams": 6000,
+      "name": "HUMIO - woda alkaliczna, 12 butelek",
+      "price": "60.00",
+      "price_set": {
+        "shop_money": {
+          "amount": "60.00",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "60.00",
+          "currency_code": "PLN"
+        }
+      },
+      "product_exists": true,
+      "product_id": 9709169836379,
+      "properties": [],
+      "quantity": 2,
+      "requires_shipping": true,
+      "sku": "50",
+      "taxable": true,
+      "title": "HUMIO - woda alkaliczna, 12 butelek",
+      "total_discount": "0.00",
+      "total_discount_set": {
+        "shop_money": {
+          "amount": "0.00",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "0.00",
+          "currency_code": "PLN"
+        }
+      },
+      "variant_id": 49944467505499,
+      "variant_inventory_management": "shopify",
+      "variant_title": null,
+      "vendor": "Mój sklep",
+      "tax_lines": [
+        {
+          "channel_liable": false,
+          "price": "8.89",
+          "price_set": {
+            "shop_money": {
+              "amount": "8.89",
+              "currency_code": "PLN"
+            },
+            "presentment_money": {
+              "amount": "8.89",
+              "currency_code": "PLN"
+            }
+          },
+          "rate": 0.08,
+          "title": "PL VAT"
+        }
+      ],
+      "duties": [],
+      "discount_allocations": []
+    },
+    {
+      "id": 19153167253851,
+      "admin_graphql_api_id": "gid://shopify/LineItem/19153167253851",
+      "attributed_staffs": [],
+      "current_quantity": 2,
+      "fulfillable_quantity": 2,
+      "fulfillment_service": "manual",
+      "fulfillment_status": null,
+      "gift_card": false,
+      "grams": 0,
+      "name": "kaucja 6zł, 12 butelek plastik",
+      "price": "6.00",
+      "price_set": {
+        "shop_money": {
+          "amount": "6.00",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "6.00",
+          "currency_code": "PLN"
+        }
+      },
+      "product_exists": true,
+      "product_id": 10323410944347,
+      "properties": [],
+      "quantity": 2,
+      "requires_shipping": false,
+      "sku": null,
+      "taxable": true,
+      "title": "kaucja 6zł, 12 butelek plastik",
+      "total_discount": "0.00",
+      "total_discount_set": {
+        "shop_money": {
+          "amount": "0.00",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "0.00",
+          "currency_code": "PLN"
+        }
+      },
+      "variant_id": 52168148287835,
+      "variant_inventory_management": null,
+      "variant_title": null,
+      "vendor": "HUMIO ",
+      "tax_lines": [
+        {
+          "channel_liable": false,
+          "price": "0.00",
+          "price_set": {
+            "shop_money": {
+              "amount": "0.00",
+              "currency_code": "PLN"
+            },
+            "presentment_money": {
+              "amount": "0.00",
+              "currency_code": "PLN"
+            }
+          },
+          "rate": 0.0,
+          "title": "PL VAT"
+        }
+      ],
+      "duties": [],
+      "discount_allocations": []
+    },
+    {
+      "id": 19153167286619,
+      "admin_graphql_api_id": "gid://shopify/LineItem/19153167286619",
+      "attributed_staffs": [],
+      "current_quantity": 1,
+      "fulfillable_quantity": 1,
+      "fulfillment_service": "manual",
+      "fulfillment_status": null,
+      "gift_card": false,
+      "grams": 18000,
+      "name": "HUMIO - woda alkaliczna, 12 butelek w szkle",
+      "price": "85.00",
+      "price_set": {
+        "shop_money": {
+          "amount": "85.00",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "85.00",
+          "currency_code": "PLN"
+        }
+      },
+      "product_exists": true,
+      "product_id": 9955919233371,
+      "properties": [],
+      "quantity": 1,
+      "requires_shipping": true,
+      "sku": "",
+      "taxable": true,
+      "title": "HUMIO - woda alkaliczna, 12 butelek w szkle",
+      "total_discount": "0.00",
+      "total_discount_set": {
+        "shop_money": {
+          "amount": "0.00",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "0.00",
+          "currency_code": "PLN"
+        }
+      },
+      "variant_id": 50800604807515,
+      "variant_inventory_management": "shopify",
+      "variant_title": null,
+      "vendor": "HUMIO ",
+      "tax_lines": [
+        {
+          "channel_liable": false,
+          "price": "6.30",
+          "price_set": {
+            "shop_money": {
+              "amount": "6.30",
+              "currency_code": "PLN"
+            },
+            "presentment_money": {
+              "amount": "6.30",
+              "currency_code": "PLN"
+            }
+          },
+          "rate": 0.08,
+          "title": "PL VAT"
+        }
+      ],
+      "duties": [],
+      "discount_allocations": []
+    },
+    {
+      "id": 19153167319387,
+      "admin_graphql_api_id": "gid://shopify/LineItem/19153167319387",
+      "attributed_staffs": [],
+      "current_quantity": 1,
+      "fulfillable_quantity": 1,
+      "fulfillment_service": "manual",
+      "fulfillment_status": null,
+      "gift_card": false,
+      "grams": 36000,
+      "name": "Imprezowy zapas wody HUMIO - 72 butelek",
+      "price": "315.00",
+      "price_set": {
+        "shop_money": {
+          "amount": "315.00",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "315.00",
+          "currency_code": "PLN"
+        }
+      },
+      "product_exists": true,
+      "product_id": 10149079613787,
+      "properties": [],
+      "quantity": 1,
+      "requires_shipping": true,
+      "sku": null,
+      "taxable": true,
+      "title": "Imprezowy zapas wody HUMIO - 72 butelek",
+      "total_discount": "0.00",
+      "total_discount_set": {
+        "shop_money": {
+          "amount": "0.00",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "0.00",
+          "currency_code": "PLN"
+        }
+      },
+      "variant_id": 51575904731483,
+      "variant_inventory_management": "shopify",
+      "variant_title": null,
+      "vendor": "HUMIO ",
+      "tax_lines": [
+        {
+          "channel_liable": false,
+          "price": "23.33",
+          "price_set": {
+            "shop_money": {
+              "amount": "23.33",
+              "currency_code": "PLN"
+            },
+            "presentment_money": {
+              "amount": "23.33",
+              "currency_code": "PLN"
+            }
+          },
+          "rate": 0.08,
+          "title": "PL VAT"
+        }
+      ],
+      "duties": [],
+      "discount_allocations": []
+    },
+    {
+      "id": 19153167352155,
+      "admin_graphql_api_id": "gid://shopify/LineItem/19153167352155",
+      "attributed_staffs": [],
+      "current_quantity": 1,
+      "fulfillable_quantity": 1,
+      "fulfillment_service": "manual",
+      "fulfillment_status": null,
+      "gift_card": false,
+      "grams": 0,
+      "name": "kaucja 36zł, 72 butelki plastik",
+      "price": "36.00",
+      "price_set": {
+        "shop_money": {
+          "amount": "36.00",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "36.00",
+          "currency_code": "PLN"
+        }
+      },
+      "product_exists": true,
+      "product_id": 10323416383835,
+      "properties": [],
+      "quantity": 1,
+      "requires_shipping": false,
+      "sku": null,
+      "taxable": true,
+      "title": "kaucja 36zł, 72 butelki plastik",
+      "total_discount": "0.00",
+      "total_discount_set": {
+        "shop_money": {
+          "amount": "0.00",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "0.00",
+          "currency_code": "PLN"
+        }
+      },
+      "variant_id": 52168166146395,
+      "variant_inventory_management": null,
+      "variant_title": null,
+      "vendor": "HUMIO ",
+      "tax_lines": [
+        {
+          "channel_liable": false,
+          "price": "0.00",
+          "price_set": {
+            "shop_money": {
+              "amount": "0.00",
+              "currency_code": "PLN"
+            },
+            "presentment_money": {
+              "amount": "0.00",
+              "currency_code": "PLN"
+            }
+          },
+          "rate": 0.0,
+          "title": "PL VAT"
+        }
+      ],
+      "duties": [],
+      "discount_allocations": []
+    }
+  ],
+  "payment_terms": null,
+  "refunds": [],
+  "shipping_address": {
+    "first_name": "Jan",
+    "address1": "Krakowska 24",
+    "phone": "+48601234567",
+    "city": "Nowy Sącz",
+    "zip": "33-300",
+    "province": null,
+    "country": "Poland",
+    "last_name": "Kowalczyk",
+    "address2": null,
+    "company": null,
+    "latitude": 49.6293516,
+    "longitude": 20.6833609,
+    "name": "Jan Kowalczyk",
+    "country_code": "PL",
+    "province_code": null
+  },
+  "shipping_lines": []
+}

@@ -2,10 +2,11 @@
 
 Wewnętrzny system back-office dla **Zdrovena / HUMIO** — fakturowanie, audyt butelek, zamknięcie miesiąca.
 
-Składa się z trzech warstw:
-- **REST API** (FastAPI) — serwowane przez Azure Container Apps, chronione JWT (Entra ID)
+Składa się z dwóch warstw:
+- **REST API** (FastAPI) — serwowane przez Azure Container Apps, chronione JWT (Entra ID). Endpointy biznesowe pod prefixem `/api`; `/health` i `/docs` na roocie.
 - **Frontend** (vanilla HTML + MSAL.js) — Azure Static Web Apps, proxy `/api/*` → Container App
-- **CLI** — lokalne narzędzia dla właściciela firmy
+
+Integracje zewnętrzne: Shopify (webhooki), Allegro (Ship-with-Allegro), InPost (paczkomaty + kurier), Apaczka, DPD, Fakturownia, KSeF 2.0.
 
 ---
 
@@ -13,14 +14,78 @@ Składa się z trzech warstw:
 
 ### Endpoints
 
+Większość endpointów biznesowych zamontowana pod prefixem `/api` (np. `GET /api/files`) — dla czytelności pomijam go w tabelach poniżej. `/health` i `/docs` są na roocie.
+
+**System:**
+
 | Method | Path | Rola | Opis |
 |--------|------|------|------|
-| `GET` | `/health` | — | Liveness check + wersja API |
-| `GET` | `/docs` | — | Swagger UI (interaktywna dokumentacja) |
+| `GET` | `/health` | — | Liveness check + wersja API (na roocie, bez `/api`) |
+| `GET` | `/docs` | — | Swagger UI (na roocie, bez `/api`) |
+
+**Pliki:**
+
+| Method | Path | Rola | Opis |
+|--------|------|------|------|
 | `GET` | `/files` | viewer+ | Lista plików w storage (opcjonalny `?prefix=`) |
 | `GET` | `/files/{key}` | viewer+ | Pobranie pliku (streaming) |
 | `PUT` | `/files/{key}` | accountant+ | Wgranie pliku |
+| `DELETE` | `/files/{key}` | accountant+ | Usunięcie pliku |
+
+**Miesięczne zamknięcie:**
+
+| Method | Path | Rola | Opis |
+|--------|------|------|------|
 | `POST` | `/close` | accountant+ | Uruchomienie pipeline zamknięcia miesiąca |
+| `GET` | `/state` | viewer+ | Stan pipeline (PipelineState) |
+| `GET` | `/history` | viewer+ | Historia zamknięć |
+| `DELETE` | `/history/{ts}` | accountant+ | Kasowanie wpisu z historii |
+
+**Fakturownia:**
+
+| Method | Path | Rola | Opis |
+|--------|------|------|------|
+| `GET` | `/invoices/sales` | viewer+ | Lista faktur sprzedażowych |
+| `GET` | `/invoices/products` | viewer+ | Lista produktów |
+
+**Shopify webhooki (bez auth JWT — HMAC + domain whitelist):**
+
+| Method | Path | Opis |
+|--------|------|------|
+| `POST` | `/webhooks/shopify/order-create` | Legacy alias (używane przez starsze konfiguracje Shopify) |
+| `POST` | `/webhooks/shopify/order-created` | Canonical webhook — tworzy shipping draft |
+
+SHOPIFY_ALLOWED_DOMAINS jest **fail-closed w produkcji** (brak zmiennej = 500), w dev/testach dozwolony wildcard.
+
+**Shipping — projekty wysyłki (P0-P2 audit):**
+
+| Method | Path | Rola | Opis |
+|--------|------|------|------|
+| `GET` | `/shipping/drafts` | viewer+ | Lista projektów wysyłki |
+| `PATCH` | `/shipping/drafts/{id}` | shipment-mgr+ | Aktualizuj liczbę paczek |
+| `POST` | `/shipping/drafts/{id}/execute` | shipment-mgr+ | Realizuj projekt (create draft w InPost/Allegro/Apaczka) |
+| `POST` | `/shipping/drafts/{id}/confirm` | shipment-mgr+ | Potwierdź pending Allegro create-command (P1-3) |
+| `POST` | `/shipping/drafts/{id}/pickup` | shipment-mgr+ | Zamów podjazd kuriera InPost |
+| `DELETE` | `/shipping/drafts/{id}/shipment` | shipment-mgr+ | Anuluj shipment (z InPost cancel guard, P1-4) |
+| `DELETE` | `/shipping/drafts/{id}/dispatch` | shipment-mgr+ | Anuluj dispatch order (odbiór) |
+| `POST` | `/shipping/drafts/{id}/mark-fulfilled` | shipment-mgr+ | Oznacz jako zrealizowaną w Shopify |
+| `GET` | `/shipping/drafts/{id}/label` | viewer+ | Pobranie etykiety (PDF) |
+
+**Shipping — Dead Letter Queue (P1-9):**
+
+| Method | Path | Rola | Opis |
+|--------|------|------|------|
+| `GET` | `/shipping/drafts/dlq` | viewer+ | Lista nieudanych draftów (`retries` + `last_error`) |
+| `POST` | `/shipping/drafts/dlq/{entry_id}/retry` | shipment-mgr+ | Ponów tworzenie draftu |
+| `DELETE` | `/shipping/drafts/dlq/{entry_id}` | shipment-mgr+ | Usuń wpis z DLQ (po ręcznej analizie) |
+
+**Shipping — bezpośrednie operacje na przewoźnikach (obejście draftów — troubleshooting):**
+
+| Method | Path | Rola | Opis |
+|--------|------|------|------|
+| `DELETE` | `/inpost/shipments/{shipment_id}` | shipment-mgr+ | Twardy delete shipment w InPost |
+| `DELETE` | `/inpost/dispatch_orders/{dispatch_order_id}` | shipment-mgr+ | Delete dispatch order |
+| `DELETE` | `/apaczka/orders/{order_id}` | shipment-mgr+ | Delete order w Apaczce |
 
 ### Autentykacja
 
@@ -44,13 +109,15 @@ curl -H "Authorization: Bearer $TOKEN" https://<API_URL>/files
 | Admin | `zdrovena-admin` | Pełny dostęp |
 | Accountant | `zdrovena-accountant` | Pliki (odczyt + zapis) + zamknięcie miesiąca |
 | Viewer | `zdrovena-viewer` | Tylko odczyt plików |
+| Shipment Manager | `zdrovena-shipment-mgr` | Zarządzanie wysyłkami (execute, pickup, aktualizacja paczek) |
 
 Role przypisuje się w: `Azure Portal → Enterprise applications → zdrovena-api → Users and groups`.
+Można przypisywać bezpośrednio do użytkowników lub do **grup Entra ID** — patrz sekcja [Zarządzanie dostępem](#zarządzanie-dostępem-entra-id) poniżej.
 
 ### Przykłady
 
 ```bash
-BASE=https://<API_URL>
+BASE=https://<API_URL>/api
 
 # lista plików
 curl -H "Authorization: Bearer $TOKEN" "$BASE/files"
@@ -70,15 +137,21 @@ curl -X PUT -H "Authorization: Bearer $TOKEN" \
 # zamknięcie miesiąca (wymaga roli accountant+)
 curl -X POST -H "Authorization: Bearer $TOKEN" "$BASE/close"
 
-# health check
-curl "$BASE/health"
+# lista projektów wysyłki
+curl -H "Authorization: Bearer $TOKEN" "$BASE/shipping/drafts"
+
+# lista nieudanych draftów (DLQ)
+curl -H "Authorization: Bearer $TOKEN" "$BASE/shipping/drafts/dlq"
+
+# health check (bez tokenu, na roocie — nie pod /api)
+curl "https://<API_URL>/health"
 # → {"status": "ok", "version": "2.0.0"}
 ```
 
 ### Uruchomienie lokalne
 
 ```bash
-pip install -e '.[all,dev]'
+pip install -e '.[api,cloud,all,dev]'
 
 # bez Azure (dev/testy)
 AZURE_AUTH_DISABLED=true uvicorn zdrovena.api.main:app --reload
@@ -87,9 +160,12 @@ AZURE_AUTH_DISABLED=true uvicorn zdrovena.api.main:app --reload
 AZURE_STORAGE_CONNECTION_STRING="UseDevelopmentStorage=true" \
 AZURE_AUTH_DISABLED=true \
 uvicorn zdrovena.api.main:app --reload
+
+# z mockowanym kurierem (nie woła InPost/Allegro API)
+MOCK_COURIER=true AZURE_AUTH_DISABLED=true uvicorn zdrovena.api.main:app --reload
 ```
 
-Swagger UI dostępne pod `http://localhost:8000/docs`.
+Swagger UI dostępne pod `http://localhost:8000/docs` (na roocie, nie pod `/api`).
 
 ---
 
@@ -116,55 +192,82 @@ Przy każdym deploy frontend pobiera `/version.json` i `/api/health`, porównuje
 
 ---
 
-## CLI
+## Zarządzanie dostępem (Entra ID)
 
+### Jak to działa
+
+Aplikacja używa **App Roles** w Azure Entra ID. Rola trafia do tokenu JWT w claimage `roles` i API sprawdza ją przy każdym żądaniu. Role można przypisywać:
+
+- **bezpośrednio do użytkownika** — OK dla 1–2 osób, ale przy większej liczbie trudno zarządzać
+- **do grupy bezpieczeństwa (Security Group)** — zalecane: dodajesz osobę do grupy i automatycznie dostaje odpowiednie uprawnienia
+
+### Aktualna konfiguracja
+
+| Rola | Gdzie przypisana |
+|------|-----------------|
+| `zdrovena-admin` | Bezpośrednio do właściciela |
+| `zdrovena-accountant` | Bezpośrednio do księgowej |
+| `zdrovena-shipment-mgr` | — (nowa rola, brak przypisań) |
+
+Grupy bezpieczeństwa: **brak skonfigurowanych** — wszystkie przypisania są bezpośrednie.
+
+> **Uwaga:** Przypisanie grupy do App Role wymaga licencji **Entra ID P1** (lub P2).
+> Bez licencji P1 w oknie "Users and groups" widzisz tylko opcję dodania użytkownika, nie grupy.
+
+### Jak stworzyć grupę
+
+1. Otwórz: **Azure Portal → Entra ID → Groups → New group**
+2. Wypełnij:
+   - **Group type**: `Security`
+   - **Group name**: np. `zdrovena-shipping-managers`
+   - **Group description**: np. `Dostęp do zarządzania wysyłkami`
+   - **Membership type**: `Assigned` (ręczne dodawanie) lub `Dynamic User` (automatyczne wg reguł)
+3. W sekcji **Members** dodaj od razu pierwszych użytkowników (opcjonalne — można później)
+4. Kliknij **Create**
+
+### Jak dodać użytkownika do grupy
+
+**Opcja A — przez stronę grupy:**
+
+1. **Entra ID → Groups** → kliknij grupę
+2. **Members → Add members** → wyszukaj użytkownika → **Select**
+
+**Opcja B — przez stronę użytkownika:**
+
+1. **Entra ID → Users** → kliknij użytkownika
+2. **Groups → Add memberships** → wybierz grupę → **Select**
+
+**Azure CLI:**
 ```bash
-pip install -e '.[all]'
-playwright install chromium
+# znajdź object ID użytkownika
+az ad user show --id email@domena.pl --query id -o tsv
 
-zdrovena --version                        # 2.0.0
-zdrovena -y 2025 audit                    # pełny audyt FV vs WZ
-zdrovena -y 2025 -m 6 list               # faktury z czerwca
-zdrovena -y 2025 export                   # CSV per miesiąc
-zdrovena -y 2025 summary                  # WZ vs FV (plastik/szkło)
-zdrovena products --active-only           # aktywne produkty
+# znajdź object ID grupy
+az ad group show --group zdrovena-shipping-managers --query id -o tsv
 
-zdrovena -y 2025 -m 2 report              # Wykaz sprzedaży VAT → PDF
-zdrovena -y 2025 -m 2 report -k expenses  # raport kosztów
-
-zdrovena close 2025-06                    # zamknięcie miesiąca
-zdrovena close 2025-06 --dry-run          # symulacja
-zdrovena close 2025-06 --zip --send       # ZIP + wysyłka
-
-zdrovena setup                            # wizard credentiali
-zdrovena setup --check                    # sprawdź co skonfigurowane
+# dodaj użytkownika do grupy
+az ad group member add \
+  --group zdrovena-shipping-managers \
+  --member-id <object-id-usera>
 ```
 
-### Komendy
+### Jak przypisać grupę do roli aplikacji
 
-| Komenda | Opis |
-|---------|------|
-| `audit` | Pełna rekoncyliacja WZ ↔ FV z kontrolami §2/§7/§8/§10 |
-| `list` | Lista faktur sprzedaży z liczbą butelek |
-| `export` | Export pozycji butelek do CSV per miesiąc |
-| `summary` | Tabela: WZ wysłane vs FV zafakturowane (plastik/szkło) |
-| `products` | Lista produktów Fakturownia (`--active-only`) |
-| `report` | Pobranie raportów Fakturownia jako PDF (Playwright) |
-| `close` | Pipeline zamknięcia miesiąca — preflight → faktury → KSeF → ZIP → e-mail |
-| `setup` | Wizard credentiali i OAuth (`--check`, `zoho`, `gads`) |
+1. Otwórz: **Azure Portal → Entra ID → Enterprise applications → zdrovena-api**
+2. **Users and groups → Add user/group**
+3. Kliknij **None selected** pod Users and groups → wyszukaj **grupę** (np. `zdrovena-shipping-managers`) → **Select**
+4. Kliknij **None selected** pod Select a role → wybierz rolę (np. `zdrovena-shipment-mgr`) → **Select**
+5. **Assign**
 
-### Pipeline zamknięcia miesiąca (`zdrovena close`)
+Po przypisaniu: każdy członek grupy przy następnym logowaniu dostanie token z odpowiednią rolą.
+Token jest cache'owany przez MSAL — żeby rola zadziałała od razu, użytkownik musi wylogować się i zalogować ponownie.
 
-| # | Krok | Źródło |
-|---|------|--------|
-| 0 | Pre-flight — weryfikacja vendorów, wyciągu, raportów | Zoho Mail, lokalny fs |
-| 1 | Tworzenie struktury folderów | — |
-| 2 | Pobieranie faktur sprzedaży | Fakturownia API |
-| 3 | Pobieranie JPK / raportów VAT | Fakturownia API |
-| 4 | Pobieranie faktur kosztowych | KSeF → Fakturownia → Zoho Mail |
-| 5 | Weryfikacja wyciągu bankowego | lokalny fs |
-| 6 | Budowanie archiwum ZIP | — |
-| 7 | Wysyłka e-mail do księgowej | Zoho SMTP |
+### Jak dodać nowego użytkownika (bez grup)
+
+1. **Entra ID → Users → New user** (lub **Invite user** jeśli konto spoza organizacji)
+2. Wypełnij dane; użytkownik dostaje e-mail z linkiem
+3. **Enterprise applications → zdrovena-api → Users and groups → Add user/group**
+4. Wybierz użytkownika + rolę → **Assign**
 
 ---
 
@@ -424,13 +527,16 @@ terraform apply
 ## Testy
 
 ```bash
-pip install -e '.[all,dev]'
+pip install -e '.[api,cloud,all,dev]'
 pytest                          # wszystkie testy
-pytest --cov=zdrovena           # z pokryciem
+pytest --cov=zdrovena           # z pokryciem (próg ≥80%)
 pytest tests/fitness/           # granice modułów
+ruff check .                    # lint (blokuje CI)
+ruff format --check .           # format check (blokuje CI)
+pyright                         # typy (blokuje CI)
 ```
 
-Pokrycie mierzalnego kodu biznesowego: ≥80%.
+Pokrycie mierzalnego kodu biznesowego: ≥80% (twardo enforce’owane w `_quality-gate.yml`).
 
 ---
 
@@ -438,11 +544,15 @@ Pokrycie mierzalnego kodu biznesowego: ≥80%.
 
 | Extra | Pakiety | Używane przez |
 |-------|---------|---------------|
-| `ksef` | cryptography, signxml, lxml | KSeF 2.0 e-invoicing |
-| `pdf` | pypdf, pdf2image | Ekstrakcja dat z PDF |
-| `report` | playwright, playwright-stealth | Pobieranie raportów i Canva |
-| `all` | ksef + pdf + report | wszystko |
-| `dev` | pytest, pytest-cov, responses | testy |
+| `ksef` | cryptography, signxml, lxml | KSeF 2.0 e-invoicing (pipeline zamknięcia) |
+| `pdf` | pypdf, pdf2image | Ekstrakcja dat z PDF faktur kosztowych |
+| `report` | playwright, playwright-stealth | Canva downloader (raporty PDF) |
+| `api` | fastapi, uvicorn, PyJWT, pypdf | REST API |
+| `cloud` | azure-storage-blob, azure-identity, azure-keyvault-secrets, azure-data-tables, azure-monitor-opentelemetry | produkcja Azure |
+| `all` | `[ksef,pdf,report]` — **bez `api`/`cloud`** | zbiorczy alias dla lokalnego pipeline zamknięcia |
+| `dev` | pytest, pytest-cov, responses, httpx, pip-audit, bandit, checkov, hypothesis, ruff | testy + quality gate |
+
+❌ **Uwaga:** `pip install -e '.[all]'` **nie** zainstaluje REST API ani zależności Azure. Do uruchomienia API użyj `.[api,cloud,all,dev]`.
 
 ---
 
@@ -450,44 +560,68 @@ Pokrycie mierzalnego kodu biznesowego: ≥80%.
 
 ```
 zdrovena/
-├── cli.py                          # entry-point, argparse
-├── __init__.py                     # wersja pakietu
+├── __init__.py                     # wersja pakietu (2.0.0)
+├── cli.py                          # CLI: zdrovena {close, audit, files, health, …}
 ├── common/
-│   ├── client.py                   # FakturowniaClient
+│   ├── client.py                   # bazowy HTTP client (retry + logging)
+│   ├── fakturownia.py              # FakturowniaClient (REST API)
 │   ├── storage.py                  # StorageService (Blob / lokalny fs)
-│   ├── exceptions.py               # hierarchia wyjątków
+│   ├── secrets.py                  # SecretsProvider (KV / env / lokalny)
+│   ├── _keyvault.py                # Azure Key Vault client (fetch + rotate)
+│   ├── config.py                   # ładowanie configu (env + KV)
+│   ├── exceptions.py               # hierarchia wyjątków domenowych
+│   ├── shipping_exceptions.py      # wyjątki wysyłkowe (InPost cancel, DLQ, …)
+│   ├── shipping_store.py           # ShippingStore (Table Storage / lokalny JSON) + DLQ
+│   ├── shipping_format.py          # formatowanie draftów wysyłki (UI + logi)
+│   ├── shopify_dedup_store.py      # deduplikacja webhooków Shopify (idempotency)
+│   ├── allegro.py                  # AllegroClient + AllegroTokenStore (P0-2)
+│   ├── allegro_mapper.py           # mapping order → Allegro create-command (P0-1, P1-1, P1-2)
+│   ├── inpost.py                   # InPostClient + PACZKOMAT_SLOTS + pick_paczkomat_template (P2-1)
+│   ├── apaczka.py                  # ApaczkaClient
+│   ├── bottles.py                  # audyt butelek (kaucja, saldo)
+│   ├── retry.py                    # retry decorator + backoff
+│   ├── sms_service.py              # SMS notifications (kurier ETA)
 │   └── formatting.py               # ANSI, miesiące, to_decimal
 ├── api/
 │   ├── main.py                     # FastAPI app + Azure Monitor setup
-│   ├── auth.py                     # JWT / Entra ID
-│   ├── models.py                   # CloseRequest, CloseResponse
+│   ├── auth.py                     # JWT / Entra ID, app roles (admin/accountant/viewer/shipment-mgr)
+│   ├── client.py                   # klient CLI→API (na Container App)
+│   ├── deps.py                     # FastAPI dependencies (storage, shipping, secrets, auth)
+│   ├── models.py                   # pydantic modele request/response
+│   ├── commands/                   # CLI: `zdrovena files`, `zdrovena health`
 │   └── routers/
-│       ├── close.py                # POST /close
-│       ├── files.py                # GET/PUT /files
-│       └── invoices.py             # GET /invoices
-├── audit/
-│   ├── api.py                      # AuditAPI (WZ/FV)
-│   ├── bottles.py                  # BottleReconciler
-│   ├── sections.py                 # sekcje audytu §1–§9
-│   └── commands/
+│       ├── close.py                # POST /close, GET /state, /history
+│       ├── files.py                # GET/PUT/DELETE /files
+│       ├── invoices.py             # GET /invoices/{sales,products}
+│       ├── webhooks.py             # Shopify webhook + shipping drafts + DLQ (P0-P2 audit)
+│       ├── allegro_poller.py       # background poller (Allegro pending confirms)
+│       └── fakturownia_patcher.py  # patch klienta Fakturownia (fixup metadanych)
+├── audit/                          # audyt butelek + raporty
+│   ├── api.py                      # AuditClient (API zdrovena ↔ audyt)
+│   ├── bottles.py                  # saldo kaucji, ruchy butelek
+│   ├── report_downloader.py        # ściąganie raportów Playwright
+│   ├── sections.py                 # sekcje raportu
+│   └── commands/                   # CLI: `zdrovena {audit, list, export, summary, report, products}`
 └── month_closing/
     ├── config.py                   # vendorzy, firma, cfg Zoho/KSeF
     ├── state.py                    # PipelineState (.state.json w blob)
     ├── orchestrator.py             # MonthCloseOrchestrator
     ├── preflight.py                # PreflightChecker
+    ├── close_history.py            # historia zamknięć (Table Storage / lokalny JSON)
+    ├── table_history.py            # Azure Table Storage adapter dla historii
     ├── zoho_mail.py                # Zoho Mail REST
     ├── ksef.py                     # KSeF 2.0 (opcjonalne zależności)
     ├── invoice_date_check.py       # ekstrakcja dat z PDF
+    ├── fakturownia_reports.py      # generowanie raportów z Fakturowni
     ├── canva_downloader.py         # Playwright: faktury Canva
     ├── email_service.py            # Zoho SMTP
     ├── zip_service.py              # archiwum ZIP
-    └── commands/
-        ├── close_cmd.py
-        └── setup_cmd.py            # wizard sekretów + OAuth
-tests/                              # pytest
-scripts/                            # CI: quality gate, smoke
-infra/terraform/                    # infrastruktura Azure
-.github/workflows/                  # CI/CD pipelines
+    ├── console.py                  # rich console (progress + logi)
+    └── commands/                   # CLI: `zdrovena {close, preflight, setup}`
+tests/                              # pytest (1115+ testy, coverage ≥80%)
+scripts/                            # CI: quality gate, smoke, deploy helpers
+infra/terraform/                    # infrastruktura Azure (modules + envs)
+.github/workflows/                  # CI/CD pipelines (develop-gate, main-gate, terraform, itd.)
 ```
 
 ---

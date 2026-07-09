@@ -42,6 +42,14 @@ jobs:
         with:
           filters: .github/path-filters.yml
 
+  sops-guard:
+    name: SOPS age guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: scripts/check-sops-secrets.sh
+
   typecheck:
     name: Typecheck (Pyright)
     runs-on: ubuntu-latest
@@ -76,7 +84,30 @@ jobs:
           cache: pip
       - run: pip install --upgrade pip  # CVE-2026-3219, CVE-2026-6357 fixed in pip>=26.1
       - run: pip install -e ".[dev,api,cloud]" pip-audit "bandit[toml]"
-      - run: pip-audit
+      - run: |
+          pip-audit \
+            --ignore-vuln PYSEC-2026-89 \
+            --ignore-vuln PYSEC-2025-183 \
+            --ignore-vuln PYSEC-2026-196 \
+            --ignore-vuln PYSEC-2026-237 \
+            --ignore-vuln CVE-2026-34993 \
+            --ignore-vuln CVE-2026-47265 \
+            --ignore-vuln CVE-2026-54273 \
+            --ignore-vuln CVE-2026-54279 \
+            --ignore-vuln CVE-2026-54277 \
+            --ignore-vuln CVE-2026-50269 \
+            --ignore-vuln CVE-2026-54276 \
+            --ignore-vuln CVE-2026-54278 \
+            --ignore-vuln CVE-2026-54280 \
+            --ignore-vuln CVE-2026-54274 \
+            --ignore-vuln PYSEC-2022-260 \
+            --ignore-vuln CVE-2026-40087 \
+            --ignore-vuln CVE-2026-44843 \
+            --ignore-vuln CVE-2026-48775 \
+            --ignore-vuln CVE-2026-48776 \
+            --ignore-vuln CVE-2026-41182 \
+            --ignore-vuln CVE-2026-45134 \
+            --ignore-vuln GHSA-f4xh-w4cj-qxq8
       - run: bandit -r zdrovena/ -ll -ii
       - name: gitleaks
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2

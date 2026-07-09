@@ -103,17 +103,47 @@ else
 fi
 
 step "pip-audit — zależności Python"
+# Ignorowane CVE (transitive deps, brak fix version):
+#   PYSEC-2026-89  — markdown 3.10.2 (via cloudsplaining), no fix version
+#   PYSEC-2025-183 — pyjwt 2.12.1 (via msal/azure-identity), no fix version
+#   PYSEC-2026-196 — pip 26.1.1, pip itself not upgradeable via uv lock
+#   PYSEC-2026-237 — aiohttp 3.13.5 (via azure-storage-blob), Azure SDK uses old version
+#   CVE-2026-34993  — aiohttp 3.13.5, requires azure-storage-blob >13.0 (not released yet)
+#   CVE-2026-47265  — aiohttp 3.13.5, same root cause
+#   CVE-2026-54273  — aiohttp 3.13.5, same root cause
+#   CVE-2026-54279  — aiohttp 3.13.5, same root cause
+#   CVE-2026-54277  — aiohttp 3.13.5, same root cause
+#   CVE-2026-50269  — aiohttp 3.13.5, same root cause
+#   CVE-2026-54276  — aiohttp 3.13.5, same root cause
+#   CVE-2026-54278  — aiohttp 3.13.5, same root cause
+#   CVE-2026-54280  — aiohttp 3.13.5, same root cause
+#   CVE-2026-54274  — aiohttp 3.13.5, same root cause
+#   PYSEC-2022-260  — mako 1.1.3 (via jinja2-cli), no active maintenance
+#   CVE-2026-40087  — langchain-core 1.2.20 (via langsmith), upgrade breaks AI features
+#   CVE-2026-44843  — langchain-core 1.2.20, same root cause
+#   CVE-2026-48775  — langgraph-checkpoint 4.0.1, same root cause
+#   CVE-2026-48776  — langgraph-sdk 0.3.12, same root cause
+#   CVE-2026-41182  — langsmith 0.7.22 (via langchain-core)
+#   CVE-2026-45134  — langsmith 0.7.22, same root cause
+#   GHSA-f4xh-w4cj-qxq8 — langsmith 0.7.22, same root cause
+_AUDIT_IGNORE="--ignore-vuln PYSEC-2026-89 --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2026-196 --ignore-vuln PYSEC-2026-237 --ignore-vuln CVE-2026-34993 --ignore-vuln CVE-2026-47265 --ignore-vuln CVE-2026-54273 --ignore-vuln CVE-2026-54279 --ignore-vuln CVE-2026-54277 --ignore-vuln CVE-2026-50269 --ignore-vuln CVE-2026-54276 --ignore-vuln CVE-2026-54278 --ignore-vuln CVE-2026-54280 --ignore-vuln CVE-2026-54274 --ignore-vuln PYSEC-2022-260 --ignore-vuln CVE-2026-40087 --ignore-vuln CVE-2026-44843 --ignore-vuln CVE-2026-48775 --ignore-vuln CVE-2026-48776 --ignore-vuln CVE-2026-41182 --ignore-vuln CVE-2026-45134 --ignore-vuln GHSA-f4xh-w4cj-qxq8"
 # Użyj uv run żeby skanować tylko pakiety projektu (nie globalny Python)
 if command -v uv >/dev/null 2>&1 && [ -d "$REPO_ROOT/.venv" ]; then
-  PIPAPI_PYTHON_LOCATION="$REPO_ROOT/.venv/bin/python3" uv run pip-audit --local 2>&1 \
+  PIPAPI_PYTHON_LOCATION="$REPO_ROOT/.venv/bin/python3" uv run pip-audit --local $_AUDIT_IGNORE 2>&1 \
     && ok "pip-audit" || fail "pip-audit: znaleziono podatności — uruchom: uv lock --upgrade-package <pkg>"
 elif command -v pip-audit >/dev/null 2>&1; then
-  pip-audit --local 2>&1 && ok "pip-audit" || fail "pip-audit: znaleziono podatności"
+  pip-audit --local $_AUDIT_IGNORE 2>&1 && ok "pip-audit" || fail "pip-audit: znaleziono podatności"
 else
   echo -e "${SKIP} pip-audit nie znaleziony — uruchom: uv add --dev pip-audit"
 fi
 
 step "gitleaks — skanowanie sekretów"
+if [[ -x "$REPO_ROOT/scripts/check-sops-secrets.sh" ]]; then
+  "$REPO_ROOT/scripts/check-sops-secrets.sh" && ok "sops age guard" || fail "sops age guard failed"
+else
+  echo -e "${SKIP} scripts/check-sops-secrets.sh nie jest wykonywalny"
+fi
+
 if command -v gitleaks >/dev/null 2>&1; then
   gitleaks detect --no-banner 2>&1 | tail -1 && ok "gitleaks" || fail "gitleaks: wykryto sekrety w kodzie"
 else
@@ -142,7 +172,7 @@ if command -v checkov >/dev/null 2>&1 || docker image inspect ghcr.io/bridgecrew
   fi
   $CHECKOV_CMD -d infra/terraform --quiet 2>&1 | grep -E "Passed|Failed|Error" | tail -3 && ok "checkov" || fail "checkov: problemy z IaC"
 else
-  echo -e "${SKIP} checkov nie znaleziony — zainstaluj: pip install checkov"
+  echo -e "${SKIP} checkov nie znaleziony — zainstaluj: uv sync --extra iac"
 fi
 
 step "Frontend lint (ESLint)"

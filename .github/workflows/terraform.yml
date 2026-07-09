@@ -239,6 +239,17 @@ jobs:
             echo "TF_VAR_azure_client_id_entra=$API_CLIENT"
           } >> "$GITHUB_ENV"
 
+      - name: Require AZURE_API_CLIENT_ID
+        # azure_client_id_entra defaults to "" (see variables.tf) to allow an
+        # empty value during initial local setup — but that same default
+        # silently disables JWT audience validation in prod (auth.py). Fail
+        # the production apply rather than let this ship as a silent bypass.
+        run: |
+          if [ -z "$TF_VAR_azure_client_id_entra" ]; then
+            echo "::error::AZURE_API_CLIENT_ID secret is empty — applying would disable JWT audience validation in production. Set the secret before re-running." >&2
+            exit 1
+          fi
+
       - name: Terraform init
         # ARM_* env vars are set by Sanitize step via $GITHUB_ENV (trimmed).
         run: terraform init -backend-config=backend.hcl -input=false

@@ -1,0 +1,24 @@
+{
+  "hasExternalInvoices": false,
+  "links": [],
+  "invoices": [
+    {
+      "id": "58323124-cc07-402a-bdb1-277ae3195de0",
+      "invoiceNumber": "3/07/2026",
+      "createdAt": "2026-07-02T09:59:26.107Z",
+      "file": {
+        "name": "3_07_2026.pdf",
+        "uploadedAt": "2026-07-02T09:59:26.411Z",
+        "securityVerification": {
+          "status": "ACCEPTED",
+          "verifiedAt": "2026-07-02T09:59:30.829Z"
+        }
+      },
+      "verification": {
+        "status": "NOT_APPLICABLE",
+        "details": []
+      }
+    }
+  ],
+  "orderMode": "REGULAR"
+}

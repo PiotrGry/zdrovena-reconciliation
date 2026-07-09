@@ -337,3 +337,105 @@ az monitor metrics alert create --name test-alert --resource-group zdrovena-rg \
 - **Priority:** P3
 - **Depends on:** Shipping draft automation (Azure Function) deployed first
 - **Context:** After the shipping Function is live, Application Insights logs are sufficient initially. Add a daily digest (email or Slack) when volume grows beyond ~50 orders/month.
+
+---
+
+## Shipping — Technical Debt (from /review 2026-06-24)
+
+### Webhook idempotency
+- **What:** Shopify retries create duplicate drafts (new UUID per call). Double-execute = double shipment.
+- **Fix:** Check `shopify_order_id` before insert in `_create_draft`; use it as RowKey for idempotent upsert.
+- **Priority:** P1
+- **File:** `zdrovena/api/routers/webhooks.py:373`
+
+### execute_draft race condition (TOCTOU)
+- **What:** Two concurrent execute calls for same draft can both pass the `status != "created"` guard and create two courier shipments.
+- **Fix:** Use ETag/optimistic concurrency in `update_entity` (Azure Table Storage mode="replace" with ETag).
+- **Priority:** P2
+- **File:** `zdrovena/api/routers/webhooks.py:465`
+
+### ShippingStore _deserialize type coercion
+- **What:** Every string from Table Storage is speculatively JSON-parsed. `"null"` → `None`, `"1234567890"` → int. Can corrupt customer names or tracking numbers.
+- **Fix:** Whitelist known dict/list fields (`receiver`, `shipping_address`, `packages_breakdown`, `order_items`) instead of parsing all strings.
+- **Priority:** P2
+- **File:** `zdrovena/common/shipping_store.py:52`
+
+### _table_client() creates new Azure client per operation
+- **What:** Each upsert/update/get spawns a new TableServiceClient + create_table_if_not_exists HTTP call. Unnecessary overhead on every request.
+- **Fix:** Cache the client at class construction time.
+- **Priority:** P3
+- **File:** `zdrovena/common/shipping_store.py:81`
+
+### Missing auth enforcement tests (403 for non-privileged callers)
+- **What:** execute_draft/order_pickup/update_draft have no tests for `zdrovena-viewer` role (should get 403).
+- **Fix:** Add 3-4 tests with non-admin token.
+- **Priority:** P3
+- **File:** `tests/test_shipping_webhook.py`
+
+### Missing SMS notification tests
+- **What:** `_maybe_send_new_order_sms` has zero test coverage — no happy path, no exception-swallowed path.
+- **Fix:** Add `TestSmsNotification` class with 3 test cases.
+- **Priority:** P3
+- **File:** `tests/test_shipping_webhook.py`
+
+---
+
+## Azure Key Vault — sekrety do dodania przed prod
+
+Wszystkie sekrety poniżej muszą być dodane do Key Vault przed uruchomieniem produkcyjnym.
+Nazwy używają myślników (AKV nie obsługuje podkreślników). Odpowiadają dokładnie
+temu co `get_secret()` szuka po konwersji `_` → `-`.
+
+```bash
+# Szablon — podmień <vault> na nazwę swojego Key Vault
+AKV="<vault>"
+
+az keyvault secret set --vault-name $AKV --name shopify-webhook-secret  --value "<API secret key z Shopify Admin → Apps → Custom Apps>"
+az keyvault secret set --vault-name $AKV --name shopify-access-token    --value "<shpat_...>"
+az keyvault secret set --vault-name $AKV --name shopify-shop-domain     --value "humio-b2b-2.myshopify.com"
+
+az keyvault secret set --vault-name $AKV --name inpost-api-token        --value "<JWT z panelu sandbox/prod InPost>"
+az keyvault secret set --vault-name $AKV --name inpost-organization-id  --value "5289956"
+# Uwaga: inpost-base-url NIE trafia do Key Vault — to konfiguracja, nie sekret.
+# Ustaw jako env var w Container App: INPOST_BASE_URL=https://api-shipx-pl.easypack24.net
+
+az keyvault secret set --vault-name $AKV --name apaczka-app-id          --value "<app_id z Apaczka → Ustawienia → Web API>"
+az keyvault secret set --vault-name $AKV --name apaczka-app-secret      --value "<klucz HMAC z Apaczka → Ustawienia → Web API>"
+
+az keyvault secret set --vault-name $AKV --name smsapi-token            --value "<token z SMSAPI.pl>"
+az keyvault secret set --vault-name $AKV --name notify-phone            --value "48XXXXXXXXX"
+
+az keyvault secret set --vault-name $AKV --name sender-name             --value "Humio Woda Alkaliczna"
+az keyvault secret set --vault-name $AKV --name sender-street           --value "<ulica nadawcy>"
+az keyvault secret set --vault-name $AKV --name sender-building-number  --value "<numer budynku>"  # TODO: bug #9.3 — currently hardcoded "1"
+az keyvault secret set --vault-name $AKV --name sender-city             --value "<miasto>"
+az keyvault secret set --vault-name $AKV --name sender-post-code        --value "<XX-XXX>"
+az keyvault secret set --vault-name $AKV --name sender-phone            --value "48XXXXXXXXX"
+az keyvault secret set --vault-name $AKV --name sender-email            --value "<email nadawcy>"
+```
+
+### Status sekretów
+
+| Sekret AKV | Dev (.env.local) | Prod (Key Vault) | Uwagi |
+|---|---|---|---|
+| `shopify-webhook-secret` | zakomentowany (dev pomija HMAC) | ❌ do dodania | API secret key z Shopify app |
+| `shopify-access-token` | ✅ ustawiony | ❌ do dodania | shpat_... |
+| `shopify-shop-domain` | ✅ ustawiony | ❌ do dodania | |
+| `inpost-api-token` | ✅ sandbox JWT | ❌ do dodania | prod JWT z panelu InPost |
+| `inpost-organization-id` | ✅ 5289956 | ❌ do dodania | sprawdzić czy prod ID inne |
+| `apaczka-app-id` | ❌ brak | ❌ do dodania | |
+| `apaczka-app-secret` | ❌ brak | ❌ do dodania | |
+| `smsapi-token` | ❌ brak | ❌ do dodania | |
+| `notify-phone` | ❌ brak | ❌ do dodania | |
+| `sender-name` | ❌ brak | ❌ do dodania | |
+| `sender-street` | ❌ brak | ❌ do dodania | |
+| `sender-building-number` | ❌ brak | ❌ do dodania | bug — hardcoded "1" w kodzie |
+| `sender-city` | ❌ brak | ❌ do dodania | |
+| `sender-post-code` | ❌ brak | ❌ do dodania | |
+| `sender-phone` | ❌ brak | ❌ do dodania | |
+| `sender-email` | ❌ brak | ❌ do dodania | |
+
+> **Note (2026-07-09):** `apaczka-service-id` was removed from this checklist —
+> it's per-draft data now (set from the Shopify shipping-line title via
+> `APACZKA_SERVICE_TITLE_MAP`, or manually by an operator), never a global Key
+> Vault secret. See `docs/superpowers/specs/2026-07-09-apaczka-per-draft-service.md`.

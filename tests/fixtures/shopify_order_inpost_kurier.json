@@ -1,0 +1,356 @@
+{
+  "id": 5678901234002,
+  "admin_graphql_api_id": "gid://shopify/Order/5678901234002",
+  "app_id": 1966818,
+  "browser_ip": "83.25.100.201",
+  "buyer_accepts_marketing": true,
+  "cancel_reason": null,
+  "cancelled_at": null,
+  "cart_token": "abc123def456kurier",
+  "checkout_id": 987654002,
+  "checkout_token": "def456kurier",
+  "client_details": {
+    "accept_language": "pl-PL,pl;q=0.9",
+    "browser_height": 768,
+    "browser_ip": "83.25.100.201",
+    "browser_width": 1366,
+    "session_hash": null,
+    "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15"
+  },
+  "closed_at": null,
+  "confirmed": true,
+  "contact_email": "piotr.nowak@example.com",
+  "created_at": "2026-05-21T11:30:00+02:00",
+  "currency": "PLN",
+  "current_subtotal_price": "299.99",
+  "current_total_discounts": "0.00",
+  "current_total_price": "319.99",
+  "current_total_tax": "20.00",
+  "customer": {
+    "id": 1234567890002,
+    "email": "piotr.nowak@example.com",
+    "accepts_marketing": true,
+    "created_at": "2024-11-05T14:00:00+01:00",
+    "updated_at": "2026-05-21T11:30:00+02:00",
+    "first_name": "Piotr",
+    "last_name": "Nowak",
+    "orders_count": 5,
+    "state": "enabled",
+    "total_spent": "1249.95",
+    "last_order_id": 5678901234002,
+    "note": null,
+    "verified_email": true,
+    "multipass_identifier": null,
+    "tax_exempt": false,
+    "tags": "",
+    "last_order_name": "#1002",
+    "currency": "PLN",
+    "phone": "+48602222222",
+    "accepts_marketing_updated_at": "2024-11-05T14:00:00+01:00",
+    "marketing_opt_in_level": "single_opt_in",
+    "default_address": {
+      "id": 9876543002,
+      "customer_id": 1234567890002,
+      "first_name": "Piotr",
+      "last_name": "Nowak",
+      "company": null,
+      "address1": "ul. Piękna 12",
+      "address2": "m. 5",
+      "city": "Kraków",
+      "province": null,
+      "country": "Poland",
+      "zip": "30-001",
+      "phone": "+48602222222",
+      "name": "Piotr Nowak",
+      "province_code": null,
+      "country_code": "PL",
+      "country_name": "Poland",
+      "default": true
+    }
+  },
+  "customer_locale": "pl",
+  "discount_applications": [],
+  "discount_codes": [],
+  "email": "piotr.nowak@example.com",
+  "estimated_taxes": false,
+  "financial_status": "paid",
+  "fulfillment_status": null,
+  "fulfillments": [],
+  "landing_site": "/collections/all",
+  "line_items": [
+    {
+      "id": 1111111012,
+      "admin_graphql_api_id": "gid://shopify/LineItem/1111111002",
+      "fulfillable_quantity": 1,
+      "fulfillment_service": "manual",
+      "fulfillment_status": null,
+      "gift_card": false,
+      "grams": 5400,
+      "name": "HUMIO - woda alkaliczna, 12 butelek w szkle",
+      "price": "89.99",
+      "price_set": {
+        "shop_money": {
+          "amount": "89.99",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "89.99",
+          "currency_code": "PLN"
+        }
+      },
+      "product_exists": true,
+      "product_id": 8888888002,
+      "properties": [],
+      "quantity": 2,
+      "requires_shipping": true,
+      "sku": "HUMIO-SZKLO-12-001",
+      "taxable": true,
+      "title": "HUMIO - woda alkaliczna, 12 butelek w szkle",
+      "total_discount": "0.00",
+      "variant_id": 44444444002,
+      "variant_inventory_management": "shopify",
+      "variant_title": null,
+      "vendor": "Humio"
+    }
+  ],
+  "name": "#1002",
+  "note": "Proszę o staranne zapakowanie.",
+  "note_attributes": [],
+  "number": 2,
+  "order_number": 1002,
+  "order_status_url": "https://wodahumio.myshopify.com/orders/abc123kurier/authenticate?key=token",
+  "payment_gateway_names": [
+    "przelewy24"
+  ],
+  "phone": "+48602222222",
+  "presentment_currency": "PLN",
+  "processed_at": "2026-05-21T11:30:00+02:00",
+  "referring_site": "https://www.google.pl/",
+  "refunds": [],
+  "shipping_address": {
+    "first_name": "Piotr",
+    "last_name": "Nowak",
+    "address1": "ul. Piękna 12",
+    "address2": "m. 5",
+    "city": "Kraków",
+    "zip": "30-001",
+    "province": null,
+    "country": "Poland",
+    "phone": "+48602222222",
+    "name": "Piotr Nowak",
+    "province_code": null,
+    "country_code": "PL",
+    "latitude": "50.0647",
+    "longitude": "19.9450"
+  },
+  "shipping_lines": [
+    {
+      "id": 2222222002,
+      "carrier_identifier": null,
+      "code": "INPOST_KURIER",
+      "discounted_price": "20.00",
+      "discounted_price_set": {
+        "shop_money": {
+          "amount": "20.00",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "20.00",
+          "currency_code": "PLN"
+        }
+      },
+      "phone": null,
+      "price": "20.00",
+      "price_set": {
+        "shop_money": {
+          "amount": "20.00",
+          "currency_code": "PLN"
+        },
+        "presentment_money": {
+          "amount": "20.00",
+          "currency_code": "PLN"
+        }
+      },
+      "requested_fulfillment_service_id": null,
+      "source": "shopify",
+      "title": "InPost Kurier",
+      "tax_lines": [],
+      "discount_allocations": []
+    }
+  ],
+  "source_name": "web",
+  "subtotal_price": "299.98",
+  "tags": "",
+  "tax_lines": [
+    {
+      "price": "20.00",
+      "rate": 0.23,
+      "title": "VAT",
+      "channel_liable": false
+    }
+  ],
+  "taxes_included": false,
+  "test": false,
+  "token": "abc123kurier",
+  "total_discounts": "0.00",
+  "total_line_items_price": "299.98",
+  "total_price": "319.98",
+  "total_price_set": {
+    "shop_money": {
+      "amount": "319.98",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "319.98",
+      "currency_code": "PLN"
+    }
+  },
+  "total_tax": "20.00",
+  "total_tip_received": "0.00",
+  "total_weight": 1200,
+  "updated_at": "2026-05-21T11:30:00+02:00",
+  "user_id": null,
+  "billing_address": {
+    "first_name": "Piotr",
+    "last_name": "Nowak",
+    "address1": "ul. Piękna 12",
+    "address2": "m. 5",
+    "city": "Kraków",
+    "zip": "30-001",
+    "province": null,
+    "country": "Poland",
+    "phone": "+48602222222",
+    "name": "Piotr Nowak",
+    "province_code": null,
+    "country_code": "PL"
+  },
+  "company": null,
+  "confirmation_number": "ABCD1234",
+  "current_subtotal_price_set": {
+    "shop_money": {
+      "amount": "299.98",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "299.98",
+      "currency_code": "PLN"
+    }
+  },
+  "current_total_additional_fees_set": null,
+  "current_total_discounts_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "current_total_duties_set": null,
+  "current_total_price_set": {
+    "shop_money": {
+      "amount": "319.98",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "319.98",
+      "currency_code": "PLN"
+    }
+  },
+  "current_total_tax_set": {
+    "shop_money": {
+      "amount": "20.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "20.00",
+      "currency_code": "PLN"
+    }
+  },
+  "device_id": null,
+  "duties_included": false,
+  "landing_site_ref": null,
+  "location_id": null,
+  "merchant_business_entity_id": "MTkxODc4OTQ5MjEx",
+  "merchant_of_record_app_id": null,
+  "original_total_additional_fees_set": null,
+  "original_total_duties_set": null,
+  "payment_terms": null,
+  "po_number": null,
+  "reference": null,
+  "source_identifier": null,
+  "source_url": null,
+  "subtotal_price_set": {
+    "shop_money": {
+      "amount": "299.98",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "299.98",
+      "currency_code": "PLN"
+    }
+  },
+  "tax_exempt": false,
+  "total_cash_rounding_payment_adjustment_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_cash_rounding_refund_adjustment_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_discounts_set": {
+    "shop_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "0.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_line_items_price_set": {
+    "shop_money": {
+      "amount": "299.98",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "299.98",
+      "currency_code": "PLN"
+    }
+  },
+  "total_outstanding": "0.00",
+  "total_shipping_price_set": {
+    "shop_money": {
+      "amount": "20.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "20.00",
+      "currency_code": "PLN"
+    }
+  },
+  "total_tax_set": {
+    "shop_money": {
+      "amount": "20.00",
+      "currency_code": "PLN"
+    },
+    "presentment_money": {
+      "amount": "20.00",
+      "currency_code": "PLN"
+    }
+  }
+}

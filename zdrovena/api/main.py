@@ -17,7 +17,21 @@ from zdrovena.api.routers import close, files, invoices, webhooks
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    force=True,
 )
+
+# Azure SDK's http_logging_policy emits every request/response header at INFO,
+# which floods the console during dev (~30 lines per Azurite/Table call). Pin
+# the noisy Azure SDK loggers to a configurable level (default WARNING). Set
+# LOG_LEVEL_AZURE=DEBUG when you actually need to inspect HTTP traffic.
+_azure_log_level = os.environ.get("LOG_LEVEL_AZURE", "WARNING").upper()
+for _name in (
+    "azure.core.pipeline.policies.http_logging_policy",
+    "azure.identity",
+    "azure.storage",
+    "azure.data.tables",
+):
+    logging.getLogger(_name).setLevel(_azure_log_level)
 
 logger = logging.getLogger("zdrovena.api.main")
 

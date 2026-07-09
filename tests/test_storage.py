@@ -119,6 +119,76 @@ class TestLocalStorageService:
         assert isinstance(svc, StorageService)
 
 
+# ── Path traversal (TDD-red) ──────────────────────────────────────────────────
+
+
+class TestPathTraversalProtection:
+    """**TDD-red** — LocalStorageService takes a `key` and concatenates it with
+    self.root without validation. A malicious or buggy caller can supply
+    `"../../etc/passwd"` or an absolute path and escape the storage root.
+
+    Target: upload/upload_stream/download/delete/exists/stream must reject
+    keys that escape the configured root. See audit §7.4 and §10.
+    """
+
+    def test_upload_rejects_path_traversal(self, tmp_path):
+        root = tmp_path / "storage"
+        root.mkdir()
+        svc = LocalStorageService(root=root)
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"x")
+        # An ideal implementation rejects traversing keys outright. The
+        # current implementation silently writes the file outside the root.
+        with pytest.raises((ValueError, PermissionError, OSError)):
+            svc.upload(src, "../escape.bin")
+        # The file must NOT have landed outside the storage root
+        assert not (tmp_path / "escape.bin").exists()
+
+    def test_upload_rejects_absolute_path_key(self, tmp_path):
+        svc = LocalStorageService(root=tmp_path / "storage")
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"x")
+        forbidden = tmp_path / "absolute-target.bin"
+        with pytest.raises((ValueError, PermissionError, OSError)):
+            svc.upload(src, str(forbidden))
+        assert not forbidden.exists()
+
+    def test_download_rejects_path_traversal(self, tmp_path):
+        # Storage root must exist so the resolved path '../secret.txt'
+        # actually points to a real file outside the root.
+        root = tmp_path / "storage"
+        root.mkdir()
+        outside = tmp_path / "secret.txt"
+        outside.write_bytes(b"SECRET")
+        svc = LocalStorageService(root=root)
+        dest = tmp_path / "out.txt"
+        with pytest.raises((ValueError, PermissionError)):
+            svc.download("../secret.txt", dest)
+        # We must NOT have copied the secret out
+        if dest.exists():
+            assert dest.read_bytes() != b"SECRET"
+
+    def test_delete_rejects_path_traversal(self, tmp_path):
+        outside = tmp_path / "sibling.txt"
+        outside.write_bytes(b"keep me")
+        svc = LocalStorageService(root=tmp_path / "storage")
+        with pytest.raises((ValueError, PermissionError, OSError)):
+            svc.delete("../sibling.txt")
+        # File outside root is untouched
+        assert outside.exists()
+        assert outside.read_bytes() == b"keep me"
+
+    def test_list_files_rejects_path_traversal(self, tmp_path):
+        root = tmp_path / "storage"
+        root.mkdir()
+        outside = tmp_path / "sibling"
+        outside.mkdir()
+        (outside / "secret.txt").write_bytes(b"SECRET")
+        svc = LocalStorageService(root=root)
+        with pytest.raises((ValueError, PermissionError, OSError)):
+            svc.list_files("../sibling")
+
+
 # ── get_storage_service factory ───────────────────────────────────────────────
 
 

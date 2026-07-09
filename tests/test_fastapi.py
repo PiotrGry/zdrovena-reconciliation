@@ -148,6 +148,37 @@ class TestFilesList:
 
         assert {"key", "size", "last_modified"} <= entry.keys()
 
+    def test_list_prefix_traversal_rejected(self, api):
+        c, _ = api
+        resp = c.get("/api/files/", params={"prefix": "../../etc"})
+        assert resp.status_code == 400
+
+
+# ── /files — upload ───────────────────────────────────────────────────────────
+
+
+class TestFilesUpload:
+    def test_upload_persists_content(self, api):
+        c, storage = api
+        resp = c.put("/api/files/reports/out.pdf", content=b"hello world")
+        assert resp.status_code == 204
+        assert (storage.root / "reports/out.pdf").read_bytes() == b"hello world"
+
+    def test_upload_larger_than_spool_threshold_persists_content(self, api):
+        c, storage = api
+        payload = b"x" * (11 * 1024 * 1024)  # exceeds the 10MiB in-memory spool
+        resp = c.put("/api/files/reports/big.bin", content=payload)
+        assert resp.status_code == 204
+        assert (storage.root / "reports/big.bin").read_bytes() == payload
+
+    def test_upload_path_traversal_rejected(self, api):
+        c, _ = api
+        # httpx collapses ".." client-side before the request is sent, same as
+        # the pre-existing download-traversal test below — either a 400 from
+        # our own validation or a 404 from the collapsed route is acceptable.
+        resp = c.put("/api/files/../etc/passwd", content=b"x")
+        assert resp.status_code in (400, 404)
+
 
 # ── /files — auth enforcement ─────────────────────────────────────────────────
 
@@ -236,6 +267,13 @@ class TestCloseEndpoint:
         with patch("zdrovena.api.routers.close.MonthCloseOrchestrator") as M:
             instance = M.return_value
             instance.report.errors = ["Brakuje wyciągu bankowego"]
+            instance.report.warnings = []
+            instance.report.steps_completed = []
+            instance.report.sales_invoice_count = 0
+            instance.report.sales_gross_total = "0.00"
+            instance.report.cost_invoice_count = 0
+            instance.report.bank_statement_found = False
+            instance.report.email_sent = False
             instance.execute.side_effect = SystemExit(1)
             resp = c.post("/api/close", json={"year": 2026, "month": 3, "dry_run": True})
         assert resp.status_code == 422

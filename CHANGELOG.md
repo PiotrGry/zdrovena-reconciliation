@@ -1,6 +1,60 @@
 # CHANGELOG
 
 
+## v2.7.1 (2026-06-30)
+
+### Added
+
+- **shipping**: `reviewed` parameter in PATCH `/shipping/drafts/{draft_id}` — allows operators to exit `needs_review` status by setting `reviewed=true`, which clears the status to `pending` and removes error flag.
+
+### Fixed
+
+- **shipping**: Drafts with invalid phone numbers now properly set status to `needs_review`, preventing auto-execution and requiring explicit operator review.
+
+---
+
+## v2.7.0 (2026-06-30)
+
+### Added
+
+- **shipping**: Full shipping draft automation — Shopify webhook creates courier drafts (InPost ShipX + Apaczka), operator executes via UI or bulk-execute.
+- **shipping**: Azure Table Storage backend for shipping drafts (replaces JSONL blob); `ShippingStore` supports both Table Storage and local JSON fallback.
+- **shipping**: Smart box packing — plastic uses greedy largest-box-first (3-pak → 2-pak → 1-pak → pół-pak); glass uses 2-pak consolidation (szkło-2pak → szkło).
+- **shipping**: InPost paczkomat dispatch order (drzwi→paczkomat flow), kurier pickup scheduling with date/time window, bulk pickup ordering.
+- **shipping**: SMS notifications via SMSAPI.pl — operator receives alert on new order arrival; requires `smsapi_token` + `notify_phone` in Key Vault.
+- **shipping/UI**: ShippingView complete overhaul — column headers, CSS grid alignment, zebra rows, expand/collapse all, material chips (plastik/szkło), box-type table in expanded view.
+- **shipping/UI**: Bulk execute, bulk pickup, bulk packages_count update for selected drafts.
+- **shipping/UI**: Filters by status, courier, and date; select-all for actionable rows; pickup pill badge in collapsed header.
+- **shipping/UI**: Pickup schedule modal with time-slot selects (no native time picker), 2-hour minimum enforcement, today-aware earliest slot.
+- **dev**: `MOCK_COURIER=1` skips real courier APIs — default in `dev.sh`; `DEV_MODE=local` sets it automatically.
+- **dev**: `scripts/seed-shipping-drafts.py` — 15 test drafts covering all courier/material/status combinations; auto-seeds on `bash dev.sh`; `--clear-all` resets to clean state.
+- **dev**: `scripts/seed-via-webhook.py` — sends fake Shopify orders through the webhook pipeline for end-to-end testing.
+- **dev**: `stop.sh` — stops all dev services (Docker, uvicorn, Vite) with `kill -9`, auto-frees occupied ports.
+- **i18n**: All ShippingView strings use translation keys (`T.sh_*`) for PL/EN language switching.
+
+### Changed
+
+- **shipping**: `kaucja` line items filtered from `total_qty` and `order_items` — no longer counted toward package calculation or shown in order detail.
+- **shipping**: Glass box packing changed from 1-box-per-zgrzewka to greedy 2-pak consolidation (`szkło-2pak`).
+- **shipping/UI**: InPostServiceToggle removed — service routing (paczkomat vs kurier) determined by Shopify shipping method only.
+- **shipping/UI**: Package display shows material tags (plastik ×N / szkło ×N) in collapsed header; expanded view shows box-type table (Typ | Szt. | Materiał).
+
+### Fixed
+
+- **shipping**: Shopify webhook fail-closed security — unsigned webhooks rejected unless `ALLOW_UNSIGNED_SHOPIFY_WEBHOOKS=true` is set; returns 503 if webhook secret not configured and flag not set.
+- **shipping**: Courier routing — only match explicit "inpost" or "paczkomat" keywords; bare "kurier" no longer triggers InPost routing.
+- **shipping**: Polish phone normalization — `normalize_pl_phone()` handles 9-digit, 11-digit (48*), and spaced/hyphenated formats; returns +48XXXXXXXXX.
+- **shipping**: Polish address parsing — `parse_pl_address()` splits street and building number (including letter suffixes like "100A"); graceful fallback.
+- **shipping**: Multi-package handling — drafts with `packages_count > 1` are set to `status='needs_review'`; execute endpoint rejects needs_review drafts with 409 Conflict.
+- **shipping**: Apaczka cache fix — use `storage.stream()` for cache reads and `storage.upload_stream()` for writes instead of download/upload.
+- **shipping**: `_calc_packages` now counts zgrzewki (product units) not bottles; kaucja no longer inflates package count.
+- **shipping**: `order_pickup` endpoint now allows InPost paczkomat (previously blocked to kurier only).
+- **shipping**: `MOCK_COURIER` now also skips InPost dispatch order in `order_pickup` endpoint.
+- **deps**: Starlette upgraded 1.0.0 → 1.2.1 (PYSEC-2026-161).
+- **dev**: `stop.sh` force-kills with `-9`, auto-frees lingering ports instead of just warning.
+- **dev**: App logs now visible in Docker (`logging.basicConfig(force=True)` prevents uvicorn from overriding log config).
+
+
 ## v2.6.0 (2026-05-19)
 
 ### Added
