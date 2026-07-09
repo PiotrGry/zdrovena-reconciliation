@@ -7,10 +7,14 @@ Fakturownia REST API v1:
          https://pomoc.fakturownia.pl/pola-przekazywane-z-programu-fakturownia-do-ksef-zgodnie-ze-schema-fa-3
 
 `settlement_positions` field (KSeF `Rozliczenie`):
-    Confirmed by official pomoc.fakturownia.pl mapping (2026-06-11).
-    Structure inferred from Rails conventions + KSeF FA(3) schema:
-        [{"kind": "charge"|"deduction", "amount": "<PLN>", "description": "<reason>"}]
-    Adapter isolates subfield names — tests assert contract, not literal keys.
+    Structure confirmed against the LIVE API (2026-07-09): the label field
+    is named `reason`, not `description` — both `description` and `name`
+    are rejected with a 422 "unknown attribute" error. Wire shape:
+        [{"kind": "charge"|"deduction", "amount": "<PLN>", "reason": "<text>"}]
+    FakturowniaClient's own `add_settlement_position`/
+    `has_settlement_with_description` keep their `description` PARAMETER
+    name for backward compatibility with existing callers; only the JSON
+    key sent to/read from the API is `reason`.
 """
 
 from __future__ import annotations
@@ -154,7 +158,7 @@ class TestAddSettlementPosition:
         """Adds a `charge` (obciążenie) to invoice.
 
         Contract: sends PUT with `settlement_positions` containing
-        {kind, amount, description}. Preserves any pre-existing settlements.
+        {kind, amount, reason}. Preserves any pre-existing settlements.
         """
         # Existing invoice has NO settlement_positions
         existing = {"id": 500, "number": "FV/2025/500", "settlement_positions": []}
@@ -183,7 +187,7 @@ class TestAddSettlementPosition:
         row = settlements[0]
         assert row["kind"] == "charge"
         assert row["amount"] == "5.00"
-        assert row["description"] == "Kaucja za opakowania zwrotne"
+        assert row["reason"] == "Kaucja za opakowania zwrotne"
 
     def test_add_deduction_kind(self, client):
         existing = {"id": 600, "settlement_positions": []}
@@ -203,7 +207,7 @@ class TestAddSettlementPosition:
         existing = {
             "id": 700,
             "settlement_positions": [
-                {"id": 42, "kind": "deduction", "amount": "2.00", "description": "Kompensata"},
+                {"id": 42, "kind": "deduction", "amount": "2.00", "reason": "Kompensata"},
             ],
         }
         with patch("requests.Session.request") as mock:
@@ -220,7 +224,7 @@ class TestAddSettlementPosition:
         assert any(s.get("id") == 42 for s in settlements)
         # new row appended
         assert any(
-            s.get("kind") == "charge" and s.get("description") == "Kaucja za opakowania zwrotne"
+            s.get("kind") == "charge" and s.get("reason") == "Kaucja za opakowania zwrotne"
             for s in settlements
         )
 
@@ -287,7 +291,7 @@ class TestAddSettlementPosition:
                     "id": 77,
                     "kind": "charge",
                     "amount": "5.00",
-                    "description": "Kaucja za opakowania zwrotne",
+                    "reason": "Kaucja za opakowania zwrotne",
                 }
             ],
         }
@@ -314,7 +318,7 @@ class TestAddSettlementPosition:
         existing = {
             "id": 951,
             "settlement_positions": [
-                {"id": 1, "description": "  KAUCJA za opakowania zwrotne  "},
+                {"id": 1, "reason": "  KAUCJA za opakowania zwrotne  "},
             ],
         }
         with patch("requests.Session.request") as mock:
@@ -335,7 +339,7 @@ class TestHasSettlementWithDescription:
     def test_returns_true_when_matching_description_exists(self):
         invoice = {
             "settlement_positions": [
-                {"kind": "charge", "amount": "5.00", "description": "Kaucja za opakowania zwrotne"},
+                {"kind": "charge", "amount": "5.00", "reason": "Kaucja za opakowania zwrotne"},
             ]
         }
         assert (
@@ -348,7 +352,7 @@ class TestHasSettlementWithDescription:
     def test_returns_false_when_no_match(self):
         invoice = {
             "settlement_positions": [
-                {"kind": "deduction", "amount": "2.00", "description": "Kompensata"},
+                {"kind": "deduction", "amount": "2.00", "reason": "Kompensata"},
             ]
         }
         assert (
@@ -370,7 +374,7 @@ class TestHasSettlementWithDescription:
     def test_match_is_case_insensitive_and_stripped(self):
         invoice = {
             "settlement_positions": [
-                {"description": "  KAUCJA za opakowania zwrotne  "},
+                {"reason": "  KAUCJA za opakowania zwrotne  "},
             ]
         }
         assert (

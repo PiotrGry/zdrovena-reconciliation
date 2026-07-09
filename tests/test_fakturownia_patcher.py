@@ -198,7 +198,7 @@ class TestIdempotency:
             invoice_id=100,
             positions=[{"name": "Woda Humio 500ml x 12", "quantity": 1}],
             settlement_positions=[
-                {"kind": "charge", "amount": "6.00", "description": KAUCJA_DESCRIPTION}
+                {"kind": "charge", "amount": "6.00", "reason": KAUCJA_DESCRIPTION}
             ],
         )
         fakturownia_client.has_settlement_with_description.return_value = True

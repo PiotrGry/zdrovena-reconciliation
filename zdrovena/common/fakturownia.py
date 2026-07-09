@@ -189,6 +189,13 @@ class FakturowniaClient:
         Raises:
             ValueError: on invalid kind / amount / description
             FakturowniaAuthError / FakturowniaBusinessError / FakturowniaServerError
+
+        Note: Fakturownia's SettlementPosition model's human-readable label
+        field is named ``reason`` in its actual API contract — confirmed
+        live: both ``description`` and ``name`` are rejected with 422
+        "unknown attribute" errors. This method's own `description`
+        parameter name is kept for backward compatibility with existing
+        callers; only the wire-level JSON key was wrong.
         """
         if kind not in _VALID_SETTLEMENT_KINDS:
             raise ValueError(f"kind must be one of {_VALID_SETTLEMENT_KINDS}, got {kind!r}")
@@ -210,7 +217,7 @@ class FakturowniaClient:
         # zwracamy fakturę bez PUT-a (idempotent no-op).
         needle = description.strip().casefold()
         for row in existing_rows:
-            desc = (row.get("description") or "").strip().casefold()
+            desc = (row.get("reason") or "").strip().casefold()
             if desc == needle:
                 log.info(
                     "add_settlement_position: invoice %s already has row %r — skipping PUT",
@@ -225,7 +232,7 @@ class FakturowniaClient:
             {
                 "kind": kind,
                 "amount": amount_str,
-                "description": description.strip(),
+                "reason": description.strip(),
             }
         )
 
@@ -234,13 +241,16 @@ class FakturowniaClient:
     @staticmethod
     def has_settlement_with_description(invoice: dict[str, Any], description: str) -> bool:
         """Return True iff invoice.settlement_positions contains a row whose
-        description matches (case-insensitive, stripped)."""
+        reason matches (case-insensitive, stripped). Named *_with_description
+        for backward compatibility with existing callers — Fakturownia's own
+        field name for this is `reason`, not `description` (see
+        add_settlement_position's docstring)."""
         needle = (description or "").strip().casefold()
         if not needle:
             return False
         rows = invoice.get("settlement_positions") or []
         for row in rows:
-            desc = (row.get("description") or "").strip().casefold()
+            desc = (row.get("reason") or "").strip().casefold()
             if desc == needle:
                 return True
         return False
