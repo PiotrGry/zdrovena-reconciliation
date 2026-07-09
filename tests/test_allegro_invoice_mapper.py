@@ -33,14 +33,56 @@ def _order(**overrides) -> dict:
 
 
 class TestInvoiceNotRequired:
-    def test_returns_none_when_invoice_not_required(self):
-        order = _order(invoice={"required": False, "address": None})
-        assert allegro_order_to_fakturownia_invoice(order) is None
+    """Every order gets an invoice, even when the buyer opted for a
+    receipt/paragon instead of a VAT invoice — addressed to them as a
+    private individual using their own registered address, since no
+    invoice-specific address exists in this case."""
 
-    def test_returns_none_when_invoice_key_missing(self):
+    def test_still_creates_invoice_when_not_required(self):
+        order = _order(invoice={"required": False, "address": None})
+        invoice = allegro_order_to_fakturownia_invoice(order)
+        assert invoice is not None
+        assert invoice["buyer_first_name"] == "Anna"
+        assert invoice["buyer_last_name"] == "Nowak"
+        assert invoice["buyer_company"] == "0"
+        assert "buyer_tax_no" not in invoice
+
+    def test_still_creates_invoice_when_invoice_key_missing(self):
         order = _order()
         del order["invoice"]
-        assert allegro_order_to_fakturownia_invoice(order) is None
+        invoice = allegro_order_to_fakturownia_invoice(order)
+        assert invoice is not None
+        assert invoice["buyer_first_name"] == "Anna"
+        assert invoice["buyer_company"] == "0"
+
+    def test_falls_back_to_buyer_address_when_no_invoice_address(self):
+        order = _order(
+            invoice={"required": False, "address": None},
+            buyer={
+                "email": "buyer@allegromail.pl",
+                "firstName": "Anna",
+                "lastName": "Nowak",
+                "address": {
+                    "street": "Cieszyńska 6/12",
+                    "city": "Kraków",
+                    "postCode": "30-015",
+                    "countryCode": "PL",
+                },
+            },
+        )
+        invoice = allegro_order_to_fakturownia_invoice(order)
+        assert invoice["buyer_street"] == "Cieszyńska 6/12"
+        assert invoice["buyer_city"] == "Kraków"
+        assert invoice["buyer_post_code"] == "30-015"
+        assert invoice["buyer_country"] == "PL"
+
+    def test_no_address_fields_when_buyer_has_no_address_either(self):
+        order = _order(invoice={"required": False, "address": None})
+        invoice = allegro_order_to_fakturownia_invoice(order)
+        assert "buyer_street" not in invoice
+        assert "buyer_city" not in invoice
+        assert "buyer_post_code" not in invoice
+        assert "buyer_country" not in invoice
 
 
 class TestPrivateBuyer:

@@ -18,9 +18,18 @@ deposit.price.amount="6.00") whose `summary.totalToPay` of "158.00" only
 matches `(73.00 + 6.00) * 2`, not `73.00 + 6.00`. Both fields are
 multiplied by `quantity` below.
 
-Returns None when the buyer did not request a VAT invoice at all
-(`invoice.required` is False or missing) — Allegro lets buyers opt for a
-receipt/paragon instead, which is a normal case, not an error.
+Every order gets a Fakturownia invoice, whether or not the buyer explicitly
+requested a VAT invoice (`invoice.required`). Allegro lets buyers opt for a
+receipt/paragon instead of a VAT invoice, but this business still issues a
+Fakturownia invoice for that sale — just addressed to the buyer as a private
+individual (no NIP, buyer's own name) instead of a company. When no
+invoice-specific address was supplied (`invoice.address` is None — always
+true when `invoice.required` is False, and possible even when True), the
+buyer's own registered address (`order.buyer.address`) is used as the
+billing address instead — never the delivery address, which may be a
+locker/pickup point unsuitable for billing. Note: `buyer.address` uses the
+key `postCode`, while `invoice.address`/`delivery.address` use `zipCode` —
+both are checked.
 """
 
 from __future__ import annotations
@@ -31,13 +40,10 @@ from typing import Any
 from zdrovena.common.fakturownia import KAUCJA_DESCRIPTION
 
 
-def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any] | None:
+def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any]:
     invoice_request = order.get("invoice") or {}
-    if not invoice_request.get("required"):
-        return None
-
     buyer = order.get("buyer") or {}
-    address = invoice_request.get("address") or {}
+    address = invoice_request.get("address") or buyer.get("address") or {}
     company = address.get("company") or {}
     is_company = bool(company.get("name"))
 
@@ -96,7 +102,7 @@ def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any
     city = address.get("city")
     if city:
         invoice["buyer_city"] = city
-    zip_code = address.get("zipCode")
+    zip_code = address.get("zipCode") or address.get("postCode")
     if zip_code:
         invoice["buyer_post_code"] = zip_code
     country_code = address.get("countryCode")

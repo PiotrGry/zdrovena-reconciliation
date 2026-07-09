@@ -33,16 +33,25 @@ def _order(**overrides) -> dict:
 
 
 class TestNotRequired:
-    def test_skips_when_invoice_not_required(self):
+    def test_still_creates_invoice_when_not_required(self):
+        """Buyer opted for a receipt/paragon instead of a VAT invoice —
+        this business still issues a Fakturownia invoice for the sale,
+        addressed to the buyer as a private individual."""
         fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = []
+        fakturownia.create_invoice.return_value = {"id": 1, "number": "1/07/2026"}
+        fakturownia.get_invoice_pdf.return_value = b"%PDF-1.4"
         allegro = MagicMock()
+        allegro.create_invoice_declaration.return_value = {"id": "decl-1"}
         order = _order(invoice={"required": False, "address": None})
         result = create_invoice_for_order(
             order, fakturownia_client=fakturownia, allegro_client=allegro
         )
-        assert result["status"] == "not_required"
-        fakturownia.create_invoice.assert_not_called()
-        allegro.create_invoice_declaration.assert_not_called()
+        assert result["status"] == "created"
+        fakturownia.create_invoice.assert_called_once()
+        created_payload = fakturownia.create_invoice.call_args.args[0]
+        assert created_payload["buyer_first_name"] == "Anna"
+        assert created_payload["buyer_company"] == "0"
 
 
 class TestIdempotency:

@@ -117,8 +117,11 @@ def create_invoice_for_order(
 ) -> dict[str, Any]:
     """Create a Fakturownia invoice for one Allegro order and push it back.
 
+    Every order gets an invoice — allegro_order_to_fakturownia_invoice()
+    always returns a payload, addressed to the buyer as a private
+    individual when they did not explicitly request a VAT invoice.
+
     Returns a dict with at least a "status" key:
-      "not_required"   — buyer did not request a VAT invoice, nothing to do
       "already_exists" — Fakturownia already has an invoice for this order
       "created"        — success; also has fakturownia_invoice_id/number
       "error"          — also has "error" (str); fakturownia_invoice_id is
@@ -128,8 +131,6 @@ def create_invoice_for_order(
     allegro_order_id = str(order.get("id") or "")
 
     payload = allegro_order_to_fakturownia_invoice(order)
-    if payload is None:
-        return {"status": "not_required"}
 
     try:
         existing = fakturownia_client.list_invoices(oid=allegro_order_id)
