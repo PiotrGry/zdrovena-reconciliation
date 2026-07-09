@@ -49,6 +49,7 @@ from zdrovena.common.shipping_exceptions import (
     AllegroAuthError,
     AllegroBusinessError,
     AllegroCommandPending,
+    ApaczkaBusinessError,
     CourierAuthError,
     CourierBusinessError,
     CourierTransientError,
@@ -590,6 +591,20 @@ def _run_apaczka(
     app_id = get_secret("apaczka_app_id")
     app_secret = get_secret("apaczka_app_secret")
     service_id = draft.get("apaczka_service_id") or ""
+    if not service_id:
+        # Guard against silently sending an empty service_id to Apaczka's live,
+        # paid create_shipment API. A None/missing apaczka_service_id means the
+        # draft was never matched against the Shopify shipping-line title map
+        # (see _pick_apaczka_service) and should have stayed in needs_review —
+        # raising here turns a would-be-silent bad shipment into a loud,
+        # visible error (caught by execute_draft's except Exception handler,
+        # which marks the draft status="error" and returns HTTP 502).
+        raise ApaczkaBusinessError(
+            f"Draft {draft.get('id')} has no apaczka_service_id — cannot create shipment",
+            order_id=str(draft.get("id", "")),
+            courier="apaczka",
+            action="create_shipment",
+        )
     client = ApaczkaClient(app_id, app_secret, service_id, storage)
 
     receiver = draft.get("receiver") or {}

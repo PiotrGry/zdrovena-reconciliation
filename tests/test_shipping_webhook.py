@@ -1058,6 +1058,7 @@ class TestRunApaczka:
             "shopify_order_number": "1060",
             "courier": "apaczka",
             "service": "apaczka",
+            "apaczka_service_id": "53",
             "receiver": {
                 "first_name": "Piotr",
                 "last_name": "W",
@@ -1109,6 +1110,37 @@ class TestRunApaczka:
         MockClient.assert_called_once_with("tok", "tok", "53", storage_mock)
         requested_secrets = [c.args[0] for c in mock_get_secret.call_args_list]
         assert "apaczka_service_id" not in requested_secrets
+
+    def test_missing_apaczka_service_id_raises_instead_of_calling_client(self):
+        """Critical safety guard: a draft with no apaczka_service_id (never matched
+        against the Shopify shipping-line title map — see _pick_apaczka_service)
+        must raise loudly rather than silently sending an empty service_id to
+        Apaczka's live, paid create_shipment API."""
+        from zdrovena.api.routers.webhooks import _run_apaczka
+        from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
+
+        storage_mock = object()
+        draft = {
+            "id": "d-ap-3",
+            "shopify_order_number": "1062",
+            "courier": "apaczka",
+            "service": "apaczka",
+            "apaczka_service_id": None,
+            "receiver": {
+                "first_name": "Jan",
+                "last_name": "K",
+                "email": "j@k.pl",
+                "phone": "800300402",
+                "locker_id": "",
+            },
+            "shipping_address": {"street": "Krótka 2", "city": "Łódź", "post_code": "90-001"},
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.apaczka.ApaczkaClient") as MockClient:
+                with pytest.raises(ApaczkaBusinessError):
+                    _run_apaczka(draft, _SENDER, storage_mock)
+
+        MockClient.assert_not_called()
 
 
 class TestCreateDraft:
@@ -1650,13 +1682,16 @@ class TestGetLabelApaczka:
             "error": None,
         }
         store.upsert_draft(draft)
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.webhooks.get_secret") as mock_get_secret:
+            mock_get_secret.return_value = "tok"
             with patch(
                 "zdrovena.common.apaczka.ApaczkaClient.get_label", return_value=b"%PDF-1.4 apaczka"
             ):
                 resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=apaczka")
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/pdf"
+        requested_secrets = [c.args[0] for c in mock_get_secret.call_args_list]
+        assert "apaczka_service_id" not in requested_secrets
 
 
 class TestCreateDraftDispatchFail:
@@ -1906,18 +1941,22 @@ class TestCancelInpostDispatchEndpoint:
 
 class TestCancelApaczkaOrderEndpoint:
     def test_successful_cancel_returns_204(self, client):
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.webhooks.get_secret") as mock_get_secret:
+            mock_get_secret.return_value = "tok"
             with patch(
                 "zdrovena.common.apaczka.ApaczkaClient.cancel_shipment", return_value={}
             ) as mock_cancel:
                 resp = client.delete("/api/apaczka/orders/ord-55")
         assert resp.status_code == 204
         mock_cancel.assert_called_once_with("ord-55")
+        requested_secrets = [c.args[0] for c in mock_get_secret.call_args_list]
+        assert "apaczka_service_id" not in requested_secrets
 
     def test_409_on_business_error(self, client):
         from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
 
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.webhooks.get_secret") as mock_get_secret:
+            mock_get_secret.return_value = "tok"
             with patch(
                 "zdrovena.common.apaczka.ApaczkaClient.cancel_shipment",
                 side_effect=ApaczkaBusinessError(
@@ -1926,3 +1965,5 @@ class TestCancelApaczkaOrderEndpoint:
             ):
                 resp = client.delete("/api/apaczka/orders/ord-gone")
         assert resp.status_code == 409
+        requested_secrets = [c.args[0] for c in mock_get_secret.call_args_list]
+        assert "apaczka_service_id" not in requested_secrets
