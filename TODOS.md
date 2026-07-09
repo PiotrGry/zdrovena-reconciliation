@@ -24,6 +24,12 @@
 - **Cost:** ~€15/month (0.5 vCPU × 1 GiB × 730 hours)
 - **Effort:** XS (~5 min)
 - **Priority:** P1
+- **Status:** ✅ DONE (2026-07-09) — live prod was already running `min_replicas=1`
+  (applied outside Terraform at some point), `compute.tf` just hadn't caught up.
+  Fixed the drift in code instead of reverting it. Also wired
+  `TF_VAR_swa_custom_domain` into `terraform.yml` — CI's plan/apply had never
+  set it, so any CI-driven `terraform apply` would have destroyed the live
+  `portal.wodahumio.pl` custom domain (created outside CI, same root cause).
 
 **Implementation:**
 ```terraform

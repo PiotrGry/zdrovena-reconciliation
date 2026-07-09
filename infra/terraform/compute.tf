@@ -22,7 +22,7 @@ module "api_prod" {
   allowed_origins                       = var.swa_custom_domain != "" ? "https://${azurerm_static_web_app.ui.default_host_name},https://${var.swa_custom_domain}" : "https://${azurerm_static_web_app.ui.default_host_name}"
   applicationinsights_connection_string = azurerm_application_insights.ai.connection_string
   shopify_allowed_domains               = var.shopify_allowed_domains
-  min_replicas                          = 0
+  min_replicas                          = 1
   max_replicas                          = 2
   cpu                                   = var.container_app_cpu
   memory                                = var.container_app_memory
