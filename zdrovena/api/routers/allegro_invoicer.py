@@ -4,9 +4,14 @@ invoice for an Allegro order.
 Replaces reliance on Fakturownia's Allegro app-store integration, which
 does not compute kaucja (deposit) and which this business does not control.
 Instead of patching an already-wrong invoice after the fact, this creates
-the invoice correctly the first time (kaucja baked in via
-settlement_positions from allegro_invoice_mapper) and pushes it to Allegro
-via the order-invoices API.
+the invoice correctly the first time: the base invoice (positions only) via
+POST /invoices.json, then kaucja (if any — from allegro_invoice_mapper's
+settlement_positions) via a follow-up add_settlement_position() PUT, since
+Fakturownia's create endpoint rejects an inline settlement_positions block
+(confirmed against the live API: 422 "Nieprawidłowy atrybut: 'description'"
+— that shape is only valid on the PUT-based update path). The final PDF is
+only fetched after the settlement position is attached, so the copy pushed
+to Allegro already includes the kaucja line.
 
 Idempotency: before creating anything, checks Fakturownia for an existing
 invoice with oid=<allegro_order_id> (Fakturownia is the source of truth —
@@ -149,14 +154,38 @@ def create_invoice_for_order(
 
     _check_total_matches_allegro(order, payload)
 
+    settlement_positions = payload.get("settlement_positions") or []
+    invoice_body = {k: v for k, v in payload.items() if k != "settlement_positions"}
+
     try:
-        created = fakturownia_client.create_invoice(payload)
+        created = fakturownia_client.create_invoice(invoice_body)
         fakturownia_invoice_id = created["id"]
         fakturownia_invoice_number = created["number"]
     except Exception as exc:
         logger.exception("Fakturownia create_invoice failed for Allegro order %s", allegro_order_id)
         _alert_invoice_failure(allegro_order_id=allegro_order_id, reason=str(exc))
         return {"status": "error", "error": str(exc)}
+
+    try:
+        for settlement in settlement_positions:
+            fakturownia_client.add_settlement_position(
+                invoice_id=fakturownia_invoice_id,
+                kind=settlement["kind"],
+                amount_pln=settlement["amount"],
+                description=settlement["description"],
+            )
+    except Exception as exc:
+        logger.exception(
+            "Adding settlement position to Fakturownia invoice %s failed for order %s",
+            fakturownia_invoice_id,
+            allegro_order_id,
+        )
+        _alert_invoice_failure(allegro_order_id=allegro_order_id, reason=str(exc))
+        return {
+            "status": "error",
+            "error": str(exc),
+            "fakturownia_invoice_id": fakturownia_invoice_id,
+        }
 
     try:
         pdf_bytes = fakturownia_client.get_invoice_pdf(fakturownia_invoice_id)

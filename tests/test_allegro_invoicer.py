@@ -90,6 +90,90 @@ class TestSuccessPath:
             order_id="af1", invoice_id="alg-inv-1", pdf_bytes=b"%PDF-1.4 fake"
         )
 
+    def test_settlement_position_not_sent_inline_but_added_via_followup_call(self):
+        """P0 regression guard: Fakturownia's POST /invoices.json rejects an
+        inline settlement_positions block (422 "Nieprawidłowy atrybut:
+        'description'", confirmed against the live API) — kaucja must be
+        added via a separate add_settlement_position() PUT after creation,
+        not embedded in the create_invoice() call."""
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = []
+        fakturownia.create_invoice.return_value = {"id": 999, "number": "FV/2026/999"}
+        fakturownia.get_invoice_pdf.return_value = b"%PDF-1.4 fake"
+        allegro = MagicMock()
+        allegro.create_invoice_declaration.return_value = {"id": "alg-inv-1"}
+
+        result = create_invoice_for_order(
+            _order(), fakturownia_client=fakturownia, allegro_client=allegro
+        )
+
+        assert result["status"] == "created"
+        create_call_body = fakturownia.create_invoice.call_args.args[0]
+        assert "settlement_positions" not in create_call_body
+
+        fakturownia.add_settlement_position.assert_called_once_with(
+            invoice_id=999,
+            kind="charge",
+            amount_pln="6.00",
+            description="Kaucja za opakowania zwrotne",
+        )
+
+    def test_settlement_position_added_before_pdf_is_fetched(self):
+        """The PDF pushed to Allegro must already include the kaucja line —
+        order of operations matters, not just that both calls happen."""
+        call_order: list[str] = []
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = []
+        fakturownia.create_invoice.return_value = {"id": 999, "number": "FV/2026/999"}
+        fakturownia.add_settlement_position.side_effect = lambda **kw: call_order.append(
+            "add_settlement_position"
+        )
+        fakturownia.get_invoice_pdf.side_effect = lambda *a: (
+            call_order.append("get_invoice_pdf") or b"%PDF-1.4 fake"
+        )
+        allegro = MagicMock()
+        allegro.create_invoice_declaration.return_value = {"id": "alg-inv-1"}
+
+        create_invoice_for_order(_order(), fakturownia_client=fakturownia, allegro_client=allegro)
+
+        assert call_order == ["add_settlement_position", "get_invoice_pdf"]
+
+    def test_no_settlement_call_when_order_has_no_deposit(self):
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = []
+        fakturownia.create_invoice.return_value = {"id": 999, "number": "FV/2026/999"}
+        fakturownia.get_invoice_pdf.return_value = b"%PDF-1.4 fake"
+        allegro = MagicMock()
+        allegro.create_invoice_declaration.return_value = {"id": "alg-inv-1"}
+
+        order = _order()
+        order["lineItems"][0].pop("deposit")
+        result = create_invoice_for_order(
+            order, fakturownia_client=fakturownia, allegro_client=allegro
+        )
+
+        assert result["status"] == "created"
+        fakturownia.add_settlement_position.assert_not_called()
+
+    def test_settlement_position_failure_logs_and_alerts_invoice_already_created(self):
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = []
+        fakturownia.create_invoice.return_value = {"id": 999, "number": "FV/2026/999"}
+        fakturownia.add_settlement_position.side_effect = RuntimeError("Fakturownia 422")
+        allegro = MagicMock()
+
+        with patch("zdrovena.api.routers.allegro_invoicer._alert_invoice_failure") as mock_alert:
+            result = create_invoice_for_order(
+                _order(), fakturownia_client=fakturownia, allegro_client=allegro
+            )
+
+        assert result["status"] == "error"
+        assert result["fakturownia_invoice_id"] == 999
+        assert "Fakturownia 422" in result["error"]
+        mock_alert.assert_called_once()
+        fakturownia.get_invoice_pdf.assert_not_called()
+        allegro.create_invoice_declaration.assert_not_called()
+
 
 class TestFailureAlerts:
     def test_fakturownia_create_failure_logs_and_alerts(self, monkeypatch):
