@@ -196,17 +196,29 @@ meaning when `courier != "apaczka"` either).
 
 ## Frontend (`ShippingView.jsx`)
 
-Mirrors the existing InPost `service`/`locker_id` review UI:
-- When a draft has `courier === "apaczka"` and `status === "needs_review"` because
-  `apaczka_service_id` is missing, show a dropdown (fetched once from
-  `GET /shipping/apaczka-services`, cached client-side for the session) instead of
-  the current generic "mark reviewed" control.
+**Correction after re-checking the frontend:** there is currently no UI anywhere in
+`ShippingView.jsx` that calls `PATCH /shipping/drafts/{id}` at all — `service`,
+`locker_id`, and `reviewed` are only reachable via direct API calls (curl/Postman)
+today; this was already a known gap for InPost's `locker_id`. This spec adds the
+*first* such UI, scoped narrowly to Apaczka — it does not fix the pre-existing
+`locker_id` gap (separate, already-tracked follow-up).
+
+Minimal new UI, added to the existing accordion-row detail view:
+- When a draft has `courier === "apaczka"` and `apaczka_service_id` is falsy, show
+  a `<select>` populated from `GET /shipping/apaczka-services` (fetched once per
+  page load, held in component state — no need for a cache library at this size)
+  plus a "Zapisz" button. On submit: `PATCH /shipping/drafts/{id}` with
+  `{"apaczka_service_id": <value>, "reviewed": true}` in one call (both fields the
+  existing endpoint already accepts independently — sending both together is just
+  two independent patches applied in the same request, not new backend behavior),
+  then refresh the draft list.
+- When `apaczka_service_id` is already set, show it as plain text (catalog label,
+  e.g. "DPD Kurier") instead of the dropdown — no edit affordance for already-set
+  values in this pass (YAGNI; add an "edit" toggle later if operators need to
+  correct a wrong selection post-hoc).
 - `courierLabel(draft)` gains a case: when `courier === "apaczka"` and
-  `apaczka_service_id` is set, show the catalog label (e.g. "Apaczka — DPD Kurier")
-  instead of the current bare "Apaczka".
-- Selecting a value calls the existing `PATCH /shipping/drafts/{id}` pattern
-  (already used for InPost's `service`/`locker_id`), now also accepting
-  `apaczka_service_id`.
+  `apaczka_service_id` is set, show `Apaczka — <catalog label>` instead of the
+  current bare `"Apaczka"`.
 
 ---
 
