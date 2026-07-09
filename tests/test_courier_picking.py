@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from zdrovena.api.routers.webhooks import (
@@ -187,3 +189,47 @@ class TestPickApaczkaService:
         """Unlike _pick_courier/_pick_inpost_service, there is no heuristic here —
         Apaczka title strings aren't predictable substrings like inpost/paczkomat."""
         assert _pick_apaczka_service("Kurier ekspresowy XYZ") is None
+
+
+class TestPickApaczkaServiceCatalogValidation:
+    """Regression guard for final-branch review: APACZKA_SERVICE_TITLE_MAP
+    entries must be cross-checked against APACZKA_SERVICE_CATALOG, or a
+    misconfiguration (typo, or a deliberately-excluded InPost-supplier id)
+    could route a real shipment through an uncatalogued/wrong courier."""
+
+    def test_valid_catalog_service_id_still_works(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21")
+        _reset_courier_maps_cache()
+        assert _pick_apaczka_service("Apaczka DPD") == "21"
+
+    def test_uncatalogued_service_id_is_dropped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=999999")
+        _reset_courier_maps_cache()
+        assert _pick_apaczka_service("Apaczka DPD") is None
+
+    def test_mix_of_valid_and_invalid_entries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21;bogus=999999")
+        _reset_courier_maps_cache()
+        assert _pick_apaczka_service("Apaczka DPD") == "21"
+        assert _pick_apaczka_service("Bogus Courier") is None
+
+    def test_deliberately_excluded_inpost_supplier_id_is_dropped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """42 ("InPost Kurier") is a real Apaczka service_id but is NOT in
+        APACZKA_SERVICE_CATALOG — InPost-supplier ids are deliberately
+        excluded since they ship through the dedicated InPost integration,
+        never through Apaczka."""
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "inpost=42")
+        _reset_courier_maps_cache()
+        assert _pick_apaczka_service("Something InPost") is None
+
+    def test_invalid_service_id_logs_warning(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=999999")
+        _reset_courier_maps_cache()
+        with caplog.at_level(logging.WARNING):
+            result = _pick_apaczka_service("Apaczka DPD")
+        assert result is None
+        assert any("999999" in record.message for record in caplog.records)

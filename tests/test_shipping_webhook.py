@@ -1603,6 +1603,32 @@ class TestCreateDraftApaczka:
             monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
             _reset_courier_maps_cache()
 
+    def test_apaczka_service_id_from_uncatalogued_title_map_forces_needs_review(
+        self, store, monkeypatch
+    ):
+        """Regression guard for a real gap found in final-branch review: an
+        operator misconfiguring APACZKA_SERVICE_TITLE_MAP with a service_id
+        that isn't in APACZKA_SERVICE_CATALOG must NOT silently create a
+        'pending' draft that would ship through an uncatalogued/wrong
+        courier channel — it must fall back to needs_review, exactly like
+        an unconfigured title map does."""
+        from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache
+
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=999999")
+        _reset_courier_maps_cache()
+        try:
+            order = _load_fixture("shopify_order_apaczka.json")
+            order["shipping_address"]["phone"] = "500600700"
+            order["customer"]["phone"] = "500600700"
+            storage = object()
+            _create_draft(order, store, storage)
+            drafts = store.list_drafts()
+            assert drafts[0]["apaczka_service_id"] is None
+            assert drafts[0]["status"] == "needs_review"
+        finally:
+            monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
+            _reset_courier_maps_cache()
+
     def test_non_apaczka_draft_has_none_apaczka_service_id(self, store):
         """InPost/Allegro drafts get apaczka_service_id=None, never validated."""
         from zdrovena.api.routers.webhooks import _create_draft

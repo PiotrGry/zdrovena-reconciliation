@@ -357,8 +357,28 @@ def _apaczka_service_title_map() -> dict[str, str]:
     """Explicit title → Apaczka service_id mapping from ``APACZKA_SERVICE_TITLE_MAP``.
 
     Example: ``APACZKA_SERVICE_TITLE_MAP="dpd kurier=21;orlen paczka=53"``.
+    Values not present in APACZKA_SERVICE_CATALOG are dropped (logged as a
+    warning) rather than silently reaching a live Apaczka shipment — an
+    operator misconfiguration then falls back to the same needs_review path
+    already used when no mapping is configured at all, instead of shipping
+    through a wrong/unintended courier channel.
     """
-    return _parse_title_map(os.getenv("APACZKA_SERVICE_TITLE_MAP", ""))
+    from zdrovena.common.apaczka import APACZKA_SERVICE_CATALOG
+
+    raw_map = _parse_title_map(os.getenv("APACZKA_SERVICE_TITLE_MAP", ""))
+    valid_map: dict[str, str] = {}
+    for keyword, service_id in raw_map.items():
+        if service_id in APACZKA_SERVICE_CATALOG:
+            valid_map[keyword] = service_id
+        else:
+            logger.warning(
+                "APACZKA_SERVICE_TITLE_MAP: keyword %r maps to unknown "
+                "service_id %r (not in APACZKA_SERVICE_CATALOG) — ignoring, "
+                "titles matching this keyword will route to needs_review",
+                keyword,
+                service_id,
+            )
+    return valid_map
 
 
 def _reset_courier_maps_cache() -> None:
