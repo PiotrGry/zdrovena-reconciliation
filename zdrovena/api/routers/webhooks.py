@@ -360,22 +360,6 @@ def _apaczka_service_title_map() -> dict[str, str]:
     return _parse_title_map(os.getenv("APACZKA_SERVICE_TITLE_MAP", ""))
 
 
-def _pick_apaczka_service(title: str) -> str | None:
-    """Map a Shopify shipping-line title to an Apaczka service_id.
-
-    Unlike ``_pick_courier``/``_pick_inpost_service`` there is no
-    substring-heuristic fallback: Apaczka's title strings are
-    business-configured Shopify shipping-method names, not consistently
-    predictable substrings. No configured match -> None, which routes the
-    draft to needs_review (see Task 3) instead of guessing.
-    """
-    lowered = title.lower()
-    for keyword, service_id in _apaczka_service_title_map().items():
-        if keyword and keyword in lowered:
-            return service_id
-    return None
-
-
 def _reset_courier_maps_cache() -> None:
     """Clear cached ENV mapping (test-only helper)."""
     _courier_title_map.cache_clear()
@@ -414,6 +398,23 @@ def _pick_inpost_service(title: str) -> str:
             if keyword and keyword in lowered:
                 return service
     return "paczkomat" if "paczkomat" in lowered else "kurier"
+
+
+def _pick_apaczka_service(title: str) -> str | None:
+    """Pick an Apaczka service_id from shipping-line title.
+
+    Unlike ``_pick_courier``/``_pick_inpost_service`` there is no
+    substring-heuristic fallback: Apaczka's title strings are
+    business-configured Shopify shipping-method names, not consistently
+    predictable substrings. No configured match -> None; the caller treats
+    that as needing manual review before shipping, rather than guessing
+    which of Apaczka's ~70 courier products to use.
+    """
+    lowered = title.lower()
+    for keyword, service_id in _apaczka_service_title_map().items():
+        if keyword and keyword in lowered:
+            return service_id
+    return None
 
 
 # ── Courier execution helpers ─────────────────────────────────────────────────
