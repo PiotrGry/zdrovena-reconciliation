@@ -2,7 +2,10 @@
 
 Creates shipment drafts. Auth uses per-request HMAC-SHA256 signatures.
 Service structure is cached in blob storage (max once per 23 hours).
-Secrets: apaczka-app-id, apaczka-app-secret, apaczka-service-id (Key Vault).
+Secrets: apaczka-app-id, apaczka-app-secret (Key Vault). ``service_id`` is
+per-draft data (from the Shopify shipping-line title, or set manually by an
+operator), never a global secret — see APACZKA_SERVICE_CATALOG below and
+docs/superpowers/specs/2026-07-09-apaczka-per-draft-service.md.
 """
 
 from __future__ import annotations
@@ -48,6 +51,43 @@ _SERVICE_CACHE_KEY = "apaczka/service_structure.json"
 _SERVICE_CACHE_TTL_H = 23
 # Apaczka signals in-body success with status == 200 (independent of the HTTP status).
 _APACZKA_BODY_OK = 200
+
+# Curated subset of Apaczka's ~70 service_ids (fetched live from the
+# `service_structure` endpoint, verified 2026-07-09), covering non-InPost
+# door-to-door and locker/pickup-point ("skrytki") delivery. InPost-supplier
+# entries are deliberately excluded — those ship through the dedicated InPost
+# integration, never through Apaczka. See
+# docs/superpowers/specs/2026-07-09-apaczka-per-draft-service.md for the full
+# rationale and how to extend this list.
+APACZKA_SERVICE_CATALOG: dict[str, str] = {
+    # Door-to-door
+    "1": "UPS Standard",
+    "2": "UPS Express Saver",
+    "3": "UPS Express Plus do 12:00",
+    "4": "UPS Express Plus do 9:00",
+    "21": "DPD Kurier",
+    "24": "DPD Kurier do 9:30",
+    "25": "DPD Kurier do 12:00",
+    "60": "Pocztex Kurier Drzwi-Drzwi",
+    "82": "DHL Parcel Kurier",
+    "83": "DHL Parcel Kurier do 12:00",
+    "84": "DHL Parcel Kurier do 9:00",
+    "151": "FEDEX Kurier",
+    "202": "GLS Kurier Drzwi-Drzwi",
+    # Point / locker ("skrytki")
+    "14": "UPS AP Punkt-Punkt",
+    "15": "UPS AP Drzwi-Punkt",
+    "23": "DPD Pickup Drzwi-Punkt",
+    "26": "DPD Pickup Punkt-Punkt",
+    "50": "Orlen Paczka Punkt-Punkt",
+    "53": "Orlen Paczka Drzwi-Punkt",
+    "64": "Pocztex Kurier Drzwi-Punkt",
+    "66": "Pocztex Punkt Punkt-Punkt",
+    "86": "DHL POP do punktu",
+    "203": "GLS Kurier Drzwi-Punkt",
+    "314": "Packeta Punkt-Punkt",
+    "317": "Packeta Magazyn-Punkt",
+}
 
 
 def _sign(app_id: str, secret: str, endpoint: str, data: dict[str, Any]) -> dict[str, Any]:
