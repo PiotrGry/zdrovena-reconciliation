@@ -39,6 +39,7 @@ def main() -> int:
 
         client = BlobServiceClient(account_url, credential=DefaultAzureCredential())
     else:
+        assert conn is not None  # guarded by the account_url/conn check above
         client = BlobServiceClient.from_connection_string(conn)
 
     try:
