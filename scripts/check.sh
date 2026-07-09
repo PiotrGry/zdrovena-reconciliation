@@ -172,7 +172,7 @@ if command -v checkov >/dev/null 2>&1 || docker image inspect ghcr.io/bridgecrew
   fi
   $CHECKOV_CMD -d infra/terraform --quiet 2>&1 | grep -E "Passed|Failed|Error" | tail -3 && ok "checkov" || fail "checkov: problemy z IaC"
 else
-  echo -e "${SKIP} checkov nie znaleziony — zainstaluj: pip install checkov"
+  echo -e "${SKIP} checkov nie znaleziony — zainstaluj: uv sync --extra iac"
 fi
 
 step "Frontend lint (ESLint)"

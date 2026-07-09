@@ -8,7 +8,7 @@ from __future__ import annotations
 import mimetypes
 import tempfile
 import urllib.parse
-from typing import Annotated
+from typing import Annotated, BinaryIO, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -159,7 +159,10 @@ async def upload_file(
         async for chunk in request.stream():
             spooled.write(chunk)
         spooled.seek(0)
-        storage.upload_stream(spooled, normalised, content_type)
+        # SpooledTemporaryFile[bytes] doesn't structurally satisfy typeshed's
+        # BinaryIO Protocol, though shutil.copyfileobj/upload_blob both accept
+        # it fine at runtime — same typeshed gap as ContentSettings below.
+        storage.upload_stream(cast(BinaryIO, spooled), normalised, content_type)
 
 
 @router.delete(
