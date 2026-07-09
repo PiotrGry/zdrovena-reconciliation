@@ -113,6 +113,7 @@ jobs:
           TF_VAR_github_owner: ${{ github.repository_owner }}
           TF_VAR_github_repo: ${{ github.event.repository.name }}
           TF_VAR_terraform_ip_allowlist: '[]'
+          TF_VAR_swa_custom_domain: portal.wodahumio.pl
         run: |
           set +e
           terraform plan -input=false -no-color -detailed-exitcode -out=tfplan 2>&1 | tee plan.txt
@@ -260,4 +261,5 @@ jobs:
           TF_VAR_github_owner: ${{ github.repository_owner }}
           TF_VAR_github_repo: ${{ github.event.repository.name }}
           TF_VAR_terraform_ip_allowlist: '[]'
+          TF_VAR_swa_custom_domain: portal.wodahumio.pl
         run: terraform apply -input=false -auto-approve -no-color
