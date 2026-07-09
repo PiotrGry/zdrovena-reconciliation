@@ -1426,6 +1426,68 @@ class TestCreateDraftApaczka:
         assert d["receiver"]["email"] == "maria.wisniewska@example.com"
         assert d["shipping_address"]["city"] == "Gdańsk"
 
+    def test_apaczka_service_id_set_from_title_map(self, store, monkeypatch):
+        from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache
+
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21")
+        _reset_courier_maps_cache()
+        try:
+            storage = object()
+            order = _load_fixture("shopify_order_apaczka.json")
+            _create_draft(order, store, storage)
+            drafts = store.list_drafts()
+            assert drafts[0]["apaczka_service_id"] == "21"
+        finally:
+            monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
+            _reset_courier_maps_cache()
+
+    def test_apaczka_service_id_none_forces_needs_review(self, store, monkeypatch):
+        """Fixture's shipping_lines[0].title is 'Apaczka DPD' — with no env
+        mapping configured, apaczka_service_id stays unset and the draft must
+        be needs_review even if phone/packages_count would otherwise pass."""
+        from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache
+
+        monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
+        _reset_courier_maps_cache()
+        order = _load_fixture("shopify_order_apaczka.json")
+        order["shipping_address"]["phone"] = "500600700"
+        order["customer"]["phone"] = "500600700"
+        storage = object()
+        _create_draft(order, store, storage)
+        drafts = store.list_drafts()
+        assert drafts[0]["apaczka_service_id"] is None
+        assert drafts[0]["status"] == "needs_review"
+
+    def test_apaczka_service_id_matched_allows_pending(self, store, monkeypatch):
+        """Same phone fix as above, but WITH a matching title map — status
+        should be 'pending', proving apaczka_service_id was the only blocker."""
+        from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache
+
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21")
+        _reset_courier_maps_cache()
+        try:
+            order = _load_fixture("shopify_order_apaczka.json")
+            order["shipping_address"]["phone"] = "500600700"
+            order["customer"]["phone"] = "500600700"
+            storage = object()
+            _create_draft(order, store, storage)
+            drafts = store.list_drafts()
+            assert drafts[0]["apaczka_service_id"] == "21"
+            assert drafts[0]["status"] == "pending"
+        finally:
+            monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
+            _reset_courier_maps_cache()
+
+    def test_non_apaczka_draft_has_none_apaczka_service_id(self, store):
+        """InPost/Allegro drafts get apaczka_service_id=None, never validated."""
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        storage = object()
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        _create_draft(order, store, storage)
+        drafts = store.list_drafts()
+        assert drafts[0]["apaczka_service_id"] is None
+
 
 class TestExecuteDraftApaczka:
     def test_execute_apaczka_draft(self, client, store):

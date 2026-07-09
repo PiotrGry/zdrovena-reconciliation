@@ -1000,10 +1000,12 @@ def _create_draft(
         else:
             allegro_sending_method = None
         inpost_service = "paczkomat" if allegro_sending_method == "parcel_locker" else None
+        apaczka_service_id: str | None = None
     else:
         courier = _pick_courier(order)
         inpost_service = _pick_inpost_service(title) if courier == "inpost" else None
         allegro_sending_method = None
+        apaczka_service_id = _pick_apaczka_service(title) if courier == "apaczka" else None
 
     line_items = order.get("line_items") or []
     product_items = [item for item in line_items if not SKIP_RE.search(item.get("name", ""))]
@@ -1047,10 +1049,19 @@ def _create_draft(
         "customer_name": customer_name,
         "courier": courier,
         "service": service,
+        "apaczka_service_id": apaczka_service_id,
         "tracking_number": None,
         "courier_draft_id": None,
         "dispatch_order_id": None,  # fix #6: field exists from creation
-        "status": "needs_review" if (packages_count > 1 or phone is None) else "pending",
+        "status": (
+            "needs_review"
+            if (
+                packages_count > 1
+                or phone is None
+                or (courier == "apaczka" and apaczka_service_id is None)
+            )
+            else "pending"
+        ),
         "packages_count": packages_count,
         "packages_breakdown": packages_breakdown,
         "total_qty": total_qty,
