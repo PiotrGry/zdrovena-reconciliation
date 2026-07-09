@@ -969,9 +969,7 @@ class TestUpdateDraft:
         assert resp.status_code == 200
         assert resp.json()["status"] == "needs_review"
 
-    def test_apaczka_service_id_and_reviewed_together_clears_needs_review(
-        self, client, store
-    ):
+    def test_apaczka_service_id_and_reviewed_together_clears_needs_review(self, client, store):
         draft = self._seed_draft(store)
         store.update_draft(draft["id"], {"status": "needs_review"})
         resp = client.patch(

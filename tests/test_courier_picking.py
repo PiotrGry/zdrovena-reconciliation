@@ -161,9 +161,7 @@ class TestPickApaczkaService:
     def test_no_env_configured_returns_none(self) -> None:
         assert _pick_apaczka_service("Apaczka DPD") is None
 
-    def test_env_mapping_match_returns_service_id(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_mapping_match_returns_service_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21;orlen paczka=53")
         _reset_courier_maps_cache()
         assert _pick_apaczka_service("Apaczka DPD") == "21"
@@ -173,9 +171,7 @@ class TestPickApaczkaService:
         _reset_courier_maps_cache()
         assert _pick_apaczka_service("ORLEN PACZKA - punkt odbioru") == "53"
 
-    def test_no_match_in_configured_map_returns_none(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_match_in_configured_map_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21")
         _reset_courier_maps_cache()
         assert _pick_apaczka_service("UPS Express") is None
