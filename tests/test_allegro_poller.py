@@ -12,7 +12,7 @@ Failure of one order does NOT block others.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from zdrovena.api.routers.allegro_poller import poll_orders_once
 
@@ -188,3 +188,134 @@ class TestExternalOrderIdOnDraft:
         saved = store.upsert_draft.call_args.args[0]
         # For Allegro drafts, shopify_order_id may be absent OR mirror external_order_id
         assert saved.get("shopify_order_id") in {None, "af1", ""}
+
+
+class TestInvoiceCreationWiring:
+    def test_calls_invoicer_after_successful_draft_creation(self, monkeypatch):
+        monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af1")]
+        store = MagicMock()
+        store.list_drafts.return_value = []
+        fakturownia = MagicMock()
+
+        with patch(
+            "zdrovena.api.routers.allegro_poller.create_invoice_for_order",
+            return_value={"status": "created", "fakturownia_invoice_id": 1},
+        ) as mock_invoicer:
+            poll_orders_once(
+                client=client,
+                shipping_store=store,
+                storage=MagicMock(),
+                fakturownia_client=fakturownia,
+            )
+
+        mock_invoicer.assert_called_once()
+        called_order = mock_invoicer.call_args.args[0]
+        assert called_order["id"] == "af1"
+        assert mock_invoicer.call_args.kwargs["fakturownia_client"] is fakturownia
+        assert mock_invoicer.call_args.kwargs["allegro_client"] is client
+
+    def test_does_not_call_invoicer_when_draft_creation_fails(self, monkeypatch):
+        monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af1")]
+        store = MagicMock()
+        store.list_drafts.return_value = []
+        store.upsert_draft.side_effect = RuntimeError("store down")
+        fakturownia = MagicMock()
+
+        with patch("zdrovena.api.routers.allegro_poller.create_invoice_for_order") as mock_invoicer:
+            poll_orders_once(
+                client=client,
+                shipping_store=store,
+                storage=MagicMock(),
+                fakturownia_client=fakturownia,
+            )
+
+        mock_invoicer.assert_not_called()
+
+    def test_does_not_call_invoicer_for_skipped_duplicate(self, monkeypatch):
+        monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af1")]
+        store = MagicMock()
+        store.list_drafts.return_value = [
+            {"source": "allegro", "external_order_id": "af1", "status": "created"}
+        ]
+        fakturownia = MagicMock()
+
+        with patch("zdrovena.api.routers.allegro_poller.create_invoice_for_order") as mock_invoicer:
+            poll_orders_once(
+                client=client,
+                shipping_store=store,
+                storage=MagicMock(),
+                fakturownia_client=fakturownia,
+            )
+
+        mock_invoicer.assert_not_called()
+
+    def test_invoicer_failure_does_not_abort_cycle(self, monkeypatch):
+        """One order's invoice failing must not block the next order's draft."""
+        monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af1"), _form("af2")]
+        store = MagicMock()
+        store.list_drafts.return_value = []
+        fakturownia = MagicMock()
+
+        with patch(
+            "zdrovena.api.routers.allegro_poller.create_invoice_for_order",
+            side_effect=RuntimeError("boom"),
+        ):
+            stats = poll_orders_once(
+                client=client,
+                shipping_store=store,
+                storage=MagicMock(),
+                fakturownia_client=fakturownia,
+            )
+
+        assert stats["created"] == 2
+        assert stats["invoice_errors"] == 2
+
+    def test_missing_fakturownia_client_skips_invoicing_gracefully(self, monkeypatch):
+        """fakturownia_client is optional — callers not ready to wire it up
+        yet (or environments without Fakturownia credentials) must not crash.
+        """
+        monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af1")]
+        store = MagicMock()
+        store.list_drafts.return_value = []
+
+        with patch("zdrovena.api.routers.allegro_poller.create_invoice_for_order") as mock_invoicer:
+            stats = poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
+
+        mock_invoicer.assert_not_called()
+        assert stats["created"] == 1
+
+    def test_returned_error_status_increments_invoice_errors(self, monkeypatch):
+        """create_invoice_for_order's normal (non-raising) error return must
+        also count toward invoice_errors — this is the expected failure path
+        for real Fakturownia/Allegro business failures, not an edge case.
+        """
+        monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af1")]
+        store = MagicMock()
+        store.list_drafts.return_value = []
+        fakturownia = MagicMock()
+
+        with patch(
+            "zdrovena.api.routers.allegro_poller.create_invoice_for_order",
+            return_value={"status": "error", "error": "Fakturownia 500"},
+        ):
+            stats = poll_orders_once(
+                client=client,
+                shipping_store=store,
+                storage=MagicMock(),
+                fakturownia_client=fakturownia,
+            )
+
+        assert stats["invoice_errors"] == 1
+        assert stats["invoices_created"] == 0

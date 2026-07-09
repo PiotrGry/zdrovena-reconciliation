@@ -309,3 +309,180 @@ class TestAtomicWrite:
         assert target_writes == [], (
             "shipping-drafts.json was written in-place; expected atomic write-to-temp + os.replace"
         )
+
+
+# ── try_claim_pickup — local backend ────────────────────────────────────────
+
+
+class TestTryClaimPickupLocal:
+    def test_first_claim_succeeds(self, store):
+        store.upsert_draft(_draft("pk-1"))
+        assert store.try_claim_pickup("pk-1") is True
+        assert store.get_draft("pk-1")["pickup_ordered"] is True
+
+    def test_second_claim_fails(self, store):
+        store.upsert_draft(_draft("pk-2"))
+        assert store.try_claim_pickup("pk-2") is True
+        assert store.try_claim_pickup("pk-2") is False
+
+    def test_claim_missing_draft_fails(self, store):
+        assert store.try_claim_pickup("does-not-exist") is False
+
+    def test_only_one_thread_wins_concurrent_claim(self, store):
+        store.upsert_draft(_draft("pk-race"))
+        results: list[bool] = []
+        lock = threading.Lock()
+
+        def worker():
+            won = store.try_claim_pickup("pk-race")
+            with lock:
+                results.append(won)
+
+        threads = [threading.Thread(target=worker) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert results.count(True) == 1, f"Expected exactly one winner, got {results}"
+
+
+# ── try_claim_pickup / upsert_draft dedup — table backend (fake client) ──────
+
+
+class _FakeTableEntity(dict):
+    """Minimal stand-in for azure.data.tables.TableEntity."""
+
+    def __init__(self, data, etag):
+        super().__init__(data)
+        self._metadata = {"etag": etag}
+
+    @property
+    def metadata(self):
+        return self._metadata
+
+
+class _FakeTableClient:
+    """In-memory fake of azure.data.tables.TableClient covering only the
+    operations ShippingStore's table backend calls: get/update/upsert/delete/
+    query, including ETag-based optimistic concurrency for update_entity.
+    """
+
+    def __init__(self):
+        self._rows: dict[tuple[str, str], dict] = {}
+        self._etags: dict[tuple[str, str], int] = {}
+
+    def get_entity(self, partition_key, row_key):
+        key = (partition_key, row_key)
+        if key not in self._rows:
+            raise KeyError("not found")
+        return _FakeTableEntity(dict(self._rows[key]), str(self._etags[key]))
+
+    def upsert_entity(self, entity):
+        key = (entity["PartitionKey"], entity["RowKey"])
+        self._rows[key] = dict(entity)
+        self._etags[key] = self._etags.get(key, 0) + 1
+
+    def update_entity(self, entity, mode="merge", etag=None, match_condition=None):
+        key = (entity["PartitionKey"], entity["RowKey"])
+        if key not in self._rows:
+            raise KeyError("not found")
+        if etag is not None and str(self._etags[key]) != etag:
+            from azure.core.exceptions import ResourceModifiedError
+
+            raise ResourceModifiedError("etag mismatch")
+        self._rows[key].update({k: v for k, v in entity.items()})
+        self._etags[key] += 1
+
+    def delete_entity(self, partition_key, row_key):
+        self._rows.pop((partition_key, row_key), None)
+        self._etags.pop((partition_key, row_key), None)
+
+    def query_entities(self, query_filter):
+        # Only supports the "field eq/ne 'value'" AND-chain shapes this
+        # codebase generates — not a general OData parser.
+        clauses = [c.strip() for c in query_filter.split(" and ")]
+        results = []
+        for row in self._rows.values():
+            ok = True
+            for clause in clauses:
+                if " ne " in clause:
+                    field, _, value = clause.partition(" ne ")
+                    value = value.strip().strip("'").replace("''", "'")
+                    if str(row.get(field.strip())) == value:
+                        ok = False
+                        break
+                elif " eq " in clause:
+                    field, _, value = clause.partition(" eq ")
+                    value = value.strip().strip("'").replace("''", "'")
+                    if str(row.get(field.strip())) != value:
+                        ok = False
+                        break
+            if ok:
+                results.append(dict(row))
+        return iter(results)
+
+
+@pytest.fixture()
+def table_store(monkeypatch) -> tuple[ShippingStore, _FakeTableClient]:
+    store = ShippingStore(account_url="https://fake.blob.core.windows.net")
+    fake = _FakeTableClient()
+    monkeypatch.setattr(store, "_table_client", lambda: fake)
+    return store, fake
+
+
+class TestTryClaimPickupTable:
+    def test_first_claim_succeeds(self, table_store):
+        store, _fake = table_store
+        store.upsert_draft(_draft("t-pk-1"))
+        assert store.try_claim_pickup("t-pk-1") is True
+        assert store.get_draft("t-pk-1")["pickup_ordered"] is True
+
+    def test_second_claim_fails(self, table_store):
+        store, _fake = table_store
+        store.upsert_draft(_draft("t-pk-2"))
+        assert store.try_claim_pickup("t-pk-2") is True
+        assert store.try_claim_pickup("t-pk-2") is False
+
+    def test_claim_missing_draft_fails(self, table_store):
+        store, _fake = table_store
+        assert store.try_claim_pickup("nope") is False
+
+    def test_concurrent_update_between_get_and_claim_loses(self, table_store):
+        """Simulates a second writer mutating the row between our get_entity
+        and update_entity calls — the etag mismatch must make the claim fail
+        rather than silently overwrite.
+        """
+        store, fake = table_store
+        store.upsert_draft(_draft("t-pk-3"))
+
+        original_get_entity = fake.get_entity
+
+        def get_entity_then_mutate(partition_key, row_key):
+            entity = original_get_entity(partition_key, row_key)
+            # Another process updates the row after our read but before our write.
+            fake.update_entity(
+                {"PartitionKey": partition_key, "RowKey": row_key, "note": "concurrent-write"}
+            )
+            return entity
+
+        fake.get_entity = get_entity_then_mutate
+        assert store.try_claim_pickup("t-pk-3") is False
+
+
+class TestUpsertDedupTable:
+    def test_duplicate_shopify_order_id_removes_older_draft(self, table_store):
+        store, _fake = table_store
+        d1 = _draft("t-uuid-aaa", shopify_order_id="shop-9001")
+        d2 = _draft("t-uuid-bbb", shopify_order_id="shop-9001")
+        store.upsert_draft(d1)
+        store.upsert_draft(d2)
+        assert store.get_draft("t-uuid-aaa") is None
+        assert store.get_draft("t-uuid-bbb") is not None
+
+    def test_distinct_shopify_order_ids_both_kept(self, table_store):
+        store, _fake = table_store
+        store.upsert_draft(_draft("t-uuid-ccc", shopify_order_id="shop-1"))
+        store.upsert_draft(_draft("t-uuid-ddd", shopify_order_id="shop-2"))
+        assert store.get_draft("t-uuid-ccc") is not None
+        assert store.get_draft("t-uuid-ddd") is not None

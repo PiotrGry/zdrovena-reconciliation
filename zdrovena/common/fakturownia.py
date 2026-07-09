@@ -49,6 +49,17 @@ SETTLEMENT_KIND_CHARGE = "charge"  # KSeF Obciazenia
 SETTLEMENT_KIND_DEDUCTION = "deduction"  # KSeF Odliczenia
 _VALID_SETTLEMENT_KINDS = {SETTLEMENT_KIND_CHARGE, SETTLEMENT_KIND_DEDUCTION}
 
+# Shared across fakturownia_patcher.py (settlement-patching an existing
+# invoice) and allegro_invoice_mapper.py (building a new invoice with the
+# deposit baked in from the start) — both must use the EXACT same
+# description string, or the patcher's has_settlement_with_description()
+# idempotency check will fail to recognize kaucja rows the mapper already
+# added, and add a duplicate.
+KAUCJA_DESCRIPTION = (
+    os.getenv("KAUCJA_DESCRIPTION", "Kaucja za opakowania zwrotne").strip()
+    or "Kaucja za opakowania zwrotne"
+)
+
 
 class FakturowniaClient:
     """Thin REST client for Fakturownia.
@@ -94,6 +105,7 @@ class FakturowniaClient:
         *,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
+        raw: bool = False,
     ) -> Any:
         url = f"{self.base_url}{path}"
         # api_token in query for GET; both places acceptable per Fakturownia docs.
@@ -111,12 +123,16 @@ class FakturowniaClient:
         except requests.ConnectionError as e:
             raise CourierConnectionError(courier="fakturownia", detail=str(e)) from e
 
-        return self._parse_response(resp, method=method, path=path)
+        return self._parse_response(resp, method=method, path=path, raw=raw)
 
     @staticmethod
-    def _parse_response(resp: requests.Response, *, method: str, path: str) -> Any:
+    def _parse_response(
+        resp: requests.Response, *, method: str, path: str, raw: bool = False
+    ) -> Any:
         status = resp.status_code
         if HTTPStatus.OK <= status < HTTPStatus.MULTIPLE_CHOICES:
+            if raw:
+                return resp.content
             if status == HTTPStatus.NO_CONTENT:
                 return None
             try:
@@ -140,6 +156,10 @@ class FakturowniaClient:
 
     def get_invoice(self, invoice_id: int) -> dict[str, Any]:
         return self._request("GET", f"/invoices/{invoice_id}.json")
+
+    def get_invoice_pdf(self, invoice_id: int) -> bytes:
+        """Download the invoice PDF. Returns raw PDF bytes."""
+        return self._request("GET", f"/invoices/{invoice_id}.pdf", raw=True)
 
     def list_invoices(
         self,
@@ -170,6 +190,15 @@ class FakturowniaClient:
         body = {"api_token": self.api_token, "invoice": patch}
         return self._request("PUT", f"/invoices/{invoice_id}.json", json=body)
 
+    def create_invoice(self, invoice: dict[str, Any]) -> dict[str, Any]:
+        """Create a new Fakturownia document (VAT invoice, nota księgowa, etc.).
+
+        `invoice["kind"]` selects the document type (e.g. "vat", "accounting_note").
+        Returns the created document, including its `id`.
+        """
+        body = {"api_token": self.api_token, "invoice": invoice}
+        return self._request("POST", "/invoices.json", json=body)
+
     # ── settlement_positions (KSeF Rozliczenie) ─────────────────────────────
 
     def add_settlement_position(
@@ -189,6 +218,13 @@ class FakturowniaClient:
         Raises:
             ValueError: on invalid kind / amount / description
             FakturowniaAuthError / FakturowniaBusinessError / FakturowniaServerError
+
+        Note: Fakturownia's SettlementPosition model's human-readable label
+        field is named ``reason`` in its actual API contract — confirmed
+        live: both ``description`` and ``name`` are rejected with 422
+        "unknown attribute" errors. This method's own `description`
+        parameter name is kept for backward compatibility with existing
+        callers; only the wire-level JSON key was wrong.
         """
         if kind not in _VALID_SETTLEMENT_KINDS:
             raise ValueError(f"kind must be one of {_VALID_SETTLEMENT_KINDS}, got {kind!r}")
@@ -210,7 +246,7 @@ class FakturowniaClient:
         # zwracamy fakturę bez PUT-a (idempotent no-op).
         needle = description.strip().casefold()
         for row in existing_rows:
-            desc = (row.get("description") or "").strip().casefold()
+            desc = (row.get("reason") or "").strip().casefold()
             if desc == needle:
                 log.info(
                     "add_settlement_position: invoice %s already has row %r — skipping PUT",
@@ -225,7 +261,7 @@ class FakturowniaClient:
             {
                 "kind": kind,
                 "amount": amount_str,
-                "description": description.strip(),
+                "reason": description.strip(),
             }
         )
 
@@ -234,13 +270,16 @@ class FakturowniaClient:
     @staticmethod
     def has_settlement_with_description(invoice: dict[str, Any], description: str) -> bool:
         """Return True iff invoice.settlement_positions contains a row whose
-        description matches (case-insensitive, stripped)."""
+        reason matches (case-insensitive, stripped). Named *_with_description
+        for backward compatibility with existing callers — Fakturownia's own
+        field name for this is `reason`, not `description` (see
+        add_settlement_position's docstring)."""
         needle = (description or "").strip().casefold()
         if not needle:
             return False
         rows = invoice.get("settlement_positions") or []
         for row in rows:
-            desc = (row.get("description") or "").strip().casefold()
+            desc = (row.get("reason") or "").strip().casefold()
             if desc == needle:
                 return True
         return False

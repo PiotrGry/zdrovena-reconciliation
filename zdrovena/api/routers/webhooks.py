@@ -49,6 +49,7 @@ from zdrovena.common.shipping_exceptions import (
     AllegroAuthError,
     AllegroBusinessError,
     AllegroCommandPending,
+    ApaczkaBusinessError,
     CourierAuthError,
     CourierBusinessError,
     CourierTransientError,
@@ -351,10 +352,40 @@ def _inpost_service_title_map() -> dict[str, str]:
     return _parse_title_map(os.getenv("INPOST_SERVICE_TITLE_MAP", ""))
 
 
+@lru_cache(maxsize=1)
+def _apaczka_service_title_map() -> dict[str, str]:
+    """Explicit title → Apaczka service_id mapping from ``APACZKA_SERVICE_TITLE_MAP``.
+
+    Example: ``APACZKA_SERVICE_TITLE_MAP="dpd kurier=21;orlen paczka=53"``.
+    Values not present in APACZKA_SERVICE_CATALOG are dropped (logged as a
+    warning) rather than silently reaching a live Apaczka shipment — an
+    operator misconfiguration then falls back to the same needs_review path
+    already used when no mapping is configured at all, instead of shipping
+    through a wrong/unintended courier channel.
+    """
+    from zdrovena.common.apaczka import APACZKA_SERVICE_CATALOG
+
+    raw_map = _parse_title_map(os.getenv("APACZKA_SERVICE_TITLE_MAP", ""))
+    valid_map: dict[str, str] = {}
+    for keyword, service_id in raw_map.items():
+        if service_id in APACZKA_SERVICE_CATALOG:
+            valid_map[keyword] = service_id
+        else:
+            logger.warning(
+                "APACZKA_SERVICE_TITLE_MAP: keyword %r maps to unknown "
+                "service_id %r (not in APACZKA_SERVICE_CATALOG) — ignoring, "
+                "titles matching this keyword will route to needs_review",
+                keyword,
+                service_id,
+            )
+    return valid_map
+
+
 def _reset_courier_maps_cache() -> None:
     """Clear cached ENV mapping (test-only helper)."""
     _courier_title_map.cache_clear()
     _inpost_service_title_map.cache_clear()
+    _apaczka_service_title_map.cache_clear()
 
 
 def _pick_courier(order: dict[str, Any]) -> str:
@@ -388,6 +419,23 @@ def _pick_inpost_service(title: str) -> str:
             if keyword and keyword in lowered:
                 return service
     return "paczkomat" if "paczkomat" in lowered else "kurier"
+
+
+def _pick_apaczka_service(title: str) -> str | None:
+    """Pick an Apaczka service_id from shipping-line title.
+
+    Unlike ``_pick_courier``/``_pick_inpost_service`` there is no
+    substring-heuristic fallback: Apaczka's title strings are
+    business-configured Shopify shipping-method names, not consistently
+    predictable substrings. No configured match -> None; the caller treats
+    that as needing manual review before shipping, rather than guessing
+    which of Apaczka's ~70 courier products to use.
+    """
+    lowered = title.lower()
+    for keyword, service_id in _apaczka_service_title_map().items():
+        if keyword and keyword in lowered:
+            return service_id
+    return None
 
 
 # ── Courier execution helpers ─────────────────────────────────────────────────
@@ -562,7 +610,21 @@ def _run_apaczka(
 
     app_id = get_secret("apaczka_app_id")
     app_secret = get_secret("apaczka_app_secret")
-    service_id = get_secret("apaczka_service_id")
+    service_id = draft.get("apaczka_service_id") or ""
+    if not service_id:
+        # Guard against silently sending an empty service_id to Apaczka's live,
+        # paid create_shipment API. A None/missing apaczka_service_id means the
+        # draft was never matched against the Shopify shipping-line title map
+        # (see _pick_apaczka_service) and should have stayed in needs_review —
+        # raising here turns a would-be-silent bad shipment into a loud,
+        # visible error (caught by execute_draft's except Exception handler,
+        # which marks the draft status="error" and returns HTTP 502).
+        raise ApaczkaBusinessError(
+            f"Draft {draft.get('id')} has no apaczka_service_id — cannot create shipment",
+            order_id=str(draft.get("id", "")),
+            courier="apaczka",
+            action="create_shipment",
+        )
     client = ApaczkaClient(app_id, app_secret, service_id, storage)
 
     receiver = draft.get("receiver") or {}
@@ -973,10 +1035,12 @@ def _create_draft(
         else:
             allegro_sending_method = None
         inpost_service = "paczkomat" if allegro_sending_method == "parcel_locker" else None
+        apaczka_service_id: str | None = None
     else:
         courier = _pick_courier(order)
         inpost_service = _pick_inpost_service(title) if courier == "inpost" else None
         allegro_sending_method = None
+        apaczka_service_id = _pick_apaczka_service(title) if courier == "apaczka" else None
 
     line_items = order.get("line_items") or []
     product_items = [item for item in line_items if not SKIP_RE.search(item.get("name", ""))]
@@ -1010,6 +1074,10 @@ def _create_draft(
     # fix: normalize phone
     phone = normalize_pl_phone(phone) if phone else phone
 
+    needs_review = (
+        packages_count > 1 or phone is None or (courier == "apaczka" and apaczka_service_id is None)
+    )
+
     record: dict[str, Any] = {
         "id": str(uuid.uuid4()),
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -1020,10 +1088,11 @@ def _create_draft(
         "customer_name": customer_name,
         "courier": courier,
         "service": service,
+        "apaczka_service_id": apaczka_service_id,
         "tracking_number": None,
         "courier_draft_id": None,
         "dispatch_order_id": None,  # fix #6: field exists from creation
-        "status": "needs_review" if (packages_count > 1 or phone is None) else "pending",
+        "status": "needs_review" if needs_review else "pending",
         "packages_count": packages_count,
         "packages_breakdown": packages_breakdown,
         "total_qty": total_qty,
@@ -1173,6 +1242,24 @@ def list_drafts(
 ) -> dict[str, Any]:
     drafts = shipping_store.list_drafts()
     return {"drafts": drafts}
+
+
+@router.get(
+    "/shipping/apaczka-services",
+    summary="List the curated Apaczka courier services available for draft selection",
+    responses={403: {"description": "Insufficient role"}},
+)
+def list_apaczka_services(
+    principal: Annotated[Principal, Depends(require_viewer_or_above)],
+) -> dict[str, Any]:
+    from zdrovena.common.apaczka import APACZKA_SERVICE_CATALOG
+
+    return {
+        "services": [
+            {"service_id": service_id, "label": label}
+            for service_id, label in APACZKA_SERVICE_CATALOG.items()
+        ]
+    }
 
 
 # ── Dead-letter queue (P1-9) ────────────────────────────────────────────────
@@ -1471,6 +1558,11 @@ def order_pickup(
     if not courier_draft_id:
         raise HTTPException(status_code=409, detail="No courier draft ID — execute first")
 
+    # Claim before calling the courier (not after) so two concurrent requests
+    # can't both pass the pickup_ordered check above and both dispatch.
+    if not shipping_store.try_claim_pickup(draft_id):
+        raise HTTPException(status_code=409, detail="Pickup already ordered")
+
     if _MOCK_COURIER:
         ref = draft.get("shopify_order_number", "mock")
         logger.info("MOCK_COURIER: skipping InPost dispatch order for draft %s", ref)
@@ -1491,9 +1583,9 @@ def order_pickup(
             )
         except Exception as exc:
             logger.exception("order_pickup failed for draft %s", draft_id)
+            shipping_store.update_draft(draft_id, {"pickup_ordered": False})
             raise HTTPException(status_code=502, detail=f"InPost dispatch error: {exc}") from exc
 
-    shipping_store.update_draft(draft_id, {"pickup_ordered": True})
     return {"status": "pickup_ordered", "draft_id": draft_id}
 
 
@@ -1780,8 +1872,9 @@ def cancel_apaczka_order(
 
     app_id = get_secret("apaczka_app_id")
     app_secret = get_secret("apaczka_app_secret")
-    service_id = get_secret("apaczka_service_id")
-    client = ApaczkaClient(app_id, app_secret, service_id, storage)
+    # No draft available here (only order_id) and cancel_shipment() never
+    # reads service_id — pass an empty placeholder rather than looking one up.
+    client = ApaczkaClient(app_id, app_secret, "", storage)
     try:
         client.cancel_shipment(order_id)
     except ZdrovenaShippingError as exc:
@@ -1811,6 +1904,7 @@ def update_draft(
     packages_count: int | None = Body(None, ge=1, le=99),
     service: str | None = Body(None),
     locker_id: str | None = Body(None),
+    apaczka_service_id: str | None = Body(None),
     reviewed: bool | None = Body(None),
 ) -> dict[str, Any]:
     draft = shipping_store.get_draft(draft_id)
@@ -1831,6 +1925,15 @@ def update_draft(
         receiver = dict(draft.get("receiver") or {})
         receiver["locker_id"] = locker_id
         patch["receiver"] = receiver
+    if apaczka_service_id is not None:
+        from zdrovena.common.apaczka import APACZKA_SERVICE_CATALOG
+
+        if apaczka_service_id not in APACZKA_SERVICE_CATALOG:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown apaczka_service_id: {apaczka_service_id}",
+            )
+        patch["apaczka_service_id"] = apaczka_service_id
     if reviewed is True and draft.get("status") == "needs_review":
         patch["status"] = "pending"
         patch["error"] = None
@@ -1892,7 +1995,9 @@ def get_label(
 
             app_id = get_secret("apaczka_app_id")
             app_secret = get_secret("apaczka_app_secret")
-            service_id = get_secret("apaczka_service_id")
+            # get_label() never reads service_id (verified in apaczka.py), but
+            # pass the real per-draft value anyway for consistency/future-proofing.
+            service_id = draft.get("apaczka_service_id") or ""
             pdf_bytes = ApaczkaClient(app_id, app_secret, service_id, storage).get_label(label_id)
         elif courier == "allegro_delivery":
             client = _get_allegro_client()

@@ -701,6 +701,36 @@ class TestOrderPickup:
         updated = store.get_draft(draft["id"])
         assert updated["pickup_ordered"] is True
 
+    def test_409_when_claim_lost_to_concurrent_request(self, client, store):
+        """A second request that races in after the claim but before the
+        courier call must be rejected, not silently dispatch a duplicate.
+        """
+        draft = self._seed_created_kurier(store)
+        assert store.try_claim_pickup(draft["id"]) is True  # simulates a winning concurrent request
+        resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+        assert resp.status_code == 409
+
+    def test_502_rolls_back_claim_so_retry_is_possible(self, client, store):
+        draft = self._seed_created_kurier(store)
+        with patch(
+            "zdrovena.common.inpost.InPostClient.create_dispatch_order",
+            side_effect=RuntimeError("InPost unreachable"),
+        ):
+            with patch("zdrovena.api.routers.webhooks.get_secret", return_value="test-value"):
+                resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+        assert resp.status_code == 502
+        updated = store.get_draft(draft["id"])
+        assert updated["pickup_ordered"] is False
+
+        # A retry after the courier failure must be able to claim again.
+        with patch(
+            "zdrovena.common.inpost.InPostClient.create_dispatch_order",
+            return_value={"id": "disp-retry"},
+        ):
+            with patch("zdrovena.api.routers.webhooks.get_secret", return_value="test-value"):
+                retry_resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+        assert retry_resp.status_code == 200
+
 
 # ── Cancel shipment / dispatch (Ship with Allegro) ────────────────────────────
 
@@ -909,6 +939,47 @@ class TestUpdateDraft:
         assert resp.status_code == 409
         assert "requires review" in resp.json()["detail"].lower()
 
+    def test_sets_apaczka_service_id(self, client, store):
+        draft = self._seed_draft(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}", json={"apaczka_service_id": "21"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["apaczka_service_id"] == "21"
+        updated = store.get_draft(draft["id"])
+        assert updated["apaczka_service_id"] == "21"
+
+    def test_rejects_unknown_apaczka_service_id(self, client, store):
+        draft = self._seed_draft(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}", json={"apaczka_service_id": "999999"}
+        )
+        assert resp.status_code == 400
+        assert "apaczka_service_id" in resp.json()["detail"].lower()
+
+    def test_apaczka_service_id_does_not_auto_clear_needs_review(self, client, store):
+        """Matches existing service/locker_id behavior: setting the field
+        alone does not flip status — the operator still confirms separately
+        via reviewed=True."""
+        draft = self._seed_draft(store)
+        store.update_draft(draft["id"], {"status": "needs_review"})
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}", json={"apaczka_service_id": "21"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "needs_review"
+
+    def test_apaczka_service_id_and_reviewed_together_clears_needs_review(self, client, store):
+        draft = self._seed_draft(store)
+        store.update_draft(draft["id"], {"status": "needs_review"})
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"apaczka_service_id": "21", "reviewed": True},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["apaczka_service_id"] == "21"
+        assert resp.json()["status"] == "pending"
+
     def test_after_reviewed_execute_not_blocked_by_review(self, client, store):
         draft = self._seed_draft(store)
         store.update_draft(draft["id"], {"status": "needs_review"})
@@ -1028,6 +1099,7 @@ class TestRunApaczka:
             "shopify_order_number": "1060",
             "courier": "apaczka",
             "service": "apaczka",
+            "apaczka_service_id": "53",
             "receiver": {
                 "first_name": "Piotr",
                 "last_name": "W",
@@ -1044,6 +1116,83 @@ class TestRunApaczka:
         assert result["courier_draft_id"] == "ap-1"
         assert result["tracking_number"] == "WAY001"
         assert result["status"] == "created"
+
+    def test_uses_draft_apaczka_service_id_not_secret(self):
+        """P0 regression guard: service_id must come from the draft, never
+        from a get_secret('apaczka_service_id') call (that secret no longer
+        exists — see docs/superpowers/specs/2026-07-09-apaczka-per-draft-service.md)."""
+        from zdrovena.api.routers.webhooks import _run_apaczka
+
+        storage_mock = object()
+        draft = {
+            "id": "d-ap-2",
+            "shopify_order_number": "1061",
+            "courier": "apaczka",
+            "service": "apaczka",
+            "apaczka_service_id": "53",
+            "receiver": {
+                "first_name": "Anna",
+                "last_name": "N",
+                "email": "a@n.pl",
+                "phone": "800300401",
+                "locker_id": "",
+            },
+            "shipping_address": {"street": "Polna 1", "city": "Poznań", "post_code": "60-001"},
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret") as mock_get_secret:
+            mock_get_secret.return_value = "tok"
+            with patch("zdrovena.common.apaczka.ApaczkaClient") as MockClient:
+                MockClient.return_value.create_shipment.return_value = {
+                    "id": "ap-2",
+                    "waybill_number": "WAY002",
+                }
+                _run_apaczka(draft, _SENDER, storage_mock)
+
+        MockClient.assert_called_once_with("tok", "tok", "53", storage_mock)
+        requested_secrets = [c.args[0] for c in mock_get_secret.call_args_list]
+        assert "apaczka_service_id" not in requested_secrets
+
+    def test_missing_apaczka_service_id_raises_instead_of_calling_client(self):
+        """Critical safety guard: a draft with no apaczka_service_id (never matched
+        against the Shopify shipping-line title map — see _pick_apaczka_service)
+        must raise loudly rather than silently sending an empty service_id to
+        Apaczka's live, paid create_shipment API."""
+        from zdrovena.api.routers.webhooks import _run_apaczka
+        from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
+
+        storage_mock = object()
+        draft = {
+            "id": "d-ap-3",
+            "shopify_order_number": "1062",
+            "courier": "apaczka",
+            "service": "apaczka",
+            "apaczka_service_id": None,
+            "receiver": {
+                "first_name": "Jan",
+                "last_name": "K",
+                "email": "j@k.pl",
+                "phone": "800300402",
+                "locker_id": "",
+            },
+            "shipping_address": {"street": "Krótka 2", "city": "Łódź", "post_code": "90-001"},
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.apaczka.ApaczkaClient") as MockClient:
+                with pytest.raises(ApaczkaBusinessError):
+                    _run_apaczka(draft, _SENDER, storage_mock)
+
+        MockClient.assert_not_called()
+
+
+class TestListApaczkaServices:
+    def test_returns_full_catalog(self, client):
+        from zdrovena.common.apaczka import APACZKA_SERVICE_CATALOG
+
+        resp = client.get("/api/shipping/apaczka-services")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["services"]) == len(APACZKA_SERVICE_CATALOG)
+        assert {"service_id": "21", "label": "DPD Kurier"} in body["services"]
 
 
 class TestCreateDraft:
@@ -1396,6 +1545,98 @@ class TestCreateDraftApaczka:
         assert d["receiver"]["email"] == "maria.wisniewska@example.com"
         assert d["shipping_address"]["city"] == "Gdańsk"
 
+    def test_apaczka_service_id_set_from_title_map(self, store, monkeypatch):
+        from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache
+
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21")
+        _reset_courier_maps_cache()
+        try:
+            storage = object()
+            order = _load_fixture("shopify_order_apaczka.json")
+            _create_draft(order, store, storage)
+            drafts = store.list_drafts()
+            assert drafts[0]["apaczka_service_id"] == "21"
+        finally:
+            monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
+            _reset_courier_maps_cache()
+
+    def test_apaczka_service_id_none_forces_needs_review(self, store, monkeypatch):
+        """Fixture's shipping_lines[0].title is 'Apaczka DPD' — with no env
+        mapping configured, apaczka_service_id stays unset and the draft must
+        be needs_review even if phone/packages_count would otherwise pass."""
+        from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache
+
+        monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
+        _reset_courier_maps_cache()
+        try:
+            order = _load_fixture("shopify_order_apaczka.json")
+            order["shipping_address"]["phone"] = "500600700"
+            order["customer"]["phone"] = "500600700"
+            storage = object()
+            _create_draft(order, store, storage)
+            drafts = store.list_drafts()
+            assert drafts[0]["apaczka_service_id"] is None
+            assert drafts[0]["status"] == "needs_review"
+        finally:
+            monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
+            _reset_courier_maps_cache()
+
+    def test_apaczka_service_id_matched_allows_pending(self, store, monkeypatch):
+        """Same phone fix as above, but WITH a matching title map — status
+        should be 'pending', proving apaczka_service_id was the only blocker."""
+        from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache
+
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21")
+        _reset_courier_maps_cache()
+        try:
+            order = _load_fixture("shopify_order_apaczka.json")
+            order["shipping_address"]["phone"] = "500600700"
+            order["customer"]["phone"] = "500600700"
+            storage = object()
+            _create_draft(order, store, storage)
+            drafts = store.list_drafts()
+            assert drafts[0]["apaczka_service_id"] == "21"
+            assert drafts[0]["status"] == "pending"
+        finally:
+            monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
+            _reset_courier_maps_cache()
+
+    def test_apaczka_service_id_from_uncatalogued_title_map_forces_needs_review(
+        self, store, monkeypatch
+    ):
+        """Regression guard for a real gap found in final-branch review: an
+        operator misconfiguring APACZKA_SERVICE_TITLE_MAP with a service_id
+        that isn't in APACZKA_SERVICE_CATALOG must NOT silently create a
+        'pending' draft that would ship through an uncatalogued/wrong
+        courier channel — it must fall back to needs_review, exactly like
+        an unconfigured title map does."""
+        from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache
+
+        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=999999")
+        _reset_courier_maps_cache()
+        try:
+            order = _load_fixture("shopify_order_apaczka.json")
+            order["shipping_address"]["phone"] = "500600700"
+            order["customer"]["phone"] = "500600700"
+            storage = object()
+            _create_draft(order, store, storage)
+            drafts = store.list_drafts()
+            assert drafts[0]["apaczka_service_id"] is None
+            assert drafts[0]["status"] == "needs_review"
+        finally:
+            monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
+            _reset_courier_maps_cache()
+
+    def test_non_apaczka_draft_has_none_apaczka_service_id(self, store):
+        """InPost/Allegro drafts get apaczka_service_id=None, never validated."""
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        storage = object()
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        _create_draft(order, store, storage)
+        drafts = store.list_drafts()
+        assert drafts[0]["apaczka_service_id"] is None
+
 
 class TestExecuteDraftApaczka:
     def test_execute_apaczka_draft(self, client, store):
@@ -1519,13 +1760,16 @@ class TestGetLabelApaczka:
             "error": None,
         }
         store.upsert_draft(draft)
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.webhooks.get_secret") as mock_get_secret:
+            mock_get_secret.return_value = "tok"
             with patch(
                 "zdrovena.common.apaczka.ApaczkaClient.get_label", return_value=b"%PDF-1.4 apaczka"
             ):
                 resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=apaczka")
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/pdf"
+        requested_secrets = [c.args[0] for c in mock_get_secret.call_args_list]
+        assert "apaczka_service_id" not in requested_secrets
 
 
 class TestCreateDraftDispatchFail:
@@ -1775,18 +2019,22 @@ class TestCancelInpostDispatchEndpoint:
 
 class TestCancelApaczkaOrderEndpoint:
     def test_successful_cancel_returns_204(self, client):
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.webhooks.get_secret") as mock_get_secret:
+            mock_get_secret.return_value = "tok"
             with patch(
                 "zdrovena.common.apaczka.ApaczkaClient.cancel_shipment", return_value={}
             ) as mock_cancel:
                 resp = client.delete("/api/apaczka/orders/ord-55")
         assert resp.status_code == 204
         mock_cancel.assert_called_once_with("ord-55")
+        requested_secrets = [c.args[0] for c in mock_get_secret.call_args_list]
+        assert "apaczka_service_id" not in requested_secrets
 
     def test_409_on_business_error(self, client):
         from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
 
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.webhooks.get_secret") as mock_get_secret:
+            mock_get_secret.return_value = "tok"
             with patch(
                 "zdrovena.common.apaczka.ApaczkaClient.cancel_shipment",
                 side_effect=ApaczkaBusinessError(
@@ -1795,3 +2043,5 @@ class TestCancelApaczkaOrderEndpoint:
             ):
                 resp = client.delete("/api/apaczka/orders/ord-gone")
         assert resp.status_code == 409
+        requested_secrets = [c.args[0] for c in mock_get_secret.call_args_list]
+        assert "apaczka_service_id" not in requested_secrets

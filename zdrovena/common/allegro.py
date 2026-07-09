@@ -307,8 +307,14 @@ class AllegroClient:
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         return self._request("GET", path, params=params).json() or {}
 
-    def _post(self, path: str, json_body: dict[str, Any]) -> dict[str, Any]:
-        resp = self._request("POST", path, json_body=json_body)
+    def _post(
+        self,
+        path: str,
+        json_body: dict[str, Any],
+        *,
+        extra_headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        resp = self._request("POST", path, json_body=json_body, extra_headers=extra_headers)
         if resp.status_code == HTTPStatus.NO_CONTENT:
             return {}
         try:
@@ -396,13 +402,28 @@ class AllegroClient:
         invoice_number: str,
         file_type: str = "VAT",
     ) -> dict[str, Any]:
-        """Declare a new invoice for an order; returned id is used to upload PDF."""
+        """Declare a new invoice for an order; returned id is used to upload PDF.
+
+        Two real bugs found and fixed via a live test against a real order:
+        1. Allegro rejects this POST with 415 "Unsupported content type"
+           unless Content-Type is explicitly set to the same vendor media
+           type as Accept — `requests`' default `application/json` (set
+           automatically for `json=`) is not accepted here, even though
+           other POST/PUT endpoints in this client (e.g. create_shipment)
+           work fine without it.
+        2. `file.name` is required (422 "may not be null" otherwise) — Allegro's
+           own UI shows this as the invoice's displayed filename. Derived
+           from invoice_number with `/` replaced (invoice numbers like
+           "19/07/2026" aren't valid filename characters).
+        """
+        file_name = invoice_number.replace("/", "-") + ".pdf"
         return self._post(
             f"/order/checkout-forms/{order_id}/invoices",
             {
                 "invoiceNumber": invoice_number,
-                "file": {"type": file_type},
+                "file": {"type": file_type, "name": file_name},
             },
+            extra_headers={"Content-Type": _ACCEPT_HEADER},
         )
 
     def upload_invoice_file(

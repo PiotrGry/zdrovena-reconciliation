@@ -18,7 +18,7 @@ function fmtDate(iso) {
     }
 }
 
-function courierLabel(draft) {
+function courierLabel(draft, apaczkaServices = []) {
     if (draft.courier === 'allegro_delivery') {
         if (draft.allegro_sending_method === 'parcel_locker') return 'Wysyłam z Allegro (Paczkomat)'
         if (draft.allegro_sending_method === 'dispatch_order') return 'Wysyłam z Allegro (Kurier InPost)'
@@ -28,6 +28,10 @@ function courierLabel(draft) {
         if (draft.service === 'inpost_locker_standard') return 'InPost Paczkomat'
         if (draft.service === 'inpost_courier_standard') return 'InPost Kurier'
         return 'InPost'
+    }
+    if (draft.apaczka_service_id) {
+        const match = apaczkaServices.find(s => s.service_id === draft.apaczka_service_id)
+        if (match) return `Apaczka — ${match.label}`
     }
     return 'Apaczka'
 }
@@ -178,10 +182,11 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, busy, canManage, selected, onToggleSelect, forceOpen }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen }) {
     const { t, lang } = useT()
     const T = t[lang]
     const [open, setOpen] = useState(false)
+    const [selectedApaczkaService, setSelectedApaczkaService] = useState('')
 
     useEffect(() => {
         if (forceOpen !== undefined && forceOpen !== null) setOpen(forceOpen)
@@ -241,13 +246,20 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, b
                     {draft.receiver?.phone || ''}
                 </span>
                 <span style={{ display: 'flex', gap: 4, flexWrap: 'nowrap', overflow: 'hidden' }}><MaterialTags draft={draft} /></span>
-                <span><Pill kind={courierPillKind(draft)}>{courierLabel(draft)}</Pill></span>
+                <span><Pill kind={courierPillKind(draft)}>{courierLabel(draft, apaczkaServices)}</Pill></span>
                 <span className="mono dim" style={{ fontSize: '0.85em' }}>{fmtDate(draft.created_at)}</span>
                 <span>
-                    <Pill kind={draft.status === 'created' ? 'ok' : draft.status === 'pending' ? 'default' : draft.status === 'needs_review' ? 'warn' : 'warn'}>
+                    <Pill kind={
+                        draft.status === 'created' ? 'ok'
+                            : draft.status === 'pending' ? 'default'
+                            : draft.status === 'needs_review' ? 'warn'
+                            : draft.status === 'pending_confirmation' ? 'info'
+                            : 'warn'
+                    }>
                         {draft.status === 'pending' ? (T.sh_status_pending ?? 'oczekujące')
                             : draft.status === 'created' ? (T.sh_status_created ?? 'nadane')
                             : draft.status === 'needs_review' ? (T.sh_status_needs_review ?? 'do sprawdzenia')
+                            : draft.status === 'pending_confirmation' ? (T.sh_status_pending_confirmation ?? 'czeka na Allegro')
                             : (T.sh_status_error ?? 'błąd')}
                     </Pill>
                 </span>
@@ -333,6 +345,37 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, b
                         </div>
                     </div>
 
+                    {draft.courier === 'apaczka' && (
+                        <div style={{ marginTop: 12 }}>
+                            <div className="detail-label">{T.sh_apaczka_service_label ?? 'Serwis Apaczka'}</div>
+                            {draft.apaczka_service_id ? (
+                                <div>{apaczkaServices.find(s => s.service_id === draft.apaczka_service_id)?.label || draft.apaczka_service_id}</div>
+                            ) : (
+                                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+                                    <select
+                                        value={selectedApaczkaService}
+                                        onChange={e => setSelectedApaczkaService(e.target.value)}
+                                        disabled={isBusy}
+                                    >
+                                        <option value="">{T.sh_apaczka_service_placeholder ?? '— wybierz serwis —'}</option>
+                                        {apaczkaServices.map(s => (
+                                            <option key={s.service_id} value={s.service_id}>{s.label}</option>
+                                        ))}
+                                    </select>
+                                    <button
+                                        className="btn btn-secondary"
+                                        disabled={isBusy || !selectedApaczkaService}
+                                        onClick={() => onSetApaczkaService(draft, selectedApaczkaService)}
+                                    >
+                                        {isBusy
+                                            ? (T.sh_apaczka_service_save_busy ?? 'Zapisywanie…')
+                                            : (T.sh_apaczka_service_save ?? 'Zapisz')}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {draft.error && (
                         <div className="error-banner" style={{ marginTop: 8 }}>
                             <Icon name="alertTriangle" size={13} />
@@ -365,6 +408,20 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, b
                             >
                                 <Icon name="printer" size={13} />
                                 Drukuj etykietę
+                            </button>
+                        )}
+
+                        {draft.status === 'pending_confirmation' && (
+                            <button
+                                className="btn btn-secondary"
+                                onClick={() => onConfirmPending(draft)}
+                                disabled={isBusy}
+                                title="Allegro jeszcze przetwarza tę przesyłkę — sprawdzane automatycznie co 5s, albo kliknij żeby sprawdzić od razu"
+                            >
+                                {isBusy
+                                    ? <><Icon name="loader" size={13} className="spin" /> {T.sh_confirm_pending_busy ?? 'Sprawdzanie…'}</>
+                                    : <><Icon name="refresh" size={13} /> {T.sh_confirm_pending ?? 'Sprawdź status'}</>
+                                }
                             </button>
                         )}
 
@@ -449,6 +506,7 @@ export default function ShippingView() {
     const [bulkProgress, setBulkProgress] = useState(null)
     const [bulkPickupModal, setBulkPickupModal] = useState(false)
     const [expandAll, setExpandAll] = useState(null)
+    const [apaczkaServices, setApaczkaServices] = useState([])
 
     const load = useCallback(async () => {
         setLoading(true)
@@ -488,6 +546,27 @@ export default function ShippingView() {
             }
         }
         run()
+        return () => { cancelled = true }
+    }, [getToken])
+
+    useEffect(() => {
+        let cancelled = false
+        async function loadApaczkaServices() {
+            try {
+                const token = await getToken()
+                const res = await fetch('/api/shipping/apaczka-services', {
+                    headers: { Authorization: `Bearer ${token}` },
+                })
+                if (res.ok) {
+                    const body = await res.json()
+                    if (!cancelled) setApaczkaServices(body.services || [])
+                }
+            } catch {
+                // Non-critical: dropdown stays empty; PATCH still works via
+                // curl/Postman with a known service_id if this fetch fails.
+            }
+        }
+        loadApaczkaServices()
         return () => { cancelled = true }
     }, [getToken])
 
@@ -547,6 +626,63 @@ export default function ShippingView() {
             }
         })()
     }
+
+    function handleSetApaczkaService(draft, serviceId) {
+        return withBusy(draft.id, async () => {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ apaczka_service_id: serviceId, reviewed: true }),
+            })
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(body.detail || `${res.status}`)
+            }
+        })()
+    }
+
+    function handleConfirmPending(draft) {
+        return withBusy(draft.id, async () => {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}/confirm`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            // 202 = Allegro still processing, not an error — the auto-poll below
+            // (or another manual click) will check again.
+            if (!res.ok && res.status !== 202) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(body.detail || `${res.status}`)
+            }
+        })()
+    }
+
+    // Auto-poll drafts stuck in pending_confirmation (Allegro create-command still
+    // IN_PROGRESS) so the operator doesn't have to keep clicking "Sprawdź status".
+    const pendingConfirmationKey = drafts
+        .filter(d => d.status === 'pending_confirmation')
+        .map(d => d.id)
+        .join(',')
+
+    useEffect(() => {
+        if (!pendingConfirmationKey) return
+        const ids = pendingConfirmationKey.split(',')
+        const interval = setInterval(async () => {
+            try {
+                const token = await getToken()
+                await Promise.all(ids.map(id =>
+                    fetch(`/api/shipping/drafts/${id}/confirm`, {
+                        method: 'POST',
+                        headers: { Authorization: `Bearer ${token}` },
+                    }).catch(() => {})
+                ))
+                load()
+            } catch { /* retry on next tick */ }
+        }, 5000)
+        return () => clearInterval(interval)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pendingConfirmationKey])
 
     function handleMarkFulfilled(draft) {
         const isAllegro = draft.source === 'allegro'
@@ -662,6 +798,7 @@ export default function ShippingView() {
                         <option value="all">{T.sh_filter_all_status ?? 'Wszystkie statusy'}</option>
                         <option value="pending">{T.sh_status_pending ?? 'oczekujące'}</option>
                         <option value="created">{T.sh_status_created ?? 'nadane'}</option>
+                        <option value="pending_confirmation">{T.sh_status_pending_confirmation ?? 'czeka na Allegro'}</option>
                         <option value="error">{T.sh_status_error ?? 'błąd'}</option>
                     </select>
                     <select value={filterCourier} onChange={e => setFilterCourier(e.target.value)}
@@ -792,6 +929,9 @@ export default function ShippingView() {
                         onExecute={handleExecute}
                         onPickup={handlePickup}
                         onMarkFulfilled={handleMarkFulfilled}
+                        onConfirmPending={handleConfirmPending}
+                        onSetApaczkaService={handleSetApaczkaService}
+                        apaczkaServices={apaczkaServices}
                         selected={selectedDraftIds.has(draft.id)}
                         onToggleSelect={handleToggleSelect}
                         forceOpen={expandAll}

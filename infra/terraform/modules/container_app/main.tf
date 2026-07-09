@@ -101,6 +101,14 @@ resource "azurerm_container_app" "this" {
           value = var.applicationinsights_connection_string
         }
       }
+
+      dynamic "env" {
+        for_each = var.shopify_allowed_domains != "" ? [1] : []
+        content {
+          name  = "SHOPIFY_ALLOWED_DOMAINS"
+          value = var.shopify_allowed_domains
+        }
+      }
     }
   }
 }

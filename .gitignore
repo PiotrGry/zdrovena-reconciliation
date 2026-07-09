@@ -29,6 +29,10 @@ frontend/dist/
 .env
 .env.local
 .env.*.local
+*.agekey
+*.agekey.txt
+age*.key
+keys.txt
 
 # OS
 .DS_Store
@@ -63,3 +67,6 @@ htmlcov/
 .gstack/
 .env.smoke
 .venv-local
+
+# git worktrees (superpowers subagent-driven-development)
+.worktrees/

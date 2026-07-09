@@ -401,7 +401,6 @@ az keyvault secret set --vault-name $AKV --name inpost-organization-id  --value 
 
 az keyvault secret set --vault-name $AKV --name apaczka-app-id          --value "<app_id z Apaczka → Ustawienia → Web API>"
 az keyvault secret set --vault-name $AKV --name apaczka-app-secret      --value "<klucz HMAC z Apaczka → Ustawienia → Web API>"
-az keyvault secret set --vault-name $AKV --name apaczka-service-id      --value "<service_id dla domyślnego kuriera; reszta w kodzie>"
 
 az keyvault secret set --vault-name $AKV --name smsapi-token            --value "<token z SMSAPI.pl>"
 az keyvault secret set --vault-name $AKV --name notify-phone            --value "48XXXXXXXXX"
@@ -426,7 +425,6 @@ az keyvault secret set --vault-name $AKV --name sender-email            --value 
 | `inpost-organization-id` | ✅ 5289956 | ❌ do dodania | sprawdzić czy prod ID inne |
 | `apaczka-app-id` | ❌ brak | ❌ do dodania | |
 | `apaczka-app-secret` | ❌ brak | ❌ do dodania | |
-| `apaczka-service-id` | ❌ brak | ❌ do dodania | |
 | `smsapi-token` | ❌ brak | ❌ do dodania | |
 | `notify-phone` | ❌ brak | ❌ do dodania | |
 | `sender-name` | ❌ brak | ❌ do dodania | |
@@ -436,3 +434,8 @@ az keyvault secret set --vault-name $AKV --name sender-email            --value 
 | `sender-post-code` | ❌ brak | ❌ do dodania | |
 | `sender-phone` | ❌ brak | ❌ do dodania | |
 | `sender-email` | ❌ brak | ❌ do dodania | |
+
+> **Note (2026-07-09):** `apaczka-service-id` was removed from this checklist —
+> it's per-draft data now (set from the Shopify shipping-line title via
+> `APACZKA_SERVICE_TITLE_MAP`, or manually by an operator), never a global Key
+> Vault secret. See `docs/superpowers/specs/2026-07-09-apaczka-per-draft-service.md`.

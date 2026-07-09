@@ -383,6 +383,13 @@ class TestInvoicesApi:
         assert call.args[1] == f"{_BASE_URL_PROD}/order/checkout-forms/o1/invoices"
 
     def test_create_invoice_declaration_posts_metadata(self):
+        """P0 regression guard for two real bugs found via a live test
+        against a real order: (1) Allegro rejects this POST with 415 unless
+        Content-Type matches the vendor Accept media type — requests'
+        default `application/json` (auto-set for `json=`) is NOT accepted
+        here; (2) `file.name` is required (422 "may not be null" otherwise)
+        and must not contain the invoice number's literal `/` (not a valid
+        filename character)."""
         c = _make_client()
         with patch.object(c._session, "request") as req:
             req.side_effect = [self._auth_ok(), _ok({"id": "inv1"})]
@@ -394,8 +401,11 @@ class TestInvoicesApi:
         assert call.args[0].upper() == "POST"
         assert call.args[1] == f"{_BASE_URL_PROD}/order/checkout-forms/o1/invoices"
         body = call.kwargs.get("json") or {}
-        # exact payload shape is Allegro-specific; we assert core fields exist
-        assert "file" in body or "invoiceNumber" in body
+        assert body["invoiceNumber"] == "FV/1/2026"
+        assert body["file"]["type"] == "VAT"
+        assert body["file"]["name"] == "FV-1-2026.pdf"
+        assert "/" not in body["file"]["name"]
+        assert call.kwargs["headers"]["Content-Type"] == "application/vnd.allegro.public.v1+json"
 
     def test_upload_invoice_file_puts_pdf_bytes(self):
         c = _make_client()

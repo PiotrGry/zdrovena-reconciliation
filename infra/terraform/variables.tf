@@ -77,6 +77,12 @@ variable "swa_custom_domain" {
   default     = ""
 }
 
+variable "shopify_allowed_domains" {
+  description = "Comma-separated Shopify shop domain whitelist for the prod Container App (SHOPIFY_ALLOWED_DOMAINS). Required for prod: webhooks.py fails closed (rejects all Shopify webhooks) when APP_ENV=prod and this is unset."
+  type        = string
+  default     = "jvepcp-0p.myshopify.com"
+}
+
 variable "enable_private_network" {
   description = "Enable VNet + Service Endpoints for Storage and Key Vault (cost-optimized). Cost: ~€3/month (VNet traffic only). Service Endpoints = FREE (vs €14/month for Private Endpoints). Traffic via Microsoft backbone, firewall default_action=Deny, RBAC enforced. Sufficient for business data; upgrade to Private Endpoints if HIPAA/PCI-DSS compliance required."
   type        = bool

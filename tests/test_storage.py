@@ -178,6 +178,16 @@ class TestPathTraversalProtection:
         assert outside.exists()
         assert outside.read_bytes() == b"keep me"
 
+    def test_list_files_rejects_path_traversal(self, tmp_path):
+        root = tmp_path / "storage"
+        root.mkdir()
+        outside = tmp_path / "sibling"
+        outside.mkdir()
+        (outside / "secret.txt").write_bytes(b"SECRET")
+        svc = LocalStorageService(root=root)
+        with pytest.raises((ValueError, PermissionError, OSError)):
+            svc.list_files("../sibling")
+
 
 # ── get_storage_service factory ───────────────────────────────────────────────
 

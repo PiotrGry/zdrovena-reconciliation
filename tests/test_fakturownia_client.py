@@ -7,10 +7,14 @@ Fakturownia REST API v1:
          https://pomoc.fakturownia.pl/pola-przekazywane-z-programu-fakturownia-do-ksef-zgodnie-ze-schema-fa-3
 
 `settlement_positions` field (KSeF `Rozliczenie`):
-    Confirmed by official pomoc.fakturownia.pl mapping (2026-06-11).
-    Structure inferred from Rails conventions + KSeF FA(3) schema:
-        [{"kind": "charge"|"deduction", "amount": "<PLN>", "description": "<reason>"}]
-    Adapter isolates subfield names — tests assert contract, not literal keys.
+    Structure confirmed against the LIVE API (2026-07-09): the label field
+    is named `reason`, not `description` — both `description` and `name`
+    are rejected with a 422 "unknown attribute" error. Wire shape:
+        [{"kind": "charge"|"deduction", "amount": "<PLN>", "reason": "<text>"}]
+    FakturowniaClient's own `add_settlement_position`/
+    `has_settlement_with_description` keep their `description` PARAMETER
+    name for backward compatibility with existing callers; only the JSON
+    key sent to/read from the API is `reason`.
 """
 
 from __future__ import annotations
@@ -146,6 +150,73 @@ class TestUpdateInvoice:
                 client.update_invoice(111, {"buyer_name": ""})
 
 
+# ── create_invoice ───────────────────────────────────────────────────────────
+
+
+class TestCreateInvoice:
+    def test_create_invoice_posts_wrapped_payload(self, client):
+        payload = {
+            "kind": "vat",
+            "buyer_name": "Anna Nowak",
+            "positions": [
+                {"name": "HUMIO 6 PET", "tax": 8, "total_price_gross": 73.00, "quantity": 1}
+            ],
+        }
+        with patch("requests.Session.request", return_value=_resp({"id": 777, **payload})) as mock:
+            out = client.create_invoice(payload)
+            _, kwargs = mock.call_args
+            assert kwargs["method"] == "POST"
+            assert kwargs["url"].endswith("/invoices.json")
+            body = kwargs["json"]
+            assert body["api_token"] == "test-token-abc"
+            assert body["invoice"] == payload
+            assert out["id"] == 777
+
+    def test_create_invoice_422_raises_business_error(self, client):
+        err = {"code": "error", "message": {"buyer_name": ["can't be blank"]}}
+        with patch("requests.Session.request", return_value=_resp(err, status=422)):
+            with pytest.raises(FakturowniaBusinessError):
+                client.create_invoice({"kind": "vat", "positions": []})
+
+    def test_create_invoice_401_raises_auth_error(self, client):
+        with patch(
+            "requests.Session.request", return_value=_resp({"code": "unauthorized"}, status=401)
+        ):
+            with pytest.raises(FakturowniaAuthError):
+                client.create_invoice({"kind": "vat", "positions": []})
+
+    def test_create_invoice_500_raises_server_error(self, client):
+        with patch("requests.Session.request", return_value=_resp({}, status=500)):
+            with pytest.raises(FakturowniaServerError):
+                client.create_invoice({"kind": "vat", "positions": []})
+
+
+# ── get_invoice_pdf ──────────────────────────────────────────────────────────
+
+
+class TestGetInvoicePdf:
+    def test_get_invoice_pdf_returns_raw_bytes(self, client):
+        r = _resp(status=200)
+        r.content = b"%PDF-1.4 fake pdf bytes"
+        with patch("requests.Session.request", return_value=r) as mock:
+            out = client.get_invoice_pdf(777)
+            assert out == b"%PDF-1.4 fake pdf bytes"
+            _, kwargs = mock.call_args
+            assert kwargs["method"] == "GET"
+            assert "/invoices/777.pdf" in kwargs["url"]
+            assert kwargs["params"]["api_token"] == "test-token-abc"
+
+    def test_get_invoice_pdf_404_raises_business_error(self, client):
+        with patch("requests.Session.request", return_value=_resp({}, status=404)):
+            with pytest.raises(FakturowniaBusinessError):
+                client.get_invoice_pdf(999999)
+
+    def test_get_invoice_pdf_500_raises_server_error(self, client):
+        with patch("requests.Session.request", return_value=_resp({}, status=500)):
+            with pytest.raises(FakturowniaServerError):
+                client.get_invoice_pdf(777)
+
+
 # ── add_settlement_position (KSeF Rozliczenie / kaucja) ─────────────────────
 
 
@@ -154,7 +225,7 @@ class TestAddSettlementPosition:
         """Adds a `charge` (obciążenie) to invoice.
 
         Contract: sends PUT with `settlement_positions` containing
-        {kind, amount, description}. Preserves any pre-existing settlements.
+        {kind, amount, reason}. Preserves any pre-existing settlements.
         """
         # Existing invoice has NO settlement_positions
         existing = {"id": 500, "number": "FV/2025/500", "settlement_positions": []}
@@ -183,7 +254,7 @@ class TestAddSettlementPosition:
         row = settlements[0]
         assert row["kind"] == "charge"
         assert row["amount"] == "5.00"
-        assert row["description"] == "Kaucja za opakowania zwrotne"
+        assert row["reason"] == "Kaucja za opakowania zwrotne"
 
     def test_add_deduction_kind(self, client):
         existing = {"id": 600, "settlement_positions": []}
@@ -203,7 +274,7 @@ class TestAddSettlementPosition:
         existing = {
             "id": 700,
             "settlement_positions": [
-                {"id": 42, "kind": "deduction", "amount": "2.00", "description": "Kompensata"},
+                {"id": 42, "kind": "deduction", "amount": "2.00", "reason": "Kompensata"},
             ],
         }
         with patch("requests.Session.request") as mock:
@@ -220,7 +291,7 @@ class TestAddSettlementPosition:
         assert any(s.get("id") == 42 for s in settlements)
         # new row appended
         assert any(
-            s.get("kind") == "charge" and s.get("description") == "Kaucja za opakowania zwrotne"
+            s.get("kind") == "charge" and s.get("reason") == "Kaucja za opakowania zwrotne"
             for s in settlements
         )
 
@@ -287,7 +358,7 @@ class TestAddSettlementPosition:
                     "id": 77,
                     "kind": "charge",
                     "amount": "5.00",
-                    "description": "Kaucja za opakowania zwrotne",
+                    "reason": "Kaucja za opakowania zwrotne",
                 }
             ],
         }
@@ -314,7 +385,7 @@ class TestAddSettlementPosition:
         existing = {
             "id": 951,
             "settlement_positions": [
-                {"id": 1, "description": "  KAUCJA za opakowania zwrotne  "},
+                {"id": 1, "reason": "  KAUCJA za opakowania zwrotne  "},
             ],
         }
         with patch("requests.Session.request") as mock:
@@ -335,7 +406,7 @@ class TestHasSettlementWithDescription:
     def test_returns_true_when_matching_description_exists(self):
         invoice = {
             "settlement_positions": [
-                {"kind": "charge", "amount": "5.00", "description": "Kaucja za opakowania zwrotne"},
+                {"kind": "charge", "amount": "5.00", "reason": "Kaucja za opakowania zwrotne"},
             ]
         }
         assert (
@@ -348,7 +419,7 @@ class TestHasSettlementWithDescription:
     def test_returns_false_when_no_match(self):
         invoice = {
             "settlement_positions": [
-                {"kind": "deduction", "amount": "2.00", "description": "Kompensata"},
+                {"kind": "deduction", "amount": "2.00", "reason": "Kompensata"},
             ]
         }
         assert (
@@ -370,7 +441,7 @@ class TestHasSettlementWithDescription:
     def test_match_is_case_insensitive_and_stripped(self):
         invoice = {
             "settlement_positions": [
-                {"description": "  KAUCJA za opakowania zwrotne  "},
+                {"reason": "  KAUCJA za opakowania zwrotne  "},
             ]
         }
         assert (
