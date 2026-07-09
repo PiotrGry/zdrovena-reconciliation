@@ -1075,6 +1075,41 @@ class TestRunApaczka:
         assert result["tracking_number"] == "WAY001"
         assert result["status"] == "created"
 
+    def test_uses_draft_apaczka_service_id_not_secret(self):
+        """P0 regression guard: service_id must come from the draft, never
+        from a get_secret('apaczka_service_id') call (that secret no longer
+        exists — see docs/superpowers/specs/2026-07-09-apaczka-per-draft-service.md)."""
+        from zdrovena.api.routers.webhooks import _run_apaczka
+
+        storage_mock = object()
+        draft = {
+            "id": "d-ap-2",
+            "shopify_order_number": "1061",
+            "courier": "apaczka",
+            "service": "apaczka",
+            "apaczka_service_id": "53",
+            "receiver": {
+                "first_name": "Anna",
+                "last_name": "N",
+                "email": "a@n.pl",
+                "phone": "800300401",
+                "locker_id": "",
+            },
+            "shipping_address": {"street": "Polna 1", "city": "Poznań", "post_code": "60-001"},
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret") as mock_get_secret:
+            mock_get_secret.return_value = "tok"
+            with patch("zdrovena.common.apaczka.ApaczkaClient") as MockClient:
+                MockClient.return_value.create_shipment.return_value = {
+                    "id": "ap-2",
+                    "waybill_number": "WAY002",
+                }
+                _run_apaczka(draft, _SENDER, storage_mock)
+
+        MockClient.assert_called_once_with("tok", "tok", "53", storage_mock)
+        requested_secrets = [c.args[0] for c in mock_get_secret.call_args_list]
+        assert "apaczka_service_id" not in requested_secrets
+
 
 class TestCreateDraft:
     def test_inpost_kurier_draft_stored_on_success(self, store, tmp_path):

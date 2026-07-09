@@ -589,7 +589,7 @@ def _run_apaczka(
 
     app_id = get_secret("apaczka_app_id")
     app_secret = get_secret("apaczka_app_secret")
-    service_id = get_secret("apaczka_service_id")
+    service_id = draft.get("apaczka_service_id") or ""
     client = ApaczkaClient(app_id, app_secret, service_id, storage)
 
     receiver = draft.get("receiver") or {}
@@ -1821,8 +1821,9 @@ def cancel_apaczka_order(
 
     app_id = get_secret("apaczka_app_id")
     app_secret = get_secret("apaczka_app_secret")
-    service_id = get_secret("apaczka_service_id")
-    client = ApaczkaClient(app_id, app_secret, service_id, storage)
+    # No draft available here (only order_id) and cancel_shipment() never
+    # reads service_id — pass an empty placeholder rather than looking one up.
+    client = ApaczkaClient(app_id, app_secret, "", storage)
     try:
         client.cancel_shipment(order_id)
     except ZdrovenaShippingError as exc:
@@ -1933,7 +1934,9 @@ def get_label(
 
             app_id = get_secret("apaczka_app_id")
             app_secret = get_secret("apaczka_app_secret")
-            service_id = get_secret("apaczka_service_id")
+            # get_label() never reads service_id (verified in apaczka.py), but
+            # pass the real per-draft value anyway for consistency/future-proofing.
+            service_id = draft.get("apaczka_service_id") or ""
             pdf_bytes = ApaczkaClient(app_id, app_secret, service_id, storage).get_label(label_id)
         elif courier == "allegro_delivery":
             client = _get_allegro_client()
