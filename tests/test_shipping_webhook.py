@@ -1449,14 +1449,18 @@ class TestCreateDraftApaczka:
 
         monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
         _reset_courier_maps_cache()
-        order = _load_fixture("shopify_order_apaczka.json")
-        order["shipping_address"]["phone"] = "500600700"
-        order["customer"]["phone"] = "500600700"
-        storage = object()
-        _create_draft(order, store, storage)
-        drafts = store.list_drafts()
-        assert drafts[0]["apaczka_service_id"] is None
-        assert drafts[0]["status"] == "needs_review"
+        try:
+            order = _load_fixture("shopify_order_apaczka.json")
+            order["shipping_address"]["phone"] = "500600700"
+            order["customer"]["phone"] = "500600700"
+            storage = object()
+            _create_draft(order, store, storage)
+            drafts = store.list_drafts()
+            assert drafts[0]["apaczka_service_id"] is None
+            assert drafts[0]["status"] == "needs_review"
+        finally:
+            monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
+            _reset_courier_maps_cache()
 
     def test_apaczka_service_id_matched_allows_pending(self, store, monkeypatch):
         """Same phone fix as above, but WITH a matching title map — status

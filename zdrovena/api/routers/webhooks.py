@@ -1039,6 +1039,12 @@ def _create_draft(
     # fix: normalize phone
     phone = normalize_pl_phone(phone) if phone else phone
 
+    needs_review = (
+        packages_count > 1
+        or phone is None
+        or (courier == "apaczka" and apaczka_service_id is None)
+    )
+
     record: dict[str, Any] = {
         "id": str(uuid.uuid4()),
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -1053,15 +1059,7 @@ def _create_draft(
         "tracking_number": None,
         "courier_draft_id": None,
         "dispatch_order_id": None,  # fix #6: field exists from creation
-        "status": (
-            "needs_review"
-            if (
-                packages_count > 1
-                or phone is None
-                or (courier == "apaczka" and apaczka_service_id is None)
-            )
-            else "pending"
-        ),
+        "status": "needs_review" if needs_review else "pending",
         "packages_count": packages_count,
         "packages_breakdown": packages_breakdown,
         "total_qty": total_qty,
