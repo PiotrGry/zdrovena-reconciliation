@@ -265,7 +265,9 @@ class AllegroClient:
             try:
                 self._token_store.save_access_token(self._access_token, self._expires_at)  # type: ignore[union-attr]
             except Exception:
-                logger.warning("Failed to persist access token — process continues but restart will need refresh")
+                logger.warning(
+                    "Failed to persist access token — process continues but restart will need refresh"
+                )
         # Refresh tokens rotate on every use. Persist the new one to the
         # injected store so a process restart does not lose it. A failed
         # persist is logged at ERROR by the store; we still keep the token
