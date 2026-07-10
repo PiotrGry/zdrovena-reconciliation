@@ -388,7 +388,11 @@ def _sync_shopify_fulfillment(
     courier_key = (courier or "").lower()
     tracking_company = _SHOPIFY_COURIER_COMPANY.get(courier_key, courier or "")
     tracking_url_tpl = _SHOPIFY_COURIER_TRACKING_URL.get(courier_key)
-    tracking_url = tracking_url_tpl.format(number=tracking_number) if tracking_url_tpl and tracking_number else None
+    tracking_url = (
+        tracking_url_tpl.format(number=tracking_number)
+        if tracking_url_tpl and tracking_number
+        else None
+    )
 
     payload: dict[str, Any] = {
         "fulfillment": {
@@ -1927,7 +1931,9 @@ def mark_fulfilled(
     shopify_side_effect: dict[str, Any] | None = None
     is_shopify = draft.get("source") == "shopify"
     if is_shopify:
-        shopify_order_id = str(draft.get("external_order_id") or draft.get("shopify_order_id") or "")
+        shopify_order_id = str(
+            draft.get("external_order_id") or draft.get("shopify_order_id") or ""
+        )
         if shopify_order_id:
             try:
                 shopify_side_effect = _sync_shopify_fulfillment(
