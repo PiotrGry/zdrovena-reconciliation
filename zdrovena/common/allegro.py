@@ -43,6 +43,9 @@ _AUTH_URL_SANDBOX = "https://allegro.pl.allegrosandbox.pl/auth/oauth/token"
 _ACCEPT_HEADER = "application/vnd.allegro.public.v1+json"
 _DEFAULT_TIMEOUT = int(os.environ.get("ALLEGRO_HTTP_TIMEOUT", "30"))
 
+_SECRET_ACCESS_TOKEN = "allegro-access-token"
+_SECRET_ACCESS_EXPIRY = "allegro-access-token-expiry"
+
 # Refresh window before actual expiry so we never hand out an about-to-expire token.
 _TOKEN_REFRESH_SKEW_S = 30
 
@@ -103,6 +106,26 @@ class SecretsAllegroTokenStore:
         from zdrovena.common.secrets import set_secret
 
         return set_secret(self._SECRET_NAME, token)
+
+    def load_access_token(self) -> tuple[str, float] | None:
+        """Return (token, expiry_epoch) if a valid persisted AT exists, else None."""
+        from zdrovena.common.secrets import get_secret
+
+        at = get_secret(_SECRET_ACCESS_TOKEN, required=False)
+        expiry_str = get_secret(_SECRET_ACCESS_EXPIRY, required=False)
+        if not at or not expiry_str:
+            return None
+        try:
+            return (at, float(expiry_str))
+        except ValueError:
+            return None
+
+    def save_access_token(self, token: str, expiry: float) -> bool:
+        from zdrovena.common.secrets import set_secret
+
+        ok1 = set_secret(_SECRET_ACCESS_TOKEN, token)
+        ok2 = set_secret(_SECRET_ACCESS_EXPIRY, str(expiry))
+        return ok1 and ok2
 
 
 def _normalize_pickup_proposals(data: Any) -> list[dict[str, Any]]:
@@ -216,6 +239,16 @@ class AllegroClient:
         except requests.ConnectionError as exc:
             raise CourierConnectionError(courier="allegro", detail=str(exc)) from exc
 
+        if resp.status_code == 400:
+            _err_msg = ""
+            try:
+                _err_msg = resp.json().get("error", "") or ""
+            except Exception:
+                pass
+            raise AllegroAuthError(
+                detail=f"Refresh token rejected (HTTP 400, error={_err_msg!r}). "
+                "Run: zdrovena allegro-auth"
+            )
         if resp.status_code in (401, 403):
             raise AllegroAuthError(detail=(resp.text or "")[:200])
         if not resp.ok:
@@ -228,6 +261,11 @@ class AllegroClient:
         self._access_token = token
         expires_in = int(payload.get("expires_in", 43200))
         self._expires_at = time.time() + max(expires_in - _TOKEN_REFRESH_SKEW_S, 0)
+        if hasattr(self._token_store, "save_access_token"):
+            try:
+                self._token_store.save_access_token(self._access_token, self._expires_at)  # type: ignore[union-attr]
+            except Exception:
+                logger.warning("Failed to persist access token — process continues but restart will need refresh")
         # Refresh tokens rotate on every use. Persist the new one to the
         # injected store so a process restart does not lose it. A failed
         # persist is logged at ERROR by the store; we still keep the token
@@ -250,7 +288,18 @@ class AllegroClient:
 
     def _get_token(self) -> str:
         if self._access_token is None or time.time() >= self._expires_at:
-            self._fetch_token()
+            # On first call (access_token is None), try loading a persisted AT
+            # from the store — avoids burning the refresh token on every cron
+            # job start when the AT may still be valid from the previous run.
+            if self._access_token is None and hasattr(self._token_store, "load_access_token"):
+                cached = self._token_store.load_access_token()  # type: ignore[union-attr]
+                if cached:
+                    at, expiry = cached
+                    if expiry - _TOKEN_REFRESH_SKEW_S > time.time():
+                        self._access_token = at
+                        self._expires_at = expiry
+            if self._access_token is None or time.time() >= self._expires_at:
+                self._fetch_token()
         assert self._access_token is not None
         return self._access_token
 
