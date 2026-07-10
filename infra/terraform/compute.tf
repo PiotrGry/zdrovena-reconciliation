@@ -138,7 +138,12 @@ resource "null_resource" "api_prod_easyauth" {
   }
 
   provisioner "local-exec" {
-    command = <<-EOT
+    # on_failure = continue: on a greenfield deploy EasyAuth may not be
+    # initialized yet (az containerapp auth update fails with ResourceNotFound).
+    # The webhook paths remain protected by the app's HMAC check. Re-run
+    # `terraform apply` after manually enabling EasyAuth to set excludedPaths.
+    on_failure = continue
+    command    = <<-EOT
       az containerapp auth update \
         --name "${module.api_prod.name}" \
         --resource-group "${azurerm_resource_group.rg.name}" \

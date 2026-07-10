@@ -255,6 +255,81 @@ def _get_allegro_client() -> Any | None:
     )
 
 
+def _get_fakturownia_client() -> Any | None:
+    """Build a FakturowniaClient from Key Vault secrets. Returns None if missing."""
+    from zdrovena.common.config import KEYCHAIN_SERVICE_FAKTUROWNIA
+    from zdrovena.common.exceptions import MissingSecretError
+
+    try:
+        token = get_secret(KEYCHAIN_SERVICE_FAKTUROWNIA)
+    except MissingSecretError:
+        return None
+    from zdrovena.common.client import FakturowniaClient
+
+    return FakturowniaClient(api_token=token)
+
+
+def _sync_shopify_orders_from_api(
+    shop_domain: str,
+    api_token: str,
+    shipping_store: ShippingStore,
+    storage: Any,
+) -> dict[str, int]:
+    """Fetch unfulfilled open Shopify orders via REST API and create missing drafts.
+
+    Uses external_order_id (Shopify order id) for idempotency — existing drafts
+    (any status) with the same id are skipped so we never create duplicates.
+    """
+    import requests
+
+    stats: dict[str, int] = {"fetched": 0, "created": 0, "skipped": 0, "errors": 0}
+    # limit=50 is intentional for v1 — covers typical daily volume.
+    # If >50 unfulfilled orders pile up, a second sync call will catch the rest
+    # (dedup skips already-created drafts). No cursor pagination implemented.
+    resp = requests.get(
+        f"https://{shop_domain}/admin/api/2024-01/orders.json",
+        params={
+            "status": "open",
+            "fulfillment_status": "unfulfilled",
+            "limit": 50,
+            "fields": "id,order_number,name,email,phone,shipping_address,shipping_lines,line_items,note_attributes,customer",
+        },
+        headers={"X-Shopify-Access-Token": api_token},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    orders = resp.json().get("orders", [])
+    stats["fetched"] = len(orders)
+    if not orders:
+        return stats
+
+    # High limit: list_drafts fetches all Table Storage rows anyway; the cap
+    # only affects the returned slice. 10_000 covers any realistic store size
+    # and prevents silent duplicate-draft creation on stores with >200 total orders.
+    existing_drafts = shipping_store.list_drafts(limit=10_000)
+    existing_order_ids = {
+        str(d.get("external_order_id", ""))
+        for d in existing_drafts
+        if d.get("source") == "shopify" and d.get("external_order_id")
+    }
+
+    for order in orders:
+        order_id = str(order.get("id", ""))
+        if order_id in existing_order_ids:
+            stats["skipped"] += 1
+            continue
+        try:
+            _create_draft(order, shipping_store, storage, source="shopify")
+            stats["created"] += 1
+        except Exception:
+            logger.exception(
+                "Shopify sync: draft creation failed for order %s", order.get("order_number")
+            )
+            stats["errors"] += 1
+
+    return stats
+
+
 def _maybe_push_tracking_to_allegro(draft: dict[str, Any]) -> None:
     """After a shipment is created, push the waybill back to Allegro.
 
@@ -2023,3 +2098,53 @@ def get_label(
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
+
+
+@router.post(
+    "/shipping/sync",
+    status_code=status.HTTP_200_OK,
+    summary="Manually trigger order sync from Allegro and Shopify",
+)
+def sync_orders(
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+    shipping_store: ShippingStoreDep,
+    storage: StorageDep,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {"allegro": None, "shopify": None}
+
+    allegro_client = _get_allegro_client()
+    if allegro_client is not None:
+        try:
+            fakturownia_client = _get_fakturownia_client()
+            from zdrovena.api.routers.allegro_poller import poll_orders_once
+
+            result["allegro"] = poll_orders_once(
+                client=allegro_client,
+                shipping_store=shipping_store,
+                storage=storage,
+                fakturownia_client=fakturownia_client,
+            )
+        except Exception as exc:
+            logger.exception("Allegro sync failed: %s", exc)
+            result["allegro"] = {"error": str(exc)}
+    else:
+        result["allegro"] = {"error": "credentials_not_configured"}
+
+    shopify_token = get_secret("shopify_api_token", required=False)
+    allowed_domains = _allowed_shopify_domains()
+    if shopify_token and allowed_domains:
+        shop_domain = next(iter(allowed_domains))
+        try:
+            result["shopify"] = _sync_shopify_orders_from_api(
+                shop_domain=shop_domain,
+                api_token=shopify_token,
+                shipping_store=shipping_store,
+                storage=storage,
+            )
+        except Exception as exc:
+            logger.exception("Shopify sync failed: %s", exc)
+            result["shopify"] = {"error": str(exc)}
+    else:
+        result["shopify"] = {"skipped": "not_configured"}
+
+    return result
