@@ -337,6 +337,7 @@ class AllegroClient:
         self,
         *,
         status: str | None = None,
+        fulfillment_status: str | None = None,
         bought_at_gte: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
@@ -344,13 +345,18 @@ class AllegroClient:
         """List checkout forms (buyer orders).
 
         Filters (all optional):
-            status: e.g. "READY_FOR_PROCESSING" | "BOUGHT" | "PROCESSING"
+            status: payment/order status, e.g. "READY_FOR_PROCESSING" | "BOUGHT"
+            fulfillment_status: shipment status, e.g. "NEW" | "PROCESSING" | "SENT"
+                Note: status=READY_FOR_PROCESSING does NOT imply not-yet-shipped;
+                use fulfillment_status=NEW to exclude already-sent orders.
             bought_at_gte: ISO 8601 timestamp (line-items purchased at ≥ this)
             limit / offset: pagination
         """
         params: dict[str, Any] = {}
         if status:
             params["status"] = status
+        if fulfillment_status:
+            params["fulfillment.status"] = fulfillment_status
         if bought_at_gte:
             params["lineItems.boughtAt.gte"] = bought_at_gte
         if limit is not None:
