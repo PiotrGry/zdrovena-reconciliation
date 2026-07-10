@@ -54,3 +54,72 @@ module "api_staging" {
   memory                                = var.container_app_memory
   tags                                  = merge(local.tags, { environment = "staging" })
 }
+
+# ── Allegro Poller — Container App Job (scheduled cron) ───────────────────────
+# Allegro has no webhooks, so we poll every 5 minutes.
+# Uses the same Docker image as api_prod; CI updates the image via
+# `az containerapp job update --image <acr>/<img>:<sha>` after each deploy.
+
+resource "azurerm_container_app_job" "allegro_poller" {
+  name                         = "${var.prefix}-allegro-poller"
+  location                     = azurerm_resource_group.rg.location
+  resource_group_name          = azurerm_resource_group.rg.name
+  container_app_environment_id = azurerm_container_app_environment.env.id
+  tags                         = local.tags
+
+  replica_timeout_in_seconds = 300
+  replica_retry_limit        = 1
+
+  schedule_trigger_config {
+    cron_expression          = "*/5 * * * *"
+    parallelism              = 1
+    replica_completion_count = 1
+  }
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  registry {
+    server   = azurerm_container_registry.acr.login_server
+    identity = "System"
+  }
+
+  template {
+    container {
+      name   = "poller"
+      image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+      cpu    = 0.25
+      memory = "0.5Gi"
+
+      command = ["zdrovena", "allegro-poll"]
+
+      env {
+        name  = "AZURE_KEYVAULT_URL"
+        value = azurerm_key_vault.kv.vault_uri
+      }
+      env {
+        name  = "AZURE_STORAGE_ACCOUNT_URL"
+        value = "https://${azurerm_storage_account.storage.name}.blob.core.windows.net"
+      }
+      env {
+        name  = "AZURE_STORAGE_CONTAINER"
+        value = azurerm_storage_container.files.name
+      }
+      env {
+        name  = "APPLICATIONINSIGHTS_CONNECTION_STRING"
+        value = azurerm_application_insights.ai.connection_string
+      }
+      env {
+        name  = "ALLEGRO_ENV"
+        value = "prod"
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      template[0].container[0].image,
+    ]
+  }
+}

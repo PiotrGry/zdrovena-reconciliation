@@ -25,7 +25,7 @@ _env_file = Path(__file__).resolve().parent.parent / ".env"
 if _env_file.is_file():
     load_dotenv(_env_file)
 
-from zdrovena.api.commands import files_cmd, health_cmd  # noqa: E402
+from zdrovena.api.commands import allegro_poll_cmd, files_cmd, health_cmd  # noqa: E402
 from zdrovena.audit.commands import (  # noqa: E402
     audit_cmd,
     export,
@@ -122,6 +122,7 @@ def main() -> None:
     setup_cmd.add_subparser(subparsers)
     files_cmd.add_subparser(subparsers)
     health_cmd.add_subparser(subparsers)
+    allegro_poll_cmd.add_subparser(subparsers)
 
     args = parser.parse_args()
 

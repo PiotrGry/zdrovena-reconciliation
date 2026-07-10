@@ -30,6 +30,7 @@ for _name in (
     "azure.identity",
     "azure.storage",
     "azure.data.tables",
+    "azure.monitor.opentelemetry",
 ):
     logging.getLogger(_name).setLevel(_azure_log_level)
 

@@ -108,3 +108,29 @@ resource "azurerm_role_assignment" "github_kv_secrets_user" {
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.github_actions.principal_id
 }
+
+# ── RBAC: Allegro Poller Job → ACR, Storage, Key Vault ────────────────────────
+
+resource "azurerm_role_assignment" "poller_acr_pull" {
+  scope                = azurerm_container_registry.acr.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_container_app_job.allegro_poller.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "poller_storage_blob" {
+  scope                = azurerm_storage_container.files.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_container_app_job.allegro_poller.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "poller_storage_table" {
+  scope                = azurerm_storage_account.storage.id
+  role_definition_name = "Storage Table Data Contributor"
+  principal_id         = azurerm_container_app_job.allegro_poller.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "poller_kv_secrets_user" {
+  scope                = azurerm_key_vault.kv.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_container_app_job.allegro_poller.identity[0].principal_id
+}
