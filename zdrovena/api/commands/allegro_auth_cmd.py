@@ -70,7 +70,7 @@ def run(args: argparse.Namespace) -> None:
     expires_in = int(d.get("expires_in", 600))
 
     print(f"\n{'=' * 60}")
-    print(f"  Open this URL in your browser:")
+    print("  Open this URL in your browser:")
     print(f"  {verification_uri}")
     print(f"\n  Enter this code when prompted: {user_code}")
     print(f"{'=' * 60}")
