@@ -122,15 +122,15 @@ class TestMarkFulfilledAllegro:
         assert body["allegro_side_effect"] is True
         assert body["fulfilled_by"] == "dev@localhost"
 
-        # Allegro client was called exactly once with the external order id.
-        fake_client.mark_order_processed.assert_called_once_with("ORD-42")
+        # Allegro client was called exactly once with the external order id and SENT status.
+        fake_client.mark_order_processed.assert_called_once_with("ORD-42", status="SENT")
 
         # Persisted state — both generic and Allegro mirror fields.
         draft = store.get_draft(draft_id)
         assert draft["fulfillment_status"] == "fulfilled"
         assert draft["fulfilled_at"] == body["fulfilled_at"]
         assert draft["fulfilled_by"] == "dev@localhost"
-        assert draft["allegro_fulfillment_status"] == "PROCESSING"
+        assert draft["allegro_fulfillment_status"] == "SENT"
         assert draft["allegro_marked_processed_at"] == body["fulfilled_at"]
         assert draft["allegro_marked_processed_by"] == "dev@localhost"
 
@@ -168,7 +168,7 @@ class TestMarkFulfilledIdempotency:
         assert second_body["fulfilled_by"] == first.json()["fulfilled_by"]
 
         # Allegro.mark_order_processed was called exactly ONCE across both calls.
-        fake_client.mark_order_processed.assert_called_once_with("ORD-99")
+        fake_client.mark_order_processed.assert_called_once_with("ORD-99", status="SENT")
 
 
 # ── error paths ──────────────────────────────────────────────────────────────

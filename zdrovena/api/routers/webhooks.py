@@ -1776,9 +1776,10 @@ def mark_fulfilled(
     ``fulfilled_by``) for every draft, regardless of source.
 
     For Allegro drafts we additionally invoke
-    ``AllegroClient.mark_order_processed(external_order_id)`` to move the order
-    to ``PROCESSING`` on Allegro's side, and mirror the timestamps into the
-    legacy ``allegro_fulfillment_status`` / ``allegro_marked_processed_*`` fields.
+    ``AllegroClient.mark_order_processed(external_order_id, status="SENT")`` to
+    move the order to ``SENT`` on Allegro's side (the parcel has left), and mirror
+    the timestamps into the legacy ``allegro_fulfillment_status`` /
+    ``allegro_marked_processed_*`` fields.
 
     Re-running this endpoint is safe: if the draft is already fulfilled we
     return 200 without hitting Allegro again.
@@ -1812,7 +1813,7 @@ def mark_fulfilled(
         if client is None:
             raise HTTPException(status_code=502, detail="Allegro credentials missing")
         try:
-            client.mark_order_processed(str(external_order_id))
+            client.mark_order_processed(str(external_order_id), status="SENT")
             allegro_side_effect = True
         except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
             logger.exception("Allegro mark_order_processed failed for draft %s", draft_id)
@@ -1832,7 +1833,7 @@ def mark_fulfilled(
     if is_allegro:
         # Keep the Allegro-specific mirror fields for backwards compatibility
         # with any UI/report that already reads them.
-        patch["allegro_fulfillment_status"] = "PROCESSING"
+        patch["allegro_fulfillment_status"] = "SENT"
         patch["allegro_marked_processed_at"] = marked_at
         patch["allegro_marked_processed_by"] = marked_by
 
