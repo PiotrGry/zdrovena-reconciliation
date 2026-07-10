@@ -6,10 +6,6 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.2"
     }
-    azapi = {
-      source  = "azure/azapi"
-      version = "~> 2.0"
-    }
   }
 
   # Backend config passed via: terraform init -backend-config=backend.hcl
@@ -23,5 +19,4 @@ provider "azurerm" {
   features {}
 }
 
-provider "azapi" {}
 

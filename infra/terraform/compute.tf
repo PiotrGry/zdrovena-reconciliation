@@ -124,27 +124,25 @@ resource "azurerm_container_app_job" "allegro_poller" {
   }
 }
 
-# ── EasyAuth: allow Shopify webhooks through without a Bearer token ────────────
-# azurerm does not expose globalValidation.excludedPaths, so we use azapi to
-# PATCH the authConfigs/current ARM resource directly. The Python handler
-# validates every request with HMAC-SHA256 (shopify-webhook-secret in Key
-# Vault), so bypassing EasyAuth here is not a security regression.
+# ── EasyAuth: Shopify webhook excluded paths ───────────────────────────────────
+# azurerm does not expose globalValidation.excludedPaths and azapi requires
+# EasyAuth to be initialised before it can PATCH authConfigs/current.
+# Applied once via CLI (out-of-band) and persisted by Azure:
+#
+#   az containerapp auth update \
+#     --name <app> --resource-group <rg> \
+#     --unauthenticated-client-action Return401 \
+#     --excluded-paths "/api/webhooks/shopify/order-created,/api/webhooks/shopify/order-create"
+#
+# Re-run if the Container App is ever recreated from scratch.
 
-resource "azapi_update_resource" "api_prod_easyauth" {
-  type        = "Microsoft.App/containerApps/authConfigs@2024-03-01"
-  resource_id = "${azurerm_resource_group.rg.id}/providers/Microsoft.App/containerApps/${module.api_prod.name}/authConfigs/current"
-
-  body = {
-    properties = {
-      globalValidation = {
-        unauthenticatedClientAction = "Return401"
-        excludedPaths = [
-          "/api/webhooks/shopify/order-created",
-          "/api/webhooks/shopify/order-create",
-        ]
-      }
-    }
-  }
-
-  depends_on = [module.api_prod]
+# ── Import: Allegro Poller job pre-exists in Azure ────────────────────────────
+# CI deploy creates the job image via az containerapp job update before
+# Terraform has a chance to run, so the resource exists in Azure but not in
+# state. This block imports it on the next terraform apply, which then lets
+# Terraform create the RBAC assignments (AcrPull, Storage, Key Vault) for
+# the job's managed identity.
+import {
+  to = azurerm_container_app_job.allegro_poller
+  id = "/subscriptions/${var.subscription_id}/resourceGroups/${var.prefix}-rg/providers/Microsoft.App/jobs/${var.prefix}-allegro-poller"
 }
