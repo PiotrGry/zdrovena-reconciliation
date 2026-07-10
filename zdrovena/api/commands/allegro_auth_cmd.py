@@ -34,7 +34,8 @@ _SANDBOX_TOKEN_URL = "https://allegro.pl.allegrosandbox.pl/auth/oauth/token"
 def run(args: argparse.Namespace) -> None:
     import os
 
-    import httpx
+    import requests
+    from requests.auth import HTTPBasicAuth
 
     from zdrovena.common.allegro import _SECRET_ACCESS_EXPIRY, _SECRET_ACCESS_TOKEN
     from zdrovena.common.secrets import get_secret, set_secret
@@ -45,16 +46,17 @@ def run(args: argparse.Namespace) -> None:
 
     client_id = get_secret("allegro-client-id")
     client_secret = get_secret("allegro-client-secret")
+    auth = HTTPBasicAuth(client_id, client_secret)
 
     env_label = "sandbox" if sandbox else "prod"
     print(f"Starting Allegro Device Authorization ({env_label})...")
 
     # Step 1: request device code
     try:
-        r = httpx.post(
+        r = requests.post(
             device_url,
             params={"client_id": client_id},
-            auth=(client_id, client_secret),
+            auth=auth,
             timeout=15,
         )
         r.raise_for_status()
@@ -82,10 +84,10 @@ def run(args: argparse.Namespace) -> None:
         time.sleep(interval)
 
         try:
-            r = httpx.post(
+            r = requests.post(
                 token_url,
                 data={"grant_type": _GRANT_DEVICE, "device_code": device_code},
-                auth=(client_id, client_secret),
+                auth=auth,
                 timeout=15,
             )
         except Exception as exc:
