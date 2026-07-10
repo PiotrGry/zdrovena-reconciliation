@@ -330,6 +330,94 @@ def _sync_shopify_orders_from_api(
     return stats
 
 
+_SHOPIFY_COURIER_COMPANY: dict[str, str] = {
+    "inpost": "InPost",
+    "apaczka": "Apaczka",
+    "allegro_delivery": "Allegro Delivery",
+    "allegro": "Allegro Delivery",
+}
+
+_SHOPIFY_COURIER_TRACKING_URL: dict[str, str] = {
+    "inpost": "https://inpost.pl/sledzenie-przesylek?number={number}",
+}
+
+
+def _sync_shopify_fulfillment(
+    order_id: str,
+    tracking_number: str | None,
+    courier: str | None,
+) -> dict[str, Any]:
+    """Create a Shopify fulfillment for a completed order via the FulfillmentOrder API.
+
+    Non-blocking: caller decides whether to surface failures as warnings or errors.
+    Returns a result dict with "created", "skipped", or "error" key.
+    """
+    import requests
+
+    shopify_token = get_secret("shopify_admin_token", required=False)
+    if not shopify_token:
+        return {"skipped": "shopify_not_configured"}
+
+    allowed_domains = _allowed_shopify_domains()
+    if not allowed_domains:
+        return {"skipped": "no_shopify_domain"}
+
+    shop_domain = next(iter(allowed_domains))
+    headers = {
+        "X-Shopify-Access-Token": shopify_token,
+        "Content-Type": "application/json",
+    }
+    base = f"https://{shop_domain}/admin/api/2024-01"
+
+    # Step 1: find open fulfillment orders (the modern Shopify fulfillment model)
+    fo_resp = requests.get(
+        f"{base}/orders/{order_id}/fulfillment_orders.json",
+        headers=headers,
+        timeout=15,
+    )
+    fo_resp.raise_for_status()
+    open_fo_ids = [
+        fo["id"]
+        for fo in fo_resp.json().get("fulfillment_orders", [])
+        if fo.get("status") == "open"
+    ]
+    if not open_fo_ids:
+        return {"skipped": "no_open_fulfillment_orders"}
+
+    # Step 2: create fulfillment with tracking info
+    courier_key = (courier or "").lower()
+    tracking_company = _SHOPIFY_COURIER_COMPANY.get(courier_key, courier or "")
+    tracking_url_tpl = _SHOPIFY_COURIER_TRACKING_URL.get(courier_key)
+    tracking_url = (
+        tracking_url_tpl.format(number=tracking_number)
+        if tracking_url_tpl and tracking_number
+        else None
+    )
+
+    payload: dict[str, Any] = {
+        "fulfillment": {
+            "line_items_by_fulfillment_order": [
+                {"fulfillment_order_id": fo_id} for fo_id in open_fo_ids
+            ],
+            "notify_customer": True,
+        }
+    }
+    if tracking_number:
+        tracking_info: dict[str, Any] = {"number": tracking_number, "company": tracking_company}
+        if tracking_url:
+            tracking_info["url"] = tracking_url
+        payload["fulfillment"]["tracking_info"] = tracking_info
+
+    f_resp = requests.post(f"{base}/fulfillments.json", headers=headers, json=payload, timeout=15)
+    f_resp.raise_for_status()
+    fulfillment = f_resp.json().get("fulfillment", {})
+    return {
+        "created": True,
+        "shopify_fulfillment_id": str(fulfillment.get("id", "")),
+        "tracking_number": tracking_number,
+    }
+
+
 def _maybe_push_tracking_to_allegro(draft: dict[str, Any]) -> None:
     """After a shipment is created, push the waybill back to Allegro.
 
@@ -1776,9 +1864,10 @@ def mark_fulfilled(
     ``fulfilled_by``) for every draft, regardless of source.
 
     For Allegro drafts we additionally invoke
-    ``AllegroClient.mark_order_processed(external_order_id)`` to move the order
-    to ``PROCESSING`` on Allegro's side, and mirror the timestamps into the
-    legacy ``allegro_fulfillment_status`` / ``allegro_marked_processed_*`` fields.
+    ``AllegroClient.mark_order_processed(external_order_id, status="SENT")`` to
+    move the order to ``SENT`` on Allegro's side (the parcel has left), and mirror
+    the timestamps into the legacy ``allegro_fulfillment_status`` /
+    ``allegro_marked_processed_*`` fields.
 
     Re-running this endpoint is safe: if the draft is already fulfilled we
     return 200 without hitting Allegro again.
@@ -1804,6 +1893,7 @@ def mark_fulfilled(
             "fulfilled_at": draft.get("fulfilled_at"),
             "fulfilled_by": draft.get("fulfilled_by"),
             "allegro_side_effect": False,
+            "shopify_side_effect": None,
         }
 
     allegro_side_effect = False
@@ -1812,7 +1902,7 @@ def mark_fulfilled(
         if client is None:
             raise HTTPException(status_code=502, detail="Allegro credentials missing")
         try:
-            client.mark_order_processed(str(external_order_id))
+            client.mark_order_processed(str(external_order_id), status="SENT")
             allegro_side_effect = True
         except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
             logger.exception("Allegro mark_order_processed failed for draft %s", draft_id)
@@ -1832,11 +1922,29 @@ def mark_fulfilled(
     if is_allegro:
         # Keep the Allegro-specific mirror fields for backwards compatibility
         # with any UI/report that already reads them.
-        patch["allegro_fulfillment_status"] = "PROCESSING"
+        patch["allegro_fulfillment_status"] = "SENT"
         patch["allegro_marked_processed_at"] = marked_at
         patch["allegro_marked_processed_by"] = marked_by
 
     shipping_store.update_draft(draft_id, patch)
+
+    shopify_side_effect: dict[str, Any] | None = None
+    is_shopify = draft.get("source") == "shopify"
+    if is_shopify:
+        shopify_order_id = str(
+            draft.get("external_order_id") or draft.get("shopify_order_id") or ""
+        )
+        if shopify_order_id:
+            try:
+                shopify_side_effect = _sync_shopify_fulfillment(
+                    order_id=shopify_order_id,
+                    tracking_number=draft.get("tracking_number"),
+                    courier=draft.get("courier"),
+                )
+            except Exception as exc:
+                logger.exception("Shopify fulfillment sync failed for draft %s", draft_id)
+                shopify_side_effect = {"error": str(exc)}
+
     return {
         "status": "marked_fulfilled",
         "draft_id": draft_id,
@@ -1845,6 +1953,7 @@ def mark_fulfilled(
         "fulfilled_at": marked_at,
         "fulfilled_by": marked_by,
         "allegro_side_effect": allegro_side_effect,
+        "shopify_side_effect": shopify_side_effect,
     }
 
 
@@ -2130,7 +2239,7 @@ def sync_orders(
     else:
         result["allegro"] = {"error": "credentials_not_configured"}
 
-    shopify_token = get_secret("shopify_api_token", required=False)
+    shopify_token = get_secret("shopify_admin_token", required=False)
     allowed_domains = _allowed_shopify_domains()
     if shopify_token and allowed_domains:
         shop_domain = next(iter(allowed_domains))

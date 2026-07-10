@@ -2058,7 +2058,7 @@ class TestSyncOrdersEndpoint:
         mock_allegro_client = MagicMock()
 
         def fake_get_secret(name, required=True):
-            if name == "shopify_api_token":
+            if name == "shopify_admin_token":
                 return "shpat_test"
             return "some-value"
 
@@ -2090,7 +2090,7 @@ class TestSyncOrdersEndpoint:
 
     def test_allegro_credentials_missing_returns_error_key(self, client):
         def fake_get_secret(name, required=True):
-            if name == "shopify_api_token":
+            if name == "shopify_admin_token":
                 return None
             return None
 
@@ -2141,7 +2141,7 @@ class TestSyncOrdersEndpoint:
         mock_allegro_client = MagicMock()
 
         def fake_get_secret(name, required=True):
-            if name == "shopify_api_token":
+            if name == "shopify_admin_token":
                 return "shpat_test"
             return "some-value"
 
@@ -2177,7 +2177,7 @@ class TestSyncOrdersEndpoint:
         mock_allegro_client = MagicMock()
 
         def fake_get_secret(name, required=True):
-            if name == "shopify_api_token":
+            if name == "shopify_admin_token":
                 return None
             return "some-value"
 
