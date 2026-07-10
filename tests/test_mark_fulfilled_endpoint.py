@@ -15,6 +15,8 @@ from __future__ import annotations
 import os
 from unittest.mock import MagicMock, patch
 
+import responses as responses_lib
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -225,3 +227,125 @@ class TestMarkFulfilledErrors:
         # Local status must NOT flip if the external side-effect failed.
         draft = store.get_draft(draft_id)
         assert draft.get("fulfillment_status") != "fulfilled"
+
+
+# ── Shopify fulfillment sync ─────────────────────────────────────────────────
+
+
+class TestMarkFulfilledShopify:
+    """mark-fulfilled for source=shopify calls Shopify Fulfillment API."""
+
+    def _shopify_draft(self, store, tracking_number="123456789"):
+        return _make_draft(
+            store,
+            id="draft-shopify-ff-1",
+            source="shopify",
+            external_order_id="4567890123",
+            courier="inpost",
+            tracking_number=tracking_number,
+        )
+
+    @responses_lib.activate
+    def test_shopify_fulfillment_created_with_tracking(self, client, store):
+        draft_id = self._shopify_draft(store)
+
+        responses_lib.add(
+            responses_lib.GET,
+            "https://myshop.myshopify.com/admin/api/2024-01/orders/4567890123/fulfillment_orders.json",
+            json={"fulfillment_orders": [{"id": 99, "status": "open"}]},
+            status=200,
+        )
+        responses_lib.add(
+            responses_lib.POST,
+            "https://myshop.myshopify.com/admin/api/2024-01/fulfillments.json",
+            json={"fulfillment": {"id": 777, "status": "success"}},
+            status=201,
+        )
+
+        with (
+            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                return_value=frozenset(["myshop.myshopify.com"]),
+            ),
+        ):
+            resp = client.post(f"/api/shipping/drafts/{draft_id}/mark-fulfilled")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "marked_fulfilled"
+        se = body["shopify_side_effect"]
+        assert se["created"] is True
+        assert se["shopify_fulfillment_id"] == "777"
+        assert se["tracking_number"] == "123456789"
+
+        # Verify fulfillment POST included tracking info + correct fulfillment_order_id
+        posted = responses_lib.calls[1].request
+        import json
+        payload = json.loads(posted.body)
+        assert payload["fulfillment"]["line_items_by_fulfillment_order"][0]["fulfillment_order_id"] == 99
+        assert payload["fulfillment"]["tracking_info"]["number"] == "123456789"
+        assert payload["fulfillment"]["tracking_info"]["company"] == "InPost"
+        assert "sledzenie" in payload["fulfillment"]["tracking_info"]["url"]
+
+    @responses_lib.activate
+    def test_shopify_no_open_fulfillment_orders_returns_skipped(self, client, store):
+        draft_id = self._shopify_draft(store)
+
+        responses_lib.add(
+            responses_lib.GET,
+            "https://myshop.myshopify.com/admin/api/2024-01/orders/4567890123/fulfillment_orders.json",
+            json={"fulfillment_orders": [{"id": 99, "status": "closed"}]},
+            status=200,
+        )
+
+        with (
+            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                return_value=frozenset(["myshop.myshopify.com"]),
+            ),
+        ):
+            resp = client.post(f"/api/shipping/drafts/{draft_id}/mark-fulfilled")
+
+        assert resp.status_code == 200
+        se = resp.json()["shopify_side_effect"]
+        assert se == {"skipped": "no_open_fulfillment_orders"}
+
+    def test_shopify_not_configured_returns_skipped(self, client, store):
+        draft_id = self._shopify_draft(store)
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value=None):
+            resp = client.post(f"/api/shipping/drafts/{draft_id}/mark-fulfilled")
+
+        assert resp.status_code == 200
+        se = resp.json()["shopify_side_effect"]
+        assert se == {"skipped": "shopify_not_configured"}
+        # Draft still marked fulfilled locally
+        assert store.get_draft(draft_id)["fulfillment_status"] == "fulfilled"
+
+    @responses_lib.activate
+    def test_shopify_api_error_does_not_block_local_fulfillment(self, client, store):
+        draft_id = self._shopify_draft(store)
+
+        responses_lib.add(
+            responses_lib.GET,
+            "https://myshop.myshopify.com/admin/api/2024-01/orders/4567890123/fulfillment_orders.json",
+            json={"errors": "Not Found"},
+            status=404,
+        )
+
+        with (
+            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                return_value=frozenset(["myshop.myshopify.com"]),
+            ),
+        ):
+            resp = client.post(f"/api/shipping/drafts/{draft_id}/mark-fulfilled")
+
+        assert resp.status_code == 200
+        se = resp.json()["shopify_side_effect"]
+        assert "error" in se
+        # Draft IS fulfilled locally even though Shopify call failed
+        assert store.get_draft(draft_id)["fulfillment_status"] == "fulfilled"
