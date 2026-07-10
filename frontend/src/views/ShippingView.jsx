@@ -889,6 +889,7 @@ export default function ShippingView() {
                     </button>
                     <button className="btn btn-ghost" onClick={handleSync} disabled={syncing || loading} title="Sync orders from Allegro &amp; Shopify">
                         <Icon name={syncing ? 'refresh' : 'zap'} size={14} className={syncing ? 'spin' : undefined} />
+                        {syncResult?.error && <span style={{ color: 'var(--color-error)', fontSize: '0.75em', marginLeft: 4 }}>!</span>}
                     </button>
                     <button className="btn btn-ghost" onClick={load} disabled={loading} title="Odśwież">
                         <Icon name="refresh" size={14} />
