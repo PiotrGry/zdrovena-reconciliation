@@ -507,6 +507,8 @@ export default function ShippingView() {
     const [bulkPickupModal, setBulkPickupModal] = useState(false)
     const [expandAll, setExpandAll] = useState(null)
     const [apaczkaServices, setApaczkaServices] = useState([])
+    const [syncing, setSyncing] = useState(false)
+    const [syncResult, setSyncResult] = useState(null)
 
     const load = useCallback(async () => {
         setLoading(true)
@@ -525,6 +527,25 @@ export default function ShippingView() {
             setLoading(false)
         }
     }, [getToken])
+
+    const handleSync = useCallback(async () => {
+        setSyncing(true)
+        setSyncResult(null)
+        try {
+            const token = await getToken()
+            const res = await fetch('/api/shipping/sync', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            const body = await res.json()
+            setSyncResult(res.ok ? body : { error: body.detail ?? `${res.status}` })
+            if (res.ok) await load()
+        } catch (e) {
+            setSyncResult({ error: e.message })
+        } finally {
+            setSyncing(false)
+        }
+    }, [getToken, load])
 
     useEffect(() => {
         let cancelled = false
@@ -866,8 +887,12 @@ export default function ShippingView() {
                         <Icon name={expandAll ? 'chevronUp' : 'chevronDown'} size={13} />
                         {expandAll ? (T.sh_collapse ?? 'Zwiń') : (T.sh_expand ?? 'Rozwiń')}
                     </button>
+                    <button className="btn btn-ghost" onClick={handleSync} disabled={syncing || loading} title="Sync orders from Allegro &amp; Shopify">
+                        <Icon name={syncing ? 'refresh' : 'zap'} size={14} className={syncing ? 'spin' : undefined} />
+                        {syncResult?.error && <span style={{ color: 'var(--color-error)', fontSize: '0.75em', marginLeft: 4 }}>!</span>}
+                    </button>
                     <button className="btn btn-ghost" onClick={load} disabled={loading} title="Odśwież">
-                        <Icon name="refreshCw" size={14} />
+                        <Icon name="refresh" size={14} />
                     </button>
                 </div>
             </div>

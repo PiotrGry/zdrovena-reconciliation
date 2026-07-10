@@ -1,6 +1,36 @@
 # CHANGELOG
 
 
+## v2.7.3 (2026-07-10)
+
+### Added
+
+- **api**: New `POST /api/shipping/sync` endpoint lets shipment managers manually pull missing orders from both Allegro and Shopify without waiting for the cron job. Returns per-source stats (`fetched`, `created`, `skipped`, `errors`).
+- **frontend**: Sync button in the shipping toolbar triggers the new endpoint and auto-refreshes the draft list on success.
+
+### Fixed
+
+- **frontend**: Refresh button was invisible — `<Icon name="refreshCw">` referenced a non-existent icon name. Fixed to `refresh`.
+- **infra**: Shopify webhook 401 errors caused by Azure Container App EasyAuth blocking unauthenticated requests. EasyAuth now excludes the Shopify webhook paths from the JWT gate; Python HMAC-SHA256 validation still runs on every request. Codified in Terraform via `null_resource` + `az containerapp auth update`; requires `terraform apply`.
+
+### Changed
+
+- **infra**: Added `azure/azapi ~> 2.0` provider to Terraform stack for ARM API access.
+
+
+## v2.7.2 (2026-07-10)
+
+### Added
+
+- **infra**: Allegro order polling runs as an Azure Container App Job (`zdrovena-allegro-poller`) on a 5-minute cron. Uses the same Docker image as `api_prod`; CI updates the image after each deploy via `az containerapp job update`. Requires `terraform apply` to provision.
+- **cli**: `zdrovena allegro-poll` subcommand — bootstraps AllegroClient + FakturowniaClient + ShippingStore from Key Vault secrets, calls `poll_orders_once()`, exits 0 on success and 1 on fatal credential/storage errors.
+
+### Fixed
+
+- **observability**: Azure Monitor OpenTelemetry exporter (`azure.monitor.opentelemetry.exporter.export._base`) was emitting one INFO line per second to container logs, making app-level logs invisible. Added `azure.monitor.opentelemetry` to the Azure SDK logger suppression list in `main.py` and the new `allegro_poll_cmd`.
+
+---
+
 ## v2.7.1 (2026-06-30)
 
 ### Added

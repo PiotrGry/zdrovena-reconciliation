@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zdrovena-reconciliation"
-version = "2.7.0"
+version = "2.7.3"
 description = "Unified CLI for Fakturownia invoice audit, bottle tracking & month-close (Zdrovena/Humio)"
 requires-python = ">=3.10"
 dependencies = [
@@ -130,6 +130,10 @@ omit = [
     "zdrovena/audit/commands/report_cmd.py",
     "zdrovena/audit/commands/summary.py",
     "zdrovena/month_closing/commands/setup_cmd.py",
+
+    # CLI bootstrap for the Allegro Container App Job cron — delegates to poll_orders_once()
+    # (tested at 86%). All code paths require live Key Vault + Allegro + Azure Storage credentials.
+    "zdrovena/api/commands/allegro_poll_cmd.py",
 ]
 
 [tool.coverage.report]
