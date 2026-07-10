@@ -74,6 +74,16 @@ jobs:
             --image           "$IMAGE" \
             --min-replicas    1
 
+      - name: Update Allegro poller job image
+        env:
+          RG: zdrovena-rg
+          IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:${{ github.sha }}
+        run: |
+          az containerapp job update \
+            --name           "zdrovena-allegro-poller" \
+            --resource-group "$RG" \
+            --image          "$IMAGE"
+
       - name: Wait for production deployment to complete
         env:
           PROD_APP: zdrovena-api-prod

@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v2.7.2 (2026-07-10)
+
+### Added
+
+- **infra**: Allegro order polling runs as an Azure Container App Job (`zdrovena-allegro-poller`) on a 5-minute cron. Uses the same Docker image as `api_prod`; CI updates the image after each deploy via `az containerapp job update`. Requires `terraform apply` to provision.
+- **cli**: `zdrovena allegro-poll` subcommand — bootstraps AllegroClient + FakturowniaClient + ShippingStore from Key Vault secrets, calls `poll_orders_once()`, exits 0 on success and 1 on fatal credential/storage errors.
+
+### Fixed
+
+- **observability**: Azure Monitor OpenTelemetry exporter (`azure.monitor.opentelemetry.exporter.export._base`) was emitting one INFO line per second to container logs, making app-level logs invisible. Added `azure.monitor.opentelemetry` to the Azure SDK logger suppression list in `main.py` and the new `allegro_poll_cmd`.
+
+---
+
 ## v2.7.1 (2026-06-30)
 
 ### Added
