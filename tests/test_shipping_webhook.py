@@ -2045,3 +2045,245 @@ class TestCancelApaczkaOrderEndpoint:
         assert resp.status_code == 409
         requested_secrets = [c.args[0] for c in mock_get_secret.call_args_list]
         assert "apaczka_service_id" not in requested_secrets
+
+
+# ── POST /api/shipping/sync ───────────────────────────────────────────────────
+
+
+class TestSyncOrdersEndpoint:
+    def test_returns_200_with_both_sources(self, client):
+        allegro_stats = {"fetched": 2, "created": 1, "skipped_duplicate": 1, "errors": 0}
+        shopify_stats = {"fetched": 3, "created": 2, "skipped": 1, "errors": 0}
+
+        mock_allegro_client = MagicMock()
+
+        def fake_get_secret(name, required=True):
+            if name == "shopify_api_token":
+                return "shpat_test"
+            return "some-value"
+
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client):
+            with patch("zdrovena.api.routers.webhooks._get_fakturownia_client", return_value=None):
+                with patch(
+                    "zdrovena.api.routers.allegro_poller.poll_orders_once",
+                    return_value=allegro_stats,
+                ):
+                    with patch(
+                        "zdrovena.api.routers.webhooks._sync_shopify_orders_from_api",
+                        return_value=shopify_stats,
+                    ):
+                        with patch("zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret):
+                            with patch(
+                                "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                                return_value={"shop.myshopify.com"},
+                            ):
+                                resp = client.post("/api/shipping/sync")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["allegro"] == allegro_stats
+        assert body["shopify"] == shopify_stats
+
+    def test_allegro_credentials_missing_returns_error_key(self, client):
+        def fake_get_secret(name, required=True):
+            if name == "shopify_api_token":
+                return None
+            return None
+
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=None):
+            with patch("zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret):
+                with patch(
+                    "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                    return_value=set(),
+                ):
+                    resp = client.post("/api/shipping/sync")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["allegro"] == {"error": "credentials_not_configured"}
+        assert body["shopify"] == {"skipped": "not_configured"}
+
+    def test_allegro_poll_raises_exception_returns_error(self, client):
+        mock_allegro_client = MagicMock()
+
+        def fake_get_secret(name, required=True):
+            return None
+
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client):
+            with patch("zdrovena.api.routers.webhooks._get_fakturownia_client", return_value=None):
+                with patch(
+                    "zdrovena.api.routers.allegro_poller.poll_orders_once",
+                    side_effect=RuntimeError("allegro API down"),
+                ):
+                    with patch("zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret):
+                        with patch(
+                            "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                            return_value=set(),
+                        ):
+                            resp = client.post("/api/shipping/sync")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "error" in body["allegro"]
+        assert "allegro API down" in body["allegro"]["error"]
+        assert body["shopify"] == {"skipped": "not_configured"}
+
+    def test_shopify_sync_raises_exception_returns_error(self, client):
+        allegro_stats = {"fetched": 0, "created": 0, "skipped_duplicate": 0, "errors": 0}
+        mock_allegro_client = MagicMock()
+
+        def fake_get_secret(name, required=True):
+            if name == "shopify_api_token":
+                return "shpat_test"
+            return "some-value"
+
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client):
+            with patch("zdrovena.api.routers.webhooks._get_fakturownia_client", return_value=None):
+                with patch(
+                    "zdrovena.api.routers.allegro_poller.poll_orders_once",
+                    return_value=allegro_stats,
+                ):
+                    with patch(
+                        "zdrovena.api.routers.webhooks._sync_shopify_orders_from_api",
+                        side_effect=ConnectionError("shopify unreachable"),
+                    ):
+                        with patch("zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret):
+                            with patch(
+                                "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                                return_value={"shop.myshopify.com"},
+                            ):
+                                resp = client.post("/api/shipping/sync")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["allegro"] == allegro_stats
+        assert "error" in body["shopify"]
+        assert "shopify unreachable" in body["shopify"]["error"]
+
+    def test_shopify_not_configured_when_no_token(self, client):
+        allegro_stats = {"fetched": 0, "created": 0, "skipped_duplicate": 0, "errors": 0}
+        mock_allegro_client = MagicMock()
+
+        def fake_get_secret(name, required=True):
+            if name == "shopify_api_token":
+                return None
+            return "some-value"
+
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client):
+            with patch("zdrovena.api.routers.webhooks._get_fakturownia_client", return_value=None):
+                with patch(
+                    "zdrovena.api.routers.allegro_poller.poll_orders_once",
+                    return_value=allegro_stats,
+                ):
+                    with patch("zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret):
+                        with patch(
+                            "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                            return_value={"shop.myshopify.com"},
+                        ):
+                            resp = client.post("/api/shipping/sync")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["allegro"] == allegro_stats
+        assert body["shopify"] == {"skipped": "not_configured"}
+
+
+# ── _sync_shopify_orders_from_api unit tests ─────────────────────────────────
+
+
+class TestSyncShopifyOrdersFromApi:
+    """Unit tests for _sync_shopify_orders_from_api helper."""
+
+    def _make_order(self, order_id: int = 1001, shipping_lines=None) -> dict:
+        return {
+            "id": order_id,
+            "order_number": order_id,
+            "shipping_lines": shipping_lines or [{"title": "DPD Kurier"}],
+            "shipping_address": {
+                "first_name": "Jan",
+                "last_name": "Kowalski",
+                "address1": "Kwiatowa 1",
+                "city": "Warszawa",
+                "zip": "00-001",
+            },
+            "customer": {"email": "jan@example.com", "phone": "500000000"},
+        }
+
+    def test_empty_orders_returns_zero_stats(self, tmp_path):
+        from responses import RequestsMock
+
+        from zdrovena.api.routers.webhooks import _sync_shopify_orders_from_api
+        from zdrovena.common.storage import LocalStorageService
+
+        store = ShippingStore(local_root=tmp_path / "store")
+        storage = LocalStorageService(root=tmp_path / "storage")
+
+        with RequestsMock() as rsps:
+            rsps.add(
+                rsps.GET,
+                "https://shop.myshopify.com/admin/api/2024-01/orders.json",
+                json={"orders": []},
+                status=200,
+            )
+            stats = _sync_shopify_orders_from_api(
+                shop_domain="shop.myshopify.com",
+                api_token="tok",
+                shipping_store=store,
+                storage=storage,
+            )
+
+        assert stats == {"fetched": 0, "created": 0, "skipped": 0, "errors": 0}
+
+    def test_existing_order_is_skipped(self, tmp_path):
+        from responses import RequestsMock
+
+        from zdrovena.api.routers.webhooks import _create_draft, _sync_shopify_orders_from_api
+        from zdrovena.common.storage import LocalStorageService
+
+        store = ShippingStore(local_root=tmp_path / "store")
+        storage = LocalStorageService(root=tmp_path / "storage")
+        order = self._make_order(order_id=9999)
+
+        with RequestsMock() as rsps:
+            rsps.add(
+                rsps.GET,
+                "https://shop.myshopify.com/admin/api/2024-01/orders.json",
+                json={"orders": [order]},
+                status=200,
+            )
+            _create_draft(order, store, storage, source="shopify")
+            stats = _sync_shopify_orders_from_api(
+                shop_domain="shop.myshopify.com",
+                api_token="tok",
+                shipping_store=store,
+                storage=storage,
+            )
+
+        assert stats["fetched"] == 1
+        assert stats["skipped"] == 1
+        assert stats["created"] == 0
+
+    def test_http_error_propagates(self, tmp_path):
+        import requests
+        from responses import RequestsMock
+
+        from zdrovena.api.routers.webhooks import _sync_shopify_orders_from_api
+        from zdrovena.common.storage import LocalStorageService
+
+        store = ShippingStore(local_root=tmp_path / "store")
+        storage = LocalStorageService(root=tmp_path / "storage")
+
+        with RequestsMock() as rsps:
+            rsps.add(
+                rsps.GET,
+                "https://shop.myshopify.com/admin/api/2024-01/orders.json",
+                json={"errors": "Unauthorized"},
+                status=401,
+            )
+            with pytest.raises(requests.HTTPError):
+                _sync_shopify_orders_from_api(
+                    shop_domain="shop.myshopify.com",
+                    api_token="bad-token",
+                    shipping_store=store,
+                    storage=storage,
+                )
