@@ -151,6 +151,18 @@ class TestPollOrdersOnce:
         kwargs = client.list_orders.call_args.kwargs
         assert kwargs.get("status") == "READY_FOR_PROCESSING"
 
+    def test_uses_new_fulfillment_status_filter_by_default(self):
+        client = MagicMock()
+        client.list_orders.return_value = []
+        store = MagicMock()
+        store.list_drafts.return_value = []
+        poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
+        kwargs = client.list_orders.call_args.kwargs
+        assert kwargs.get("fulfillment_status") == "NEW", (
+            "Must filter by fulfillment_status=NEW to exclude already-shipped orders; "
+            "Allegro payment status READY_FOR_PROCESSING never changes after payment"
+        )
+
     def test_list_orders_exception_returns_error_stats(self):
         client = MagicMock()
         client.list_orders.side_effect = RuntimeError("network")
