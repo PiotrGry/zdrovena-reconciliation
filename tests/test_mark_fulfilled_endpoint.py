@@ -15,9 +15,8 @@ from __future__ import annotations
 import os
 from unittest.mock import MagicMock, patch
 
-import responses as responses_lib
-
 import pytest
+import responses as responses_lib
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
@@ -282,8 +281,12 @@ class TestMarkFulfilledShopify:
         # Verify fulfillment POST included tracking info + correct fulfillment_order_id
         posted = responses_lib.calls[1].request
         import json
+
         payload = json.loads(posted.body)
-        assert payload["fulfillment"]["line_items_by_fulfillment_order"][0]["fulfillment_order_id"] == 99
+        assert (
+            payload["fulfillment"]["line_items_by_fulfillment_order"][0]["fulfillment_order_id"]
+            == 99
+        )
         assert payload["fulfillment"]["tracking_info"]["number"] == "123456789"
         assert payload["fulfillment"]["tracking_info"]["company"] == "InPost"
         assert "sledzenie" in payload["fulfillment"]["tracking_info"]["url"]
