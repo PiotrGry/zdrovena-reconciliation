@@ -123,3 +123,28 @@ resource "azurerm_container_app_job" "allegro_poller" {
     ]
   }
 }
+
+# ── EasyAuth: allow Shopify webhooks through without a Bearer token ────────────
+# azurerm does not expose globalValidation.excludedPaths, so we use azapi to
+# PATCH the authConfigs/current ARM resource directly. The Python handler
+# validates every request with HMAC-SHA256 (shopify-webhook-secret in Key
+# Vault), so bypassing EasyAuth here is not a security regression.
+
+resource "azapi_update_resource" "api_prod_easyauth" {
+  type        = "Microsoft.App/containerApps/authConfigs@2024-03-01"
+  resource_id = "${azurerm_resource_group.rg.id}/providers/Microsoft.App/containerApps/${module.api_prod.name}/authConfigs/current"
+
+  body = {
+    properties = {
+      globalValidation = {
+        unauthenticatedClientAction = "Return401"
+        excludedPaths = [
+          "/api/webhooks/shopify/order-created",
+          "/api/webhooks/shopify/order-create",
+        ]
+      }
+    }
+  }
+
+  depends_on = [module.api_prod]
+}
