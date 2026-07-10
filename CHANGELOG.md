@@ -15,7 +15,7 @@
 
 ### Changed
 
-- **infra**: Added `azure/azapi ~> 2.0` provider to Terraform stack for ARM API access.
+- **infra**: EasyAuth `excludedPaths` for Shopify webhooks applied via CLI (out-of-band); see comment in `compute.tf` for the exact command.
 
 
 ## v2.7.2 (2026-07-10)
