@@ -2062,7 +2062,9 @@ class TestSyncOrdersEndpoint:
                 return "shpat_test"
             return "some-value"
 
-        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client):
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client
+        ):
             with patch("zdrovena.api.routers.webhooks._get_fakturownia_client", return_value=None):
                 with patch(
                     "zdrovena.api.routers.allegro_poller.poll_orders_once",
@@ -2072,7 +2074,9 @@ class TestSyncOrdersEndpoint:
                         "zdrovena.api.routers.webhooks._sync_shopify_orders_from_api",
                         return_value=shopify_stats,
                     ):
-                        with patch("zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret):
+                        with patch(
+                            "zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret
+                        ):
                             with patch(
                                 "zdrovena.api.routers.webhooks._allowed_shopify_domains",
                                 return_value={"shop.myshopify.com"},
@@ -2109,13 +2113,17 @@ class TestSyncOrdersEndpoint:
         def fake_get_secret(name, required=True):
             return None
 
-        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client):
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client
+        ):
             with patch("zdrovena.api.routers.webhooks._get_fakturownia_client", return_value=None):
                 with patch(
                     "zdrovena.api.routers.allegro_poller.poll_orders_once",
                     side_effect=RuntimeError("allegro API down"),
                 ):
-                    with patch("zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret):
+                    with patch(
+                        "zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret
+                    ):
                         with patch(
                             "zdrovena.api.routers.webhooks._allowed_shopify_domains",
                             return_value=set(),
@@ -2137,7 +2145,9 @@ class TestSyncOrdersEndpoint:
                 return "shpat_test"
             return "some-value"
 
-        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client):
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client
+        ):
             with patch("zdrovena.api.routers.webhooks._get_fakturownia_client", return_value=None):
                 with patch(
                     "zdrovena.api.routers.allegro_poller.poll_orders_once",
@@ -2147,7 +2157,9 @@ class TestSyncOrdersEndpoint:
                         "zdrovena.api.routers.webhooks._sync_shopify_orders_from_api",
                         side_effect=ConnectionError("shopify unreachable"),
                     ):
-                        with patch("zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret):
+                        with patch(
+                            "zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret
+                        ):
                             with patch(
                                 "zdrovena.api.routers.webhooks._allowed_shopify_domains",
                                 return_value={"shop.myshopify.com"},
@@ -2169,13 +2181,17 @@ class TestSyncOrdersEndpoint:
                 return None
             return "some-value"
 
-        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client):
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client
+        ):
             with patch("zdrovena.api.routers.webhooks._get_fakturownia_client", return_value=None):
                 with patch(
                     "zdrovena.api.routers.allegro_poller.poll_orders_once",
                     return_value=allegro_stats,
                 ):
-                    with patch("zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret):
+                    with patch(
+                        "zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret
+                    ):
                         with patch(
                             "zdrovena.api.routers.webhooks._allowed_shopify_domains",
                             return_value={"shop.myshopify.com"},
