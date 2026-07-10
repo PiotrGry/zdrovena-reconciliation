@@ -45,6 +45,7 @@ def poll_orders_once(
     storage: Any,
     fakturownia_client: Any = None,
     status: str = "READY_FOR_PROCESSING",
+    fulfillment_status: str = "NEW",
 ) -> dict[str, int]:
     """One polling cycle. Returns per-cycle stats.
 
@@ -52,6 +53,10 @@ def poll_orders_once(
     invoice for each newly-created draft (see allegro_invoicer.py). Omit it
     (or pass None) to skip invoicing entirely — e.g. in environments without
     Fakturownia credentials configured.
+
+    fulfillment_status defaults to "NEW" to skip already-shipped orders.
+    Allegro's payment status (READY_FOR_PROCESSING) never changes after payment,
+    so without a fulfillment filter all historical paid orders would be re-synced.
     """
     stats = {
         "fetched": 0,
@@ -62,7 +67,7 @@ def poll_orders_once(
         "invoice_errors": 0,
     }
     try:
-        forms = client.list_orders(status=status)
+        forms = client.list_orders(status=status, fulfillment_status=fulfillment_status)
     except Exception:
         # Resilience boundary: a poll cycle must never crash the scheduler, so we
         # catch broadly (network, auth, mapping) and surface it as an error stat.

@@ -180,6 +180,39 @@ class TestOAuth:
             with pytest.raises(AllegroAuthError):
                 c.list_orders()
 
+    def test_auth_400_raises_allegro_auth_error_not_server_error(self):
+        c = _make_client()
+        err_resp = _err(400, "bad_request")
+        err_resp.json.return_value = {"error": "invalid_grant"}
+        with patch.object(c._session, "request", return_value=err_resp):
+            with pytest.raises(AllegroAuthError) as exc_info:
+                c.list_orders()
+        assert "allegro-auth" in str(exc_info.value).lower()
+
+    def test_cached_access_token_loaded_from_store_avoids_refresh(self):
+        """If SecretsAllegroTokenStore has a valid AT, _fetch_token should not be called."""
+        from zdrovena.common.allegro import SecretsAllegroTokenStore
+
+        store = SecretsAllegroTokenStore()
+        future_expiry = time.time() + 3600
+        store.load_access_token = lambda: ("cached-at", future_expiry)  # type: ignore[method-assign]
+        store.load_refresh_token = lambda: _REFRESH_TOKEN  # type: ignore[method-assign]
+
+        c = AllegroClient(
+            client_id=_CLIENT_ID,
+            client_secret=_CLIENT_SECRET,
+            refresh_token=_REFRESH_TOKEN,
+            token_store=store,
+        )
+        with patch.object(c._session, "request") as req:
+            req.side_effect = [
+                _ok({"checkoutForms": [], "count": 0, "totalCount": 0}),
+            ]
+            c.list_orders()
+        # Only one request — the orders call; no token refresh call
+        assert req.call_count == 1
+        assert c._access_token == "cached-at"
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 3. HTTP layer / error mapping (6 tests)
