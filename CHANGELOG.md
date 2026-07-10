@@ -15,7 +15,7 @@
 
 ### Changed
 
-- **infra**: Added `hashicorp/null ~> 3.0` provider to Terraform stack for `null_resource` support.
+- **infra**: Added `azure/azapi ~> 2.0` provider to Terraform stack for ARM API access.
 
 
 ## v2.7.2 (2026-07-10)

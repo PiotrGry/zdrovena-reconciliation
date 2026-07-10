@@ -125,31 +125,25 @@ resource "azurerm_container_app_job" "allegro_poller" {
 }
 
 # ── EasyAuth: allow Shopify webhooks through without a Bearer token ────────────
-# azurerm does not expose globalValidation.excludedPaths, so we configure via
-# az CLI. The provisioner re-runs only when the excluded path list changes.
-# The Python handler validates every request with HMAC-SHA256 (shopify-webhook-
-# secret in Key Vault), so bypassing EasyAuth here is not a security regression.
+# azurerm does not expose globalValidation.excludedPaths, so we use azapi to
+# PATCH the authConfigs/current ARM resource directly. The Python handler
+# validates every request with HMAC-SHA256 (shopify-webhook-secret in Key
+# Vault), so bypassing EasyAuth here is not a security regression.
 
-resource "null_resource" "api_prod_easyauth" {
-  triggers = {
-    app_name       = module.api_prod.name
-    rg             = azurerm_resource_group.rg.name
-    excluded_paths = "/api/webhooks/shopify/order-created,/api/webhooks/shopify/order-create"
-  }
+resource "azapi_update_resource" "api_prod_easyauth" {
+  type        = "Microsoft.App/containerApps/authConfigs@2024-03-01"
+  resource_id = "${azurerm_resource_group.rg.id}/providers/Microsoft.App/containerApps/${module.api_prod.name}/authConfigs/current"
 
-  provisioner "local-exec" {
-    # on_failure = continue: on a greenfield deploy EasyAuth may not be
-    # initialized yet (az containerapp auth update fails with ResourceNotFound).
-    # The webhook paths remain protected by the app's HMAC check. Re-run
-    # `terraform apply` after manually enabling EasyAuth to set excludedPaths.
-    on_failure = continue
-    command    = <<-EOT
-      az containerapp auth update \
-        --name "${module.api_prod.name}" \
-        --resource-group "${azurerm_resource_group.rg.name}" \
-        --unauthenticated-client-action Return401 \
-        --excluded-paths "/api/webhooks/shopify/order-created,/api/webhooks/shopify/order-create"
-    EOT
+  body = {
+    properties = {
+      globalValidation = {
+        unauthenticatedClientAction = "Return401"
+        excludedPaths = [
+          "/api/webhooks/shopify/order-created",
+          "/api/webhooks/shopify/order-create",
+        ]
+      }
+    }
   }
 
   depends_on = [module.api_prod]
