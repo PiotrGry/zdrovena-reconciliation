@@ -1152,6 +1152,40 @@ class TestRunApaczka:
         _, kwargs = mock_ship.call_args
         assert kwargs["receiver_address"] == "Krakowska 24"
 
+    def test_flat_number_included_in_receiver_address(self):
+        """flat_number (Shopify address2) must be appended so apartment is not lost."""
+        from zdrovena.api.routers.webhooks import _run_apaczka
+
+        storage_mock = object()
+        draft = {
+            "id": "d-ap-flat",
+            "shopify_order_number": "1557",
+            "courier": "apaczka",
+            "service": "apaczka",
+            "apaczka_service_id": "21",
+            "receiver": {
+                "first_name": "Anna",
+                "last_name": "N",
+                "email": "a@n.pl",
+                "phone": "500600701",
+                "locker_id": "",
+            },
+            "shipping_address": {
+                "street": "Krakowska",
+                "building_number": "24",
+                "flat_number": "m. 5",
+                "city": "Nowy Sącz",
+                "post_code": "33-300",
+            },
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship:
+                mock_ship.return_value = {"id": "ap-flat", "waybill_number": "WAY-FLAT"}
+                _run_apaczka(draft, _SENDER, storage_mock)
+
+        _, kwargs = mock_ship.call_args
+        assert kwargs["receiver_address"] == "Krakowska 24 m. 5"
+
     def test_uses_draft_apaczka_service_id_not_secret(self):
         """P0 regression guard: service_id must come from the draft, never
         from a get_secret('apaczka_service_id') call (that secret no longer
