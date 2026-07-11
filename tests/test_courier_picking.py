@@ -83,7 +83,9 @@ class TestPickCourierFallback:
 
     def test_kurier_dostawa_pod_drzwi_routes_to_inpost(self) -> None:
         # Shopify shipping line title for InPost door-to-door delivery
-        assert _pick_courier({"shipping_lines": [{"title": "Kurier - dostawa pod drzwi"}]}) == "inpost"
+        assert (
+            _pick_courier({"shipping_lines": [{"title": "Kurier - dostawa pod drzwi"}]}) == "inpost"
+        )
 
     def test_empty_shipping_lines_routes_to_apaczka(self) -> None:
         assert _pick_courier({}) == "apaczka"
