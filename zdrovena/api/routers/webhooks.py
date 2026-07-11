@@ -565,7 +565,7 @@ def _pick_courier(order: dict[str, Any]) -> str:
         for keyword, courier in explicit.items():
             if keyword and keyword in title:
                 return courier
-    if "inpost" in title or "paczkomat" in title or "drzwi" in title:
+    if "inpost" in title or "paczkomat" in title or "kurier" in title or "drzwi" in title:
         return "inpost"
     return "apaczka"
 
