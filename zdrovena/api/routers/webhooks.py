@@ -1244,6 +1244,7 @@ def _create_draft(
     record: dict[str, Any] = {
         "id": str(uuid.uuid4()),
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "order_date": order.get("created_at"),
         "source": source,
         "external_order_id": order_id,
         "shopify_order_id": order_id if source == "shopify" else None,
@@ -2209,6 +2210,186 @@ def get_label(
     )
 
 
+# ── Allegro invoice (manual) ──────────────────────────────────────────────────
+
+
+def _get_fakturownia_invoice_client() -> Any | None:
+    """Build zdrovena.common.fakturownia.FakturowniaClient for invoice CRUD.
+
+    Distinct from _get_fakturownia_client() which returns the audit-only
+    common.client.FakturowniaClient (paginated date-range fetch only).
+    """
+    from zdrovena.common.config import KEYCHAIN_SERVICE_FAKTUROWNIA
+    from zdrovena.common.exceptions import MissingSecretError
+
+    try:
+        token = get_secret(KEYCHAIN_SERVICE_FAKTUROWNIA)
+    except MissingSecretError:
+        return None
+    from zdrovena.common.fakturownia import FakturowniaClient
+
+    return FakturowniaClient(api_token=token)
+
+
+@router.get(
+    "/shipping/drafts/{draft_id}/invoice-preview",
+    summary="Compute Fakturownia invoice preview for an Allegro order",
+    responses={
+        400: {"description": "Not an Allegro draft"},
+        404: {"description": "Draft not found"},
+        503: {"description": "Allegro credentials not configured"},
+    },
+)
+def get_invoice_preview(
+    draft_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_viewer_or_above)],
+) -> dict[str, Any]:
+    from decimal import Decimal
+
+    draft = shipping_store.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
+    if draft.get("source") != "allegro":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invoice preview only for Allegro orders",
+        )
+
+    existing = draft.get("fakturownia_invoice_id")
+    if existing:
+        return {"status": "already_created", "fakturownia_invoice_id": existing}
+
+    allegro_client = _get_allegro_client()
+    if allegro_client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Allegro credentials not configured",
+        )
+
+    order_id = draft.get("external_order_id") or draft.get("shopify_order_number", "")
+    order = allegro_client.get_order(order_id)
+
+    from zdrovena.common.allegro_invoice_mapper import allegro_order_to_fakturownia_invoice
+
+    payload = allegro_order_to_fakturownia_invoice(order)
+    positions = payload.get("positions") or []
+    settlements = payload.get("settlement_positions") or []
+
+    total = sum(Decimal(str(p.get("total_price_gross", 0))) for p in positions)
+    total += sum(Decimal(str(s.get("amount", 0))) for s in settlements)
+
+    buyer = order.get("buyer") or {}
+    invoice_req = order.get("invoice") or {}
+    addr = invoice_req.get("address") or buyer.get("address") or {}
+    company = addr.get("company") or {}
+
+    return {
+        "status": "preview_ready",
+        "buyer_name": payload.get(
+            "buyer_name", f"{buyer.get('firstName', '')} {buyer.get('lastName', '')}".strip()
+        ),
+        "buyer_email": payload.get("buyer_email", buyer.get("email", "")),
+        "buyer_company": company.get("name") or None,
+        "buyer_nip": company.get("taxId") or None,
+        "positions": [
+            {
+                "name": p["name"],
+                "quantity": p["quantity"],
+                "unit_price_gross": float(Decimal(str(p["total_price_gross"])) / p["quantity"])
+                if p.get("quantity")
+                else 0.0,
+                "vat_rate": p.get("tax_name", "8%"),
+                "line_total": float(p["total_price_gross"]),
+            }
+            for p in positions
+        ],
+        "settlement_positions": [
+            {"description": s.get("description", ""), "amount": float(s.get("amount", 0) or 0)}
+            for s in settlements
+        ],
+        "total_gross": float(total),
+    }
+
+
+@router.post(
+    "/shipping/drafts/{draft_id}/create-invoice",
+    summary="Create Fakturownia invoice for an Allegro order and attach it",
+    responses={
+        400: {"description": "Not an Allegro draft"},
+        404: {"description": "Draft not found"},
+        503: {"description": "Credentials not configured"},
+    },
+)
+def create_draft_invoice(
+    draft_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    draft = shipping_store.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
+    if draft.get("source") != "allegro":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invoice creation only for Allegro orders",
+        )
+
+    existing = draft.get("fakturownia_invoice_id")
+    if existing and existing != "pending":
+        return {"status": "already_created", "fakturownia_invoice_id": existing}
+    if existing == "pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Invoice creation already in progress — try again in a moment",
+        )
+
+    # Claim the slot optimistically so concurrent requests see "pending" and bail out.
+    shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": "pending"})
+
+    allegro_client = _get_allegro_client()
+    fakturownia_client = _get_fakturownia_invoice_client()
+    if allegro_client is None:
+        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": None})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Allegro credentials not configured",
+        )
+    if fakturownia_client is None:
+        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": None})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Fakturownia credentials not configured",
+        )
+
+    order_id = draft.get("external_order_id") or draft.get("shopify_order_number", "")
+    try:
+        order = allegro_client.get_order(order_id)
+    except Exception as exc:
+        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": None})
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to fetch Allegro order: {exc}",
+        ) from exc
+
+    from zdrovena.api.routers.allegro_invoicer import create_invoice_for_order
+
+    result = create_invoice_for_order(
+        order, fakturownia_client=fakturownia_client, allegro_client=allegro_client
+    )
+
+    if result.get("status") != "created":
+        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": None})
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=result.get("error", "Invoice creation failed"),
+        )
+    shipping_store.update_draft(
+        draft_id, {"fakturownia_invoice_id": result["fakturownia_invoice_id"]}
+    )
+    return result
+
+
 @router.post(
     "/shipping/sync",
     status_code=status.HTTP_200_OK,
@@ -2224,14 +2405,13 @@ def sync_orders(
     allegro_client = _get_allegro_client()
     if allegro_client is not None:
         try:
-            fakturownia_client = _get_fakturownia_client()
             from zdrovena.api.routers.allegro_poller import poll_orders_once
 
             result["allegro"] = poll_orders_once(
                 client=allegro_client,
                 shipping_store=shipping_store,
                 storage=storage,
-                fakturownia_client=fakturownia_client,
+                # fakturownia_client omitted — invoicing is manual via the shipping UI
             )
         except Exception as exc:
             logger.exception("Allegro sync failed: %s", exc)
