@@ -57,7 +57,9 @@ def _make_draft(store: ShippingStore, **overrides) -> str:
 _MOCK_ORDER = {
     "id": "allegro-uuid-123",
     "buyer": {"firstName": "Jan", "lastName": "Kowalski", "email": "jan@example.com"},
-    "lineItems": [{"quantity": 2, "offer": {"name": "Woda 1L", "id": "sku-1"}, "price": {"amount": "10.00"}}],
+    "lineItems": [
+        {"quantity": 2, "offer": {"name": "Woda 1L", "id": "sku-1"}, "price": {"amount": "10.00"}}
+    ],
     "delivery": {"address": {}},
     "invoice": {},
 }
@@ -122,7 +124,9 @@ class TestInvoicePreview:
         mock_allegro.get_order.return_value = _MOCK_ORDER
         zero_qty_payload = {
             **_MOCK_PAYLOAD,
-            "positions": [{"name": "Item", "quantity": 0, "total_price_gross": 0.0, "tax_name": "8%"}],
+            "positions": [
+                {"name": "Item", "quantity": 0, "total_price_gross": 0.0, "tax_name": "8%"}
+            ],
         }
         with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro):
             with patch(
@@ -195,9 +199,7 @@ class TestCreateInvoice:
 
     def test_503_when_fakturownia_not_configured(self, client, store):
         _make_draft(store)
-        with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client", return_value=MagicMock()
-        ):
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=MagicMock()):
             with patch(
                 "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
                 return_value=None,
@@ -213,9 +215,7 @@ class TestCreateInvoice:
         mock_allegro.get_order.return_value = _MOCK_ORDER
         mock_fakturownia = MagicMock()
         creation_result = {"status": "created", "fakturownia_invoice_id": 777}
-        with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro
-        ):
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro):
             with patch(
                 "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
                 return_value=mock_fakturownia,
@@ -238,9 +238,7 @@ class TestCreateInvoice:
         mock_allegro = MagicMock()
         mock_allegro.get_order.return_value = _MOCK_ORDER
         failure_result = {"status": "error", "error": "Fakturownia returned 503"}
-        with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro
-        ):
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro):
             with patch(
                 "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
                 return_value=MagicMock(),
