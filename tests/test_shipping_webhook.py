@@ -1088,6 +1088,29 @@ class TestRunInpost:
         kw = mock_ship.call_args.kwargs
         assert kw["target_point"] == "WAW01A"
 
+    def test_kurier_building_and_flat_number_joined_with_slash(self):
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        draft = {
+            **_KURIER_DRAFT,
+            "shipping_address": {
+                "street": "Kwiatowa",
+                "building_number": "24",
+                "flat_number": "5",
+                "city": "Warszawa",
+                "post_code": "00-001",
+            },
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.create_kurier_shipment"
+            ) as mock_ship:
+                with patch("zdrovena.common.inpost.InPostClient.create_dispatch_order"):
+                    mock_ship.return_value = {"id": "ship-3", "tracking_number": "TRK3"}
+                    _run_inpost(draft, _SENDER)
+        kw = mock_ship.call_args.kwargs
+        assert kw["receiver_building_number"] == "24/5"
+
 
 class TestRunApaczka:
     def test_creates_shipment_returns_patch(self):
@@ -1288,6 +1311,7 @@ class TestCreateDraft:
         assert d["receiver"]["email"] == "piotr.nowak@example.com"
         assert d["shipping_address"]["city"] == "Kraków"
         assert d["shipping_address"]["post_code"] == "30-001"
+        assert d["shipping_address"]["flat_number"] == "m. 5"
 
     def test_locker_id_from_address2_fallback(self, store):
         from zdrovena.api.routers.webhooks import _create_draft
@@ -1318,6 +1342,34 @@ class TestCreateDraft:
         assert d["status"] == "pending"
         assert d["service"] == "inpost_locker_standard"
         assert d["receiver"]["locker_id"] == "WAW01A"
+
+    def test_multipackage_inpost_with_phone_is_pending(self, store):
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        order = {
+            "id": "800",
+            "order_number": 9002,
+            "shipping_lines": [{"title": "InPost Kurier"}],
+            "line_items": [
+                {"name": "HUMIO - woda alkaliczna, 12 butelek", "quantity": 5},
+            ],
+            "shipping_address": {
+                "first_name": "Jan",
+                "last_name": "K",
+                "address1": "Testowa 5",
+                "address2": "",
+                "city": "Wrocław",
+                "zip": "50-001",
+                "phone": "600100200",
+            },
+            "customer": {},
+            "email": "jan@k.pl",
+            "note_attributes": [],
+        }
+        _create_draft(order, store, object())
+        d = store.list_drafts()[0]
+        assert d["packages_count"] == 2
+        assert d["status"] == "pending"
 
 
 class TestCreateDraftAllegroDelivery:
