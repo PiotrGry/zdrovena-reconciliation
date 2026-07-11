@@ -131,6 +131,9 @@ class ApaczkaClient:
         (auth) and insufficient balance (auth) which are routed to their subclasses.
         """
         body = _sign(self._app_id, self._secret, endpoint, data)
+        logger.debug(
+            "Apaczka %s payload: %s", endpoint, json.dumps(data, ensure_ascii=False)[:1000]
+        )
         try:
             resp = self._session.post(f"{_BASE}/{endpoint}/", data=body, timeout=_TIMEOUT)
         except (requests.Timeout, requests.ConnectionError) as exc:

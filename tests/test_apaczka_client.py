@@ -350,6 +350,7 @@ class TestCreateShipment:
         assert data["service_id"] == _SERVICE_ID
         assert data["order_id"] == "order-2042"
         assert data["address"]["sender"]["email"] == "sender@zdrovena.pl"
+        assert data["address"]["receiver"]["address"] == "Kwiatowa 1"
         assert data["address"]["receiver"]["zip"] == "30-001"
         assert data["address"]["receiver"]["country_code"] == "PL"
         assert data["shipment"][0]["type"] == "package"
