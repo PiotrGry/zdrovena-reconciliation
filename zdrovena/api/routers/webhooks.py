@@ -799,7 +799,9 @@ def _run_apaczka(
         receiver_lastname=receiver.get("last_name", ""),
         receiver_email=receiver.get("email", ""),
         receiver_phone=receiver.get("phone", ""),
-        receiver_address=addr.get("street", ""),
+        receiver_address=" ".join(
+            filter(None, [addr.get("street", ""), addr.get("building_number", "")])
+        ),
         receiver_city=addr.get("city", ""),
         receiver_zip=addr.get("post_code", ""),
         sender=sender,

@@ -354,6 +354,23 @@ class TestCreateShipment:
         assert data["address"]["receiver"]["country_code"] == "PL"
         assert data["shipment"][0]["type"] == "package"
 
+    def test_sender_building_number_included_in_address(self):
+        """Regression: _get_sender() stores building_number separately; create_shipment
+        must join it with street so Apaczka doesn't receive a bare street name."""
+        sender_with_bnum = {
+            **_SENDER,
+            "street": "Testowa",
+            "building_number": "7",
+        }
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        api_response = _ok_response({"status": 200, "response": {"id": "ap-bnum"}})
+        with patch.object(client._session, "post", return_value=api_response) as mock_post:
+            client.create_shipment(**{**self._kwargs(), "sender": sender_with_bnum})
+
+        sent_form = mock_post.call_args.kwargs["data"]
+        data = json.loads(sent_form["request"])
+        assert data["address"]["sender"]["address"] == "Testowa 7"
+
     def test_pickup_window_included_when_provided(self):
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
         api_response = _ok_response({"status": 200, "response": {"id": "ap-3"}})

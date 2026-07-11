@@ -247,7 +247,9 @@ class ApaczkaClient:
                     "lastname": sender.get("lastname", ""),
                     "email": sender.get("email", ""),
                     "phone": sender.get("phone", ""),
-                    "address": sender.get("street", ""),
+                    "address": " ".join(
+                        filter(None, [sender.get("street", ""), sender.get("building_number", "")])
+                    ),
                     "city": sender.get("city", ""),
                     "zip": sender.get("post_code", ""),
                     "country_code": "PL",
