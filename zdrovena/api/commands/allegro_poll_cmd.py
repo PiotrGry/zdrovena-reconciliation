@@ -69,22 +69,6 @@ def _build_allegro_client():
     )
 
 
-def _build_fakturownia_client():
-    from zdrovena.common.client import FakturowniaClient
-    from zdrovena.common.config import KEYCHAIN_SERVICE_FAKTUROWNIA
-    from zdrovena.common.exceptions import MissingSecretError
-    from zdrovena.common.secrets import get_secret
-
-    try:
-        token = get_secret(KEYCHAIN_SERVICE_FAKTUROWNIA)
-    except MissingSecretError:
-        logger.warning(
-            "Fakturownia credentials not available — invoices will not be created this cycle."
-        )
-        return None
-    return FakturowniaClient(api_token=token)
-
-
 def run(args: argparse.Namespace) -> None:
     _setup_logging()
 
@@ -93,7 +77,6 @@ def run(args: argparse.Namespace) -> None:
     from zdrovena.common.storage import get_storage_service
 
     allegro_client = _build_allegro_client()
-    fakturownia_client = _build_fakturownia_client()
 
     try:
         shipping_store = get_shipping_store()
@@ -108,7 +91,7 @@ def run(args: argparse.Namespace) -> None:
             client=allegro_client,
             shipping_store=shipping_store,
             storage=storage,
-            fakturownia_client=fakturownia_client,
+            # fakturownia_client omitted — invoicing is manual via the shipping UI
         )
     except Exception as exc:
         logger.exception("Unexpected error during polling cycle: %s", exc)
