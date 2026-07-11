@@ -2219,7 +2219,7 @@ def _get_fakturownia_invoice_client() -> Any | None:
     Distinct from _get_fakturownia_client() which returns the audit-only
     common.client.FakturowniaClient (paginated date-range fetch only).
     """
-    from zdrovena.common.config import KEYCHAIN_SERVICE_FAKTUROWNIA
+    from zdrovena.common.config import DEFAULT_DOMAIN, KEYCHAIN_SERVICE_FAKTUROWNIA
     from zdrovena.common.exceptions import MissingSecretError
 
     try:
@@ -2228,7 +2228,7 @@ def _get_fakturownia_invoice_client() -> Any | None:
         return None
     from zdrovena.common.fakturownia import FakturowniaClient
 
-    return FakturowniaClient(api_token=token)
+    return FakturowniaClient(api_token=token, base_url=f"https://{DEFAULT_DOMAIN}")
 
 
 @router.get(
