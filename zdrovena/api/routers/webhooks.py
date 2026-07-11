@@ -1238,7 +1238,7 @@ def _create_draft(
     phone = normalize_pl_phone(phone) if phone else phone
 
     needs_review = (
-        packages_count > 1 or phone is None or (courier == "apaczka" and apaczka_service_id is None)
+        phone is None or (courier == "apaczka" and apaczka_service_id is None)
     )
 
     record: dict[str, Any] = {

@@ -320,7 +320,7 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen, getToken, onDraftUpdate }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, onReviewDraft, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen, getToken, onDraftUpdate }) {
     const { t, lang } = useT()
     const T = t[lang]
     const [open, setOpen] = useState(false)
@@ -580,6 +580,19 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                             </button>
                         )}
 
+                        {canManage && draft.status === 'needs_review' && draft.courier !== 'apaczka' && (
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => onReviewDraft(draft)}
+                                disabled={isBusy}
+                            >
+                                {isBusy
+                                    ? <><Icon name="loader" size={13} className="spin" /> Zatwierdzanie…</>
+                                    : <>Zatwierdź</>
+                                }
+                            </button>
+                        )}
+
                         {draft.courier_draft_id && draft.status === 'created' && (
                             <button
                                 className="btn btn-secondary"
@@ -835,6 +848,21 @@ export default function ShippingView() {
                 method: 'PATCH',
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ apaczka_service_id: serviceId, reviewed: true }),
+            })
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(body.detail || `${res.status}`)
+            }
+        })()
+    }
+
+    function handleReviewDraft(draft) {
+        return withBusy(draft.id, async () => {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reviewed: true }),
             })
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
@@ -1136,6 +1164,7 @@ export default function ShippingView() {
                         onMarkFulfilled={handleMarkFulfilled}
                         onConfirmPending={handleConfirmPending}
                         onSetApaczkaService={handleSetApaczkaService}
+                        onReviewDraft={handleReviewDraft}
                         apaczkaServices={apaczkaServices}
                         selected={selectedDraftIds.has(draft.id)}
                         onToggleSelect={handleToggleSelect}
