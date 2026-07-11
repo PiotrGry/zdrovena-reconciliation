@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir ".[api,cloud,ksef]"
 COPY zdrovena/ zdrovena/
 
 ENV APP_ENV=prod
+ENV PYTHONPATH=/app
 EXPOSE 8000
 
 # Non-root user — principle of least privilege
