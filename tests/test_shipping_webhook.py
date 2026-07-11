@@ -1102,9 +1102,7 @@ class TestRunInpost:
             },
         }
         with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
-            with patch(
-                "zdrovena.common.inpost.InPostClient.create_kurier_shipment"
-            ) as mock_ship:
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_ship:
                 with patch("zdrovena.common.inpost.InPostClient.create_dispatch_order"):
                     mock_ship.return_value = {"id": "ship-3", "tracking_number": "TRK3"}
                     _run_inpost(draft, _SENDER)
