@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v2.8.0 (2026-07-11)
+
+### Added
+
+- **frontend**: Invoice preview panel for Allegro orders — "Podgląd i załącz" button opens a slide-in panel showing buyer info, positions, kaucja, and total before creating the invoice in Fakturownia and attaching it to the Allegro order.
+- **api**: `GET /api/shipping/drafts/{id}/invoice-preview` — fetches Allegro order and computes the Fakturownia invoice payload without creating anything; returns buyer data, line items with totals, and settlement positions.
+- **api**: `POST /api/shipping/drafts/{id}/create-invoice` — creates the Fakturownia invoice, attaches it to the Allegro order, and stores the invoice ID on the draft. Uses an optimistic "pending" lock to prevent duplicate creation on double-click.
+- **frontend**: Source tag now shown for Shopify orders (info badge) in addition to the existing Allegro (warn badge).
+- **allegro**: Allegro re-authentication command (`zdrovena allegro-auth`) with device-code flow and access-token persistence in Key Vault.
+
+### Changed
+
+- **shipping**: Auto-invoicing from the Allegro poller cron job is disabled — invoices are now created manually via the new UI button. This prevents chaos from automatic creation.
+- **frontend**: Date column in the shipping view now shows the order date (Allegro: `boughtAt`, Shopify: `created_at`) instead of the sync timestamp.
+- **frontend**: Allegro order numbers (UUIDs) are truncated to 8 chars + ellipsis in the narrow table column; full ID visible on hover.
+
+### Fixed
+
+- **allegro**: `AttributeError: 'FakturowniaClient' object has no attribute 'list_invoices'` — the poller was importing the audit-only client instead of the full CRUD client.
+- **api**: `unit_price_gross` no longer raises `ZeroDivisionError` when an Allegro line item has quantity 0.
+- **api**: `create-invoice` now returns HTTP 502 (not silently 200) when Fakturownia invoice creation fails, so the frontend shows the error correctly.
+- **api**: Status field unified to `already_created` across both invoice endpoints.
+- **api**: Settlement position `amount` is now returned as `float` (was `str`), consistent with `line_total`.
+- **allegro**: `httpx` dependency removed from `allegro-auth` command — uses `requests` which is already a production dependency.
+
+
 ## v2.7.3 (2026-07-10)
 
 ### Added
