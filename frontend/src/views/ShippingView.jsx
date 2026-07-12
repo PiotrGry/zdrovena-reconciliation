@@ -5,6 +5,7 @@ import { useT } from '../lang'
 import { PageHead } from '../components/PageHead'
 import { Pill } from '../components/Pill'
 import { Icon } from '../components/Icon'
+import { useToast } from '../components/Toast'
 
 function fmtDate(iso) {
     if (!iso) return '—'
@@ -685,6 +686,7 @@ export default function ShippingView() {
     const canManage = roles.includes('zdrovena-admin') || roles.includes('zdrovena-shipment-mgr')
     const { t, lang } = useT()
     const T = t[lang]
+    const { pushToast } = useToast()
 
     const [drafts, setDrafts] = useState([])
     const [loading, setLoading] = useState(true)
@@ -784,12 +786,15 @@ export default function ShippingView() {
         return () => { cancelled = true }
     }, [getToken])
 
-    function withBusy(draftId, fn) {
+    function withBusy(draftId, fn, actionLabel) {
         return async () => {
             setBusy(s => new Set([...s, draftId]))
             try {
                 await fn()
                 await load()
+            } catch (e) {
+                const prefix = actionLabel ? `${actionLabel}: ` : ''
+                pushToast({ kind: 'error', msg: `${prefix}${e.message || 'nieznany błąd'}` })
             } finally {
                 setBusy(s => { const n = new Set(s); n.delete(draftId); return n })
             }
@@ -823,7 +828,7 @@ export default function ShippingView() {
                 const body = await res.json().catch(() => ({}))
                 throw new Error(body.detail || `${res.status}`)
             }
-        })()
+        }, 'Nie udało się zrealizować przesyłki')()
     }
 
     function handlePickup(draft, schedule) {
@@ -838,7 +843,7 @@ export default function ShippingView() {
                 const body = await res.json().catch(() => ({}))
                 throw new Error(body.detail || `${res.status}`)
             }
-        })()
+        }, 'Nie udało się zamówić podjazdu')()
     }
 
     function handleSetApaczkaService(draft, serviceId) {
@@ -853,7 +858,7 @@ export default function ShippingView() {
                 const body = await res.json().catch(() => ({}))
                 throw new Error(body.detail || `${res.status}`)
             }
-        })()
+        }, 'Nie udało się zapisać usługi Apaczka')()
     }
 
     function handleReviewDraft(draft) {
@@ -868,7 +873,7 @@ export default function ShippingView() {
                 const body = await res.json().catch(() => ({}))
                 throw new Error(body.detail || `${res.status}`)
             }
-        })()
+        }, 'Nie udało się zatwierdzić draftu')()
     }
 
     function handleConfirmPending(draft) {
@@ -884,7 +889,7 @@ export default function ShippingView() {
                 const body = await res.json().catch(() => ({}))
                 throw new Error(body.detail || `${res.status}`)
             }
-        })()
+        }, 'Nie udało się sprawdzić statusu')()
     }
 
     // Auto-poll drafts stuck in pending_confirmation (Allegro create-command still
@@ -930,7 +935,7 @@ export default function ShippingView() {
                 throw new Error(body.detail || `${res.status}`)
             }
             await load()
-        })()
+        }, 'Nie udało się oznaczyć jako zrealizowane')()
     }
 
 
