@@ -14,6 +14,7 @@ import OrdersView from './views/OrdersView'
 import UsersView from './views/UsersView'
 import SettingsView from './views/SettingsView'
 import ShippingView from './views/ShippingView'
+import DlqView from './views/DlqView'
 import LoginScreen from './views/LoginScreen'
 
 const VIEWS = {
@@ -25,6 +26,7 @@ const VIEWS = {
     ...(FEATURES.orders && { orders: OrdersView }),
     ...(FEATURES.users && { users: UsersView }),
     ...(FEATURES.shipping && { shipping: ShippingView }),
+    ...(FEATURES.dlq && { dlq: DlqView }),
     settings: SettingsView,
 }
 

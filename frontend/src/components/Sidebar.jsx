@@ -45,6 +45,9 @@ export default function Sidebar({ page, onNavigate }) {
                 {FEATURES.shipping && (
                     <NavItem iconName="truck" label={T.nav_shipping} page="shipping" current={page} onNavigate={onNavigate} />
                 )}
+                {FEATURES.dlq && (
+                    <NavItem iconName="alertTriangle" label={T.nav_dlq} page="dlq" current={page} onNavigate={onNavigate} />
+                )}
             </NavGroup>
 
             {(FEATURES.orders || FEATURES.products) && (
