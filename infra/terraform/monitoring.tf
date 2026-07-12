@@ -11,6 +11,24 @@ resource "azurerm_application_insights" "ai" {
   tags                = local.tags
 }
 
+# ── Action group: powiadamia właściciela e-mailem ────────────────────────────
+# Bez odbiorcy alerty istniały, ale nikt nie był powiadamiany ([LOG] H1 —
+# największe "pozorne bezpieczeństwo" audytu monitoringu). Ten action_group jest
+# podpięty do wszystkich reguł alertów poniżej.
+
+resource "azurerm_monitor_action_group" "ops" {
+  name                = "${var.prefix}-ag-ops"
+  resource_group_name = azurerm_resource_group.rg.name
+  short_name          = "zdrovena" # max 12 znaków
+
+  email_receiver {
+    name          = "owner"
+    email_address = var.ops_alert_email
+  }
+
+  tags = local.tags
+}
+
 # ── Alert: high error rate (5xx > 1% over 5 minutes) ─────────────────────────
 
 resource "azurerm_monitor_metric_alert" "high_error_rate" {
@@ -28,6 +46,10 @@ resource "azurerm_monitor_metric_alert" "high_error_rate" {
     aggregation      = "Count"
     operator         = "GreaterThan"
     threshold        = 5
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.ops.id
   }
 
   tags = local.tags
@@ -50,6 +72,56 @@ resource "azurerm_monitor_metric_alert" "high_latency" {
     aggregation      = "Average"
     operator         = "GreaterThan"
     threshold        = 3000
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.ops.id
+  }
+
+  tags = local.tags
+}
+
+# ── Alert: DLQ backlog (dowolna nowa porażka trafiająca do DLQ) ──────────────
+# DLQ to Azure Table Storage (shippingdraftsdlq), nie kolejka — brak natywnej
+# metryki "liczba wiadomości". Reguła oparta na logach: liczy wpisy dziennika
+# emitowane przy enqueue do DLQ (zdrovena/api/routers/webhooks.py — "enqueueing
+# to DLQ"). Próg > 0 w oknie 15 min ⇒ każde nowe niepowodzenie utworzenia draftu
+# powiadamia właściciela ([LOG] H3, [EVT] R2/H3, [API] M3).
+#
+# UWAGA (dla właściciela przy `terraform apply`): tabela ContainerAppConsoleLogs_CL
+# pojawia się w Log Analytics dopiero po pierwszym logu Container App. Jeśli
+# nazwa tabeli w Twoim workspace jest inna, dostosuj zapytanie KQL poniżej.
+
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dlq_backlog" {
+  name                = "${var.prefix}-alert-dlq-backlog"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  description         = "Nowy wpis w DLQ (nieudane utworzenie draftu) — wymaga retry/discard przez operatora"
+  severity            = 1
+
+  evaluation_frequency = "PT5M"
+  window_duration      = "PT15M"
+  scopes               = [azurerm_application_insights.ai.id]
+
+  criteria {
+    query                   = <<-KQL
+      traces
+      | where message has "enqueueing to DLQ"
+    KQL
+    time_aggregation_method = "Count"
+    threshold               = 0
+    operator                = "GreaterThan"
+
+    failing_periods {
+      minimum_failing_periods_to_trigger_alert = 1
+      number_of_evaluation_periods             = 1
+    }
+  }
+
+  auto_mitigation_enabled = false
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
   }
 
   tags = local.tags

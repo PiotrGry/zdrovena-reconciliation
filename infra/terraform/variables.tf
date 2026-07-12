@@ -47,6 +47,11 @@ variable "azure_client_id_entra" {
   # Cross-variable validation (checking var.environment) not supported in Terraform.
 }
 
+variable "ops_alert_email" {
+  description = "E-mail właściciela — odbiorca alertów Azure Monitor (error-rate, latency, DLQ). Ustaw w terraform.tfvars."
+  type        = string
+}
+
 variable "container_app_cpu" {
   description = "vCPU allocated to the API container"
   type        = number
