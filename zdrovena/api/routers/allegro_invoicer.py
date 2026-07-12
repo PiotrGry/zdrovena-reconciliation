@@ -40,6 +40,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from zdrovena.common.allegro_invoice_mapper import allegro_order_to_fakturownia_invoice
+from zdrovena.common.correlation import get_correlation_id
 from zdrovena.common.secrets import get_secret
 
 logger = logging.getLogger("zdrovena.api.routers.allegro_invoicer")
@@ -89,25 +90,33 @@ def _check_total_matches_allegro(order: dict[str, Any], payload: dict[str, Any])
         delivery_cost_amount = ((order.get("delivery") or {}).get("cost") or {}).get("amount", "0")
 
         expected = Decimal(str(total_to_pay_amount)) - Decimal(str(delivery_cost_amount))
-        computed = sum(
+        positions_sum = sum(
             (Decimal(str(p["total_price_gross"])) for p in payload.get("positions", [])),
             start=Decimal("0"),
         )
-        computed += sum(
+        settlements_sum = sum(
             (Decimal(s["amount"]) for s in payload.get("settlement_positions", [])),
             start=Decimal("0"),
         )
+        computed = positions_sum + settlements_sum
     except (AttributeError, InvalidOperation, KeyError, TypeError, ValueError):
         return
 
     if abs(computed - expected) > _TOTAL_MISMATCH_TOLERANCE:
+        # Log every component separately (positions vs settlements/kaucja vs
+        # Allegro's totalToPay) plus the correlation_id, so an operator can see
+        # exactly which part drifted without re-deriving the sums by hand.
         logger.warning(
-            "Invoice total mismatch for Allegro order %s: computed invoice total %s "
+            "Invoice total mismatch for Allegro order %s [correlation_id=%s]: "
+            "computed invoice total %s (positions=%s + settlements/kaucja=%s) "
             "does not match Allegro's totalToPay-minus-delivery %s "
             "(totalToPay=%s, delivery=%s) — proceeding anyway, but this may indicate "
             "a bug in allegro_invoice_mapper.py",
             order.get("id"),
+            get_correlation_id(),
             computed,
+            positions_sum,
+            settlements_sum,
             expected,
             total_to_pay_amount,
             delivery_cost_amount,
@@ -147,10 +156,21 @@ def create_invoice_for_order(
         return {"status": "error", "error": str(exc)}
 
     if existing:
+        # Recover the existing invoice's id/number so the caller can persist it
+        # instead of resetting local state to None and looping (the 502 bug).
+        # Fakturownia is the source of truth; oid+oid_unique guarantees at most
+        # one match, so existing[0] is canonical.
+        existing_invoice = existing[0]
         logger.info(
-            "Fakturownia already has an invoice for Allegro order %s — skipping", allegro_order_id
+            "Fakturownia already has an invoice for Allegro order %s (id=%s) — recovering id",
+            allegro_order_id,
+            existing_invoice.get("id"),
         )
-        return {"status": "already_exists"}
+        return {
+            "status": "already_exists",
+            "fakturownia_invoice_id": existing_invoice.get("id"),
+            "fakturownia_invoice_number": existing_invoice.get("number"),
+        }
 
     _check_total_matches_allegro(order, payload)
 

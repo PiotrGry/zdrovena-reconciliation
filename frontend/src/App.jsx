@@ -4,6 +4,7 @@ import { FEATURES } from './features'
 import { useT, LangCtx, I18N } from './lang'
 import { Header } from './components/Header'
 import Sidebar from './components/Sidebar'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import FilesView from './views/FilesView'
 import CloseView from './views/CloseView'
 import SalesView from './views/SalesView'
@@ -13,6 +14,7 @@ import OrdersView from './views/OrdersView'
 import UsersView from './views/UsersView'
 import SettingsView from './views/SettingsView'
 import ShippingView from './views/ShippingView'
+import DlqView from './views/DlqView'
 import LoginScreen from './views/LoginScreen'
 
 const VIEWS = {
@@ -24,6 +26,7 @@ const VIEWS = {
     ...(FEATURES.orders && { orders: OrdersView }),
     ...(FEATURES.users && { users: UsersView }),
     ...(FEATURES.shipping && { shipping: ShippingView }),
+    ...(FEATURES.dlq && { dlq: DlqView }),
     settings: SettingsView,
 }
 
@@ -50,7 +53,9 @@ function AppShell() {
                 <Header />
                 <Sidebar page={page} onNavigate={navigate} />
                 <main className="main">
-                    <View />
+                    <ErrorBoundary resetKey={page}>
+                        <View />
+                    </ErrorBoundary>
                 </main>
             </div>
         </LangCtx.Provider>

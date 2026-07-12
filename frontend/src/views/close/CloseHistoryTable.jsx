@@ -1,7 +1,10 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useAuth } from '../../auth'
+import { useToast } from '../../components/Toast'
 import { Icon } from '../../components/Icon'
 import { PIPELINE_STEPS } from '../../data'
+import { fetchJson } from '../../api'
+import { usePolling } from '../../hooks/usePolling'
 
 const STATUS_CONFIG = {
     success: { kind: 'ok',   label: 'Sukces',          desc: 'Wszystkie kroki wykonane, e-mail wysłany' },
@@ -16,33 +19,40 @@ const STATUS_CONFIG = {
  */
 export function CloseHistoryTable({ refreshKey = 0 }) {
     const { getToken } = useAuth()
+    const { pushToast } = useToast()
     const [history, setHistory] = useState([])
     const [loading, setLoading] = useState(true)
 
-    const load = useCallback(async () => {
+    // silent=true dla odświeżania w tle (polling): bez toasta błędu, zostawia
+    // ostatnie dobre dane.
+    const load = useCallback(async ({ silent = false } = {}) => {
         try {
             const token = await getToken()
-            const res = await fetch('/api/close/history?limit=15', {
-                headers: { Authorization: `Bearer ${token}` },
-            })
-            if (res.ok) setHistory(await res.json())
-        } catch {
-            /* ignore */
+            setHistory(await fetchJson('/api/close/history?limit=15', { token }))
+        } catch (e) {
+            if (!silent) {
+                pushToast({ kind: 'error', msg: `Nie udało się wczytać historii zamknięć: ${e.message}` })
+            }
         } finally {
-            setLoading(false)
+            if (!silent) setLoading(false)
         }
-    }, [getToken])
+    }, [getToken, pushToast])
 
     useEffect(() => { load() }, [load, refreshKey])
+    usePolling(() => load({ silent: true }), 20_000)
 
     const deleteEntry = async (ts) => {
         if (!window.confirm('Usuń ten wpis z historii?')) return
-        const token = await getToken()
-        await fetch(`/api/close/history/${encodeURIComponent(ts)}`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${token}` },
-        })
-        setHistory(prev => prev.filter(h => h.ts !== ts))
+        try {
+            const token = await getToken()
+            await fetchJson(`/api/close/history/${encodeURIComponent(ts)}`, {
+                method: 'DELETE',
+                token,
+            })
+            setHistory(prev => prev.filter(h => h.ts !== ts))
+        } catch (e) {
+            pushToast({ kind: 'error', msg: `Nie udało się usunąć wpisu: ${e.message}` })
+        }
     }
 
     if (loading || !history.length) return null

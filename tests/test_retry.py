@@ -253,7 +253,7 @@ class TestSleepFnInjection:
         assert isinstance(calls[0], float)
 
 
-# ── TDD-red: additional retryable status codes ────────────────────────────────
+# ── additional retryable status codes ─────────────────────────────────────────
 
 
 def _make_session_returning_status(status: int, headers: dict | None = None):
@@ -270,12 +270,9 @@ def _make_session_returning_status(status: int, headers: dict | None = None):
     return session, mock_resp
 
 
-class TestRetryableStatusCodesTDD:
-    """**TDD-red** — _RETRYABLE_STATUS_CODES = {429, 503} today.
-
-    Per audit §7.4: 502 (Bad Gateway), 504 (Gateway Timeout) and 408 (Request
-    Timeout) are universally treated as retryable and must honour Retry-After.
-    These tests fail until retry.py extends the set.
+class TestRetryableStatusCodes:
+    """502 (Bad Gateway), 504 (Gateway Timeout) and 408 (Request Timeout) are
+    treated as retryable and honour Retry-After, alongside 429/503 (audit §7.4).
     """
 
     def test_502_with_retry_after_is_honoured(self):
@@ -325,11 +322,9 @@ class TestRetryableStatusCodesTDD:
         assert 2.4 <= sleeps[0] <= 3.6
 
     def test_retry_after_http_date_format(self):
-        # "Retry-After: Wed, 21 Oct 2026 07:28:00 GMT" — valid per RFC 7231.
-        # Current code does float("Wed, ...") which raises ValueError and
-        # silently falls back to exponential backoff. The HTTP-date should
-        # produce a positive wait based on the delta from now() (clamped to
-        # initial_delay at minimum).
+        # "Retry-After: Wed, 21 Oct 2099 07:28:00 GMT" — valid HTTP-date per
+        # RFC 7231. It must produce a positive wait based on the delta from
+        # now() (clamped to initial_delay at minimum), not fall back to backoff.
         session, _ = _make_session_returning_status(
             503, {"Retry-After": "Wed, 21 Oct 2099 07:28:00 GMT"}
         )

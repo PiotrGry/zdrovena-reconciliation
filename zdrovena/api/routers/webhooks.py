@@ -43,7 +43,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, ShopifyDedupStoreDep, StorageDep
+from zdrovena.api.observability import get_correlation_id, set_correlation_id
 from zdrovena.audit.bottles import SKIP_RE, is_glass
+from zdrovena.common.events import log_event
 from zdrovena.common.secrets import get_secret
 from zdrovena.common.shipping_exceptions import (
     AllegroAuthError,
@@ -715,7 +717,9 @@ def _run_inpost(
             receiver_email=email,
             receiver_phone=phone,
             receiver_street=addr.get("street", ""),
-            receiver_building_number=addr.get("building_number", "1"),  # fix #3
+            receiver_building_number="/".join(
+                filter(None, [addr.get("building_number", "1"), addr.get("flat_number", "")])
+            ),
             receiver_city=addr.get("city", ""),
             receiver_post_code=addr.get("post_code", ""),
             sender=sender,
@@ -799,7 +803,16 @@ def _run_apaczka(
         receiver_lastname=receiver.get("last_name", ""),
         receiver_email=receiver.get("email", ""),
         receiver_phone=receiver.get("phone", ""),
-        receiver_address=addr.get("street", ""),
+        receiver_address=" ".join(
+            filter(
+                None,
+                [
+                    addr.get("street", ""),
+                    addr.get("building_number", ""),
+                    addr.get("flat_number", ""),
+                ],
+            )
+        ),
         receiver_city=addr.get("city", ""),
         receiver_zip=addr.get("post_code", ""),
         sender=sender,
@@ -1125,6 +1138,7 @@ def _create_draft_safely(
     storage: Any,
     *,
     source: str = "shopify",
+    correlation_id: str = "-",
 ) -> None:
     """Wrapper around ``_create_draft`` that DLQs any exception (P1-9).
 
@@ -1132,7 +1146,11 @@ def _create_draft_safely(
     silently swallowed and the order would be lost. Instead we capture the
     payload + error to the DLQ so an operator can retry via
     ``POST /shipping/drafts/dlq/{entry_id}/retry``.
+
+    ``correlation_id`` jest ustawiany na starcie, aby logi tworzenia draftu w tle
+    dzieliły identyfikator z logiem webhooka, który je zakolejkował.
     """
+    set_correlation_id(correlation_id)
     try:
         _create_draft(order, shipping_store, storage, source=source)
     except Exception as exc:
@@ -1237,9 +1255,7 @@ def _create_draft(
     # fix: normalize phone
     phone = normalize_pl_phone(phone) if phone else phone
 
-    needs_review = (
-        packages_count > 1 or phone is None or (courier == "apaczka" and apaczka_service_id is None)
-    )
+    needs_review = phone is None or (courier == "apaczka" and apaczka_service_id is None)
 
     record: dict[str, Any] = {
         "id": str(uuid.uuid4()),
@@ -1275,6 +1291,7 @@ def _create_draft(
         "shipping_address": {
             "street": street,
             "building_number": building_number,  # fix #3
+            "flat_number": shipping_addr.get("address2", ""),
             "city": shipping_addr.get("city", ""),
             "post_code": shipping_addr.get("zip", ""),
         },
@@ -1289,6 +1306,15 @@ def _create_draft(
         record["allegro_sending_method"] = allegro_sending_method
 
     shipping_store.upsert_draft(record)
+    log_event(
+        "draft.created",
+        order_number=record["shopify_order_number"],
+        draft_id=record["id"],
+        source=source,
+        courier=record["courier"],
+        status=record["status"],
+        packages_count=record["packages_count"],
+    )
     _maybe_send_new_order_sms(record)
 
 
@@ -1387,7 +1413,15 @@ async def shopify_order_created(
         return {"status": "skipped"}
 
     # 6. Heavy work off the request path (Shopify enforces a 5s timeout).
-    background_tasks.add_task(_create_draft_safely, order, shipping_store, storage)
+    #    Correlation ID przekazujemy jawnie — kontekst żądania jest już zresetowany,
+    #    gdy Starlette wykonuje zadanie tła, więc log draftu inaczej straciłby powiązanie.
+    background_tasks.add_task(
+        _create_draft_safely,
+        order,
+        shipping_store,
+        storage,
+        correlation_id=get_correlation_id(),
+    )
     logger.info("Queued shipping draft for order %s", order.get("order_number") or order.get("id"))
     return {"status": "accepted"}
 
@@ -1475,6 +1509,8 @@ def retry_dlq_entry(
             )
         except Exception:
             logger.exception("DLQ update after retry failure failed for %s", entry_id)
+        # DLQ retry to endpoint diagnostyczny operatora — surowy błąd upstream
+        # jest tu celowo zwracany, żeby operator mógł zdecydować o dalszej akcji.
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Retry failed: {type(exc).__name__}: {exc}",
@@ -1555,13 +1591,32 @@ def execute_draft(
             patch = _run_inpost(draft, sender, **pickup_schedule)
         else:
             patch = _run_apaczka(draft, sender, storage, **pickup_schedule)
+    except ZdrovenaShippingError as exc:
+        logger.exception("execute_draft failed for %s", draft_id)
+        shipping_store.update_draft(draft_id, {"status": "error", "error": str(exc)})
+        # Wyjątek domenowy przesyłki → koperta błędu (zdrovena.api.errors)
+        # mapuje go na właściwy status i polski komunikat dla operatora.
+        raise
     except Exception as exc:
         logger.exception("execute_draft failed for %s", draft_id)
         shipping_store.update_draft(draft_id, {"status": "error", "error": str(exc)})
-        raise HTTPException(status_code=502, detail=f"Courier API error: {exc}") from exc
+        # Ogólny błąd komunikacji z przewoźnikiem → 502 z polskim komunikatem,
+        # bez wyciekania surowego (angielskiego) str(exc) do operatora.
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Błąd komunikacji z przewoźnikiem — spróbuj ponownie za chwilę.",
+        ) from exc
 
     shipping_store.update_draft(draft_id, patch)
     updated = shipping_store.get_draft(draft_id)
+    log_event(
+        "shipment.created",
+        draft_id=draft_id,
+        order_number=draft.get("shopify_order_number"),
+        courier=draft.get("courier"),
+        tracking_number=patch.get("tracking_number"),
+        status=patch.get("status"),
+    )
     if updated:
         _maybe_push_tracking_to_allegro(updated)
     return updated or patch
@@ -2276,13 +2331,33 @@ def get_invoice_preview(
     positions = payload.get("positions") or []
     settlements = payload.get("settlement_positions") or []
 
-    total = sum(Decimal(str(p.get("total_price_gross", 0))) for p in positions)
-    total += sum(Decimal(str(s.get("amount", 0))) for s in settlements)
+    positions_total = sum(Decimal(str(p.get("total_price_gross", 0))) for p in positions)
+    settlement_total = sum(Decimal(str(s.get("amount", 0))) for s in settlements)
+    total = positions_total + settlement_total
 
     buyer = order.get("buyer") or {}
     invoice_req = order.get("invoice") or {}
     addr = invoice_req.get("address") or buyer.get("address") or {}
     company = addr.get("company") or {}
+
+    # Cross-check "Do zapłaty" (positions + kaucja) against Allegro's own
+    # summary.totalToPay minus delivery (invoice has no shipping line). Lets the
+    # operator confirm the invoice matches Allegro to the grosz before sending.
+    summary = order.get("summary") or {}
+    total_to_pay_raw = (summary.get("totalToPay") or {}).get("amount")
+    delivery_cost_raw = ((order.get("delivery") or {}).get("cost") or {}).get("amount")
+    allegro_total_to_pay: float | None = None
+    matches_allegro: bool | None = None
+    if total_to_pay_raw is not None:
+        try:
+            allegro_expected = Decimal(str(total_to_pay_raw)) - Decimal(
+                str(delivery_cost_raw or "0")
+            )
+            allegro_total_to_pay = float(allegro_expected)
+            matches_allegro = abs(total - allegro_expected) <= Decimal("0.01")
+        except (ArithmeticError, ValueError):
+            allegro_total_to_pay = None
+            matches_allegro = None
 
     return {
         "status": "preview_ready",
@@ -2299,7 +2374,7 @@ def get_invoice_preview(
                 "unit_price_gross": float(Decimal(str(p["total_price_gross"])) / p["quantity"])
                 if p.get("quantity")
                 else 0.0,
-                "vat_rate": p.get("tax_name", "8%"),
+                "vat_rate": f"{int(p.get('tax', 0))}%",
                 "line_total": float(p["total_price_gross"]),
             }
             for p in positions
@@ -2308,7 +2383,11 @@ def get_invoice_preview(
             {"description": s.get("description", ""), "amount": float(s.get("amount", 0) or 0)}
             for s in settlements
         ],
+        "positions_total": float(positions_total),
+        "settlement_total": float(settlement_total),
         "total_gross": float(total),
+        "allegro_total_to_pay": allegro_total_to_pay,
+        "matches_allegro": matches_allegro,
     }
 
 
@@ -2378,8 +2457,28 @@ def create_draft_invoice(
         order, fakturownia_client=fakturownia_client, allegro_client=allegro_client
     )
 
-    if result.get("status") != "created":
-        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": None})
+    result_status = result.get("status")
+
+    # "already_exists" is a success: Fakturownia already holds the invoice for
+    # this order (idempotent create via oid). Persist the recovered id and
+    # report "already_created" — never 502, never reset state to None (that was
+    # the loop bug: clearing the slot re-armed the poller to try forever).
+    if result_status == "already_exists":
+        recovered_id = result.get("fakturownia_invoice_id")
+        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": recovered_id})
+        return {
+            "status": "already_created",
+            "fakturownia_invoice_id": recovered_id,
+            "fakturownia_invoice_number": result.get("fakturownia_invoice_number"),
+        }
+
+    if result_status != "created":
+        # On failure, keep any invoice id Fakturownia already produced (e.g. the
+        # invoice was created but the Allegro push failed) so a retry attaches to
+        # the same document instead of orphaning it. Only clear the slot when we
+        # truly have nothing to keep.
+        recovered_id = result.get("fakturownia_invoice_id")
+        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": recovered_id})
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=result.get("error", "Invoice creation failed"),
@@ -2436,4 +2535,10 @@ def sync_orders(
     else:
         result["shopify"] = {"skipped": "not_configured"}
 
+    log_event(
+        "sync.completed",
+        actor=getattr(principal, "email", None),
+        allegro=result["allegro"],
+        shopify=result["shopify"],
+    )
     return result

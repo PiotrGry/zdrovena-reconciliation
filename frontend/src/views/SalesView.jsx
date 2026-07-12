@@ -5,6 +5,7 @@ import { PageHead } from '../components/PageHead'
 import { Pill } from '../components/Pill'
 import { Icon } from '../components/Icon'
 import { fmtDate, fmtPLN, MONTHS_PL } from '../data'
+import { usePolling } from '../hooks/usePolling'
 
 const STATUS_KIND = {
     paid: 'ok',
@@ -31,9 +32,13 @@ export default function SalesView() {
 
     const showToast = msg => { setToast(msg); setTimeout(() => setToast(null), 3000) }
 
-    const loadInvoices = useCallback(async () => {
-        setLoading(true)
-        setError(null)
+    // silent=true dla odświeżania w tle (polling): bez spinnera, bez toasta błędu,
+    // zostawia ostatnie dobre dane.
+    const loadInvoices = useCallback(async ({ silent = false } = {}) => {
+        if (!silent) {
+            setLoading(true)
+            setError(null)
+        }
         try {
             const token = await getToken()
             const res = await fetch(`/api/invoices/sales?year=${year}&month=${month}`, {
@@ -42,14 +47,17 @@ export default function SalesView() {
             if (!res.ok) throw new Error(`HTTP ${res.status}`)
             setItems(await res.json())
         } catch (e) {
-            setError(e.message)
-            showToast(`Błąd ładowania: ${e.message}`)
+            if (!silent) {
+                setError(e.message)
+                showToast(`Błąd ładowania: ${e.message}`)
+            }
         } finally {
-            setLoading(false)
+            if (!silent) setLoading(false)
         }
     }, [getToken, year, month])
 
     useEffect(() => { loadInvoices() }, [loadInvoices])
+    usePolling(() => loadInvoices({ silent: true }), 20_000)
 
     const STATUS_LABEL = {
         paid: T.st_paid, unpaid: T.st_unpaid, overdue: T.st_overdue,

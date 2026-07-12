@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: staging
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -34,17 +37,48 @@ jobs:
       - name: Resolve staging URLs
         id: urls
         run: |
+          set -euo pipefail
+
           API_FQDN=$(az containerapp show \
             --name zdrovena-api-staging \
             --resource-group zdrovena-rg \
             --query "properties.configuration.ingress.fqdn" -o tsv)
-          SWA_URL=$(az staticwebapp show \
+          if [ -z "$API_FQDN" ]; then
+            echo "::error::Nie udało się ustalić FQDN API stagingowego (Container App 'zdrovena-api-staging' w grupie 'zdrovena-rg'). Sprawdź, czy zasób istnieje." >&2
+            exit 1
+          fi
+
+          # Uwaga: pusty SWA_URL psuł 6 testów smoke ('Failed to parse URL from ""')
+          # — dawny '2>/dev/null || echo ""' cicho eksportował pustkę. Teraz przerywamy głośno.
+          SWA_HOST=$(az staticwebapp show \
             --name zdrovena-frontend-staging \
             --resource-group zdrovena-rg \
-            --query "defaultHostname" -o tsv 2>/dev/null \
-            | sed 's|^|https://|' || echo "")
+            --query "defaultHostname" -o tsv)
+          if [ -z "$SWA_HOST" ]; then
+            echo "::error::Nie udało się ustalić hosta Static Web App stagingowego (SWA 'zdrovena-frontend-staging' w grupie 'zdrovena-rg'). Zasób nie istnieje lub zapytanie zwróciło pustkę — przerywam zamiast eksportować pusty SWA_URL." >&2
+            exit 1
+          fi
+
           echo "api-url=https://$API_FQDN" >> "$GITHUB_OUTPUT"
-          echo "swa-url=$SWA_URL" >> "$GITHUB_OUTPUT"
+          echo "swa-url=https://$SWA_HOST" >> "$GITHUB_OUTPUT"
+
+      - name: Warm up API (rozgrzewka cold-startu Container Apps)
+        env:
+          API_URL: ${{ steps.urls.outputs.api-url }}
+        run: |
+          set -uo pipefail
+          # Container Apps skaluje do zera — pierwsze wywołanie /health potrafi trwać kilka
+          # sekund i timeoutować w teście. Rozgrzewamy do 6 prób co 10 s (curl --max-time 15).
+          for attempt in $(seq 1 6); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$API_URL/health" || echo "000")
+            if [ "$code" = "200" ]; then
+              echo "API gotowe (HTTP 200) po próbie $attempt/6."
+              exit 0
+            fi
+            echo "Próba $attempt/6: /health zwróciło '$code' — czekam 10 s."
+            [ "$attempt" -lt 6 ] && sleep 10
+          done
+          echo "::warning::API nie odpowiedziało 200 na /health po 6 próbach — kontynuuję, smoke pokaże szczegóły."
 
       - name: Run full smoke suite
         working-directory: scripts/smoke

@@ -5,6 +5,9 @@ import { useT } from '../lang'
 import { PageHead } from '../components/PageHead'
 import { Pill } from '../components/Pill'
 import { Icon } from '../components/Icon'
+import { useToast } from '../components/Toast'
+import { fetchJson } from '../api'
+import { usePolling } from '../hooks/usePolling'
 
 function fmtDate(iso) {
     if (!iso) return '—'
@@ -65,14 +68,11 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
     useEffect(() => {
         const ctrl = new AbortController()
         getToken().then(token =>
-            fetch(`/api/shipping/drafts/${draft.id}/invoice-preview`, {
-                headers: { Authorization: `Bearer ${token}` },
+            fetchJson(`/api/shipping/drafts/${draft.id}/invoice-preview`, {
+                token,
                 signal: ctrl.signal,
             })
-        ).then(r => r.json().then(data => {
-            if (!r.ok) throw new Error(data?.detail || `HTTP ${r.status}`)
-            return data
-        })).then(data => {
+        ).then(data => {
             if (!ctrl.signal.aborted) { setPreview(data); setLoading(false) }
         }).catch(e => {
             if (e.name !== 'AbortError' && !ctrl.signal.aborted) { setError(e.message); setLoading(false) }
@@ -85,13 +85,11 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
         setError(null)
         try {
             const token = await getToken()
-            const r = await fetch(`/api/shipping/drafts/${draft.id}/create-invoice`, {
+            const data = await fetchJson(`/api/shipping/drafts/${draft.id}/create-invoice`, {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
+                token,
             })
-            const data = await r.json()
-            if (r.ok) { onCreated(data) }
-            else setError(data.detail || `Błąd ${r.status}`)
+            onCreated(data)
         } catch (e) {
             setError(e.message)
         } finally {
@@ -143,7 +141,10 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
                                     <tbody>
                                         {preview.positions.map((p, i) => (
                                             <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                                                <td style={{ padding: '6px 8px 6px 0' }}>{p.name}</td>
+                                                <td style={{ padding: '6px 8px 6px 0' }}>
+                                                    {p.name}
+                                                    {p.vat_rate && <span className="dim" style={{ fontSize: '0.8em', marginLeft: 6 }}>VAT {p.vat_rate}</span>}
+                                                </td>
                                                 <td style={{ padding: '6px 8px', textAlign: 'center' }}>{p.quantity}</td>
                                                 <td style={{ padding: '6px 0 6px 8px', textAlign: 'right', fontWeight: 500 }}>{p.line_total.toFixed(2)} zł</td>
                                             </tr>
@@ -157,13 +158,33 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
                                         ))}
                                     </tbody>
                                     <tfoot>
+                                        <tr style={{ color: 'var(--text-2)', fontSize: '0.92em' }}>
+                                            <td colSpan={2} style={{ padding: '8px 8px 2px 0' }}>Suma pozycji</td>
+                                            <td style={{ padding: '8px 0 2px 8px', textAlign: 'right' }}>{(preview.positions_total ?? 0).toFixed(2)} zł</td>
+                                        </tr>
+                                        {(preview.settlement_total ?? 0) > 0 && (
+                                            <tr style={{ color: 'var(--text-2)', fontSize: '0.92em' }}>
+                                                <td colSpan={2} style={{ padding: '2px 8px 2px 0' }}>Kaucja za opakowania zwrotne</td>
+                                                <td style={{ padding: '2px 0 2px 8px', textAlign: 'right' }}>{(preview.settlement_total ?? 0).toFixed(2)} zł</td>
+                                            </tr>
+                                        )}
                                         <tr>
-                                            <td colSpan={2} style={{ padding: '10px 8px 4px 0', fontWeight: 700, fontSize: '1em' }}>Suma brutto</td>
-                                            <td style={{ padding: '10px 0 4px 8px', textAlign: 'right', fontWeight: 700, fontSize: '1em' }}>{preview.total_gross.toFixed(2)} zł</td>
+                                            <td colSpan={2} style={{ padding: '8px 8px 4px 0', fontWeight: 700, fontSize: '1em', borderTop: '2px solid var(--border)' }}>Do zapłaty</td>
+                                            <td style={{ padding: '8px 0 4px 8px', textAlign: 'right', fontWeight: 700, fontSize: '1em', borderTop: '2px solid var(--border)' }}>{preview.total_gross.toFixed(2)} zł</td>
                                         </tr>
                                     </tfoot>
                                 </table>
                             </div>
+                            {preview.allegro_total_to_pay != null && (
+                                <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 6, fontSize: '0.88em',
+                                    background: preview.matches_allegro ? 'var(--ok-bg, #f0fdf4)' : 'var(--warn-bg, #fffbeb)',
+                                    border: `1px solid ${preview.matches_allegro ? 'var(--ok, #86efac)' : 'var(--warn, #fcd34d)'}` }}>
+                                    {preview.matches_allegro
+                                        ? <><Icon name="check" size={13} /> Zgadza się z Allegro „Do zapłaty” ({preview.allegro_total_to_pay.toFixed(2)} zł, bez dostawy)</>
+                                        : <><Icon name="alertTriangle" size={13} /> Uwaga: różni się od Allegro „Do zapłaty” ({preview.allegro_total_to_pay.toFixed(2)} zł, bez dostawy) — sprawdź przed wysłaniem</>
+                                    }
+                                </div>
+                            )}
                         </>
                     )}
                 </div>
@@ -320,7 +341,7 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen, getToken, onDraftUpdate }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, onReviewDraft, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen, getToken, onDraftUpdate }) {
     const { t, lang } = useT()
     const T = t[lang]
     const [open, setOpen] = useState(false)
@@ -428,7 +449,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 </div>
                             ) : (
                                 <div>
-                                    {draft.shipping_address?.street}<br />
+                                    {[draft.shipping_address?.street, draft.shipping_address?.building_number, draft.shipping_address?.flat_number].filter(Boolean).join(' ')}<br />
                                     {draft.shipping_address?.post_code} {draft.shipping_address?.city}
                                 </div>
                             )}
@@ -580,6 +601,19 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                             </button>
                         )}
 
+                        {canManage && draft.status === 'needs_review' && draft.courier !== 'apaczka' && (
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => onReviewDraft(draft)}
+                                disabled={isBusy}
+                            >
+                                {isBusy
+                                    ? <><Icon name="loader" size={13} className="spin" /> Zatwierdzanie…</>
+                                    : <>Zatwierdź</>
+                                }
+                            </button>
+                        )}
+
                         {draft.courier_draft_id && draft.status === 'created' && (
                             <button
                                 className="btn btn-secondary"
@@ -672,6 +706,7 @@ export default function ShippingView() {
     const canManage = roles.includes('zdrovena-admin') || roles.includes('zdrovena-shipment-mgr')
     const { t, lang } = useT()
     const T = t[lang]
+    const { pushToast } = useToast()
 
     const [drafts, setDrafts] = useState([])
     const [loading, setLoading] = useState(true)
@@ -690,21 +725,22 @@ export default function ShippingView() {
     const [syncing, setSyncing] = useState(false)
     const [syncResult, setSyncResult] = useState(null)
 
-    const load = useCallback(async () => {
-        setLoading(true)
-        setError(null)
+    // silent=true dla odświeżania w tle (polling): nie miga spinnerem i nie
+    // podmienia listy na komunikat błędu — zostawia ostatnie dobre dane.
+    const load = useCallback(async ({ silent = false } = {}) => {
+        if (!silent) {
+            setLoading(true)
+            setError(null)
+        }
         try {
             const token = await getToken()
-            const res = await fetch('/api/shipping/drafts', {
-                headers: { Authorization: `Bearer ${token}` },
-            })
-            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-            const data = await res.json()
+            const data = await fetchJson('/api/shipping/drafts', { token })
             setDrafts(data.drafts ?? [])
+            if (silent) setError(null)
         } catch (e) {
-            setError(e.message)
+            if (!silent) setError(e.message)
         } finally {
-            setLoading(false)
+            if (!silent) setLoading(false)
         }
     }, [getToken])
 
@@ -713,42 +749,23 @@ export default function ShippingView() {
         setSyncResult(null)
         try {
             const token = await getToken()
-            const res = await fetch('/api/shipping/sync', {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
-            })
-            const body = await res.json()
-            setSyncResult(res.ok ? body : { error: body.detail ?? `${res.status}` })
-            if (res.ok) await load()
+            const body = await fetchJson('/api/shipping/sync', { method: 'POST', token })
+            setSyncResult(body)
+            pushToast({ kind: 'success', msg: 'Synchronizacja zamówień zakończona' })
+            await load()
         } catch (e) {
             setSyncResult({ error: e.message })
+            pushToast({ kind: 'error', msg: `Synchronizacja nie powiodła się: ${e.message}` })
         } finally {
             setSyncing(false)
         }
-    }, [getToken, load])
+    }, [getToken, load, pushToast])
 
-    useEffect(() => {
-        let cancelled = false
-        async function run() {
-            setLoading(true)
-            setError(null)
-            try {
-                const token = await getToken()
-                const res = await fetch('/api/shipping/drafts', {
-                    headers: { Authorization: `Bearer ${token}` },
-                })
-                if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-                const data = await res.json()
-                if (!cancelled) setDrafts(data.drafts ?? [])
-            } catch (e) {
-                if (!cancelled) setError(e.message)
-            } finally {
-                if (!cancelled) setLoading(false)
-            }
-        }
-        run()
-        return () => { cancelled = true }
-    }, [getToken])
+    useEffect(() => { load() }, [load])
+
+    // Reaktywność: nowe drafty z webhooków Shopify / pollera Allegro pojawiają się
+    // w ≤20 s bez F5. Visibility-aware — nie odpytuje, gdy karta jest w tle.
+    usePolling(() => load({ silent: true }), 20_000)
 
     useEffect(() => {
         let cancelled = false
@@ -771,12 +788,15 @@ export default function ShippingView() {
         return () => { cancelled = true }
     }, [getToken])
 
-    function withBusy(draftId, fn) {
+    function withBusy(draftId, fn, actionLabel) {
         return async () => {
             setBusy(s => new Set([...s, draftId]))
             try {
                 await fn()
                 await load()
+            } catch (e) {
+                const prefix = actionLabel ? `${actionLabel}: ` : ''
+                pushToast({ kind: 'error', msg: `${prefix}${e.message || 'nieznany błąd'}` })
             } finally {
                 setBusy(s => { const n = new Set(s); n.delete(draftId); return n })
             }
@@ -810,7 +830,7 @@ export default function ShippingView() {
                 const body = await res.json().catch(() => ({}))
                 throw new Error(body.detail || `${res.status}`)
             }
-        })()
+        }, 'Nie udało się zrealizować przesyłki')()
     }
 
     function handlePickup(draft, schedule) {
@@ -825,7 +845,7 @@ export default function ShippingView() {
                 const body = await res.json().catch(() => ({}))
                 throw new Error(body.detail || `${res.status}`)
             }
-        })()
+        }, 'Nie udało się zamówić podjazdu')()
     }
 
     function handleSetApaczkaService(draft, serviceId) {
@@ -840,7 +860,22 @@ export default function ShippingView() {
                 const body = await res.json().catch(() => ({}))
                 throw new Error(body.detail || `${res.status}`)
             }
-        })()
+        }, 'Nie udało się zapisać usługi Apaczka')()
+    }
+
+    function handleReviewDraft(draft) {
+        return withBusy(draft.id, async () => {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reviewed: true }),
+            })
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(body.detail || `${res.status}`)
+            }
+        }, 'Nie udało się zatwierdzić draftu')()
     }
 
     function handleConfirmPending(draft) {
@@ -856,7 +891,7 @@ export default function ShippingView() {
                 const body = await res.json().catch(() => ({}))
                 throw new Error(body.detail || `${res.status}`)
             }
-        })()
+        }, 'Nie udało się sprawdzić statusu')()
     }
 
     // Auto-poll drafts stuck in pending_confirmation (Allegro create-command still
@@ -878,7 +913,7 @@ export default function ShippingView() {
                         headers: { Authorization: `Bearer ${token}` },
                     }).catch(() => {})
                 ))
-                load()
+                load({ silent: true })
             } catch { /* retry on next tick */ }
         }, 5000)
         return () => clearInterval(interval)
@@ -902,7 +937,7 @@ export default function ShippingView() {
                 throw new Error(body.detail || `${res.status}`)
             }
             await load()
-        })()
+        }, 'Nie udało się oznaczyć jako zrealizowane')()
     }
 
 
@@ -1069,7 +1104,7 @@ export default function ShippingView() {
                     </button>
                     <button className="btn btn-ghost" onClick={handleSync} disabled={syncing || loading} title="Sync orders from Allegro &amp; Shopify">
                         <Icon name={syncing ? 'refresh' : 'zap'} size={14} className={syncing ? 'spin' : undefined} />
-                        {syncResult?.error && <span style={{ color: 'var(--color-error)', fontSize: '0.75em', marginLeft: 4 }}>!</span>}
+                        {syncResult?.error && <span style={{ color: 'var(--error)', fontSize: '0.75em', marginLeft: 4 }}>!</span>}
                     </button>
                     <button className="btn btn-ghost" onClick={load} disabled={loading} title="Odśwież">
                         <Icon name="refresh" size={14} />
@@ -1136,6 +1171,7 @@ export default function ShippingView() {
                         onMarkFulfilled={handleMarkFulfilled}
                         onConfirmPending={handleConfirmPending}
                         onSetApaczkaService={handleSetApaczkaService}
+                        onReviewDraft={handleReviewDraft}
                         apaczkaServices={apaczkaServices}
                         selected={selectedDraftIds.has(draft.id)}
                         onToggleSelect={handleToggleSelect}
