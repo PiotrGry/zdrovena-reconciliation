@@ -57,9 +57,7 @@ class TestNotRequired:
 class TestIdempotency:
     def test_skips_when_invoice_already_exists_for_order(self):
         fakturownia = MagicMock()
-        fakturownia.list_invoices.return_value = [
-            {"id": 1, "number": "FV/2026/1", "oid": "af1"}
-        ]
+        fakturownia.list_invoices.return_value = [{"id": 1, "number": "FV/2026/1", "oid": "af1"}]
         allegro = MagicMock()
         result = create_invoice_for_order(
             _order(), fakturownia_client=fakturownia, allegro_client=allegro

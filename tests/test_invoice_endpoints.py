@@ -129,9 +129,7 @@ class TestInvoicePreview:
         mock_allegro.get_order.return_value = _MOCK_ORDER
         zero_qty_payload = {
             **_MOCK_PAYLOAD,
-            "positions": [
-                {"name": "Item", "quantity": 0, "total_price_gross": 0.0, "tax": 8}
-            ],
+            "positions": [{"name": "Item", "quantity": 0, "total_price_gross": 0.0, "tax": 8}],
         }
         with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro):
             with patch(

@@ -248,14 +248,10 @@ def _process_one_invoice(
     # Canonical amount: native Allegro deposit (× quantity), shared with the
     # mapper via calculate_kaucja. The bottles heuristic is only a cross-check.
     kaucja = calculate_kaucja(allegro_order)
-    _crosscheck_bottles_heuristic(
-        invoice=invoice, invoice_number=invoice_number, kaucja=kaucja
-    )
+    _crosscheck_bottles_heuristic(invoice=invoice, invoice_number=invoice_number, kaucja=kaucja)
 
     if kaucja <= 0:
-        logger.info(
-            "Invoice %s has no native Allegro deposit — no kaucja to add", invoice_number
-        )
+        logger.info("Invoice %s has no native Allegro deposit — no kaucja to add", invoice_number)
         stats["skipped_no_pet"] += 1
         return
 
