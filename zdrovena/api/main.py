@@ -57,9 +57,22 @@ if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
         logger.warning("Azure Monitor configuration failed (non-fatal): %s", exc)
 
 
+def _is_production_env() -> bool:
+    """True gdy APP_ENV / DEPLOY_ENV / AZURE_ENV / ENV wskazuje deploy produkcyjny.
+
+    Za produkcję uznajemy dowolną z wartości {production, prod, live}. Development,
+    sandbox, staging i brak wartości są nie-produkcyjne. Bez rozróżniania wielkości
+    liter. (Odpowiada logice w ``zdrovena.api.routers.webhooks``.)
+    """
+    for var in ("APP_ENV", "DEPLOY_ENV", "AZURE_ENV", "ENV"):
+        if os.environ.get(var, "").strip().lower() in {"production", "prod", "live"}:
+            return True
+    return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[type-arg]
-    """Startup: verify Key Vault is reachable before accepting traffic.
+    """Startup: strażnik AZURE_AUTH_DISABLED + weryfikacja dostępności Key Vault.
 
     Key Vault ping only runs when AZURE_KEYVAULT_URL is set AND AZURE_AUTH_DISABLED
     is not true (i.e. production / staging). Exits with code 1 on KV failure so
@@ -68,6 +81,17 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
 
     keyvault_url = os.environ.get("AZURE_KEYVAULT_URL")
     auth_disabled = os.environ.get("AZURE_AUTH_DISABLED", "").lower() in ("1", "true", "yes")
+
+    # Strażnik: uruchomienie w produkcji z wyłączoną autoryzacją to krytyczna
+    # dziura bezpieczeństwa (każdy JWT przechodzi). Odmawiamy startu, żeby
+    # orchestrator Container App zgłosił błąd zamiast wystawić otwarte API.
+    if auth_disabled and _is_production_env():
+        logger.critical(
+            "AZURE_AUTH_DISABLED=true w środowisku produkcyjnym — API byłoby otwarte "
+            "bez autoryzacji. Odmawiam startu. Usuń AZURE_AUTH_DISABLED z konfiguracji "
+            "produkcyjnej."
+        )
+        sys.exit(1)
 
     if keyvault_url and not auth_disabled:
         try:
@@ -113,7 +137,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Correlation-ID"],
     expose_headers=["X-Correlation-ID"],
 )
