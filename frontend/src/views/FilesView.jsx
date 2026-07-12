@@ -5,6 +5,7 @@ import { FEATURES } from "../features";
 import { PageHead } from "../components/PageHead";
 import { Icon } from "../components/Icon";
 import { fmtBytes, fmtDate, MONTHS_PL, PIPELINE_STEPS } from "../data";
+import { fetchJson } from "../api";
 
 function extOf(name) {
   const m = name?.match(/\.([^.]+)$/);
@@ -57,14 +58,10 @@ export default function FilesView() {
       setLoading(true);
       try {
         const token = await getToken();
-        const res = await fetch(
+        const data = await fetchJson(
           `/api/files?prefix=${encodeURIComponent(pref)}`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-          },
+          { token },
         );
-        if (!res.ok) throw new Error(res.statusText);
-        const data = await res.json();
         setItems(data.items ?? data);
         setPrefix(pref);
       } catch (e) {
@@ -109,11 +106,10 @@ export default function FilesView() {
     if (!window.confirm(`Usuń plik "${name}"?`)) return;
     try {
       const token = await getToken();
-      const res = await fetch(`/api/files/${encodeURIComponent(key)}`, {
+      await fetchJson(`/api/files/${encodeURIComponent(key)}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
+        token,
       });
-      if (!res.ok) throw new Error(res.statusText);
       showToast(`Usunięto: ${name}`);
       loadFiles(prefix);
     } catch (e) {
@@ -127,7 +123,12 @@ export default function FilesView() {
       const res = await fetch(`/api/files/${encodeURIComponent(key)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error(res.statusText);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(
+          body?.message_pl || body?.detail || `Błąd serwera (HTTP ${res.status})`,
+        );
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -144,15 +145,14 @@ export default function FilesView() {
     const key = prefix ? `${prefix}/${file.name}` : file.name;
     try {
       const token = await getToken();
-      const res = await fetch(`/api/files/${encodeURIComponent(key)}`, {
+      await fetchJson(`/api/files/${encodeURIComponent(key)}`, {
         method: "PUT",
+        token,
         headers: {
-          Authorization: `Bearer ${token}`,
           "Content-Type": file.type || "application/octet-stream",
         },
         body: file,
       });
-      if (!res.ok) throw new Error(res.statusText);
       showToast(`Wgrano: ${file.name}`);
       loadFiles(prefix);
     } catch (e) {

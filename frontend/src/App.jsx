@@ -4,6 +4,7 @@ import { FEATURES } from './features'
 import { useT, LangCtx, I18N } from './lang'
 import { Header } from './components/Header'
 import Sidebar from './components/Sidebar'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import FilesView from './views/FilesView'
 import CloseView from './views/CloseView'
 import SalesView from './views/SalesView'
@@ -50,7 +51,9 @@ function AppShell() {
                 <Header />
                 <Sidebar page={page} onNavigate={navigate} />
                 <main className="main">
-                    <View />
+                    <ErrorBoundary resetKey={page}>
+                        <View />
+                    </ErrorBoundary>
                 </main>
             </div>
         </LangCtx.Provider>
