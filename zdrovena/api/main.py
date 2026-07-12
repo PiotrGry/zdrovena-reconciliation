@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from zdrovena.api.errors import install_exception_handlers
 from zdrovena.api.routers import close, files, invoices, webhooks
 
 logging.basicConfig(
@@ -116,6 +117,10 @@ app.include_router(close.router, prefix="/api")
 app.include_router(files.router, prefix="/api")
 app.include_router(invoices.router, prefix="/api")
 app.include_router(webhooks.router, prefix="/api")
+
+# Jednolita koperta błędu: mapuje wyjątki przesyłkowe na polskie komunikaty
+# i przechwytuje nieobsłużone wyjątki zamiast wyciekać surowy str(exc).
+install_exception_handlers(app)
 
 
 @app.get("/health", tags=["health"])
