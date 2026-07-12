@@ -1485,6 +1485,8 @@ def retry_dlq_entry(
             )
         except Exception:
             logger.exception("DLQ update after retry failure failed for %s", entry_id)
+        # DLQ retry to endpoint diagnostyczny operatora — surowy błąd upstream
+        # jest tu celowo zwracany, żeby operator mógł zdecydować o dalszej akcji.
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Retry failed: {type(exc).__name__}: {exc}",
@@ -1565,10 +1567,21 @@ def execute_draft(
             patch = _run_inpost(draft, sender, **pickup_schedule)
         else:
             patch = _run_apaczka(draft, sender, storage, **pickup_schedule)
+    except ZdrovenaShippingError as exc:
+        logger.exception("execute_draft failed for %s", draft_id)
+        shipping_store.update_draft(draft_id, {"status": "error", "error": str(exc)})
+        # Wyjątek domenowy przesyłki → koperta błędu (zdrovena.api.errors)
+        # mapuje go na właściwy status i polski komunikat dla operatora.
+        raise
     except Exception as exc:
         logger.exception("execute_draft failed for %s", draft_id)
         shipping_store.update_draft(draft_id, {"status": "error", "error": str(exc)})
-        raise HTTPException(status_code=502, detail=f"Courier API error: {exc}") from exc
+        # Ogólny błąd komunikacji z przewoźnikiem → 502 z polskim komunikatem,
+        # bez wyciekania surowego (angielskiego) str(exc) do operatora.
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Błąd komunikacji z przewoźnikiem — spróbuj ponownie za chwilę.",
+        ) from exc
 
     shipping_store.update_draft(draft_id, patch)
     updated = shipping_store.get_draft(draft_id)

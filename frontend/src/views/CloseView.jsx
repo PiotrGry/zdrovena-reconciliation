@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useAuth } from '../auth'
+import { useToast } from '../components/Toast'
 import { useT } from '../lang'
+import { fetchJson } from '../api'
 import { CloseHero } from './close/CloseHero'
 import { DocChecklist } from './close/DocChecklist'
 import { RunControls } from './close/RunControls'
@@ -23,6 +25,7 @@ import { MONTHS_PL } from '../data'
 export default function CloseView() {
     useT() // lang context needed for child components
     const { getToken } = useAuth()
+    const { pushToast } = useToast()
 
     // Domyślnie poprzedni miesiąc (ten do zamknięcia)
     const now = new Date()
@@ -65,17 +68,12 @@ export default function CloseView() {
     const loadState = useCallback(async () => {
         try {
             const token = await getToken()
-            const res = await fetch(`/api/close/state?year=${year}&month=${month}`, {
-                headers: { Authorization: `Bearer ${token}` },
-            })
-            if (res.ok) {
-                const data = await res.json()
-                setPreCompleted(data.completed_steps ?? [])
-            }
-        } catch {
-            /* ignore */
+            const data = await fetchJson(`/api/close/state?year=${year}&month=${month}`, { token })
+            setPreCompleted(data.completed_steps ?? [])
+        } catch (e) {
+            pushToast({ kind: 'error', msg: `Nie udało się wczytać stanu zamknięcia: ${e.message}` })
         }
-    }, [getToken, year, month])
+    }, [getToken, year, month, pushToast])
 
     useEffect(() => { loadState() }, [loadState])
 
@@ -85,11 +83,7 @@ export default function CloseView() {
         const loadLast = async () => {
             try {
                 const token = await getToken()
-                const res = await fetch('/api/close/history?limit=1', {
-                    headers: { Authorization: `Bearer ${token}` },
-                })
-                if (!res.ok) return
-                const data = await res.json()
+                const data = await fetchJson('/api/close/history?limit=1', { token })
                 if (cancelled || !data?.length) return
                 const h = data[0]
                 setLastClose({
@@ -98,13 +92,15 @@ export default function CloseView() {
                     year: h.year,
                     status: h.status,
                 })
-            } catch {
-                /* ignore */
+            } catch (e) {
+                if (!cancelled) {
+                    pushToast({ kind: 'error', msg: `Nie udało się wczytać ostatniego zamknięcia: ${e.message}` })
+                }
             }
         }
         loadLast()
         return () => { cancelled = true }
-    }, [getToken, historyKey])
+    }, [getToken, historyKey, pushToast])
 
     // Decyzja: czy CTA jest aktywne i jaki jest powód blokady
     const canRun = inboxReady === true && !running

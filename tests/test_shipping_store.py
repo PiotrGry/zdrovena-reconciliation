@@ -1,17 +1,15 @@
 """Tests for zdrovena.common.shipping_store.ShippingStore (local backend).
 
-Sections marked **TDD-red** describe target behaviour that requires fixes in
-the production module. They are intentionally left failing so the next agent
-implementing production code knows what to satisfy.
+Regression coverage for concurrency, idempotency and silent-failure behaviour.
 
-Audit reference: zdrovena_test_audit.md §7.4 — concurrency, idempotency and
-silent-failure tests are missing.
+Audit reference: zdrovena_test_audit.md §7.4.
 """
 
 from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -148,15 +146,13 @@ class TestOnDiskFormat:
         assert store.get_draft("recover-1") is not None
 
 
-# ── TDD-red: idempotency by shopify_order_id ──────────────────────────────────
+# ── idempotency by shopify_order_id ───────────────────────────────────────────
 
 
 class TestShopifyOrderIdempotency:
-    """**TDD-red** — Shopify retries webhooks. Two upserts with the same
-    shopify_order_id but different generated UUIDs must NOT create two drafts.
-
-    Target: shipping_store grows an `upsert_by_shopify_order_id` (or
-    upsert_draft de-duplicates on shopify_order_id + courier) — see audit §7.4.
+    """Shopify retries webhooks. Two upserts with the same shopify_order_id but
+    different generated UUIDs must NOT create two drafts — upsert_draft
+    de-duplicates on shopify_order_id + courier (audit §7.4).
     """
 
     def test_duplicate_shopify_order_id_produces_single_draft(self, store):
@@ -169,33 +165,19 @@ class TestShopifyOrderIdempotency:
         assert len(drafts) == 1
 
 
-# ── TDD-red: concurrent writes ────────────────────────────────────────────────
+# ── concurrent writes ─────────────────────────────────────────────────────────
 
 
 class TestConcurrentWrites:
-    """Concurrency safety — the local backend does naive read-modify-write
-    without explicit locking (audit §7.4). The lost-update demonstration below
-    forces a deterministic race by stalling between read and write; on a fixed
-    implementation (file lock or atomic write+rename) it will pass instead.
+    """Concurrency safety for the local backend (audit §7.4). upsert_draft
+    guards the read-modify-write critical section with a file lock
+    (_acquire_lock → flock) and an atomic write+rename in _local_save, so
+    parallel writers neither error nor lose each other's updates.
     """
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason=(
-            "TDD/flaky: 20 parallel upserts on the local backend lose writes "
-            "intermittently because _local_save does naive read-modify-write "
-            "with Path.write_text(). Strict=False because the GIL sometimes "
-            "serialises the critical section. Once shipping_store gains a "
-            "file lock + atomic write this test should be flipped to PASS."
-        ),
-    )
     def test_parallel_upserts_all_persist(self, store):
-        """Smoke test: 20 parallel upserts all land in the store.
-
-        On the current Path.write_text() implementation this happens to pass
-        most of the time because the critical section is short and the GIL
-        serialises Python-level calls — but no guarantee. The next test forces
-        the race deterministically.
+        """20 parallel upserts all land in the store — the file lock serialises
+        the read-modify-write critical section so none are lost.
         """
         N = 20
         errors: list[Exception] = []
@@ -216,23 +198,17 @@ class TestConcurrentWrites:
         ids = {r["id"] for r in store.list_drafts(limit=1000)}
         assert ids == {f"par-{i}" for i in range(N)}
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "TDD: lost-update race — two writers reading the same baseline both "
-            "save back without seeing each other's update. Needs file lock or "
-            "atomic compare-and-swap in _local_save."
-        ),
-    )
     def test_lost_update_race_is_prevented(self, store, monkeypatch):
-        """Force the read-modify-write race by inserting a stall between
-        _local_load() and _local_save() in the worker thread.
+        """Force the read-modify-write race by stalling the first writer
+        inside _local_load(), then verify both writes survive.
 
-        Both threads read the same empty baseline, both add a different
-        draft and save. On the current implementation the second save
-        overwrites the first — we observe only 1 draft in storage instead
-        of 2. A safe implementation (file lock or atomic CAS) preserves
-        both.
+        The first writer stalls while holding the store lock; the second
+        writer must therefore block until the first releases, re-read the
+        now-updated baseline and add its own draft. A lock-free (or
+        lost-update) implementation would let the second writer proceed on
+        the stale empty baseline and the first writer's save would clobber
+        it — leaving only 1 draft instead of 2. upsert_draft's flock
+        (_acquire_lock before _local_load) prevents that.
         """
         original_load = store._local_load
         gate = threading.Event()
@@ -260,13 +236,17 @@ class TestConcurrentWrites:
         t1 = threading.Thread(target=writer, args=("race-a",))
         t2 = threading.Thread(target=writer, args=("race-b",))
         t1.start()
-        # Wait until t1 is stalled inside _local_load, then start t2
+        # Wait until t1 is stalled inside _local_load (holding the lock),
+        # then start t2 so it contends for the same lock.
         assert stalled.wait(timeout=1.0)
         t2.start()
-        t2.join(timeout=2.0)
-        # Release t1 so it finishes its (now stale) save
+        # Give t2 a moment to reach the lock and block on it.
+        time.sleep(0.1)
+        # Release t1 so it finishes its save and frees the lock; t2 then
+        # acquires the lock, re-reads t1's write, and adds its own.
         gate.set()
         t1.join(timeout=2.0)
+        t2.join(timeout=2.0)
 
         assert results == {"race-a": None, "race-b": None}
         ids = {r["id"] for r in store.list_drafts(limit=1000)}
@@ -276,12 +256,12 @@ class TestConcurrentWrites:
         )
 
 
-# ── TDD-red: atomic write semantics ───────────────────────────────────────────
+# ── atomic write semantics ────────────────────────────────────────────────────
 
 
 class TestAtomicWrite:
-    """**TDD-red** — _local_save uses Path.write_text(), which writes in place.
-    A crash mid-write leaves a truncated file. Target: temp file + os.replace.
+    """_local_save must write to a temp file + os.replace, never in place, so a
+    crash mid-write cannot leave a truncated shipping-drafts.json.
     """
 
     def test_write_is_atomic_via_temp_file(self, tmp_path, monkeypatch):

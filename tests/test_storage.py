@@ -119,16 +119,13 @@ class TestLocalStorageService:
         assert isinstance(svc, StorageService)
 
 
-# ── Path traversal (TDD-red) ──────────────────────────────────────────────────
+# ── Path traversal ────────────────────────────────────────────────────────────
 
 
 class TestPathTraversalProtection:
-    """**TDD-red** — LocalStorageService takes a `key` and concatenates it with
-    self.root without validation. A malicious or buggy caller can supply
-    `"../../etc/passwd"` or an absolute path and escape the storage root.
-
-    Target: upload/upload_stream/download/delete/exists/stream must reject
-    keys that escape the configured root. See audit §7.4 and §10.
+    """upload/upload_stream/download/delete/exists/stream must reject keys that
+    escape the configured storage root (e.g. `"../../etc/passwd"` or an absolute
+    path). See audit §7.4 and §10.
     """
 
     def test_upload_rejects_path_traversal(self, tmp_path):

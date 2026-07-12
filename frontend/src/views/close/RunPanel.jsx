@@ -3,7 +3,8 @@ import { useAuth } from '../../auth'
 import { Icon } from '../../components/Icon'
 import { PIPELINE_STEPS, normalizeStepKey } from '../../data'
 
-const STEP_EST_MS = [2000, 1000, 5000, 8000, 12000, 2000, 4000, 3000]
+// Częstotliwość odpytywania backendu o realny postęp (GET /close/state).
+const POLL_INTERVAL_MS = 2000
 
 function stepStateClass(state) {
     if (state === 'running') return 'running'
@@ -42,7 +43,7 @@ export function RunPanel({
     )
     const [status, setStatus] = useState('running')
     const abortRef = useRef(null)
-    const animStoppedRef = useRef(false)
+    const pollRef = useRef(null)
     const startedRef = useRef(false)
     const logBodyRef = useRef(null)
 
@@ -65,25 +66,63 @@ export function RunPanel({
 
     const run = useCallback(async () => {
         abortRef.current = new AbortController()
-        animStoppedRef.current = false
         addLog('Uruchamianie pipeline…', 'muted')
 
         const normalizedPreCompleted = preCompleted.map(normalizeStepKey)
-        const animate = async () => {
-            for (let i = 0; i < PIPELINE_STEPS.length; i++) {
-                if (animStoppedRef.current) break
-                if (normalizedPreCompleted.includes(PIPELINE_STEPS[i].key)) continue
-                setStates(prev => prev.map((s, idx) => idx === i ? 'running' : s))
-                await new Promise(r => setTimeout(r, STEP_EST_MS[i] * 0.4))
-                if (!animStoppedRef.current) {
-                    setStates(prev => prev.map((s, idx) => idx === i ? 'done' : s))
+
+        // Odwzoruj realny stan z checkpointów backendu na stany kroków:
+        // ukończone → 'done', pierwszy nieukończony → 'running' (pipeline
+        // wykonuje kroki sekwencyjnie), reszta → 'pending'.
+        const applyProgress = completed => {
+            const doneSet = new Set([
+                ...normalizedPreCompleted,
+                ...completed.map(normalizeStepKey),
+            ])
+            setStates(() => {
+                let runningMarked = false
+                return PIPELINE_STEPS.map(s => {
+                    if (doneSet.has(s.key)) return 'done'
+                    if (!runningMarked) {
+                        runningMarked = true
+                        return 'running'
+                    }
+                    return 'pending'
+                })
+            })
+        }
+
+        const pollProgress = async token => {
+            try {
+                const res = await fetch(
+                    `/api/close/state?year=${year}&month=${month}`,
+                    {
+                        headers: { Authorization: `Bearer ${token}` },
+                        signal: abortRef.current.signal,
+                    }
+                )
+                if (res.ok) {
+                    const s = await res.json().catch(() => null)
+                    if (s?.completed_steps) applyProgress(s.completed_steps)
                 }
+            } catch {
+                // Błędy pollingu ignorujemy — wynik POST /close jest źródłem prawdy.
             }
         }
-        animate()
+
+        const stopPolling = () => {
+            if (pollRef.current) {
+                clearInterval(pollRef.current)
+                pollRef.current = null
+            }
+        }
 
         try {
             const token = await getToken()
+            // Start realnego pollingu postępu (zamiast sztucznej animacji czasowej).
+            applyProgress([])
+            await pollProgress(token)
+            pollRef.current = setInterval(() => pollProgress(token), POLL_INTERVAL_MS)
+
             const res = await fetch('/api/close', {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -91,7 +130,7 @@ export function RunPanel({
                 signal: abortRef.current.signal,
             })
 
-            animStoppedRef.current = true
+            stopPolling()
 
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
@@ -142,7 +181,7 @@ export function RunPanel({
             setStatus(finalStatus)
             onDone?.(finalStatus, data)
         } catch (e) {
-            animStoppedRef.current = true
+            stopPolling()
             if (e.name === 'AbortError') {
                 setStates(prev => prev.map(s => s === 'running' ? 'pending' : s))
                 addLog('Pipeline przerwany.', 'muted')
@@ -171,6 +210,11 @@ export function RunPanel({
             run()
         }
     }, [run])
+
+    // Zatrzymaj polling przy odmontowaniu, żeby nie wyciekał interwał.
+    useEffect(() => () => {
+        if (pollRef.current) clearInterval(pollRef.current)
+    }, [])
 
     const abort = () => abortRef.current?.abort()
 
