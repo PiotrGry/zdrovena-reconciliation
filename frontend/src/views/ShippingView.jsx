@@ -7,6 +7,7 @@ import { Pill } from '../components/Pill'
 import { Icon } from '../components/Icon'
 import { useToast } from '../components/Toast'
 import { fetchJson } from '../api'
+import { usePolling } from '../hooks/usePolling'
 
 function fmtDate(iso) {
     if (!iso) return '—'
@@ -706,21 +707,22 @@ export default function ShippingView() {
     const [syncing, setSyncing] = useState(false)
     const [syncResult, setSyncResult] = useState(null)
 
-    const load = useCallback(async () => {
-        setLoading(true)
-        setError(null)
+    // silent=true dla odświeżania w tle (polling): nie miga spinnerem i nie
+    // podmienia listy na komunikat błędu — zostawia ostatnie dobre dane.
+    const load = useCallback(async ({ silent = false } = {}) => {
+        if (!silent) {
+            setLoading(true)
+            setError(null)
+        }
         try {
             const token = await getToken()
-            const res = await fetch('/api/shipping/drafts', {
-                headers: { Authorization: `Bearer ${token}` },
-            })
-            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-            const data = await res.json()
+            const data = await fetchJson('/api/shipping/drafts', { token })
             setDrafts(data.drafts ?? [])
+            if (silent) setError(null)
         } catch (e) {
-            setError(e.message)
+            if (!silent) setError(e.message)
         } finally {
-            setLoading(false)
+            if (!silent) setLoading(false)
         }
     }, [getToken])
 
@@ -741,28 +743,11 @@ export default function ShippingView() {
         }
     }, [getToken, load, pushToast])
 
-    useEffect(() => {
-        let cancelled = false
-        async function run() {
-            setLoading(true)
-            setError(null)
-            try {
-                const token = await getToken()
-                const res = await fetch('/api/shipping/drafts', {
-                    headers: { Authorization: `Bearer ${token}` },
-                })
-                if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-                const data = await res.json()
-                if (!cancelled) setDrafts(data.drafts ?? [])
-            } catch (e) {
-                if (!cancelled) setError(e.message)
-            } finally {
-                if (!cancelled) setLoading(false)
-            }
-        }
-        run()
-        return () => { cancelled = true }
-    }, [getToken])
+    useEffect(() => { load() }, [load])
+
+    // Reaktywność: nowe drafty z webhooków Shopify / pollera Allegro pojawiają się
+    // w ≤20 s bez F5. Visibility-aware — nie odpytuje, gdy karta jest w tle.
+    usePolling(() => load({ silent: true }), 20_000)
 
     useEffect(() => {
         let cancelled = false
@@ -910,7 +895,7 @@ export default function ShippingView() {
                         headers: { Authorization: `Bearer ${token}` },
                     }).catch(() => {})
                 ))
-                load()
+                load({ silent: true })
             } catch { /* retry on next tick */ }
         }, 5000)
         return () => clearInterval(interval)
