@@ -45,6 +45,7 @@ from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_
 from zdrovena.api.deps import ShippingStoreDep, ShopifyDedupStoreDep, StorageDep
 from zdrovena.api.observability import get_correlation_id, set_correlation_id
 from zdrovena.audit.bottles import SKIP_RE, is_glass
+from zdrovena.common.events import log_event
 from zdrovena.common.secrets import get_secret
 from zdrovena.common.shipping_exceptions import (
     AllegroAuthError,
@@ -1305,6 +1306,15 @@ def _create_draft(
         record["allegro_sending_method"] = allegro_sending_method
 
     shipping_store.upsert_draft(record)
+    log_event(
+        "draft.created",
+        order_number=record["shopify_order_number"],
+        draft_id=record["id"],
+        source=source,
+        courier=record["courier"],
+        status=record["status"],
+        packages_count=record["packages_count"],
+    )
     _maybe_send_new_order_sms(record)
 
 
@@ -1599,6 +1609,14 @@ def execute_draft(
 
     shipping_store.update_draft(draft_id, patch)
     updated = shipping_store.get_draft(draft_id)
+    log_event(
+        "shipment.created",
+        draft_id=draft_id,
+        order_number=draft.get("shopify_order_number"),
+        courier=draft.get("courier"),
+        tracking_number=patch.get("tracking_number"),
+        status=patch.get("status"),
+    )
     if updated:
         _maybe_push_tracking_to_allegro(updated)
     return updated or patch
@@ -2473,4 +2491,10 @@ def sync_orders(
     else:
         result["shopify"] = {"skipped": "not_configured"}
 
+    log_event(
+        "sync.completed",
+        actor=getattr(principal, "email", None),
+        allegro=result["allegro"],
+        shopify=result["shopify"],
+    )
     return result
