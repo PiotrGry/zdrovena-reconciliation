@@ -2331,13 +2331,33 @@ def get_invoice_preview(
     positions = payload.get("positions") or []
     settlements = payload.get("settlement_positions") or []
 
-    total = sum(Decimal(str(p.get("total_price_gross", 0))) for p in positions)
-    total += sum(Decimal(str(s.get("amount", 0))) for s in settlements)
+    positions_total = sum(Decimal(str(p.get("total_price_gross", 0))) for p in positions)
+    settlement_total = sum(Decimal(str(s.get("amount", 0))) for s in settlements)
+    total = positions_total + settlement_total
 
     buyer = order.get("buyer") or {}
     invoice_req = order.get("invoice") or {}
     addr = invoice_req.get("address") or buyer.get("address") or {}
     company = addr.get("company") or {}
+
+    # Cross-check "Do zapłaty" (positions + kaucja) against Allegro's own
+    # summary.totalToPay minus delivery (invoice has no shipping line). Lets the
+    # operator confirm the invoice matches Allegro to the grosz before sending.
+    summary = order.get("summary") or {}
+    total_to_pay_raw = (summary.get("totalToPay") or {}).get("amount")
+    delivery_cost_raw = ((order.get("delivery") or {}).get("cost") or {}).get("amount")
+    allegro_total_to_pay: float | None = None
+    matches_allegro: bool | None = None
+    if total_to_pay_raw is not None:
+        try:
+            allegro_expected = Decimal(str(total_to_pay_raw)) - Decimal(
+                str(delivery_cost_raw or "0")
+            )
+            allegro_total_to_pay = float(allegro_expected)
+            matches_allegro = abs(total - allegro_expected) <= Decimal("0.01")
+        except (ArithmeticError, ValueError):
+            allegro_total_to_pay = None
+            matches_allegro = None
 
     return {
         "status": "preview_ready",
@@ -2354,7 +2374,7 @@ def get_invoice_preview(
                 "unit_price_gross": float(Decimal(str(p["total_price_gross"])) / p["quantity"])
                 if p.get("quantity")
                 else 0.0,
-                "vat_rate": p.get("tax_name", "8%"),
+                "vat_rate": f"{int(p.get('tax', 0))}%",
                 "line_total": float(p["total_price_gross"]),
             }
             for p in positions
@@ -2363,7 +2383,11 @@ def get_invoice_preview(
             {"description": s.get("description", ""), "amount": float(s.get("amount", 0) or 0)}
             for s in settlements
         ],
+        "positions_total": float(positions_total),
+        "settlement_total": float(settlement_total),
         "total_gross": float(total),
+        "allegro_total_to_pay": allegro_total_to_pay,
+        "matches_allegro": matches_allegro,
     }
 
 

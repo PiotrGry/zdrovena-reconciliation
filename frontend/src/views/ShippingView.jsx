@@ -68,14 +68,11 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
     useEffect(() => {
         const ctrl = new AbortController()
         getToken().then(token =>
-            fetch(`/api/shipping/drafts/${draft.id}/invoice-preview`, {
-                headers: { Authorization: `Bearer ${token}` },
+            fetchJson(`/api/shipping/drafts/${draft.id}/invoice-preview`, {
+                token,
                 signal: ctrl.signal,
             })
-        ).then(r => r.json().then(data => {
-            if (!r.ok) throw new Error(data?.detail || `HTTP ${r.status}`)
-            return data
-        })).then(data => {
+        ).then(data => {
             if (!ctrl.signal.aborted) { setPreview(data); setLoading(false) }
         }).catch(e => {
             if (e.name !== 'AbortError' && !ctrl.signal.aborted) { setError(e.message); setLoading(false) }
@@ -88,13 +85,11 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
         setError(null)
         try {
             const token = await getToken()
-            const r = await fetch(`/api/shipping/drafts/${draft.id}/create-invoice`, {
+            const data = await fetchJson(`/api/shipping/drafts/${draft.id}/create-invoice`, {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
+                token,
             })
-            const data = await r.json()
-            if (r.ok) { onCreated(data) }
-            else setError(data.detail || `Błąd ${r.status}`)
+            onCreated(data)
         } catch (e) {
             setError(e.message)
         } finally {
@@ -146,7 +141,10 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
                                     <tbody>
                                         {preview.positions.map((p, i) => (
                                             <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                                                <td style={{ padding: '6px 8px 6px 0' }}>{p.name}</td>
+                                                <td style={{ padding: '6px 8px 6px 0' }}>
+                                                    {p.name}
+                                                    {p.vat_rate && <span className="dim" style={{ fontSize: '0.8em', marginLeft: 6 }}>VAT {p.vat_rate}</span>}
+                                                </td>
                                                 <td style={{ padding: '6px 8px', textAlign: 'center' }}>{p.quantity}</td>
                                                 <td style={{ padding: '6px 0 6px 8px', textAlign: 'right', fontWeight: 500 }}>{p.line_total.toFixed(2)} zł</td>
                                             </tr>
@@ -160,13 +158,33 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
                                         ))}
                                     </tbody>
                                     <tfoot>
+                                        <tr style={{ color: 'var(--text-2)', fontSize: '0.92em' }}>
+                                            <td colSpan={2} style={{ padding: '8px 8px 2px 0' }}>Suma pozycji</td>
+                                            <td style={{ padding: '8px 0 2px 8px', textAlign: 'right' }}>{(preview.positions_total ?? 0).toFixed(2)} zł</td>
+                                        </tr>
+                                        {(preview.settlement_total ?? 0) > 0 && (
+                                            <tr style={{ color: 'var(--text-2)', fontSize: '0.92em' }}>
+                                                <td colSpan={2} style={{ padding: '2px 8px 2px 0' }}>Kaucja za opakowania zwrotne</td>
+                                                <td style={{ padding: '2px 0 2px 8px', textAlign: 'right' }}>{(preview.settlement_total ?? 0).toFixed(2)} zł</td>
+                                            </tr>
+                                        )}
                                         <tr>
-                                            <td colSpan={2} style={{ padding: '10px 8px 4px 0', fontWeight: 700, fontSize: '1em' }}>Suma brutto</td>
-                                            <td style={{ padding: '10px 0 4px 8px', textAlign: 'right', fontWeight: 700, fontSize: '1em' }}>{preview.total_gross.toFixed(2)} zł</td>
+                                            <td colSpan={2} style={{ padding: '8px 8px 4px 0', fontWeight: 700, fontSize: '1em', borderTop: '2px solid var(--border)' }}>Do zapłaty</td>
+                                            <td style={{ padding: '8px 0 4px 8px', textAlign: 'right', fontWeight: 700, fontSize: '1em', borderTop: '2px solid var(--border)' }}>{preview.total_gross.toFixed(2)} zł</td>
                                         </tr>
                                     </tfoot>
                                 </table>
                             </div>
+                            {preview.allegro_total_to_pay != null && (
+                                <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 6, fontSize: '0.88em',
+                                    background: preview.matches_allegro ? 'var(--ok-bg, #f0fdf4)' : 'var(--warn-bg, #fffbeb)',
+                                    border: `1px solid ${preview.matches_allegro ? 'var(--ok, #86efac)' : 'var(--warn, #fcd34d)'}` }}>
+                                    {preview.matches_allegro
+                                        ? <><Icon name="check" size={13} /> Zgadza się z Allegro „Do zapłaty” ({preview.allegro_total_to_pay.toFixed(2)} zł, bez dostawy)</>
+                                        : <><Icon name="alertTriangle" size={13} /> Uwaga: różni się od Allegro „Do zapłaty” ({preview.allegro_total_to_pay.toFixed(2)} zł, bez dostawy) — sprawdź przed wysłaniem</>
+                                    }
+                                </div>
+                            )}
                         </>
                     )}
                 </div>
