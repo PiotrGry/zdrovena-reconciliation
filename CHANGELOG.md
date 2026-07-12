@@ -19,6 +19,7 @@
 
 ### Fixed
 
+- **shipping**: Apaczka/InPost `receiver_address` and `sender address` were missing `building_number` — Shopify addresses parsed as `street + building_number` were sending only the street name, causing Apaczka server 500 on order creation. Now `building_number` (and `flat_number` from `address2`) are joined correctly. Fixes draft `617930cf` (order #1556).
 - **allegro**: `AttributeError: 'FakturowniaClient' object has no attribute 'list_invoices'` — the poller was importing the audit-only client instead of the full CRUD client.
 - **api**: `unit_price_gross` no longer raises `ZeroDivisionError` when an Allegro line item has quantity 0.
 - **api**: `create-invoice` now returns HTTP 502 (not silently 200) when Fakturownia invoice creation fails, so the frontend shows the error correctly.
