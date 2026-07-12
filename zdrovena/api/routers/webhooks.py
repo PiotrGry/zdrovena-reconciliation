@@ -715,7 +715,9 @@ def _run_inpost(
             receiver_email=email,
             receiver_phone=phone,
             receiver_street=addr.get("street", ""),
-            receiver_building_number=addr.get("building_number", "1"),  # fix #3
+            receiver_building_number="/".join(
+                filter(None, [addr.get("building_number", "1"), addr.get("flat_number", "")])
+            ),
             receiver_city=addr.get("city", ""),
             receiver_post_code=addr.get("post_code", ""),
             sender=sender,
@@ -799,7 +801,16 @@ def _run_apaczka(
         receiver_lastname=receiver.get("last_name", ""),
         receiver_email=receiver.get("email", ""),
         receiver_phone=receiver.get("phone", ""),
-        receiver_address=addr.get("street", ""),
+        receiver_address=" ".join(
+            filter(
+                None,
+                [
+                    addr.get("street", ""),
+                    addr.get("building_number", ""),
+                    addr.get("flat_number", ""),
+                ],
+            )
+        ),
         receiver_city=addr.get("city", ""),
         receiver_zip=addr.get("post_code", ""),
         sender=sender,
@@ -1273,6 +1284,7 @@ def _create_draft(
         "shipping_address": {
             "street": street,
             "building_number": building_number,  # fix #3
+            "flat_number": shipping_addr.get("address2", ""),
             "city": shipping_addr.get("city", ""),
             "post_code": shipping_addr.get("zip", ""),
         },
