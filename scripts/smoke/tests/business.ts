@@ -11,6 +11,7 @@
  *   SMOKE_ACCOUNTANT_SP_CLIENT_SECRET
  */
 
+import { skipOrFail } from "../types.js";
 import type { SmokeTest, TestContext, TestResult } from "../types.js";
 
 function ms(): number { return Date.now(); }
@@ -34,7 +35,7 @@ const closeDryRunDoesNotCrash: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getAccountantToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+      return skipOrFail(this, ctx, ms() - t0, "SMOKE_ACCOUNTANT_SP_* not configured");
     }
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
@@ -66,7 +67,7 @@ const closeResponseHasRequiredFields: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getAccountantToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+      return skipOrFail(this, ctx, ms() - t0, "SMOKE_ACCOUNTANT_SP_* not configured");
     }
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
@@ -105,7 +106,7 @@ const closePreflightBlockersAreMeaningful: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getAccountantToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+      return skipOrFail(this, ctx, ms() - t0, "SMOKE_ACCOUNTANT_SP_* not configured");
     }
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
@@ -144,7 +145,7 @@ const closeStateHasValidStructure: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getViewerToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_SP_* not configured" };
+      return skipOrFail(this, ctx, ms() - t0, "SMOKE_SP_* not configured");
     }
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
@@ -181,7 +182,7 @@ const closeFullFlowSendsEmail: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getAccountantToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+      return skipOrFail(this, ctx, ms() - t0, "SMOKE_ACCOUNTANT_SP_* not configured");
     }
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
@@ -242,7 +243,7 @@ const closeOutputStructureIsClean: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getAccountantToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+      return skipOrFail(this, ctx, ms() - t0, "SMOKE_ACCOUNTANT_SP_* not configured");
     }
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
@@ -255,7 +256,14 @@ const closeOutputStructureIsClean: SmokeTest = {
     const res = await ctx.fetch(`${ctx.apiUrl}/api/files?prefix=${encodeURIComponent(prefix)}&flat=true`, {
       headers: { Authorization: `Bearer ${token}` },
     });
+    if (res.status === 401 || res.status === 403) {
+      // Authenticated 401/403 is always a FAIL — auth/RBAC is broken, never a valid skip.
+      return { name: this.name, category: this.category, status: "FAIL", duration_ms: ms() - t0, evidence: `HTTP ${res.status}`, error: `Authenticated GET /files returned ${res.status} — auth/RBAC broken` };
+    }
     if (!res.ok) {
+      if (ctx.strict) {
+        return { name: this.name, category: this.category, status: "FAIL", duration_ms: ms() - t0, evidence: `HTTP ${res.status}`, error: `Strict mode: authenticated GET /files returned ${res.status}` };
+      }
       return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: `GET /files returned ${res.status} — pipeline may not have run yet` };
     }
     const files = await res.json() as Array<{ key: string }>;
@@ -301,7 +309,7 @@ const closeDetailedVendorAndZipReport: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getAccountantToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+      return skipOrFail(this, ctx, ms() - t0, "SMOKE_ACCOUNTANT_SP_* not configured");
     }
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();

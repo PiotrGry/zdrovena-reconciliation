@@ -26,6 +26,9 @@ const ALL_TESTS: SmokeTest[] = [
 // ── CLI args ───────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
 const verbose = args.includes("--verbose");
+const strict =
+  args.includes("--strict") ||
+  (process.env.SMOKE_STRICT ?? "").trim().toLowerCase() === "true";
 const outputArg = args.find((a) => a.startsWith("--output"));
 const outputFile = outputArg ? outputArg.split("=")[1] ?? args[args.indexOf(outputArg) + 1] : null;
 const excludeArg = args.find((a) => a.startsWith("--exclude-test="));
@@ -122,6 +125,7 @@ const ctx: TestContext = {
   smokeAccountantSpClientId: process.env.SMOKE_ACCOUNTANT_SP_CLIENT_ID ?? "",
   smokeAccountantSpClientSecret: process.env.SMOKE_ACCOUNTANT_SP_CLIENT_SECRET ?? "",
   verbose,
+  strict,
   fetch: fetchWithTimeout,
   getViewerToken,
   getAccountantToken,
@@ -132,7 +136,7 @@ async function run(): Promise<void> {
   const startMs = Date.now();
   const results: TestResult[] = [];
 
-  console.log(`\nSmoke test suite — ${TESTS.length} tests${excludedTests.size > 0 ? ` (${excludedTests.size} excluded)` : ""}`);
+  console.log(`\nSmoke test suite — ${TESTS.length} tests${excludedTests.size > 0 ? ` (${excludedTests.size} excluded)` : ""}${strict ? " [STRICT]" : ""}`);
   console.log(`API:     ${ctx.apiUrl}`);
   console.log(`SWA:     ${ctx.swaUrl}`);
   console.log("─".repeat(60));
@@ -173,6 +177,7 @@ async function run(): Promise<void> {
     timestamp: new Date().toISOString(),
     api_url: ctx.apiUrl,
     swa_url: ctx.swaUrl,
+    strict,
     total: results.length,
     passed,
     failed,

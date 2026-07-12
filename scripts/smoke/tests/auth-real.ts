@@ -5,10 +5,12 @@
  *
  * Uses a dedicated Service Principal (zdrovena-smoke-tester) with the
  * zdrovena-viewer app role assigned. Credentials passed via SMOKE_SP_CLIENT_ID
- * and SMOKE_SP_CLIENT_SECRET env vars. If unset → all tests SKIP (still safe
- * for local dev runs).
+ * and SMOKE_SP_CLIENT_SECRET env vars. If unset → all tests SKIP in local
+ * (non-strict) runs and FAIL in strict mode (release validation must not go
+ * green without authenticated coverage).
  */
 
+import { skipOrFail } from "../types.js";
 import type { SmokeTest, TestContext, TestResult } from "../types.js";
 
 function ms(): number { return Date.now(); }
@@ -25,7 +27,7 @@ const tokenAcquirable: SmokeTest = {
   async run(ctx: TestContext): Promise<TestResult> {
     const t0 = ms();
     if (!ctx.smokeSpClientId || !ctx.smokeSpClientSecret) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_SP_* env vars not set" };
+      return skipOrFail(this, ctx, ms() - t0, "SMOKE_SP_* env vars not set");
     }
     const token = await ctx.getViewerToken();
     return {
@@ -46,7 +48,7 @@ const tokenHasViewerRole: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getViewerToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "no token (smoke SP not configured)" };
+      return skipOrFail(this, ctx, ms() - t0, "no token (smoke SP not configured)");
     }
     const claims = decodeJwt(token);
     const roles = (claims.roles as string[] | undefined) ?? [];
@@ -69,7 +71,7 @@ const filesAuthenticatedReturns200: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getViewerToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "no token" };
+      return skipOrFail(this, ctx, ms() - t0, "no viewer token acquired");
     }
     const res = await ctx.fetch(`${ctx.apiUrl}/api/files`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -93,7 +95,7 @@ const closeStateAuthenticatedReturns200: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getViewerToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "no token" };
+      return skipOrFail(this, ctx, ms() - t0, "no viewer token acquired");
     }
     const res = await ctx.fetch(`${ctx.apiUrl}/api/close/state?year=2026&month=4`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -117,7 +119,7 @@ const closePostForbiddenForViewer: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getViewerToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "no token" };
+      return skipOrFail(this, ctx, ms() - t0, "no viewer token acquired");
     }
     // Viewer must NOT be able to trigger close — only accountant/admin.
     const res = await ctx.fetch(`${ctx.apiUrl}/api/close`, {
