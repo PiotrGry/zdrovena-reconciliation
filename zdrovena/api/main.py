@@ -13,13 +13,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from zdrovena.api.errors import install_exception_handlers
+from zdrovena.api.observability import CorrelationIdFilter, correlation_id_middleware
 from zdrovena.api.routers import close, files, invoices, webhooks
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    format="%(asctime)s %(levelname)s %(name)s [%(correlation_id)s]: %(message)s",
     force=True,
 )
+# Bez tego filtra %(correlation_id)s w formacie rzuciłby KeyError dla rekordów
+# spoza żądania (start aplikacji, logi bibliotek). Filtr na handlerze root
+# gwarantuje, że KAŻDY rekord ma atrybut correlation_id.
+for _root_handler in logging.getLogger().handlers:
+    _root_handler.addFilter(CorrelationIdFilter())
 
 # Azure SDK's http_logging_policy emits every request/response header at INFO,
 # which floods the console during dev (~30 lines per Azurite/Table call). Pin
@@ -108,8 +114,13 @@ app.add_middleware(
     allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-Correlation-ID"],
+    expose_headers=["X-Correlation-ID"],
 )
+
+# Correlation ID: akceptuj/generuj X-Correlation-ID, echo w odpowiedzi, wstrzyknij
+# do logów i koperty błędu. Rejestrowane po CORS, aby nagłówek był widoczny w SPA.
+app.middleware("http")(correlation_id_middleware)
 
 # SWA's linked backend routes /api/* to this Container App without stripping
 # the /api prefix, so we mount the routers under /api to match what arrives.

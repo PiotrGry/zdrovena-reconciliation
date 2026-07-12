@@ -43,6 +43,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, ShopifyDedupStoreDep, StorageDep
+from zdrovena.api.observability import get_correlation_id, set_correlation_id
 from zdrovena.audit.bottles import SKIP_RE, is_glass
 from zdrovena.common.secrets import get_secret
 from zdrovena.common.shipping_exceptions import (
@@ -1136,6 +1137,7 @@ def _create_draft_safely(
     storage: Any,
     *,
     source: str = "shopify",
+    correlation_id: str = "-",
 ) -> None:
     """Wrapper around ``_create_draft`` that DLQs any exception (P1-9).
 
@@ -1143,7 +1145,11 @@ def _create_draft_safely(
     silently swallowed and the order would be lost. Instead we capture the
     payload + error to the DLQ so an operator can retry via
     ``POST /shipping/drafts/dlq/{entry_id}/retry``.
+
+    ``correlation_id`` jest ustawiany na starcie, aby logi tworzenia draftu w tle
+    dzieliły identyfikator z logiem webhooka, który je zakolejkował.
     """
+    set_correlation_id(correlation_id)
     try:
         _create_draft(order, shipping_store, storage, source=source)
     except Exception as exc:
@@ -1397,7 +1403,15 @@ async def shopify_order_created(
         return {"status": "skipped"}
 
     # 6. Heavy work off the request path (Shopify enforces a 5s timeout).
-    background_tasks.add_task(_create_draft_safely, order, shipping_store, storage)
+    #    Correlation ID przekazujemy jawnie — kontekst żądania jest już zresetowany,
+    #    gdy Starlette wykonuje zadanie tła, więc log draftu inaczej straciłby powiązanie.
+    background_tasks.add_task(
+        _create_draft_safely,
+        order,
+        shipping_store,
+        storage,
+        correlation_id=get_correlation_id(),
+    )
     logger.info("Queued shipping draft for order %s", order.get("order_number") or order.get("id"))
     return {"status": "accepted"}
 
