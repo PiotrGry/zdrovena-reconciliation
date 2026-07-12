@@ -43,7 +43,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, ShopifyDedupStoreDep, StorageDep
-from zdrovena.api.observability import get_correlation_id, set_correlation_id
+from zdrovena.api.observability import (
+    get_correlation_id,
+    reset_correlation_id,
+    set_correlation_id,
+)
 from zdrovena.audit.bottles import SKIP_RE, is_glass
 from zdrovena.common.events import log_event
 from zdrovena.common.secrets import get_secret
@@ -1148,9 +1152,11 @@ def _create_draft_safely(
     ``POST /shipping/drafts/dlq/{entry_id}/retry``.
 
     ``correlation_id`` jest ustawiany na starcie, aby logi tworzenia draftu w tle
-    dzieliły identyfikator z logiem webhooka, który je zakolejkował.
+    dzieliły identyfikator z logiem webhooka, który je zakolejkował. Token z
+    ``set_correlation_id`` jest resetowany w ``finally``, żeby kontekst nie
+    wyciekał do kolejnych zadań wykonywanych w tym samym wątku/tasku.
     """
-    set_correlation_id(correlation_id)
+    token = set_correlation_id(correlation_id)
     try:
         _create_draft(order, shipping_store, storage, source=source)
     except Exception as exc:
@@ -1165,11 +1171,20 @@ def _create_draft_safely(
                 error=f"{type(exc).__name__}: {exc}",
                 source=source,
             )
+            log_event(
+                "draft.dlq_enqueued",
+                level=logging.ERROR,
+                order_id=order.get("id") or order.get("order_number"),
+                source=source,
+                error=f"{type(exc).__name__}: {exc}",
+            )
         except Exception:
             logger.exception(
                 "DLQ enqueue itself failed for order %s",
                 order.get("id") or order.get("order_number"),
             )
+    finally:
+        reset_correlation_id(token)
 
 
 def _create_draft(

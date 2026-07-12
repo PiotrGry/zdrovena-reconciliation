@@ -81,3 +81,47 @@ class TestCorsMethods:
         )
         allow = resp.headers.get("access-control-allow-methods", "")
         assert method in allow
+
+
+class TestEnvironmentConfigProblems:
+    """R4-B: fail-closed przy niejednoznacznej konfiguracji środowiska."""
+
+    def test_legacy_prod_without_canonical_app_env_refuses_boot(self, monkeypatch):
+        _clear_env(monkeypatch)
+        monkeypatch.setenv("DEPLOY_ENV", "production")
+        monkeypatch.delenv("AZURE_AUTH_DISABLED", raising=False)
+        monkeypatch.delenv("AZURE_KEYVAULT_URL", raising=False)
+        with pytest.raises(SystemExit) as exc:
+            _run_lifespan()
+        assert exc.value.code == 1
+
+    def test_legacy_prod_with_matching_app_env_boots(self, monkeypatch):
+        _clear_env(monkeypatch)
+        monkeypatch.setenv("DEPLOY_ENV", "production")
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "false")
+        monkeypatch.delenv("AZURE_KEYVAULT_URL", raising=False)
+        _run_lifespan()  # brak SystemExit
+
+    def test_unknown_app_env_with_auth_disabled_refuses_boot(self, monkeypatch):
+        _clear_env(monkeypatch)
+        monkeypatch.setenv("APP_ENV", "produktion")  # literówka ≠ znane środowisko
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "true")
+        monkeypatch.delenv("AZURE_KEYVAULT_URL", raising=False)
+        with pytest.raises(SystemExit) as exc:
+            _run_lifespan()
+        assert exc.value.code == 1
+
+    def test_unknown_app_env_with_auth_enabled_boots(self, monkeypatch):
+        _clear_env(monkeypatch)
+        monkeypatch.setenv("APP_ENV", "canary")
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "false")
+        monkeypatch.delenv("AZURE_KEYVAULT_URL", raising=False)
+        _run_lifespan()  # brak SystemExit — auth włączona, brak sygnału produkcji
+
+    def test_staging_app_env_with_auth_disabled_boots(self, monkeypatch):
+        _clear_env(monkeypatch)
+        monkeypatch.setenv("APP_ENV", "staging")
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "true")
+        monkeypatch.delenv("AZURE_KEYVAULT_URL", raising=False)
+        _run_lifespan()  # znane nie-produkcyjne środowisko może wyłączyć auth

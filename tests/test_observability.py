@@ -92,3 +92,51 @@ class TestContextHelpers:
             assert get_correlation_id() == "-"
         finally:
             correlation_id_var.reset(token)
+
+
+class TestCorrelationIdValidation:
+    """R4-B: walidacja długości/znaków przychodzącego correlation ID."""
+
+    def test_oversized_incoming_id_is_replaced(self):
+        res = _client().get("/health", headers={CORRELATION_HEADER: "x" * 200})
+        cid = res.headers.get(CORRELATION_HEADER)
+        assert cid and cid != "x" * 200
+        assert len(cid) == 12  # wygenerowany hex
+
+    def test_invalid_characters_are_replaced(self):
+        res = _client().get("/health", headers={CORRELATION_HEADER: "abc def{}"})
+        cid = res.headers.get(CORRELATION_HEADER)
+        assert cid and cid != "abc def{}"
+        assert len(cid) == 12
+
+    def test_valid_id_with_allowed_separators_preserved(self):
+        res = _client().get("/health", headers={CORRELATION_HEADER: "req-1.2_ok"})
+        assert res.headers.get(CORRELATION_HEADER) == "req-1.2_ok"
+
+    def test_set_correlation_id_sanitizes_invalid_value(self):
+        from zdrovena.api.observability import reset_correlation_id
+
+        token = set_correlation_id("bad id\nwith newline")
+        try:
+            cid = get_correlation_id()
+            assert "\n" not in cid and " " not in cid
+            assert len(cid) == 12
+        finally:
+            reset_correlation_id(token)
+
+
+class TestBackgroundContextReset:
+    """R4-B: token/reset w finally — kontekst nie wycieka między zadaniami tła."""
+
+    def test_create_draft_safely_resets_context(self):
+        from zdrovena.api.routers.webhooks import _create_draft_safely
+
+        class _Store:
+            def enqueue_dlq(self, **kwargs):  # pragma: no cover - nie powinno być wywołane
+                raise AssertionError("DLQ nieoczekiwane dla pustego zamówienia")
+
+        before = get_correlation_id()
+        # _create_draft rzuci na pustym zamówieniu → ścieżka DLQ; Store.enqueue_dlq
+        # podnosi AssertionError, który jest łapany przez wewnętrzny try/except.
+        _create_draft_safely({}, _Store(), None, correlation_id="cid-bg-1")
+        assert get_correlation_id() == before  # kontekst przywrócony po zadaniu

@@ -83,14 +83,24 @@ resource "azurerm_monitor_metric_alert" "high_latency" {
 
 # ── Alert: DLQ backlog (dowolna nowa porażka trafiająca do DLQ) ──────────────
 # DLQ to Azure Table Storage (shippingdraftsdlq), nie kolejka — brak natywnej
-# metryki "liczba wiadomości". Reguła oparta na logach: liczy wpisy dziennika
-# emitowane przy enqueue do DLQ (zdrovena/api/routers/webhooks.py — "enqueueing
-# to DLQ"). Próg > 0 w oknie 15 min ⇒ każde nowe niepowodzenie utworzenia draftu
-# powiadamia właściciela ([LOG] H3, [EVT] R2/H3, [API] M3).
+# metryki "liczba wiadomości". Reguła oparta na logach: łapie zarówno
+# ustrukturyzowane zdarzenie `draft.dlq_enqueued` (zdrovena.common.events →
+# log_event), jak i towarzyszący mu log "enqueueing to DLQ"
+# (zdrovena/api/routers/webhooks.py). Próg > 0 w oknie 15 min ⇒ każde nowe
+# niepowodzenie utworzenia draftu powiadamia właściciela ([LOG] H3, [EVT] R2/H3,
+# [API] M3).
 #
-# UWAGA (dla właściciela przy `terraform apply`): tabela ContainerAppConsoleLogs_CL
-# pojawia się w Log Analytics dopiero po pierwszym logu Container App. Jeśli
-# nazwa tabeli w Twoim workspace jest inna, dostosuj zapytanie KQL poniżej.
+# Tabele Log Analytics (zweryfikowane dla Container Apps + workspace-based
+# Application Insights):
+#   * ContainerAppConsoleLogs_CL — stdout/stderr kontenera (kolumna Log_s);
+#     tabela powstaje dopiero po pierwszym logu Container App.
+#   * AppTraces — logi wysyłane przez Azure Monitor OpenTelemetry
+#     (APPLICATIONINSIGHTS_CONNECTION_STRING, kolumna Message).
+# union isfuzzy=true toleruje brak którejkolwiek tabeli w świeżym workspace.
+# Alert celuje w workspace (LAW), bo tam trafiają logi Container Apps — scope na
+# komponencie App Insights nie widzi ContainerAppConsoleLogs_CL.
+#
+# Procedura testu alertu i checklist dowodów: docs/devops/monitoring-runbook.md
 
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dlq_backlog" {
   name                = "${var.prefix}-alert-dlq-backlog"
@@ -101,12 +111,14 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dlq_backlog" {
 
   evaluation_frequency = "PT5M"
   window_duration      = "PT15M"
-  scopes               = [azurerm_application_insights.ai.id]
+  scopes               = [azurerm_log_analytics_workspace.law.id]
 
   criteria {
     query                   = <<-KQL
-      traces
-      | where message has "enqueueing to DLQ"
+      union isfuzzy=true
+        (ContainerAppConsoleLogs_CL | project TimeGenerated, LogText = Log_s),
+        (AppTraces | project TimeGenerated, LogText = Message)
+      | where LogText has "draft.dlq_enqueued" or LogText has "enqueueing to DLQ"
     KQL
     time_aggregation_method = "Count"
     threshold               = 0

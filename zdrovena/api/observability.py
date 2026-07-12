@@ -24,7 +24,10 @@ from zdrovena.common.correlation import (
     CorrelationIdFilter,
     correlation_id_var,
     get_correlation_id,
+    is_valid_correlation_id,
     new_correlation_id,
+    reset_correlation_id,
+    sanitize_correlation_id,
     set_correlation_id,
 )
 
@@ -34,7 +37,10 @@ __all__ = [
     "correlation_id_middleware",
     "correlation_id_var",
     "get_correlation_id",
+    "is_valid_correlation_id",
     "new_correlation_id",
+    "reset_correlation_id",
+    "sanitize_correlation_id",
     "set_correlation_id",
 ]
 
@@ -48,7 +54,9 @@ async def correlation_id_middleware(
     incoming = (
         request.headers.get(CORRELATION_HEADER) or request.headers.get(_WEBHOOK_ID_HEADER) or ""
     ).strip()
-    cid = incoming or new_correlation_id()
+    # Nieprawidłowe/za długie przychodzące ID zastępujemy bezpiecznym wygenerowanym
+    # (walidacja długości i znaków — patrz zdrovena.common.correlation).
+    cid = sanitize_correlation_id(incoming) if incoming else new_correlation_id()
     token = correlation_id_var.set(cid)
     try:
         response = await call_next(request)

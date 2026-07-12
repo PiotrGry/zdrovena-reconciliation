@@ -65,9 +65,66 @@ def _is_production_env() -> bool:
     liter. (Odpowiada logice w ``zdrovena.api.routers.webhooks``.)
     """
     for var in ("APP_ENV", "DEPLOY_ENV", "AZURE_ENV", "ENV"):
-        if os.environ.get(var, "").strip().lower() in {"production", "prod", "live"}:
+        if os.environ.get(var, "").strip().lower() in _PRODUCTION_ENV_VALUES:
             return True
     return False
+
+
+_PRODUCTION_ENV_VALUES = {"production", "prod", "live"}
+_KNOWN_ENV_VALUES = _PRODUCTION_ENV_VALUES | {
+    "staging",
+    "sandbox",
+    "development",
+    "dev",
+    "test",
+    "local",
+}
+_LEGACY_ENV_VARS = ("DEPLOY_ENV", "AZURE_ENV", "ENV")
+
+
+def _environment_config_problems() -> list[str]:
+    """Waliduj konfigurację środowiska — kanoniczny APP_ENV + fail-closed auth.
+
+    Zwraca listę krytycznych problemów, które muszą zablokować start:
+
+    * produkcja (dowolny sygnał) z ``AZURE_AUTH_DISABLED`` — otwarte API,
+    * legacy zmienna (DEPLOY_ENV/AZURE_ENV/ENV) wskazuje produkcję, ale
+      kanoniczny ``APP_ENV`` nie potwierdza — środowisko niejednoznaczne,
+    * ``APP_ENV`` ustawiony na nieznaną wartość przy wyłączonej autoryzacji —
+      nie da się udowodnić, że to nie produkcja, więc odmawiamy startu.
+
+    Brak wszystkich zmiennych + wyłączona autoryzacja = lokalny dev (dozwolone).
+    """
+    problems: list[str] = []
+    auth_disabled = os.environ.get("AZURE_AUTH_DISABLED", "").lower() in ("1", "true", "yes")
+    app_env = os.environ.get("APP_ENV", "").strip().lower()
+
+    if auth_disabled and _is_production_env():
+        problems.append(
+            "AZURE_AUTH_DISABLED=true w środowisku produkcyjnym — API byłoby otwarte "
+            "bez autoryzacji. Usuń AZURE_AUTH_DISABLED z konfiguracji produkcyjnej."
+        )
+
+    legacy_prod = [
+        var
+        for var in _LEGACY_ENV_VARS
+        if os.environ.get(var, "").strip().lower() in _PRODUCTION_ENV_VALUES
+    ]
+    if legacy_prod and app_env not in _PRODUCTION_ENV_VALUES:
+        problems.append(
+            f"Zmienne {', '.join(legacy_prod)} wskazują produkcję, ale kanoniczny "
+            f"APP_ENV={app_env or '<brak>'} tego nie potwierdza. Ustaw APP_ENV=production "
+            "jako jedyne źródło prawdy o środowisku."
+        )
+
+    if auth_disabled and app_env and app_env not in _KNOWN_ENV_VALUES:
+        problems.append(
+            f"APP_ENV={app_env!r} jest nieznaną wartością przy AZURE_AUTH_DISABLED=true — "
+            "środowisko niejednoznaczne, odmawiam startu z wyłączoną autoryzacją. "
+            f"Dozwolone wartości: {sorted(_KNOWN_ENV_VALUES)}."
+        )
+
+    return problems
 
 
 @asynccontextmanager
@@ -82,15 +139,14 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     keyvault_url = os.environ.get("AZURE_KEYVAULT_URL")
     auth_disabled = os.environ.get("AZURE_AUTH_DISABLED", "").lower() in ("1", "true", "yes")
 
-    # Strażnik: uruchomienie w produkcji z wyłączoną autoryzacją to krytyczna
-    # dziura bezpieczeństwa (każdy JWT przechodzi). Odmawiamy startu, żeby
+    # Strażnik fail-closed: produkcja z wyłączoną autoryzacją, niejednoznaczny
+    # APP_ENV przy sygnale produkcyjnym z legacy zmiennych albo nieznany APP_ENV
+    # z wyłączoną autoryzacją — każdy z tych stanów blokuje start, żeby
     # orchestrator Container App zgłosił błąd zamiast wystawić otwarte API.
-    if auth_disabled and _is_production_env():
-        logger.critical(
-            "AZURE_AUTH_DISABLED=true w środowisku produkcyjnym — API byłoby otwarte "
-            "bez autoryzacji. Odmawiam startu. Usuń AZURE_AUTH_DISABLED z konfiguracji "
-            "produkcyjnej."
-        )
+    problems = _environment_config_problems()
+    if problems:
+        for problem in problems:
+            logger.critical("Konfiguracja środowiska: %s Odmawiam startu.", problem)
         sys.exit(1)
 
     if keyvault_url and not auth_disabled:
