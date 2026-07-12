@@ -57,12 +57,18 @@ class TestNotRequired:
 class TestIdempotency:
     def test_skips_when_invoice_already_exists_for_order(self):
         fakturownia = MagicMock()
-        fakturownia.list_invoices.return_value = [{"id": 1, "oid": "af1"}]
+        fakturownia.list_invoices.return_value = [
+            {"id": 1, "number": "FV/2026/1", "oid": "af1"}
+        ]
         allegro = MagicMock()
         result = create_invoice_for_order(
             _order(), fakturownia_client=fakturownia, allegro_client=allegro
         )
         assert result["status"] == "already_exists"
+        # Must recover the existing invoice's id/number so the caller can
+        # persist it instead of clearing state and looping (the 502 bug).
+        assert result["fakturownia_invoice_id"] == 1
+        assert result["fakturownia_invoice_number"] == "FV/2026/1"
         fakturownia.create_invoice.assert_not_called()
         fakturownia.list_invoices.assert_called_once_with(oid="af1")
 

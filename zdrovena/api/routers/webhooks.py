@@ -2433,8 +2433,28 @@ def create_draft_invoice(
         order, fakturownia_client=fakturownia_client, allegro_client=allegro_client
     )
 
-    if result.get("status") != "created":
-        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": None})
+    result_status = result.get("status")
+
+    # "already_exists" is a success: Fakturownia already holds the invoice for
+    # this order (idempotent create via oid). Persist the recovered id and
+    # report "already_created" — never 502, never reset state to None (that was
+    # the loop bug: clearing the slot re-armed the poller to try forever).
+    if result_status == "already_exists":
+        recovered_id = result.get("fakturownia_invoice_id")
+        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": recovered_id})
+        return {
+            "status": "already_created",
+            "fakturownia_invoice_id": recovered_id,
+            "fakturownia_invoice_number": result.get("fakturownia_invoice_number"),
+        }
+
+    if result_status != "created":
+        # On failure, keep any invoice id Fakturownia already produced (e.g. the
+        # invoice was created but the Allegro push failed) so a retry attaches to
+        # the same document instead of orphaning it. Only clear the slot when we
+        # truly have nothing to keep.
+        recovered_id = result.get("fakturownia_invoice_id")
+        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": recovered_id})
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=result.get("error", "Invoice creation failed"),

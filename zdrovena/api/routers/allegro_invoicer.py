@@ -147,10 +147,21 @@ def create_invoice_for_order(
         return {"status": "error", "error": str(exc)}
 
     if existing:
+        # Recover the existing invoice's id/number so the caller can persist it
+        # instead of resetting local state to None and looping (the 502 bug).
+        # Fakturownia is the source of truth; oid+oid_unique guarantees at most
+        # one match, so existing[0] is canonical.
+        existing_invoice = existing[0]
         logger.info(
-            "Fakturownia already has an invoice for Allegro order %s — skipping", allegro_order_id
+            "Fakturownia already has an invoice for Allegro order %s (id=%s) — recovering id",
+            allegro_order_id,
+            existing_invoice.get("id"),
         )
-        return {"status": "already_exists"}
+        return {
+            "status": "already_exists",
+            "fakturownia_invoice_id": existing_invoice.get("id"),
+            "fakturownia_invoice_number": existing_invoice.get("number"),
+        }
 
     _check_total_matches_allegro(order, payload)
 
