@@ -1232,11 +1232,47 @@ table.files tbody tr:hover .row-actions {
     gap: 10px;
 }
 
+.toast {
+    pointer-events: auto;
+}
+
 .toast .dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
     background: var(--success);
+}
+
+.toast-error .dot {
+    background: var(--error);
+}
+
+.toast-warning .dot {
+    background: var(--warning);
+}
+
+.toast-info .dot {
+    background: var(--bg);
+    opacity: 0.6;
+}
+
+.toast-msg {
+    flex: 1;
+}
+
+.toast-close {
+    background: none;
+    border: none;
+    color: inherit;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+    opacity: 0.7;
+}
+
+.toast-close:hover {
+    opacity: 1;
 }
 
 /* Scrollbar */
