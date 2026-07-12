@@ -38,6 +38,7 @@ from decimal import Decimal
 from typing import Any
 
 from zdrovena.common.fakturownia import KAUCJA_DESCRIPTION
+from zdrovena.common.kaucja import calculate_kaucja
 
 
 def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any]:
@@ -48,7 +49,6 @@ def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any
     is_company = bool(company.get("name"))
 
     positions: list[dict[str, Any]] = []
-    deposit_total = Decimal("0")
 
     for item in order.get("lineItems") or []:
         offer = item.get("offer") or {}
@@ -64,17 +64,10 @@ def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any
                 "tax": int(tax_rate),
             }
         )
-        deposit = item.get("deposit")
-        if deposit:
-            # Verified against a real production order (quantity=2,
-            # price.amount="73.00", deposit.price.amount="6.00",
-            # order.summary.totalToPay="158.00"): both price.amount and
-            # deposit.price.amount are PER-UNIT values in Allegro's schema,
-            # not line totals. (73.00 + 6.00) * 2 = 158.00 matches exactly;
-            # treating them as already-line-totals (73.00 + 6.00 = 79.00)
-            # does not. Both must be multiplied by quantity.
-            unit_deposit = Decimal(str((deposit.get("price") or {}).get("amount", "0")))
-            deposit_total += unit_deposit * quantity
+
+    # Kaucja — jedno kanoniczne źródło (natywny deposit z Allegro × quantity),
+    # współdzielone z patcherem, żeby obie ścieżki liczyły tę samą kwotę.
+    deposit_total = calculate_kaucja(order)
 
     invoice: dict[str, Any] = {
         "kind": "vat",

@@ -40,6 +40,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from zdrovena.common.allegro_invoice_mapper import allegro_order_to_fakturownia_invoice
+from zdrovena.common.correlation import get_correlation_id
 from zdrovena.common.secrets import get_secret
 
 logger = logging.getLogger("zdrovena.api.routers.allegro_invoicer")
@@ -89,25 +90,33 @@ def _check_total_matches_allegro(order: dict[str, Any], payload: dict[str, Any])
         delivery_cost_amount = ((order.get("delivery") or {}).get("cost") or {}).get("amount", "0")
 
         expected = Decimal(str(total_to_pay_amount)) - Decimal(str(delivery_cost_amount))
-        computed = sum(
+        positions_sum = sum(
             (Decimal(str(p["total_price_gross"])) for p in payload.get("positions", [])),
             start=Decimal("0"),
         )
-        computed += sum(
+        settlements_sum = sum(
             (Decimal(s["amount"]) for s in payload.get("settlement_positions", [])),
             start=Decimal("0"),
         )
+        computed = positions_sum + settlements_sum
     except (AttributeError, InvalidOperation, KeyError, TypeError, ValueError):
         return
 
     if abs(computed - expected) > _TOTAL_MISMATCH_TOLERANCE:
+        # Log every component separately (positions vs settlements/kaucja vs
+        # Allegro's totalToPay) plus the correlation_id, so an operator can see
+        # exactly which part drifted without re-deriving the sums by hand.
         logger.warning(
-            "Invoice total mismatch for Allegro order %s: computed invoice total %s "
+            "Invoice total mismatch for Allegro order %s [correlation_id=%s]: "
+            "computed invoice total %s (positions=%s + settlements/kaucja=%s) "
             "does not match Allegro's totalToPay-minus-delivery %s "
             "(totalToPay=%s, delivery=%s) — proceeding anyway, but this may indicate "
             "a bug in allegro_invoice_mapper.py",
             order.get("id"),
+            get_correlation_id(),
             computed,
+            positions_sum,
+            settlements_sum,
             expected,
             total_to_pay_amount,
             delivery_cost_amount,

@@ -3,16 +3,19 @@
 Worker responsibility:
   1. Enumerate recent Allegro orders from `shipping_store` (source='allegro')
   2. For each order → fetch invoices via AllegroClient.list_order_invoices
+     and the full order via AllegroClient.get_order
   3. For each Allegro invoice with a Fakturownia-linked number:
      a. GET invoice from Fakturownia (to read positions + existing settlements)
-     b. Compute kaucja = 0.50 × count_pet_bottles(positions)
+     b. Compute kaucja from the NATIVE Allegro deposit (calculate_kaucja) —
+        the legacy bottles heuristic is NO LONGER the amount source, only a
+        cross-check that logs a warning on divergence (PR-13/PR-27)
      c. If invoice already has settlement with description "Kaucja za opakowania zwrotne" → SKIP
      d. Else → PUT settlement_positions with new row
 
 All I/O is mocked. Tests assert:
-  - correct amount = 0.50 * pet_count
+  - amount == native Allegro deposit (× quantity)
   - idempotency (no double-patch)
-  - glass-only invoice = 0 pet → no patch
+  - no native deposit → no patch
   - error in one invoice doesn't block others
   - stats dict shape
 """
@@ -56,6 +59,24 @@ def _draft(*, external_order_id: str, status: str = "shipped") -> dict:
     }
 
 
+def _allegro_order(
+    *, order_id: str = "ORD-1", deposit_amount: str | None = "6.00", quantity: int = 1
+) -> dict:
+    """Minimal Allegro order carrying a native per-line deposit.
+
+    `deposit_amount=None` → no deposit line (e.g. glass-only, no kaucja).
+    """
+    line: dict = {
+        "offer": {"name": "Woda Humio"},
+        "quantity": quantity,
+        "price": {"amount": "10.00", "currency": "PLN"},
+        "tax": {"rate": "8.00"},
+    }
+    if deposit_amount is not None:
+        line["deposit"] = {"price": {"amount": deposit_amount}}
+    return {"id": order_id, "lineItems": [line]}
+
+
 def _fakturownia_invoice(
     *,
     invoice_id: int,
@@ -77,11 +98,14 @@ class TestHappyPath:
     def test_single_invoice_patched_with_kaucja(
         self, allegro_client, fakturownia_client, shipping_store
     ):
-        """1 order → 1 invoice → 12 PET bottles → 6.00 PLN kaucja added."""
+        """1 order → 1 invoice → native deposit 6.00 PLN added as kaucja."""
         shipping_store.list_drafts.return_value = [_draft(external_order_id="ORD-1")]
         allegro_client.list_order_invoices.return_value = [
             {"id": "inv-1", "invoiceNumber": "FV/2025/100", "fileType": "VAT"},
         ]
+        allegro_client.get_order.return_value = _allegro_order(
+            order_id="ORD-1", deposit_amount="6.00", quantity=1
+        )
         fakturownia_client.list_invoices.return_value = [
             _fakturownia_invoice(
                 invoice_id=100,
@@ -114,7 +138,7 @@ class TestHappyPath:
         call = fakturownia_client.add_settlement_position.call_args
         assert call.kwargs["invoice_id"] == 100
         assert call.kwargs["kind"] == "charge"
-        assert call.kwargs["amount_pln"] == "6.00"  # 12 * 0.50
+        assert call.kwargs["amount_pln"] == "6.00"  # native Allegro deposit
         assert call.kwargs["description"] == KAUCJA_DESCRIPTION
 
     def test_multiple_invoices_across_orders(
@@ -128,12 +152,16 @@ class TestHappyPath:
             [{"id": "inv-1", "invoiceNumber": "FV/2025/101"}],
             [{"id": "inv-2", "invoiceNumber": "FV/2025/102"}],
         ]
+        allegro_client.get_order.side_effect = [
+            _allegro_order(order_id="ORD-1", deposit_amount="6.00", quantity=1),
+            _allegro_order(order_id="ORD-2", deposit_amount="18.00", quantity=1),
+        ]
         fakturownia_client.list_invoices.side_effect = [
             [
                 _fakturownia_invoice(
                     invoice_id=101,
                     positions=[
-                        {"name": "Woda Humio 500ml x 6", "quantity": 2},  # 12 pet
+                        {"name": "Woda Humio 500ml x 6", "quantity": 2},
                     ],
                 )
             ],
@@ -141,7 +169,7 @@ class TestHappyPath:
                 _fakturownia_invoice(
                     invoice_id=102,
                     positions=[
-                        {"name": "Zgrzewka Humio", "quantity": 3},  # 3*12=36 pet
+                        {"name": "Zgrzewka Humio", "quantity": 3},
                     ],
                 )
             ],
@@ -174,7 +202,7 @@ class TestHappyPath:
             c.kwargs["amount_pln"]
             for c in fakturownia_client.add_settlement_position.call_args_list
         ]
-        assert amounts == ["6.00", "18.00"]  # 12*0.50, 36*0.50
+        assert amounts == ["6.00", "18.00"]  # native deposits per order
 
 
 # ── idempotency ──────────────────────────────────────────────────────────────
@@ -186,6 +214,9 @@ class TestIdempotency:
         allegro_client.list_order_invoices.return_value = [
             {"id": "inv-1", "invoiceNumber": "FV/2025/100"},
         ]
+        allegro_client.get_order.return_value = _allegro_order(
+            order_id="ORD-1", deposit_amount="6.00", quantity=1
+        )
         fakturownia_client.list_invoices.return_value = [
             _fakturownia_invoice(
                 invoice_id=100,
@@ -214,18 +245,21 @@ class TestIdempotency:
         fakturownia_client.add_settlement_position.assert_not_called()
 
 
-# ── no PET (glass-only) ──────────────────────────────────────────────────────
+# ── no deposit (glass-only) ──────────────────────────────────────────────────
 
 
-class TestNoPetBottles:
-    def test_glass_only_invoice_not_patched(
+class TestNoDeposit:
+    def test_no_native_deposit_not_patched(
         self, allegro_client, fakturownia_client, shipping_store
     ):
         shipping_store.list_drafts.return_value = [_draft(external_order_id="ORD-1")]
         allegro_client.list_order_invoices.return_value = [
             {"id": "inv-1", "invoiceNumber": "FV/2025/100"},
         ]
-        # "szkle" → glass, glass has NO kaucja
+        # Order has NO native deposit (e.g. glass) → no kaucja.
+        allegro_client.get_order.return_value = _allegro_order(
+            order_id="ORD-1", deposit_amount=None
+        )
         fakturownia_client.list_invoices.return_value = [
             _fakturownia_invoice(
                 invoice_id=100,
@@ -266,6 +300,10 @@ class TestErrorIsolation:
             RuntimeError("Allegro API down"),  # 1st call fails
             [{"id": "inv-2", "invoiceNumber": "FV/2025/102"}],  # 2nd OK
         ]
+        # get_order only reached for ORD-2 (ORD-1 failed at list_order_invoices).
+        allegro_client.get_order.return_value = _allegro_order(
+            order_id="ORD-2", deposit_amount="6.00", quantity=1
+        )
         fakturownia_client.list_invoices.return_value = [
             _fakturownia_invoice(
                 invoice_id=102,
@@ -299,6 +337,10 @@ class TestErrorIsolation:
         allegro_client.list_order_invoices.side_effect = [
             [{"id": "inv-1", "invoiceNumber": "FV/2025/101"}],
             [{"id": "inv-2", "invoiceNumber": "FV/2025/102"}],
+        ]
+        allegro_client.get_order.side_effect = [
+            _allegro_order(order_id="ORD-1", deposit_amount="6.00", quantity=1),
+            _allegro_order(order_id="ORD-2", deposit_amount="6.00", quantity=1),
         ]
         fakturownia_client.list_invoices.side_effect = [
             [
@@ -363,6 +405,9 @@ class TestInvoiceMatching:
         allegro_client.list_order_invoices.return_value = [
             {"id": "allegro-inv-1", "invoiceNumber": "FV/2025/999"},
         ]
+        allegro_client.get_order.return_value = _allegro_order(
+            order_id="ORD-1", deposit_amount="6.00", quantity=1
+        )
         # Fakturownia returns invoice matching that number
         fakturownia_client.list_invoices.return_value = [
             _fakturownia_invoice(
@@ -394,6 +439,9 @@ class TestInvoiceMatching:
         allegro_client.list_order_invoices.return_value = [
             {"id": "allegro-inv-1", "invoiceNumber": "FV/2025/999"},
         ]
+        allegro_client.get_order.return_value = _allegro_order(
+            order_id="ORD-1", deposit_amount="6.00", quantity=1
+        )
         fakturownia_client.list_invoices.return_value = []  # not found
 
         stats = patch_allegro_invoices_once(
@@ -412,6 +460,9 @@ class TestInvoiceMatching:
         allegro_client.list_order_invoices.return_value = [
             {"id": "allegro-inv-1", "invoiceNumber": "FV/2025/999"},
         ]
+        allegro_client.get_order.return_value = _allegro_order(
+            order_id="ORD-1", deposit_amount="6.00", quantity=1
+        )
         # Dwie różne faktury zwrócone dla tego samego numeru (patologia, ale możliwa)
         fakturownia_client.list_invoices.return_value = [
             _fakturownia_invoice(invoice_id=111, positions=[]),
@@ -429,6 +480,50 @@ class TestInvoiceMatching:
         # KLUCZOWE: nie pobieramy szczegółów żadnej z faktur ani nie patchujemy
         fakturownia_client.get_invoice.assert_not_called()
         fakturownia_client.add_settlement_position.assert_not_called()
+
+
+# ── kaucja source cross-check (native vs heuristic) ──────────────────────────
+
+
+class TestCrossCheck:
+    def test_amount_is_native_deposit_not_bottles_heuristic(
+        self, allegro_client, fakturownia_client, shipping_store, caplog
+    ):
+        """Native Allegro deposit is authoritative even when it disagrees with
+        the bottles×0.50 heuristic. Here: invoice names imply 12 PET → heuristic
+        6.00, but native deposit is 7.00 → amount MUST be 7.00, and a divergence
+        warning is logged (never blocks)."""
+        import logging
+
+        shipping_store.list_drafts.return_value = [_draft(external_order_id="ORD-1")]
+        allegro_client.list_order_invoices.return_value = [
+            {"id": "inv-1", "invoiceNumber": "FV/2025/100"},
+        ]
+        allegro_client.get_order.return_value = _allegro_order(
+            order_id="ORD-1", deposit_amount="7.00", quantity=1
+        )
+        fakturownia_client.list_invoices.return_value = [
+            _fakturownia_invoice(
+                invoice_id=100,
+                positions=[{"name": "Woda Humio 500ml x 12", "quantity": 1}],
+            )
+        ]
+        fakturownia_client.get_invoice.return_value = _fakturownia_invoice(
+            invoice_id=100,
+            positions=[{"name": "Woda Humio 500ml x 12", "quantity": 1}],
+        )
+        fakturownia_client.has_settlement_with_description.return_value = False
+
+        with caplog.at_level(logging.WARNING, logger="zdrovena.events"):
+            patch_allegro_invoices_once(
+                allegro_client=allegro_client,
+                fakturownia_client=fakturownia_client,
+                shipping_store=shipping_store,
+            )
+
+        call = fakturownia_client.add_settlement_position.call_args
+        assert call.kwargs["amount_pln"] == "7.00"  # native wins, not 6.00
+        assert any("kaucja_source_divergence" in r.message for r in caplog.records)
 
 
 # ── source filter (only Allegro orders) ──────────────────────────────────────
@@ -451,6 +546,8 @@ class TestSourceFilter:
         assert stats["orders_scanned"] == 1
         # allegro client called exactly once, for ORD-1
         allegro_client.list_order_invoices.assert_called_once_with("ORD-1")
+        # No invoices → order never fetched.
+        allegro_client.get_order.assert_not_called()
 
 
 # ── constants sanity ─────────────────────────────────────────────────────────
@@ -458,7 +555,7 @@ class TestSourceFilter:
 
 class TestConstants:
     def test_kaucja_unit_price_is_0_50(self):
-        # can be overridden via env var, default 0.50
+        # can be overridden via env var, default 0.50 (cross-check heuristic only)
         assert KAUCJA_UNIT_PRICE_PLN == "0.50"
 
     def test_kaucja_description_is_polish(self):
