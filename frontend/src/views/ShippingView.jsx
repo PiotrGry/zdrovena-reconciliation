@@ -428,7 +428,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 </div>
                             ) : (
                                 <div>
-                                    {draft.shipping_address?.street}<br />
+                                    {[draft.shipping_address?.street, draft.shipping_address?.building_number, draft.shipping_address?.flat_number].filter(Boolean).join(' ')}<br />
                                     {draft.shipping_address?.post_code} {draft.shipping_address?.city}
                                 </div>
                             )}
