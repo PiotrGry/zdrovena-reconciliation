@@ -6,6 +6,7 @@ import { PageHead } from '../components/PageHead'
 import { Pill } from '../components/Pill'
 import { Icon } from '../components/Icon'
 import { useToast } from '../components/Toast'
+import { fetchJson } from '../api'
 
 function fmtDate(iso) {
     if (!iso) return '—'
@@ -728,19 +729,17 @@ export default function ShippingView() {
         setSyncResult(null)
         try {
             const token = await getToken()
-            const res = await fetch('/api/shipping/sync', {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
-            })
-            const body = await res.json()
-            setSyncResult(res.ok ? body : { error: body.detail ?? `${res.status}` })
-            if (res.ok) await load()
+            const body = await fetchJson('/api/shipping/sync', { method: 'POST', token })
+            setSyncResult(body)
+            pushToast({ kind: 'success', msg: 'Synchronizacja zamówień zakończona' })
+            await load()
         } catch (e) {
             setSyncResult({ error: e.message })
+            pushToast({ kind: 'error', msg: `Synchronizacja nie powiodła się: ${e.message}` })
         } finally {
             setSyncing(false)
         }
-    }, [getToken, load])
+    }, [getToken, load, pushToast])
 
     useEffect(() => {
         let cancelled = false
@@ -1102,7 +1101,7 @@ export default function ShippingView() {
                     </button>
                     <button className="btn btn-ghost" onClick={handleSync} disabled={syncing || loading} title="Sync orders from Allegro &amp; Shopify">
                         <Icon name={syncing ? 'refresh' : 'zap'} size={14} className={syncing ? 'spin' : undefined} />
-                        {syncResult?.error && <span style={{ color: 'var(--color-error)', fontSize: '0.75em', marginLeft: 4 }}>!</span>}
+                        {syncResult?.error && <span style={{ color: 'var(--error)', fontSize: '0.75em', marginLeft: 4 }}>!</span>}
                     </button>
                     <button className="btn btn-ghost" onClick={load} disabled={loading} title="Odśwież">
                         <Icon name="refresh" size={14} />

@@ -1,7 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useAuth } from '../../auth'
+import { useToast } from '../../components/Toast'
 import { Icon } from '../../components/Icon'
 import { fmtBytes, fmtDate } from '../../data'
+import { fetchJson } from '../../api'
 
 const INBOX_PREFIX = 'faktury/inbox'
 
@@ -29,6 +31,7 @@ function extChipClass(ext) {
  */
 export function DocChecklist({ onStatusChange }) {
     const { getToken } = useAuth()
+    const { pushToast } = useToast()
     const [items, setItems] = useState([])
     const [loading, setLoading] = useState(true)
     const [dragOver, setDragOver] = useState(false)
@@ -39,20 +42,20 @@ export function DocChecklist({ onStatusChange }) {
         setLoading(true)
         try {
             const token = await getToken()
-            const res = await fetch(`/api/files?prefix=${encodeURIComponent(INBOX_PREFIX)}`, {
-                headers: { Authorization: `Bearer ${token}` },
-            })
-            if (!res.ok) throw new Error(res.statusText)
-            const data = await res.json()
+            const data = await fetchJson(
+                `/api/files?prefix=${encodeURIComponent(INBOX_PREFIX)}`,
+                { token },
+            )
             setItems((data.items ?? data).filter(i =>
                 !(i.is_directory || (i.key ?? i.name ?? '').endsWith('/'))
             ))
-        } catch {
+        } catch (e) {
             setItems([])
+            pushToast({ kind: 'error', msg: `Nie udało się wczytać listy dokumentów: ${e.message}` })
         } finally {
             setLoading(false)
         }
-    }, [getToken])
+    }, [getToken, pushToast])
 
     useEffect(() => { load() }, [load])
 
@@ -62,27 +65,31 @@ export function DocChecklist({ onStatusChange }) {
     const upload = useCallback(async (file) => {
         try {
             const token = await getToken()
-            const res = await fetch(`/api/files/${encodeURIComponent(`${INBOX_PREFIX}/${file.name}`)}`, {
+            await fetchJson(`/api/files/${encodeURIComponent(`${INBOX_PREFIX}/${file.name}`)}`, {
                 method: 'PUT',
-                headers: { Authorization: `Bearer ${token}`, 'Content-Type': file.type || 'application/octet-stream' },
+                token,
+                headers: { 'Content-Type': file.type || 'application/octet-stream' },
                 body: file,
             })
-            if (!res.ok) throw new Error(`HTTP ${res.status}`)
             load()
         } catch (e) {
-            alert(`Błąd wgrywania ${file.name}: ${e.message}`)
+            pushToast({ kind: 'error', msg: `Błąd wgrywania ${file.name}: ${e.message}` })
         }
-    }, [getToken, load])
+    }, [getToken, load, pushToast])
 
     const deleteFile = useCallback(async (key) => {
         if (!window.confirm(`Usuń "${key.split('/').pop()}" z inbox?`)) return
-        const token = await getToken()
-        await fetch(`/api/files/${encodeURIComponent(key)}`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${token}` },
-        })
-        load()
-    }, [getToken, load])
+        try {
+            const token = await getToken()
+            await fetchJson(`/api/files/${encodeURIComponent(key)}`, {
+                method: 'DELETE',
+                token,
+            })
+            load()
+        } catch (e) {
+            pushToast({ kind: 'error', msg: `Błąd usuwania: ${e.message}` })
+        }
+    }, [getToken, load, pushToast])
 
     const names = items.map(getName)
     const matched = REQUIRED_DOCS.map(doc => ({
