@@ -43,7 +43,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, ShopifyDedupStoreDep, StorageDep
+from zdrovena.api.observability import get_correlation_id, set_correlation_id
 from zdrovena.audit.bottles import SKIP_RE, is_glass
+from zdrovena.common.events import log_event
 from zdrovena.common.secrets import get_secret
 from zdrovena.common.shipping_exceptions import (
     AllegroAuthError,
@@ -1136,6 +1138,7 @@ def _create_draft_safely(
     storage: Any,
     *,
     source: str = "shopify",
+    correlation_id: str = "-",
 ) -> None:
     """Wrapper around ``_create_draft`` that DLQs any exception (P1-9).
 
@@ -1143,7 +1146,11 @@ def _create_draft_safely(
     silently swallowed and the order would be lost. Instead we capture the
     payload + error to the DLQ so an operator can retry via
     ``POST /shipping/drafts/dlq/{entry_id}/retry``.
+
+    ``correlation_id`` jest ustawiany na starcie, aby logi tworzenia draftu w tle
+    dzieliły identyfikator z logiem webhooka, który je zakolejkował.
     """
+    set_correlation_id(correlation_id)
     try:
         _create_draft(order, shipping_store, storage, source=source)
     except Exception as exc:
@@ -1299,6 +1306,15 @@ def _create_draft(
         record["allegro_sending_method"] = allegro_sending_method
 
     shipping_store.upsert_draft(record)
+    log_event(
+        "draft.created",
+        order_number=record["shopify_order_number"],
+        draft_id=record["id"],
+        source=source,
+        courier=record["courier"],
+        status=record["status"],
+        packages_count=record["packages_count"],
+    )
     _maybe_send_new_order_sms(record)
 
 
@@ -1397,7 +1413,15 @@ async def shopify_order_created(
         return {"status": "skipped"}
 
     # 6. Heavy work off the request path (Shopify enforces a 5s timeout).
-    background_tasks.add_task(_create_draft_safely, order, shipping_store, storage)
+    #    Correlation ID przekazujemy jawnie — kontekst żądania jest już zresetowany,
+    #    gdy Starlette wykonuje zadanie tła, więc log draftu inaczej straciłby powiązanie.
+    background_tasks.add_task(
+        _create_draft_safely,
+        order,
+        shipping_store,
+        storage,
+        correlation_id=get_correlation_id(),
+    )
     logger.info("Queued shipping draft for order %s", order.get("order_number") or order.get("id"))
     return {"status": "accepted"}
 
@@ -1585,6 +1609,14 @@ def execute_draft(
 
     shipping_store.update_draft(draft_id, patch)
     updated = shipping_store.get_draft(draft_id)
+    log_event(
+        "shipment.created",
+        draft_id=draft_id,
+        order_number=draft.get("shopify_order_number"),
+        courier=draft.get("courier"),
+        tracking_number=patch.get("tracking_number"),
+        status=patch.get("status"),
+    )
     if updated:
         _maybe_push_tracking_to_allegro(updated)
     return updated or patch
@@ -2459,4 +2491,10 @@ def sync_orders(
     else:
         result["shopify"] = {"skipped": "not_configured"}
 
+    log_event(
+        "sync.completed",
+        actor=getattr(principal, "email", None),
+        allegro=result["allegro"],
+        shopify=result["shopify"],
+    )
     return result

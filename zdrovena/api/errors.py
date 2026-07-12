@@ -8,7 +8,7 @@ mapowany jest na kopertę::
         "error_code":     "INPOST_LOCKER_UNAVAILABLE",   # stabilny, maszynowy
         "message_pl":     "Paczkomat InPost jest pełny…", # dla operatora (PL)
         "details":        {"courier": "inpost", ...},     # metadane, bez PII
-        "correlation_id": "-"                             # placeholder (PR-8)
+        "correlation_id": "a1b2c3d4e5f6"                  # z observability (PR-8)
     }
 
 Front (``frontend/src/api.js`` → ``fetchJson``) czyta ``message_pl`` w
@@ -28,6 +28,7 @@ from typing import Any
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+from zdrovena.api.observability import get_correlation_id
 from zdrovena.common.shipping_exceptions import (
     CancellationError,
     CourierAuthError,
@@ -38,8 +39,6 @@ from zdrovena.common.shipping_exceptions import (
 )
 
 logger = logging.getLogger("zdrovena.api.errors")
-
-_CORRELATION_PLACEHOLDER = "-"
 
 # Polski komunikat dla konkretnej klasy wyjątku (nazwa klasy → tekst).
 # Klasy bez wpisu spadają do komunikatu bazowego swojej kategorii.
@@ -134,7 +133,7 @@ def _envelope(
         "error_code": error_code,
         "message_pl": message_pl,
         "details": details or {},
-        "correlation_id": _CORRELATION_PLACEHOLDER,
+        "correlation_id": get_correlation_id(),
     }
 
 
