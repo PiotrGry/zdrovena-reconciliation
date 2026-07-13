@@ -14,7 +14,9 @@ from zdrovena.api.observability import (
     CORRELATION_HEADER,
     CorrelationIdFilter,
     correlation_id_var,
+    correlation_scope,
     get_correlation_id,
+    sanitize_correlation_id,
     set_correlation_id,
 )
 
@@ -44,6 +46,74 @@ class TestMiddleware:
         _client().get("/health", headers={CORRELATION_HEADER: "abc"})
         # poza żądaniem contextvar wraca do wartości domyślnej
         assert correlation_id_var.get() == "-"
+
+    def test_oversized_incoming_id_is_replaced(self):
+        oversized = "a" * 500
+        res = _client().get("/health", headers={CORRELATION_HEADER: oversized})
+        cid = res.headers.get(CORRELATION_HEADER)
+        assert cid != oversized
+        assert len(cid) == 12  # fresh generated hex
+
+    def test_invalid_chars_incoming_id_is_replaced(self):
+        # CRLF / space / control chars must never be echoed back into a header.
+        res = _client().get("/health", headers={CORRELATION_HEADER: "bad id\twith spaces"})
+        cid = res.headers.get(CORRELATION_HEADER)
+        assert cid != "bad id\twith spaces"
+        assert len(cid) == 12
+
+
+class TestSanitizeCorrelationId:
+    def test_valid_id_preserved(self):
+        assert sanitize_correlation_id("abc-123_ID.9") == "abc-123_ID.9"
+
+    def test_max_length_boundary_preserved(self):
+        exactly_128 = "a" * 128
+        assert sanitize_correlation_id(exactly_128) == exactly_128
+
+    def test_oversized_replaced(self):
+        assert sanitize_correlation_id("a" * 129) != "a" * 129
+
+    def test_none_and_empty_generate_fresh(self):
+        assert len(sanitize_correlation_id(None)) == 12
+        assert len(sanitize_correlation_id("")) == 12
+        assert len(sanitize_correlation_id("   ")) == 12
+
+    def test_invalid_chars_replaced(self):
+        for bad in ["a b", "a\nb", "a\tb", "a/b", "a;b", "<script>"]:
+            assert sanitize_correlation_id(bad) != bad
+
+
+class TestCorrelationScopeNoLeak:
+    def test_scope_sets_and_resets(self):
+        assert get_correlation_id() == "-"
+        with correlation_scope("task-1") as cid:
+            assert cid == "task-1"
+            assert get_correlation_id() == "task-1"
+        # after the block the context is restored — no leak to the next task
+        assert get_correlation_id() == "-"
+
+    def test_scope_resets_even_on_exception(self):
+        import pytest
+
+        with pytest.raises(RuntimeError):
+            with correlation_scope("task-2"):
+                assert get_correlation_id() == "task-2"
+                raise RuntimeError("boom")
+        assert get_correlation_id() == "-"
+
+    def test_sequential_scopes_do_not_bleed(self):
+        with correlation_scope("first"):
+            assert get_correlation_id() == "first"
+        # a second task that sets nothing must not see "first"
+        assert get_correlation_id() == "-"
+        with correlation_scope("second"):
+            assert get_correlation_id() == "second"
+        assert get_correlation_id() == "-"
+
+    def test_scope_sanitizes_invalid_value(self):
+        with correlation_scope("bad value with spaces") as cid:
+            assert cid != "bad value with spaces"
+            assert len(cid) == 12
 
 
 class TestLogFilter:

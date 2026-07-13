@@ -43,8 +43,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, ShopifyDedupStoreDep, StorageDep
-from zdrovena.api.observability import get_correlation_id, set_correlation_id
+from zdrovena.api.observability import correlation_scope, get_correlation_id
 from zdrovena.audit.bottles import SKIP_RE, is_glass
+from zdrovena.common.appenv import is_production_env
 from zdrovena.common.events import log_event
 from zdrovena.common.secrets import get_secret
 from zdrovena.common.shipping_exceptions import (
@@ -121,16 +122,12 @@ def _is_shopify_topic_allowed(topic: str) -> bool:
 
 
 def _is_production_env() -> bool:
-    """True when APP_ENV / DEPLOY_ENV / AZURE_ENV signals a production deploy.
+    """True when the canonical ``APP_ENV`` signals a production deploy.
 
-    We treat *any* of {production, prod, live} as production. Development,
-    sandbox, staging, and unset values are non-production. Case-insensitive.
+    Delegates to :func:`zdrovena.common.appenv.is_production_env` so the whole
+    application resolves "is this production?" from one canonical place (R4-B).
     """
-    for var in ("APP_ENV", "DEPLOY_ENV", "AZURE_ENV", "ENV"):
-        value = os.environ.get(var, "").strip().lower()
-        if value in {"production", "prod", "live"}:
-            return True
-    return False
+    return is_production_env()
 
 
 def _is_shopify_domain_allowed(shop_domain: str) -> bool:
@@ -1148,28 +1145,30 @@ def _create_draft_safely(
     ``POST /shipping/drafts/dlq/{entry_id}/retry``.
 
     ``correlation_id`` jest ustawiany na starcie, aby logi tworzenia draftu w tle
-    dzieliły identyfikator z logiem webhooka, który je zakolejkował.
+    dzieliły identyfikator z logiem webhooka, który je zakolejkował. Używamy
+    ``correlation_scope`` (token/reset w ``finally``), aby ID nie wyciekło do
+    kolejnego zadania tła na tym samym workerze (R4-B).
     """
-    set_correlation_id(correlation_id)
-    try:
-        _create_draft(order, shipping_store, storage, source=source)
-    except Exception as exc:
-        logger.exception(
-            "Draft creation failed for order %s (source=%s) — enqueueing to DLQ",
-            order.get("id") or order.get("order_number"),
-            source,
-        )
+    with correlation_scope(correlation_id):
         try:
-            shipping_store.enqueue_dlq(
-                payload=order,
-                error=f"{type(exc).__name__}: {exc}",
-                source=source,
-            )
-        except Exception:
+            _create_draft(order, shipping_store, storage, source=source)
+        except Exception as exc:
             logger.exception(
-                "DLQ enqueue itself failed for order %s",
+                "Draft creation failed for order %s (source=%s) — enqueueing to DLQ",
                 order.get("id") or order.get("order_number"),
+                source,
             )
+            try:
+                shipping_store.enqueue_dlq(
+                    payload=order,
+                    error=f"{type(exc).__name__}: {exc}",
+                    source=source,
+                )
+            except Exception:
+                logger.exception(
+                    "DLQ enqueue itself failed for order %s",
+                    order.get("id") or order.get("order_number"),
+                )
 
 
 def _create_draft(
