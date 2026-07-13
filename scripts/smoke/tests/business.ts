@@ -12,6 +12,7 @@
  */
 
 import type { SmokeTest, TestContext, TestResult } from "../types.js";
+import { credentialGate } from "../strict.js";
 
 function ms(): number { return Date.now(); }
 
@@ -34,7 +35,7 @@ const closeDryRunDoesNotCrash: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getAccountantToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+      return credentialGate(ctx, this, t0, "SMOKE_ACCOUNTANT_SP_* not configured");
     }
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
@@ -66,7 +67,7 @@ const closeResponseHasRequiredFields: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getAccountantToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+      return credentialGate(ctx, this, t0, "SMOKE_ACCOUNTANT_SP_* not configured");
     }
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
@@ -105,7 +106,7 @@ const closePreflightBlockersAreMeaningful: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getAccountantToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+      return credentialGate(ctx, this, t0, "SMOKE_ACCOUNTANT_SP_* not configured");
     }
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
@@ -144,7 +145,7 @@ const closeStateHasValidStructure: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getViewerToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_SP_* not configured" };
+      return credentialGate(ctx, this, t0, "SMOKE_SP_* not configured");
     }
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
@@ -181,7 +182,7 @@ const closeFullFlowSendsEmail: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getAccountantToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+      return credentialGate(ctx, this, t0, "SMOKE_ACCOUNTANT_SP_* not configured");
     }
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
@@ -242,7 +243,7 @@ const closeOutputStructureIsClean: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getAccountantToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+      return credentialGate(ctx, this, t0, "SMOKE_ACCOUNTANT_SP_* not configured");
     }
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
@@ -301,7 +302,7 @@ const closeDetailedVendorAndZipReport: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getAccountantToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_ACCOUNTANT_SP_* not configured" };
+      return credentialGate(ctx, this, t0, "SMOKE_ACCOUNTANT_SP_* not configured");
     }
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();

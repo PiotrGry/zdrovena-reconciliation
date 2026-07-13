@@ -10,6 +10,7 @@
  */
 
 import type { SmokeTest, TestContext, TestResult } from "../types.js";
+import { credentialGate } from "../strict.js";
 
 function ms(): number { return Date.now(); }
 
@@ -25,7 +26,7 @@ const tokenAcquirable: SmokeTest = {
   async run(ctx: TestContext): Promise<TestResult> {
     const t0 = ms();
     if (!ctx.smokeSpClientId || !ctx.smokeSpClientSecret) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "SMOKE_SP_* env vars not set" };
+      return credentialGate(ctx, this, t0, "SMOKE_SP_* env vars not set");
     }
     const token = await ctx.getViewerToken();
     return {
@@ -46,7 +47,7 @@ const tokenHasViewerRole: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getViewerToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "no token (smoke SP not configured)" };
+      return credentialGate(ctx, this, t0, "no token (smoke SP not configured)");
     }
     const claims = decodeJwt(token);
     const roles = (claims.roles as string[] | undefined) ?? [];
@@ -69,7 +70,7 @@ const filesAuthenticatedReturns200: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getViewerToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "no token" };
+      return credentialGate(ctx, this, t0, "no token");
     }
     const res = await ctx.fetch(`${ctx.apiUrl}/api/files`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -93,7 +94,7 @@ const closeStateAuthenticatedReturns200: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getViewerToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "no token" };
+      return credentialGate(ctx, this, t0, "no token");
     }
     const res = await ctx.fetch(`${ctx.apiUrl}/api/close/state?year=2026&month=4`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -117,7 +118,7 @@ const closePostForbiddenForViewer: SmokeTest = {
     const t0 = ms();
     const token = await ctx.getViewerToken();
     if (!token) {
-      return { name: this.name, category: this.category, status: "SKIP", duration_ms: ms() - t0, evidence: "no token" };
+      return credentialGate(ctx, this, t0, "no token");
     }
     // Viewer must NOT be able to trigger close — only accountant/admin.
     const res = await ctx.fetch(`${ctx.apiUrl}/api/close`, {
