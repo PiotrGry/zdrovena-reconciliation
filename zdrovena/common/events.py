@@ -73,5 +73,5 @@ def log_event(event: str, *, level: int = logging.INFO, **fields: Any) -> None:
     przed serializacją — logi trafiają do Log Analytics i nie mogą zawierać
     danych osobowych klientów w postaci jawnej.
     """
-    payload = {"event": event, "correlation_id": get_correlation_id(), **_mask_pii(fields)}
+    payload = {**_mask_pii(fields), "event": event, "correlation_id": get_correlation_id()}
     _event_log.log(level, json.dumps(payload, default=str, ensure_ascii=False))
