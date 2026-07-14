@@ -40,3 +40,59 @@ class TestLogEvent:
         assert events[0]["event"] == "sync.completed"
         # default=str → obiekt zserializowany jako string, nie wyjątek
         assert isinstance(events[0]["allegro"], str)
+
+
+class TestPiiMasking:
+    def test_top_level_pii_fields_masked(self, caplog):
+        with caplog.at_level(logging.INFO, logger="zdrovena.events"):
+            log_event(
+                "draft.created",
+                order_number="1001",
+                email="jan@example.com",
+                phone="600100200",
+                first_name="Jan",
+                last_name="Kowalski",
+            )
+        e = _parse_events(caplog)[0]
+        # operational, non-identifying → kept
+        assert e["order_number"] == "1001"
+        # high-risk PII → masked
+        assert e["email"] == "***"
+        assert e["phone"] == "***"
+        assert e["first_name"] == "***"
+        assert e["last_name"] == "***"
+
+    def test_nested_pii_fields_masked(self, caplog):
+        with caplog.at_level(logging.INFO, logger="zdrovena.events"):
+            log_event(
+                "shipment.created",
+                draft_id="d1",
+                receiver={
+                    "receiver_name": "Anna Nowak",
+                    "receiver_phone": "700200300",
+                    "city": "Kraków",
+                    "address": {"street": "Krakowska", "building_number": "24"},
+                },
+            )
+        e = _parse_events(caplog)[0]
+        assert e["draft_id"] == "d1"
+        assert e["receiver"]["receiver_name"] == "***"
+        assert e["receiver"]["receiver_phone"] == "***"
+        # city is not high-risk → kept for operational queries
+        assert e["receiver"]["city"] == "Kraków"
+        # nested address dict is itself under a PII key → whole subtree masked
+        assert e["receiver"]["address"] == "***"
+
+    def test_pii_key_matching_is_case_insensitive(self, caplog):
+        with caplog.at_level(logging.INFO, logger="zdrovena.events"):
+            log_event("buyer.seen", Email="X@y.pl", NIP="1234567890")
+        e = _parse_events(caplog)[0]
+        assert e["Email"] == "***"
+        assert e["NIP"] == "***"
+
+    def test_pii_inside_list_masked(self, caplog):
+        with caplog.at_level(logging.INFO, logger="zdrovena.events"):
+            log_event("order.items", items=[{"name": "Woda", "email": "a@b.pl"}])
+        e = _parse_events(caplog)[0]
+        assert e["items"][0]["name"] == "***"  # "name" is a PII key
+        assert e["items"][0]["email"] == "***"
