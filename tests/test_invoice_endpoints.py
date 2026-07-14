@@ -186,6 +186,8 @@ class TestInvoicePreview:
         # totalToPay 32.50 - delivery 12.50 = 20.00 == positions_total 20.00
         assert body["allegro_total_to_pay"] == pytest.approx(20.0)
         assert body["matches_allegro"] is True
+        # R4.3: explainable difference is present and zero when it matches.
+        assert body["difference"] == pytest.approx(0.0)
 
     def test_mismatch_with_allegro_flagged(self, client, store):
         _make_draft(store)
@@ -206,6 +208,8 @@ class TestInvoicePreview:
         # 99.00 != positions 20.00 → mismatch flagged, but still preview_ready
         assert body["status"] == "preview_ready"
         assert body["matches_allegro"] is False
+        # R4.3: difference is the signed, explainable delta ( our 20.00 − 99.00).
+        assert body["difference"] == pytest.approx(-79.0)
 
 
 # ── POST /create-invoice ──────────────────────────────────────────────────────

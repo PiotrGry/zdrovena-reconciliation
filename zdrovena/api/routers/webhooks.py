@@ -2325,7 +2325,10 @@ def get_invoice_preview(
     order_id = draft.get("external_order_id") or draft.get("shopify_order_number", "")
     order = allegro_client.get_order(order_id)
 
-    from zdrovena.common.allegro_invoice_mapper import allegro_order_to_fakturownia_invoice
+    from zdrovena.common.allegro_invoice_mapper import (
+        allegro_expected_payable,
+        allegro_order_to_fakturownia_invoice,
+    )
 
     payload = allegro_order_to_fakturownia_invoice(order)
     positions = payload.get("positions") or []
@@ -2341,23 +2344,19 @@ def get_invoice_preview(
     company = addr.get("company") or {}
 
     # Cross-check "Do zapłaty" (positions + kaucja) against Allegro's own
-    # summary.totalToPay minus delivery (invoice has no shipping line). Lets the
-    # operator confirm the invoice matches Allegro to the grosz before sending.
-    summary = order.get("summary") or {}
-    total_to_pay_raw = (summary.get("totalToPay") or {}).get("amount")
-    delivery_cost_raw = ((order.get("delivery") or {}).get("cost") or {}).get("amount")
+    # summary.totalToPay minus delivery (invoice has no shipping line), via the
+    # shared allegro_expected_payable helper so preview and final invoice compare
+    # against the identical figure. `difference` is the signed, explainable delta
+    # (our total − Allegro's) so a mismatch is inspectable, not just a boolean.
+    allegro_expected = allegro_expected_payable(order)
     allegro_total_to_pay: float | None = None
     matches_allegro: bool | None = None
-    if total_to_pay_raw is not None:
-        try:
-            allegro_expected = Decimal(str(total_to_pay_raw)) - Decimal(
-                str(delivery_cost_raw or "0")
-            )
-            allegro_total_to_pay = float(allegro_expected)
-            matches_allegro = abs(total - allegro_expected) <= Decimal("0.01")
-        except (ArithmeticError, ValueError):
-            allegro_total_to_pay = None
-            matches_allegro = None
+    difference: float | None = None
+    if allegro_expected is not None:
+        allegro_total_to_pay = float(allegro_expected)
+        delta = total - allegro_expected
+        difference = float(delta)
+        matches_allegro = abs(delta) <= Decimal("0.01")
 
     return {
         "status": "preview_ready",
@@ -2388,6 +2387,7 @@ def get_invoice_preview(
         "total_gross": float(total),
         "allegro_total_to_pay": allegro_total_to_pay,
         "matches_allegro": matches_allegro,
+        "difference": difference,
     }
 
 
