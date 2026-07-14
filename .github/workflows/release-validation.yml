@@ -78,13 +78,15 @@ jobs:
             echo "Próba $attempt/6: /health zwróciło '$code' — czekam 10 s."
             [ "$attempt" -lt 6 ] && sleep 10
           done
-          echo "::warning::API nie odpowiedziało 200 na /health po 6 próbach — kontynuuję, smoke pokaże szczegóły."
+          echo "::error::API nie odpowiedziało 200 na /health po 6 próbach — przerywam release validation (fail-closed, R4-A). Martwe API nie może przejść jako zielone." >&2
+          exit 1
 
       - name: Run full smoke suite
         working-directory: scripts/smoke
         env:
           API_URL: ${{ steps.urls.outputs.api-url }}
           SWA_URL: ${{ steps.urls.outputs.swa-url }}
+          SMOKE_STRICT: "true"  # R4-A: missing creds/token or auth 401/403 must fail the run
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_API_CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
