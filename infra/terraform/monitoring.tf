@@ -83,14 +83,21 @@ resource "azurerm_monitor_metric_alert" "high_latency" {
 
 # ── Alert: DLQ backlog (dowolna nowa porażka trafiająca do DLQ) ──────────────
 # DLQ to Azure Table Storage (shippingdraftsdlq), nie kolejka — brak natywnej
-# metryki "liczba wiadomości". Reguła oparta na logach: liczy wpisy dziennika
-# emitowane przy enqueue do DLQ (zdrovena/api/routers/webhooks.py — "enqueueing
-# to DLQ"). Próg > 0 w oknie 15 min ⇒ każde nowe niepowodzenie utworzenia draftu
-# powiadamia właściciela ([LOG] H3, [EVT] R2/H3, [API] M3).
+# metryki "liczba wiadomości". Reguła oparta na logach: liczy rekordy emitowane
+# przy enqueue do DLQ przez ``logger.exception(... "enqueueing to DLQ")`` w
+# zdrovena/api/routers/webhooks.py::_create_draft_safely. Próg > 0 w oknie 15 min
+# ⇒ każde nowe niepowodzenie utworzenia draftu powiadamia właściciela
+# ([LOG] H3, [EVT] R2/H3, [API] M3).
 #
-# UWAGA (dla właściciela przy `terraform apply`): tabela ContainerAppConsoleLogs_CL
-# pojawia się w Log Analytics dopiero po pierwszym logu Container App. Jeśli
-# nazwa tabeli w Twoim workspace jest inna, dostosuj zapytanie KQL poniżej.
+# WAŻNE — schemat: scope tej reguły to zasób Application Insights
+# (azurerm_application_insights.ai), więc KQL działa na schemacie App Insights
+# (tabele ``traces`` / ``exceptions`` mapowane do workspace'u Log Analytics przez
+# ``workspace_id``), a NIE na surowej tabeli ContainerAppConsoleLogs_CL. Log
+# ``logger.exception`` trafia do ``traces`` z ``severityLevel >= 3`` (Error);
+# filtr severity eliminuje ewentualne dopasowania spoza ścieżki błędu.
+#
+# Procedurę weryfikacji nazw tabel, `terraform plan/apply`, kontrolowany
+# test-alert i checklistę dowodową opisuje infra/terraform/MONITORING_RUNBOOK.md.
 
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dlq_backlog" {
   name                = "${var.prefix}-alert-dlq-backlog"
@@ -106,6 +113,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dlq_backlog" {
   criteria {
     query                   = <<-KQL
       traces
+      | where severityLevel >= 3
       | where message has "enqueueing to DLQ"
     KQL
     time_aggregation_method = "Count"
