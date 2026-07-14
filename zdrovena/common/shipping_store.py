@@ -225,6 +225,57 @@ class ShippingStore:
             finally:
                 self._release_lock(lock_fd)
 
+    def try_claim_execution(self, draft_id: str) -> bool:
+        """Atomically claim a draft for execution (R5-A).
+
+        Moves the draft ``status`` to ``executing`` only if its current status is
+        an executable one (``pending`` / ``pending_confirmation`` / ``error``) and
+        it has not changed underneath us (ETag ``IfNotModified``). Returns True if
+        this call won the claim, False if the draft is missing, in a
+        non-executable state (already ``executing`` / ``created`` / ``cancelled`` /
+        ``needs_review``), or a concurrent request won the race.
+
+        Claiming *before* the courier call closes the check-then-act race where
+        two concurrent execute requests both pass a ``status != "created"`` check
+        and both create a shipment.
+        """
+        from zdrovena.common.shipping_state import EXECUTING, can_execute
+
+        if self._use_table:
+            client = self._table_client()
+            try:
+                entity = client.get_entity(partition_key=PARTITION_KEY, row_key=draft_id)
+            except Exception:
+                return False
+            if not can_execute(entity.get("status")):
+                return False
+            patch = {"PartitionKey": PARTITION_KEY, "RowKey": draft_id, "status": EXECUTING}
+            try:
+                from azure.core import MatchConditions
+
+                client.update_entity(
+                    patch,
+                    mode="merge",
+                    etag=entity.metadata["etag"],
+                    match_condition=MatchConditions.IfNotModified,
+                )
+                return True
+            except Exception:
+                # Lost the race to a concurrent claim, or a transient error.
+                return False
+        else:
+            lock_fd = self._acquire_lock()
+            try:
+                data = self._local_load()
+                record = data.get(draft_id)
+                if record is None or not can_execute(record.get("status")):
+                    return False
+                record["status"] = EXECUTING
+                self._local_save(data)
+                return True
+            finally:
+                self._release_lock(lock_fd)
+
     def try_claim_pickup(self, draft_id: str) -> bool:
         """Atomically claim pickup for a draft.
 

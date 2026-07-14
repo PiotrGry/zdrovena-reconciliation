@@ -1570,10 +1570,14 @@ def execute_draft(
             status_code=409,
             detail="Draft requires review (multi-package) — use PATCH to override",
         )
-    if draft.get("status") == "created":
+    # Atomic execution claim (R5-A): move the draft to `executing` under
+    # optimistic concurrency. If the claim fails the draft is already
+    # executing/created/cancelled or a concurrent request won the race — either
+    # way we must not call the courier again (that would duplicate the shipment).
+    if not shipping_store.try_claim_execution(draft_id):
         raise HTTPException(
             status_code=409,
-            detail="Draft already executed — use pickup endpoint to order collection",
+            detail="Draft already executed or in progress — nie realizuj ponownie.",
         )
 
     pickup_schedule = {
@@ -1931,6 +1935,18 @@ def mark_fulfilled(
     draft = shipping_store.get_draft(draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
+
+    # R5-A: a cancelled or errored draft was never successfully shipped, so it
+    # must not be marked fulfilled (that would push a bogus SENT to Allegro).
+    # Re-running on an already-fulfilled draft stays idempotent (handled below).
+    if (
+        draft.get("status") in ("cancelled", "error")
+        and draft.get("fulfillment_status") != "fulfilled"
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Nie można oznaczyć jako zrealizowane: przesyłka jest anulowana lub w błędzie.",
+        )
 
     is_allegro = draft.get("source") == "allegro"
     external_order_id = (

@@ -488,6 +488,54 @@ class TestExecuteDraft:
             resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
         assert resp.status_code == 502
 
+    def test_second_execute_after_success_is_409_and_does_not_recall_courier(self, client, store):
+        # R5-A: once a draft is created, a repeat execute must be rejected and
+        # must NOT call the courier again (no duplicate shipment).
+        draft = self._seed_error_draft(store)
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "ship-1",
+                "tracking_number": "TRK1",
+                "status": "created",
+                "error": None,
+            },
+        ) as mock_run:
+            first = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+            assert first.status_code == 200
+            second = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert second.status_code == 409
+        mock_run.assert_called_once()  # courier hit exactly once
+
+    def test_execute_on_cancelled_draft_is_409(self, client, store):
+        draft = self._seed_error_draft(store)
+        store.update_draft(draft["id"], {"status": "cancelled"})
+        with patch("zdrovena.api.routers.webhooks._run_inpost") as mock_run:
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 409
+        mock_run.assert_not_called()
+
+    def test_execute_failure_leaves_draft_retryable(self, client, store):
+        # R5-A: a transient failure releases the claim back to `error`, which is
+        # an executable state, so a retry can proceed.
+        draft = self._seed_error_draft(store)
+        with patch("zdrovena.api.routers.webhooks._run_inpost", side_effect=Exception("API down")):
+            client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert store.get_draft(draft["id"])["status"] == "error"
+        # Retry now succeeds.
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "ship-2",
+                "tracking_number": "TRK2",
+                "status": "created",
+                "error": None,
+            },
+        ):
+            retry = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert retry.status_code == 200
+        assert store.get_draft(draft["id"])["status"] == "created"
+
     def _seed_allegro_error_draft(self, store, courier, service):
         draft = {
             "id": f"draft-allegro-{courier}",
