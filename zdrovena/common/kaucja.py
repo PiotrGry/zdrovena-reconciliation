@@ -25,6 +25,27 @@ from decimal import Decimal
 from typing import Any
 
 
+def parse_line_quantity(raw: Any) -> int:
+    """Parse an Allegro line-item quantity with an explicit, tested rule (R4.2).
+
+    Rules (never silently promote 0 → 1, which would inflate money):
+      * absent / ``None`` → ``1`` (Allegro always sends quantity; be lenient
+        only for a genuinely missing key)
+      * ``0`` → ``0`` (zero units contribute zero — kept, not promoted)
+      * negative or non-integer → :class:`ValueError` (a malformed order must
+        fail loud rather than miscompute an invoice)
+    """
+    if raw is None:
+        return 1
+    try:
+        quantity = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid line-item quantity {raw!r}") from exc
+    if quantity < 0:
+        raise ValueError(f"negative line-item quantity {quantity}")
+    return quantity
+
+
 def calculate_kaucja(order: dict[str, Any]) -> Decimal:
     """Zsumuj kaucję zamówienia z natywnych pól Allegro (kanoniczne źródło).
 
@@ -41,7 +62,7 @@ def calculate_kaucja(order: dict[str, Any]) -> Decimal:
         deposit = item.get("deposit")
         if not deposit:
             continue
-        quantity = int(item.get("quantity", 1) or 1)
+        quantity = parse_line_quantity(item.get("quantity"))
         unit_deposit = Decimal(str((deposit.get("price") or {}).get("amount", "0")))
         total += unit_deposit * quantity
     return total
