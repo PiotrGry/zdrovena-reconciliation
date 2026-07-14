@@ -348,3 +348,99 @@ class TestTotalSanityCheck:
 
         assert result["status"] == "created"
         assert not any("mismatch" in r.message.lower() for r in caplog.records)
+
+
+class TestRecoveryResume:
+    """R4.1: recovering an existing invoice must RESUME the incomplete steps
+    (settlement / PDF / Allegro push) idempotently, never create a second
+    invoice, and never duplicate the Allegro declaration."""
+
+    def test_partial_failure_then_retry_resumes_allegro_push(self):
+        # Call 1: invoice created in Fakturownia, but the Allegro push fails.
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = []
+        fakturownia.create_invoice.return_value = {"id": 999, "number": "FV/2026/999"}
+        fakturownia.get_invoice_pdf.return_value = b"%PDF"
+        allegro = MagicMock()
+        allegro.create_invoice_declaration.side_effect = RuntimeError("Allegro 503")
+        with patch("zdrovena.api.routers.allegro_invoicer._alert_invoice_failure"):
+            first = create_invoice_for_order(
+                _order(), fakturownia_client=fakturownia, allegro_client=allegro
+            )
+        assert first["status"] == "error"
+        # The Fakturownia invoice id is preserved so the retry can resume it.
+        assert first["fakturownia_invoice_id"] == 999
+
+        # Call 2 (retry): Fakturownia now reports the invoice exists; the order
+        # has NOT been pushed to Allegro yet → resume must complete the push.
+        fakturownia2 = MagicMock()
+        fakturownia2.list_invoices.return_value = [
+            {"id": 999, "number": "FV/2026/999", "oid": "af1"}
+        ]
+        fakturownia2.get_invoice_pdf.return_value = b"%PDF"
+        allegro2 = MagicMock()
+        allegro2.list_order_invoices.return_value = []  # not pushed yet
+        allegro2.create_invoice_declaration.return_value = {"id": "alg-1"}
+        second = create_invoice_for_order(
+            _order(), fakturownia_client=fakturownia2, allegro_client=allegro2
+        )
+        assert second["status"] == "already_exists"
+        assert second["fakturownia_invoice_id"] == 999
+        # No second Fakturownia invoice.
+        fakturownia2.create_invoice.assert_not_called()
+        # The push was resumed.
+        allegro2.create_invoice_declaration.assert_called_once_with(
+            order_id="af1", invoice_number="FV/2026/999"
+        )
+        allegro2.upload_invoice_file.assert_called_once()
+
+    def test_retry_when_already_fully_pushed_does_not_duplicate(self):
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = [
+            {"id": 999, "number": "FV/2026/999", "oid": "af1"}
+        ]
+        allegro = MagicMock()
+        allegro.list_order_invoices.return_value = [{"id": "alg-1"}]  # already pushed
+        result = create_invoice_for_order(
+            _order(), fakturownia_client=fakturownia, allegro_client=allegro
+        )
+        assert result["status"] == "already_exists"
+        assert result["fakturownia_invoice_id"] == 999
+        fakturownia.create_invoice.assert_not_called()
+        # No duplicate Allegro declaration.
+        allegro.create_invoice_declaration.assert_not_called()
+        allegro.upload_invoice_file.assert_not_called()
+
+    def test_two_repeated_retries_are_idempotent(self):
+        # Both retries see the invoice existing and already pushed → stable.
+        for _ in range(2):
+            fakturownia = MagicMock()
+            fakturownia.list_invoices.return_value = [
+                {"id": 999, "number": "FV/2026/999", "oid": "af1"}
+            ]
+            allegro = MagicMock()
+            allegro.list_order_invoices.return_value = [{"id": "alg-1"}]
+            result = create_invoice_for_order(
+                _order(), fakturownia_client=fakturownia, allegro_client=allegro
+            )
+            assert result["status"] == "already_exists"
+            assert result["fakturownia_invoice_id"] == 999
+            fakturownia.create_invoice.assert_not_called()
+            allegro.create_invoice_declaration.assert_not_called()
+
+    def test_resume_settlement_failure_preserves_id_for_next_retry(self):
+        # Existing invoice, but re-attaching the settlement fails → must return
+        # error WITH the invoice id preserved so a further retry resumes again.
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = [
+            {"id": 999, "number": "FV/2026/999", "oid": "af1"}
+        ]
+        fakturownia.add_settlement_position.side_effect = RuntimeError("Fakturownia 500")
+        allegro = MagicMock()
+        with patch("zdrovena.api.routers.allegro_invoicer._alert_invoice_failure"):
+            result = create_invoice_for_order(
+                _order(), fakturownia_client=fakturownia, allegro_client=allegro
+            )
+        assert result["status"] == "error"
+        assert result["fakturownia_invoice_id"] == 999
+        fakturownia.create_invoice.assert_not_called()

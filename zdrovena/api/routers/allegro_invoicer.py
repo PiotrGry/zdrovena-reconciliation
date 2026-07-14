@@ -123,6 +123,84 @@ def _check_total_matches_allegro(order: dict[str, Any], payload: dict[str, Any])
         )
 
 
+def _finish_invoice(
+    *,
+    allegro_order_id: str,
+    invoice_id: Any,
+    invoice_number: Any,
+    settlement_positions: list[dict[str, Any]],
+    fakturownia_client: Any,
+    allegro_client: Any,
+    resuming: bool = False,
+) -> dict[str, Any]:
+    """Idempotently complete the post-create steps for an invoice.
+
+    Steps, in order: attach any settlement positions (kaucja), fetch the PDF,
+    and push it to Allegro. Safe to call on a freshly created invoice OR when
+    recovering an existing one (the 502-loop fix — R4.1):
+
+      * ``add_settlement_position`` is a no-op when the row already exists
+        (it re-reads the invoice and matches on ``reason``), so re-running it
+        cannot duplicate the kaucja.
+      * When ``resuming`` (recovery path), the Allegro push is skipped if the
+        order already has an invoice attached (``list_order_invoices``), so it
+        cannot create a duplicate declaration. On a fresh create the order has
+        no invoice yet, so we push unconditionally and avoid the extra call.
+
+    On any failure returns an ``error`` dict that PRESERVES
+    ``fakturownia_invoice_id`` so the next retry resumes at the first
+    still-incomplete step instead of orphaning the document.
+    """
+    try:
+        for settlement in settlement_positions:
+            fakturownia_client.add_settlement_position(
+                invoice_id=invoice_id,
+                kind=settlement["kind"],
+                amount_pln=settlement["amount"],
+                description=settlement["description"],
+            )
+    except Exception as exc:
+        logger.exception(
+            "Adding settlement position to Fakturownia invoice %s failed for order %s",
+            invoice_id,
+            allegro_order_id,
+        )
+        _alert_invoice_failure(allegro_order_id=allegro_order_id, reason=str(exc))
+        return {"status": "error", "error": str(exc), "fakturownia_invoice_id": invoice_id}
+
+    try:
+        if resuming and allegro_client.list_order_invoices(allegro_order_id):
+            logger.info(
+                "Allegro order %s already has an invoice attached — skipping push "
+                "(idempotent resume)",
+                allegro_order_id,
+            )
+        else:
+            pdf_bytes = fakturownia_client.get_invoice_pdf(invoice_id)
+            declaration = allegro_client.create_invoice_declaration(
+                order_id=allegro_order_id, invoice_number=invoice_number
+            )
+            allegro_client.upload_invoice_file(
+                order_id=allegro_order_id,
+                invoice_id=declaration["id"],
+                pdf_bytes=pdf_bytes,
+            )
+    except Exception as exc:
+        logger.exception(
+            "Fetching or pushing Fakturownia invoice %s to Allegro failed for order %s",
+            invoice_id,
+            allegro_order_id,
+        )
+        _alert_invoice_failure(allegro_order_id=allegro_order_id, reason=str(exc))
+        return {"status": "error", "error": str(exc), "fakturownia_invoice_id": invoice_id}
+
+    return {
+        "status": "created",
+        "fakturownia_invoice_id": invoice_id,
+        "fakturownia_invoice_number": invoice_number,
+    }
+
+
 def create_invoice_for_order(
     order: dict[str, Any],
     *,
@@ -155,26 +233,47 @@ def create_invoice_for_order(
         _alert_invoice_failure(allegro_order_id=allegro_order_id, reason=str(exc))
         return {"status": "error", "error": str(exc)}
 
+    settlement_positions = payload.get("settlement_positions") or []
+
     if existing:
-        # Recover the existing invoice's id/number so the caller can persist it
-        # instead of resetting local state to None and looping (the 502 bug).
-        # Fakturownia is the source of truth; oid+oid_unique guarantees at most
-        # one match, so existing[0] is canonical.
+        # Recover the existing invoice (Fakturownia is the source of truth;
+        # oid+oid_unique guarantees at most one match, so existing[0] is
+        # canonical) and RESUME the incomplete steps rather than skipping them.
+        #
+        # The 502-loop bug had two halves: the first fix stopped resetting local
+        # state to None (so retries no longer looped). But simply returning
+        # "already_exists" here left the real gap — if the invoice was created
+        # yet the settlement/PDF/Allegro-push failed, it was never finished, so
+        # the order silently lacked its invoice on Allegro. _finish_invoice is
+        # idempotent, so re-running it completes only the missing steps and
+        # never duplicates the kaucja or the Allegro declaration.
         existing_invoice = existing[0]
+        invoice_id = existing_invoice.get("id")
+        invoice_number = existing_invoice.get("number")
         logger.info(
-            "Fakturownia already has an invoice for Allegro order %s (id=%s) — recovering id",
+            "Fakturownia already has an invoice for Allegro order %s (id=%s) — "
+            "recovering and resuming any incomplete steps",
             allegro_order_id,
-            existing_invoice.get("id"),
+            invoice_id,
         )
-        return {
-            "status": "already_exists",
-            "fakturownia_invoice_id": existing_invoice.get("id"),
-            "fakturownia_invoice_number": existing_invoice.get("number"),
-        }
+        result = _finish_invoice(
+            allegro_order_id=allegro_order_id,
+            invoice_id=invoice_id,
+            invoice_number=invoice_number,
+            settlement_positions=settlement_positions,
+            fakturownia_client=fakturownia_client,
+            allegro_client=allegro_client,
+            resuming=True,
+        )
+        # No NEW Fakturownia invoice was created — keep the "already_exists"
+        # status the caller/endpoint contract expects. Errors keep their status
+        # (and the recovered id) so the next retry resumes again.
+        if result["status"] == "created":
+            result["status"] = "already_exists"
+        return result
 
     _check_total_matches_allegro(order, payload)
 
-    settlement_positions = payload.get("settlement_positions") or []
     invoice_body = {k: v for k, v in payload.items() if k != "settlement_positions"}
 
     try:
@@ -186,58 +285,19 @@ def create_invoice_for_order(
         _alert_invoice_failure(allegro_order_id=allegro_order_id, reason=str(exc))
         return {"status": "error", "error": str(exc)}
 
-    try:
-        for settlement in settlement_positions:
-            fakturownia_client.add_settlement_position(
-                invoice_id=fakturownia_invoice_id,
-                kind=settlement["kind"],
-                amount_pln=settlement["amount"],
-                description=settlement["description"],
-            )
-    except Exception as exc:
-        logger.exception(
-            "Adding settlement position to Fakturownia invoice %s failed for order %s",
-            fakturownia_invoice_id,
-            allegro_order_id,
-        )
-        _alert_invoice_failure(allegro_order_id=allegro_order_id, reason=str(exc))
-        return {
-            "status": "error",
-            "error": str(exc),
-            "fakturownia_invoice_id": fakturownia_invoice_id,
-        }
-
-    try:
-        pdf_bytes = fakturownia_client.get_invoice_pdf(fakturownia_invoice_id)
-        declaration = allegro_client.create_invoice_declaration(
-            order_id=allegro_order_id, invoice_number=fakturownia_invoice_number
-        )
-        allegro_client.upload_invoice_file(
-            order_id=allegro_order_id,
-            invoice_id=declaration["id"],
-            pdf_bytes=pdf_bytes,
-        )
-    except Exception as exc:
-        logger.exception(
-            "Fetching or pushing Fakturownia invoice %s to Allegro failed for order %s",
-            fakturownia_invoice_id,
-            allegro_order_id,
-        )
-        _alert_invoice_failure(allegro_order_id=allegro_order_id, reason=str(exc))
-        return {
-            "status": "error",
-            "error": str(exc),
-            "fakturownia_invoice_id": fakturownia_invoice_id,
-        }
-
-    logger.info(
-        "Created and pushed Fakturownia invoice %s (%s) for Allegro order %s",
-        fakturownia_invoice_id,
-        fakturownia_invoice_number,
-        allegro_order_id,
+    result = _finish_invoice(
+        allegro_order_id=allegro_order_id,
+        invoice_id=fakturownia_invoice_id,
+        invoice_number=fakturownia_invoice_number,
+        settlement_positions=settlement_positions,
+        fakturownia_client=fakturownia_client,
+        allegro_client=allegro_client,
     )
-    return {
-        "status": "created",
-        "fakturownia_invoice_id": fakturownia_invoice_id,
-        "fakturownia_invoice_number": fakturownia_invoice_number,
-    }
+    if result["status"] == "created":
+        logger.info(
+            "Created and pushed Fakturownia invoice %s (%s) for Allegro order %s",
+            fakturownia_invoice_id,
+            fakturownia_invoice_number,
+            allegro_order_id,
+        )
+    return result
