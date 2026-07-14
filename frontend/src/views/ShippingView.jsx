@@ -808,13 +808,20 @@ export default function ShippingView() {
             const token = await getToken()
             const url = `/api/shipping/drafts/${draft.id}/label?courier=${draft.courier}`
             const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+            if (res.status === 409) {
+                // R5-B: label not ready yet (shipment not confirmed by courier) —
+                // an informational, transient state, not an error.
+                const body = await res.json().catch(() => ({}))
+                pushToast({ kind: 'info', msg: body.message_pl || 'Etykieta nie jest jeszcze gotowa — spróbuj ponownie za chwilę.' })
+                return
+            }
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
             const blob = await res.blob()
             const objUrl = URL.createObjectURL(blob)
             window.open(objUrl, '_blank')
             setTimeout(() => URL.revokeObjectURL(objUrl), 30_000)
         } catch (e) {
-            alert(`Błąd pobierania etykiety: ${e.message}`)
+            pushToast({ kind: 'error', msg: `Błąd pobierania etykiety: ${e.message}` })
         }
     }
 
