@@ -114,6 +114,7 @@ jobs:
           TF_VAR_github_repo: ${{ github.event.repository.name }}
           TF_VAR_terraform_ip_allowlist: '[]'
           TF_VAR_swa_custom_domain: portal.wodahumio.pl
+          TF_VAR_ops_alert_email: piotr@wodahumio.pl  # R4-C: Azure Monitor alert recipient
         run: |
           set +e
           terraform plan -input=false -no-color -detailed-exitcode -out=tfplan 2>&1 | tee plan.txt
@@ -262,4 +263,5 @@ jobs:
           TF_VAR_github_repo: ${{ github.event.repository.name }}
           TF_VAR_terraform_ip_allowlist: '[]'
           TF_VAR_swa_custom_domain: portal.wodahumio.pl
+          TF_VAR_ops_alert_email: piotr@wodahumio.pl  # R4-C: Azure Monitor alert recipient
         run: terraform apply -input=false -auto-approve -no-color
