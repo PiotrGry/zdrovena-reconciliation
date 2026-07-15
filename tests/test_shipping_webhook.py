@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import io
 import json
 import os
 from pathlib import Path
@@ -2532,3 +2533,99 @@ class TestSyncShopifyOrdersFromApi:
                     shipping_store=store,
                     storage=storage,
                 )
+
+
+class TestBatchLabels:
+    """R5-B: POST /shipping/labels/batch — merge selected labels into one PDF,
+    with deterministic errors for missing / not-ready / oversized batches."""
+
+    @staticmethod
+    def _valid_pdf() -> bytes:
+        from pypdf import PdfWriter
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=200, height=200)
+        buf = io.BytesIO()
+        writer.write(buf)
+        return buf.getvalue()
+
+    def _seed(self, store, draft_id, courier="inpost", courier_draft_id="cd-1"):
+        store.upsert_draft(
+            {
+                "id": draft_id,
+                "source": "shopify",
+                "status": "created",
+                "courier": courier,
+                "courier_draft_id": courier_draft_id,
+                "shopify_order_number": draft_id,
+            }
+        )
+
+    def test_400_on_empty(self, client):
+        resp = client.post("/api/shipping/labels/batch", json={"draft_ids": []})
+        assert resp.status_code == 400
+
+    def test_404_on_missing_draft(self, client, store):
+        self._seed(store, "b-1")
+        resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ["b-1", "ghost"]})
+        assert resp.status_code == 404
+        assert "ghost" in resp.json()["detail"]
+
+    def test_merges_labels_into_single_pdf(self, client, store):
+        self._seed(store, "b-1", courier_draft_id="cd-1")
+        self._seed(store, "b-2", courier_draft_id="cd-2")
+        pdf = self._valid_pdf()
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.get_label", return_value=pdf):
+                resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ["b-1", "b-2"]})
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/pdf"
+        assert resp.content[:4] == b"%PDF"
+
+    def test_409_when_label_not_ready(self, client, store):
+        from zdrovena.common.shipping_exceptions import InPostBusinessError
+
+        self._seed(store, "b-1", courier_draft_id="cd-1")
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                side_effect=InPostBusinessError("shipment not confirmed", courier="inpost"),
+            ):
+                resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ["b-1"]})
+        assert resp.status_code == 409
+        assert "b-1" in resp.json()["detail"]
+
+    def test_409_when_draft_has_no_label_id(self, client, store):
+        self._seed(store, "b-1", courier_draft_id=None)
+        resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ["b-1"]})
+        assert resp.status_code == 409
+
+    def test_400_when_over_limit(self, client, store):
+        ids = [f"x-{i}" for i in range(101)]
+        resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ids})
+        assert resp.status_code == 400
+
+
+class TestSingleLabelNotReady:
+    def test_inpost_business_error_maps_to_409(self, client, store):
+        from zdrovena.common.shipping_exceptions import InPostBusinessError
+
+        store.upsert_draft(
+            {
+                "id": "lnr-1",
+                "source": "shopify",
+                "status": "created",
+                "courier": "inpost",
+                "courier_draft_id": "cd-1",
+                "shopify_order_number": "lnr-1",
+            }
+        )
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                side_effect=InPostBusinessError("not confirmed yet", courier="inpost"),
+            ):
+                resp = client.get("/api/shipping/drafts/lnr-1/label?courier=inpost")
+        # R5-B: pre-confirmation → 409 LABEL_NOT_READY, not a generic 502.
+        assert resp.status_code == 409
+        assert resp.json()["error_code"] == "LabelNotReadyError"

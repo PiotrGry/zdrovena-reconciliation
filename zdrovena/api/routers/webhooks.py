@@ -56,6 +56,8 @@ from zdrovena.common.shipping_exceptions import (
     CourierAuthError,
     CourierBusinessError,
     CourierTransientError,
+    InPostBusinessError,
+    LabelNotReadyError,
     ZdrovenaShippingError,
 )
 from zdrovena.common.shipping_format import (
@@ -2229,6 +2231,154 @@ def update_draft(
 
 # ── Label streaming ───────────────────────────────────────────────────────────
 
+_SUPPORTED_LABEL_COURIERS = ("inpost", "apaczka", "allegro_delivery")
+_MAX_BATCH_LABELS = 100  # provider-agnostic safety cap on one batch print
+
+
+def _fetch_label_pdf(draft: dict[str, Any], courier: str, storage: Any) -> bytes:
+    """Fetch one label PDF for a draft. Shared by the single-label and batch
+    endpoints (R5-B).
+
+    Raises :class:`LabelNotReadyError` (HTTP 409) when the label is not printable
+    yet — either the draft has no courier id, or InPost rejects the fetch with a
+    business error (almost always "shipment not confirmed/processed yet"). Other
+    courier failures surface as HTTP 502.
+    """
+    if courier == "allegro_delivery":
+        label_id = draft.get("allegro_shipment_id") or draft.get("courier_draft_id")
+    else:
+        label_id = draft.get("courier_draft_id")
+    if not label_id:
+        raise HTTPException(status_code=404, detail="No courier draft ID — draft may have failed")
+
+    try:
+        if courier == "inpost":
+            from zdrovena.common.inpost import InPostClient
+
+            token = get_secret("inpost_api_token")
+            org_id = get_secret("inpost_organization_id")
+            try:
+                return InPostClient(token, org_id).get_label(label_id)
+            except InPostBusinessError as exc:
+                # A business rejection while fetching a label means the shipment
+                # is not confirmed/processed yet → not ready, not a hard failure.
+                raise LabelNotReadyError(str(exc), courier="inpost", action="get_label") from exc
+        elif courier == "apaczka":
+            from zdrovena.common.apaczka import ApaczkaClient
+
+            app_id = get_secret("apaczka_app_id")
+            app_secret = get_secret("apaczka_app_secret")
+            service_id = draft.get("apaczka_service_id") or ""
+            return ApaczkaClient(app_id, app_secret, service_id, storage).get_label(label_id)
+        else:  # allegro_delivery
+            client = _get_allegro_client()
+            if client is None:
+                raise HTTPException(status_code=502, detail="Allegro credentials missing")
+            try:
+                return client.get_ship_with_allegro_label(str(label_id))
+            except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
+                logger.exception("Allegro label fetch failed for draft %s", draft.get("id"))
+                raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
+    except (HTTPException, ZdrovenaShippingError):
+        raise
+    except Exception as exc:
+        logger.exception("Label fetch failed for draft %s", draft.get("id"))
+        raise HTTPException(status_code=502, detail=f"Courier API error: {exc}") from exc
+
+
+def _merge_pdfs(pdfs: list[bytes]) -> bytes:
+    """Merge label PDFs into a single document (R5-B batch printing)."""
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    for pdf in pdfs:
+        writer.append(io.BytesIO(pdf))
+    out = io.BytesIO()
+    writer.write(out)
+    writer.close()
+    return out.getvalue()
+
+
+@router.post(
+    "/shipping/labels/batch",
+    summary="Fetch and merge labels for several drafts into one printable PDF",
+    responses={
+        400: {"description": "No draft_ids, too many, or unsupported courier"},
+        404: {"description": "None of the drafts exist"},
+        409: {"description": "One or more labels are not ready yet"},
+    },
+)
+def batch_labels(
+    shipping_store: ShippingStoreDep,
+    storage: StorageDep,
+    principal: Annotated[Principal, Depends(require_viewer_or_above)],
+    draft_ids: Annotated[list[str], Body(embed=True)],
+) -> StreamingResponse:
+    """Merge the labels of the given drafts into one PDF (R5-B).
+
+    Drafts are grouped by courier (each fetched via the same path as the single
+    label endpoint), then concatenated in the request order. Fails deterministically:
+      * empty / oversized ``draft_ids`` → 400
+      * a not-yet-ready label → 409 listing the offending drafts
+      * an unknown draft id → 404 listing them
+    """
+    if not draft_ids:
+        raise HTTPException(status_code=400, detail="draft_ids must not be empty")
+    if len(draft_ids) > _MAX_BATCH_LABELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many labels in one batch (max {_MAX_BATCH_LABELS}, got {len(draft_ids)})",
+        )
+
+    drafts: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for did in draft_ids:
+        d = shipping_store.get_draft(did)
+        if d is None:
+            missing.append(did)
+        else:
+            drafts.append(d)
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Draft(s) not found: {', '.join(missing)}")
+
+    bad_courier = [d.get("id") for d in drafts if d.get("courier") not in _SUPPORTED_LABEL_COURIERS]
+    if bad_courier:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported courier for draft(s): {', '.join(map(str, bad_courier))}",
+        )
+
+    # Group by courier so a future provider bulk-label API can be slotted in per
+    # group; today we fetch each label and merge. Order within the response
+    # follows the original draft_ids order for predictable printing.
+    pdfs: list[bytes] = []
+    not_ready: list[str] = []
+    for d in drafts:
+        try:
+            pdfs.append(_fetch_label_pdf(d, d["courier"], storage))
+        except LabelNotReadyError:
+            not_ready.append(str(d.get("id")))
+        except HTTPException as exc:
+            # A missing courier id (404) means the draft exists but has no label
+            # yet — for a batch that is just another "not ready" case, not a hard
+            # failure. Any other courier error (502) aborts the whole batch.
+            if exc.status_code == 404:
+                not_ready.append(str(d.get("id")))
+            else:
+                raise
+    if not_ready:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Etykiety nie są jeszcze gotowe dla: {', '.join(not_ready)}",
+        )
+
+    merged = _merge_pdfs(pdfs)
+    return StreamingResponse(
+        io.BytesIO(merged),
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'inline; filename="labels_batch.pdf"'},
+    )
+
 
 @router.get(
     "/shipping/drafts/{draft_id}/label",
@@ -2257,47 +2407,7 @@ def get_label(
             detail=f"courier must be one of: {', '.join(_SUPPORTED_COURIERS)}",
         )
 
-    # For Ship-with-Allegro the label id is the shipment_id, stored under courier_draft_id
-    # (set by _run_allegro_delivery) and mirrored to allegro_shipment_id.
-    if courier == "allegro_delivery":
-        label_id = draft.get("allegro_shipment_id") or draft.get("courier_draft_id")
-    else:
-        label_id = draft.get("courier_draft_id")
-    if not label_id:
-        raise HTTPException(status_code=404, detail="No courier draft ID — draft may have failed")
-
-    try:
-        if courier == "inpost":
-            from zdrovena.common.inpost import InPostClient
-
-            token = get_secret("inpost_api_token")
-            org_id = get_secret("inpost_organization_id")
-            pdf_bytes = InPostClient(token, org_id).get_label(label_id)
-        elif courier == "apaczka":
-            from zdrovena.common.apaczka import ApaczkaClient
-
-            app_id = get_secret("apaczka_app_id")
-            app_secret = get_secret("apaczka_app_secret")
-            # get_label() never reads service_id (verified in apaczka.py), but
-            # pass the real per-draft value anyway for consistency/future-proofing.
-            service_id = draft.get("apaczka_service_id") or ""
-            pdf_bytes = ApaczkaClient(app_id, app_secret, service_id, storage).get_label(label_id)
-        elif courier == "allegro_delivery":
-            client = _get_allegro_client()
-            if client is None:
-                raise HTTPException(status_code=502, detail="Allegro credentials missing")
-            try:
-                pdf_bytes = client.get_ship_with_allegro_label(str(label_id))
-            except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
-                logger.exception("Allegro label fetch failed for draft %s", draft_id)
-                raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown courier: {courier}")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Label fetch failed for draft %s", draft_id)
-        raise HTTPException(status_code=502, detail=f"Courier API error: {exc}") from exc
+    pdf_bytes = _fetch_label_pdf(draft, courier, storage)
 
     order_num = draft.get("shopify_order_number", draft_id).lstrip("#")
     filename = f"label_{courier}_{order_num}.pdf"
