@@ -69,6 +69,12 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
     const [ackMismatch, setAckMismatch] = useState(false)
 
     useEffect(() => {
+        // R4.3/#135: a fresh preview load (draft change OR reload) must clear any
+        // prior mismatch acknowledgement — consent must never carry across drafts
+        // or across preview versions of the same draft.
+        setAckMismatch(false)
+        setLoading(true)
+        setError(null)
         const ctrl = new AbortController()
         getToken().then(token =>
             fetchJson(`/api/shipping/drafts/${draft.id}/invoice-preview`, {
