@@ -1183,12 +1183,14 @@ export default function ShippingView() {
                         <Icon name={expandAll ? 'chevronUp' : 'chevronDown'} size={13} />
                         {expandAll ? (T.sh_collapse ?? 'Zwiń') : (T.sh_expand ?? 'Rozwiń')}
                     </button>
-                    <button className="btn btn-ghost" onClick={handleSync} disabled={syncing || loading} title="Sync orders from Allegro &amp; Shopify">
+                    <button className="btn btn-ghost" onClick={handleSync} disabled={syncing || loading} title="Synchronizuj zamówienia z Allegro i Shopify">
                         <Icon name={syncing ? 'refresh' : 'zap'} size={14} className={syncing ? 'spin' : undefined} />
+                        {syncing ? 'Synchronizowanie...' : 'Synchronizuj'}
                         {syncResult?.error && <span style={{ color: 'var(--error)', fontSize: '0.75em', marginLeft: 4 }}>!</span>}
                     </button>
-                    <button className="btn btn-ghost" onClick={load} disabled={loading} title="Odśwież">
-                        <Icon name="refresh" size={14} />
+                    <button className="btn btn-ghost" onClick={load} disabled={loading} title="Odśwież widok">
+                        <Icon name="refresh" size={14} className={loading ? 'spin' : undefined} />
+                        {loading ? 'Odświeżanie...' : 'Odśwież'}
                     </button>
                 </div>
             </div>
