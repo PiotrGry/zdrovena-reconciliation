@@ -298,8 +298,9 @@ def _sync_shopify_orders_from_api(
     resp = requests.get(
         f"https://{shop_domain}/admin/api/2024-01/orders.json",
         params={
-            "status": "open",
+            "status": "any",
             "fulfillment_status": "any",
+            "order": "updated_at desc",
             "limit": 50,
             "fields": (
                 "id,order_number,name,email,phone,created_at,updated_at,"
@@ -1198,7 +1199,6 @@ def _create_draft_safely(
 _SYNC_PRESERVED_FIELDS = {
     "id",
     "created_at",
-    "tracking_number",
     "courier_draft_id",
     "dispatch_order_id",
     "allegro_shipment_id",
@@ -1206,7 +1206,6 @@ _SYNC_PRESERVED_FIELDS = {
     "pickup_ordered",
     "fakturownia_invoice_id",
     "fakturownia_invoice_number",
-    "fulfilled_at",
     "allegro_fulfillment_status",
 }
 
@@ -1238,6 +1237,27 @@ def _source_fulfillment_status(order: dict[str, Any], *, source: str) -> str | N
 
 def _source_cancelled(order: dict[str, Any]) -> bool:
     return bool(order.get("cancelled_at") or order.get("cancelled") is True)
+
+
+def _source_fulfillment_details(order: dict[str, Any]) -> dict[str, Any]:
+    fulfillments = order.get("fulfillments") or []
+    if not isinstance(fulfillments, list):
+        return {}
+    for fulfillment in fulfillments:
+        if not isinstance(fulfillment, dict):
+            continue
+        tracking_number = fulfillment.get("tracking_number")
+        tracking_numbers = fulfillment.get("tracking_numbers")
+        if not tracking_number and isinstance(tracking_numbers, list) and tracking_numbers:
+            tracking_number = tracking_numbers[0]
+        if tracking_number:
+            return {
+                "tracking_number": tracking_number,
+                "tracking_company": fulfillment.get("tracking_company"),
+                "fulfilled_at": fulfillment.get("updated_at") or fulfillment.get("created_at"),
+                "shopify_fulfillment_id": str(fulfillment.get("id", "")) or None,
+            }
+    return {}
 
 
 def _status_from_source(order: dict[str, Any], fallback: str, *, source: str) -> str:
@@ -1336,6 +1356,7 @@ def _build_draft_record(
     source_fulfillment = _source_fulfillment_status(order, source=source)
     now = datetime.now(timezone.utc).isoformat()
     base_status = "needs_review" if needs_review else "pending"
+    fulfillment_details = _source_fulfillment_details(order) if source == "shopify" else {}
     record: dict[str, Any] = {
         "id": draft_id or str(uuid.uuid4()),
         "created_at": created_at or now,
@@ -1349,7 +1370,8 @@ def _build_draft_record(
         "courier": courier,
         "service": service,
         "apaczka_service_id": apaczka_service_id,
-        "tracking_number": None,
+        "tracking_number": fulfillment_details.get("tracking_number"),
+        "tracking_company": fulfillment_details.get("tracking_company"),
         "courier_draft_id": None,
         "dispatch_order_id": None,  # fix #6: field exists from creation
         "status": _status_from_source(order, base_status, source=source),
@@ -1380,6 +1402,8 @@ def _build_draft_record(
         "source_order_status": order.get("financial_status") or order.get("status"),
         "source_fulfillment_status": order.get("fulfillment_status"),
         "fulfillment_status": source_fulfillment,
+        "fulfilled_at": fulfillment_details.get("fulfilled_at"),
+        "shopify_fulfillment_id": fulfillment_details.get("shopify_fulfillment_id"),
         "cancelled_at": order.get("cancelled_at"),
         "source_updated_at": order.get("updated_at"),
     }
@@ -1398,6 +1422,8 @@ def _merge_synced_draft(existing: dict[str, Any], incoming: dict[str, Any]) -> d
     for field in _SYNC_PRESERVED_FIELDS:
         if field in existing:
             merged[field] = existing[field]
+    if existing.get("fulfilled_at") and not incoming.get("fulfilled_at"):
+        merged["fulfilled_at"] = existing["fulfilled_at"]
 
     existing_status = existing.get("status")
     incoming_status = incoming.get("status")
@@ -1426,6 +1452,9 @@ def _merge_synced_draft(existing: dict[str, Any], incoming: dict[str, Any]) -> d
     if existing.get("service") and existing_status in _SYNC_BUSY_STATUSES | _SYNC_TERMINAL_STATUSES:
         merged["service"] = existing["service"]
         merged["courier"] = existing.get("courier", merged.get("courier"))
+    if existing.get("tracking_number"):
+        merged["tracking_number"] = existing["tracking_number"]
+        merged["tracking_company"] = existing.get("tracking_company")
 
     return merged
 
