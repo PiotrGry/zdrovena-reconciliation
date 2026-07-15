@@ -34,11 +34,13 @@ both are checked.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from zdrovena.common.fakturownia import KAUCJA_DESCRIPTION
-from zdrovena.common.kaucja import calculate_kaucja
+from zdrovena.common.kaucja import calculate_kaucja, parse_line_quantity
+
+_CENTS = Decimal("0.01")
 
 
 def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any]:
@@ -52,10 +54,14 @@ def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any
 
     for item in order.get("lineItems") or []:
         offer = item.get("offer") or {}
-        quantity = int(item.get("quantity", 1) or 1)
+        quantity = parse_line_quantity(item.get("quantity"))
         unit_price = Decimal(str((item.get("price") or {}).get("amount", "0")))
         tax_rate = Decimal(str((item.get("tax") or {}).get("rate", "23")))
-        line_total = unit_price * quantity
+        # Money stays Decimal through the arithmetic; quantize to cents once and
+        # only then cross the wire as a float (Fakturownia's position schema
+        # expects a number). Quantizing before float() avoids binary-float drift
+        # like 3 * 0.1 → 0.30000000000000004.
+        line_total = (unit_price * quantity).quantize(_CENTS, rounding=ROUND_HALF_UP)
         positions.append(
             {
                 "name": offer.get("name", ""),
