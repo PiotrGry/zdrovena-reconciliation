@@ -394,32 +394,70 @@ class TestRecoveryResume:
         )
         allegro2.upload_invoice_file.assert_called_once()
 
-    def test_retry_when_already_fully_pushed_does_not_duplicate(self):
+    def test_partial_declaration_then_retry_reuploads_to_existing(self):
+        # THE key scenario (#133): declaration was created but the PDF upload
+        # failed. On retry we must re-upload to the SAME declaration id — never
+        # create a second declaration.
         fakturownia = MagicMock()
         fakturownia.list_invoices.return_value = [
             {"id": 999, "number": "FV/2026/999", "oid": "af1"}
         ]
+        fakturownia.get_invoice_pdf.return_value = b"%PDF"
         allegro = MagicMock()
-        allegro.list_order_invoices.return_value = [{"id": "alg-1"}]  # already pushed
+        # A declaration for OUR invoice number already exists (id alg-decl-7).
+        allegro.list_order_invoices.return_value = [
+            {"id": "alg-decl-7", "invoiceNumber": "FV/2026/999", "fileType": "VAT"}
+        ]
         result = create_invoice_for_order(
             _order(), fakturownia_client=fakturownia, allegro_client=allegro
         )
         assert result["status"] == "already_exists"
         assert result["fakturownia_invoice_id"] == 999
+        # No second Fakturownia invoice, no second Allegro declaration.
         fakturownia.create_invoice.assert_not_called()
-        # No duplicate Allegro declaration.
         allegro.create_invoice_declaration.assert_not_called()
-        allegro.upload_invoice_file.assert_not_called()
+        # PDF re-uploaded to the EXISTING declaration id.
+        allegro.upload_invoice_file.assert_called_once_with(
+            order_id="af1", invoice_id="alg-decl-7", pdf_bytes=b"%PDF"
+        )
 
-    def test_two_repeated_retries_are_idempotent(self):
-        # Both retries see the invoice existing and already pushed → stable.
+    def test_declaration_for_different_invoice_is_not_matched(self):
+        # A declaration for a DIFFERENT invoice number must not count as ours —
+        # we must create our own declaration, not hijack the unrelated one.
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = [
+            {"id": 999, "number": "FV/2026/999", "oid": "af1"}
+        ]
+        fakturownia.get_invoice_pdf.return_value = b"%PDF"
+        allegro = MagicMock()
+        allegro.list_order_invoices.return_value = [
+            {"id": "alg-other", "invoiceNumber": "FV/2026/000", "fileType": "VAT"}
+        ]
+        allegro.create_invoice_declaration.return_value = {"id": "alg-mine"}
+        result = create_invoice_for_order(
+            _order(), fakturownia_client=fakturownia, allegro_client=allegro
+        )
+        assert result["status"] == "already_exists"
+        allegro.create_invoice_declaration.assert_called_once_with(
+            order_id="af1", invoice_number="FV/2026/999"
+        )
+        allegro.upload_invoice_file.assert_called_once_with(
+            order_id="af1", invoice_id="alg-mine", pdf_bytes=b"%PDF"
+        )
+
+    def test_two_repeated_retries_do_not_duplicate_declaration(self):
+        # Repeated retries with a matching declaration re-upload (idempotent PUT)
+        # but never create a second declaration or invoice.
         for _ in range(2):
             fakturownia = MagicMock()
             fakturownia.list_invoices.return_value = [
                 {"id": 999, "number": "FV/2026/999", "oid": "af1"}
             ]
+            fakturownia.get_invoice_pdf.return_value = b"%PDF"
             allegro = MagicMock()
-            allegro.list_order_invoices.return_value = [{"id": "alg-1"}]
+            allegro.list_order_invoices.return_value = [
+                {"id": "alg-decl-7", "invoiceNumber": "FV/2026/999"}
+            ]
             result = create_invoice_for_order(
                 _order(), fakturownia_client=fakturownia, allegro_client=allegro
             )
@@ -427,6 +465,9 @@ class TestRecoveryResume:
             assert result["fakturownia_invoice_id"] == 999
             fakturownia.create_invoice.assert_not_called()
             allegro.create_invoice_declaration.assert_not_called()
+            allegro.upload_invoice_file.assert_called_once_with(
+                order_id="af1", invoice_id="alg-decl-7", pdf_bytes=b"%PDF"
+            )
 
     def test_resume_settlement_failure_preserves_id_for_next_retry(self):
         # Existing invoice, but re-attaching the settlement fails → must return

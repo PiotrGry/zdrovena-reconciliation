@@ -142,10 +142,13 @@ def _finish_invoice(
       * ``add_settlement_position`` is a no-op when the row already exists
         (it re-reads the invoice and matches on ``reason``), so re-running it
         cannot duplicate the kaucja.
-      * When ``resuming`` (recovery path), the Allegro push is skipped if the
-        order already has an invoice attached (``list_order_invoices``), so it
-        cannot create a duplicate declaration. On a fresh create the order has
-        no invoice yet, so we push unconditionally and avoid the extra call.
+      * When ``resuming`` (recovery path), an existing Allegro declaration is
+        matched by invoice number (``list_order_invoices``). If found, the PDF is
+        re-uploaded to THAT declaration id (idempotent ``PUT``) rather than
+        creating a second one — because Allegro's list does not report whether
+        the file was actually uploaded, so re-upload is the safe default that
+        guarantees the file is attached. On a fresh create the order has no
+        declaration yet, so we create + upload directly.
 
     On any failure returns an ``error`` dict that PRESERVES
     ``fakturownia_invoice_id`` so the next retry resumes at the first
@@ -169,11 +172,37 @@ def _finish_invoice(
         return {"status": "error", "error": str(exc), "fakturownia_invoice_id": invoice_id}
 
     try:
-        if resuming and allegro_client.list_order_invoices(allegro_order_id):
+        existing_declaration_id: str | None = None
+        if resuming:
+            # Match the declaration for THIS invoice by number — not "any invoice
+            # exists" (that was too coarse: a declaration for a different invoice,
+            # or one whose PDF upload had failed, would wrongly count as done).
+            for inv in allegro_client.list_order_invoices(allegro_order_id) or []:
+                if str(inv.get("invoiceNumber") or "") == str(invoice_number):
+                    existing_declaration_id = inv.get("id")
+                    break
+
+        if existing_declaration_id is not None:
+            # A declaration for this invoice already exists. LIMITATION: Allegro's
+            # invoice list returns invoiceNumber/fileType but NOT whether the PDF
+            # bytes were actually uploaded, so we cannot distinguish "declaration
+            # created, upload failed" from "fully done". Safest strategy: re-upload
+            # the PDF to the EXISTING declaration id. `PUT …/invoices/{id}/file` is
+            # idempotent (replaces the file), so this cannot duplicate the
+            # declaration or the invoice — it only guarantees the file is attached.
+            # We deliberately do NOT create a second declaration.
             logger.info(
-                "Allegro order %s already has an invoice attached — skipping push "
-                "(idempotent resume)",
+                "Allegro order %s already has a declaration for invoice %s — re-uploading PDF "
+                "to existing declaration %s (Allegro does not expose file-attachment status)",
                 allegro_order_id,
+                invoice_number,
+                existing_declaration_id,
+            )
+            pdf_bytes = fakturownia_client.get_invoice_pdf(invoice_id)
+            allegro_client.upload_invoice_file(
+                order_id=allegro_order_id,
+                invoice_id=existing_declaration_id,
+                pdf_bytes=pdf_bytes,
             )
         else:
             pdf_bytes = fakturownia_client.get_invoice_pdf(invoice_id)
