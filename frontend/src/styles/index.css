@@ -794,6 +794,111 @@ table.files td {
     color: var(--text-2);
 }
 
+.order-id-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.order-id-full {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
+}
+
+.order-id-copy {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-3);
+    background: var(--surface);
+}
+
+.order-id-copy:hover {
+    color: var(--primary);
+    border-color: var(--border-strong);
+}
+
+.shipping-table-header {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    align-items: stretch;
+    gap: 12px;
+    padding: 7px 16px 7px 0;
+}
+
+.shipping-table-heading {
+    position: relative;
+    min-width: 0;
+    display: flex;
+    align-items: stretch;
+}
+
+.shipping-table-sort {
+    width: 100%;
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 4px;
+    padding: 4px 12px 4px 0;
+    color: var(--text-3);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    text-align: left;
+}
+
+.shipping-table-sort span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.shipping-table-sort:disabled {
+    cursor: default;
+    opacity: 1;
+}
+
+.shipping-table-sort:not(:disabled):hover {
+    color: var(--primary);
+}
+
+.shipping-column-resize {
+    position: absolute;
+    top: 1px;
+    right: -7px;
+    width: 14px;
+    height: calc(100% - 2px);
+    cursor: col-resize;
+    border-radius: 4px;
+}
+
+.shipping-column-resize::after {
+    content: "";
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    left: 6px;
+    width: 2px;
+    border-radius: 2px;
+    background: transparent;
+}
+
+.shipping-column-resize:hover::after,
+.shipping-column-resize:focus-visible::after {
+    background: var(--primary);
+}
+
 .num {
     font-variant-numeric: tabular-nums;
 }
@@ -2363,5 +2468,4 @@ table.files tbody tr:hover .row-actions {
 .spin {
     animation: spin 0.8s linear infinite;
     display: inline-block;
-}
 }

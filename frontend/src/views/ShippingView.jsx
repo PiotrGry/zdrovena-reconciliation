@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useAuth } from '../auth'
 import { useT } from '../lang'
@@ -8,6 +8,15 @@ import { Icon } from '../components/Icon'
 import { useToast } from '../components/Toast'
 import { fetchJson } from '../api'
 import { usePolling } from '../hooks/usePolling'
+import {
+    SHIPPING_COLUMNS,
+    SHIPPING_TABLE_WIDTHS_KEY,
+    loadColumnWidths,
+    nextSortState,
+    packagesSortValue,
+    shippingGridTemplate,
+    sortDrafts,
+} from './shippingTable'
 
 function fmtDate(iso) {
     if (!iso) return '—'
@@ -54,9 +63,64 @@ function sourcePillKind(source) {
 function fmtOrderNum(num) {
     if (!num) return '—'
     const s = String(num)
-    // Allegro order IDs are UUIDs (36 chars) — truncate for display
-    if (s.length > 10) return `#${s.slice(0, 8)}…`
     return `#${s}`
+}
+
+function sortValue(draft, columnId, apaczkaServices = []) {
+    switch (columnId) {
+        case 'order':
+            return draft.shopify_order_number
+        case 'source':
+            return draft.source || 'shopify'
+        case 'customer':
+            return draft.customer_name
+        case 'packages':
+            return packagesSortValue(draft)
+        case 'courier':
+            return courierLabel(draft, apaczkaServices)
+        case 'date':
+            return draft.order_date || draft.created_at
+        case 'status':
+            return draft.status
+        default:
+            return null
+    }
+}
+
+function OrderNumberCell({ draft }) {
+    const orderNumber = draft.shopify_order_number
+    if (!orderNumber) return <span className="mono">—</span>
+
+    const value = String(orderNumber)
+    const displayValue = fmtOrderNum(value)
+    if (draft.source !== 'allegro') {
+        return <span className="mono" title={value}>{displayValue}</span>
+    }
+
+    async function copyOrderNumber(event) {
+        event.stopPropagation()
+        await navigator.clipboard?.writeText(value)
+    }
+
+    return (
+        <span className="order-id-cell" title={value}>
+            <span className="mono order-id-full">{displayValue}</span>
+            <button
+                type="button"
+                className="order-id-copy"
+                onClick={copyOrderNumber}
+                aria-label="Kopiuj pełne ID Allegro"
+                title="Kopiuj pełne ID Allegro"
+            >
+                <Icon name="copy" size={12} />
+            </button>
+        </span>
+    )
+}
+
+function SourceCell({ source }) {
+    const value = source || 'shopify'
+    return <Pill kind={sourcePillKind(value)}>{value}</Pill>
 }
 
 function syncStat(result, key) {
@@ -381,7 +445,7 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, onReviewDraft, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen, getToken, onDraftUpdate }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, onReviewDraft, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen, getToken, onDraftUpdate, columnGridTemplate, tableMinWidth }) {
     const { t, lang } = useT()
     const T = t[lang]
     const [open, setOpen] = useState(false)
@@ -409,7 +473,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
     )
 
     return (
-        <div className={`accordion-row${open ? ' open' : ''}`} style={{ display: 'flex', alignItems: 'stretch' }}>
+        <div className={`accordion-row${open ? ' open' : ''}`} style={{ display: 'flex', alignItems: 'stretch', minWidth: tableMinWidth }}>
             <div style={{ width: 56, flexShrink: 0, display: 'flex', alignItems: open ? 'flex-start' : 'center', justifyContent: 'center', gap: 6, paddingTop: open ? 4 : 0 }}>
                 {isSelectable ? (
                     <input
@@ -431,14 +495,12 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
             <div
                 className="accordion-header"
                 style={{ padding: '10px 16px 10px 0', cursor: 'default', display: 'grid', alignItems: 'center',
-                    gridTemplateColumns: '72px 1fr 170px 120px 110px 130px 130px 88px 76px' }}
+                    gridTemplateColumns: columnGridTemplate }}
             >
-                <span className="mono" title={draft.shopify_order_number}>{fmtOrderNum(draft.shopify_order_number)}</span>
+                <OrderNumberCell draft={draft} />
+                <span><SourceCell source={draft.source} /></span>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {draft.customer_name || '—'}
-                    {draft.source && (
-                        <Pill kind={sourcePillKind(draft.source)} style={{ marginLeft: 4 }}>{draft.source}</Pill>
-                    )}
                 </span>
                 <span className="dim" style={{ fontSize: '0.8em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {draft.receiver?.email || ''}
@@ -764,6 +826,55 @@ export default function ShippingView() {
     const [apaczkaServices, setApaczkaServices] = useState([])
     const [syncing, setSyncing] = useState(false)
     const [syncResult, setSyncResult] = useState(null)
+    const [columnWidths, setColumnWidths] = useState(loadColumnWidths)
+    const [sortState, setSortState] = useState({ key: null, direction: null })
+    const resizeRef = useRef(null)
+
+    const columnGridTemplate = useMemo(
+        () => shippingGridTemplate(columnWidths),
+        [columnWidths]
+    )
+    const tableMinWidth = useMemo(
+        () => 56 + 16 + ((SHIPPING_COLUMNS.length - 1) * 12) +
+            SHIPPING_COLUMNS.reduce((sum, column) => sum + (columnWidths[column.id] || column.width), 0),
+        [columnWidths]
+    )
+
+    useEffect(() => {
+        window.localStorage.setItem(SHIPPING_TABLE_WIDTHS_KEY, JSON.stringify(columnWidths))
+    }, [columnWidths])
+
+    function handleSort(column) {
+        if (!column.sortable) return
+        setSortState(current => nextSortState(current, column.id))
+    }
+
+    function startColumnResize(event, column) {
+        event.preventDefault()
+        event.stopPropagation()
+        resizeRef.current = {
+            columnId: column.id,
+            startX: event.clientX,
+            startWidth: columnWidths[column.id] || column.width,
+            minWidth: column.minWidth,
+        }
+
+        function onPointerMove(moveEvent) {
+            const resize = resizeRef.current
+            if (!resize) return
+            const nextWidth = Math.max(resize.minWidth, resize.startWidth + moveEvent.clientX - resize.startX)
+            setColumnWidths(widths => ({ ...widths, [resize.columnId]: nextWidth }))
+        }
+
+        function onPointerUp() {
+            resizeRef.current = null
+            document.removeEventListener('pointermove', onPointerMove)
+            document.removeEventListener('pointerup', onPointerUp)
+        }
+
+        document.addEventListener('pointermove', onPointerMove)
+        document.addEventListener('pointerup', onPointerUp)
+    }
 
     // silent=true dla odświeżania w tle (polling): nie miga spinnerem i nie
     // podmienia listy na komunikat błędu — zostawia ostatnie dobre dane.
@@ -1046,7 +1157,15 @@ export default function ShippingView() {
         return true
     })
 
-    const selectableIds = filtered
+    const visibleDrafts = useMemo(() => {
+        return sortDrafts(
+            filtered,
+            sortState,
+            (draft, columnId) => sortValue(draft, columnId, apaczkaServices)
+        )
+    }, [filtered, sortState, apaczkaServices])
+
+    const selectableIds = visibleDrafts
         .filter(d => d.status === 'pending' || d.status === 'needs_review' || d.status === 'error' ||
             (d.courier === 'inpost' && d.status === 'created' && !d.pickup_ordered))
         .map(d => d.id)
@@ -1154,36 +1273,62 @@ export default function ShippingView() {
                         <Icon name={expandAll ? 'chevronUp' : 'chevronDown'} size={13} />
                         {expandAll ? (T.sh_collapse ?? 'Zwiń') : (T.sh_expand ?? 'Rozwiń')}
                     </button>
-                    <button className="btn btn-ghost" onClick={handleSync} disabled={syncing || loading} title="Sync orders from Allegro &amp; Shopify">
+                    <button className="btn btn-ghost" onClick={handleSync} disabled={syncing || loading} title="Synchronizuj zamówienia z Allegro i Shopify">
                         <Icon name={syncing ? 'refresh' : 'zap'} size={14} className={syncing ? 'spin' : undefined} />
+                        {syncing ? 'Synchronizowanie...' : 'Synchronizuj'}
                         {syncResult?.error && <span style={{ color: 'var(--error)', fontSize: '0.75em', marginLeft: 4 }}>!</span>}
                     </button>
-                    <button className="btn btn-ghost" onClick={load} disabled={loading} title="Odśwież">
-                        <Icon name="refresh" size={14} />
+                    <button className="btn btn-ghost" onClick={load} disabled={loading} title="Odśwież widok">
+                        <Icon name="refresh" size={14} className={loading ? 'spin' : undefined} />
+                        {loading ? 'Odświeżanie...' : 'Odśwież'}
                     </button>
                 </div>
             </div>
 
-            <div className="card" style={{ padding: 0 }}>
+            <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
                 {!loading && !error && filtered.length > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'center', borderBottom: '2px solid var(--border-strong)', background: 'var(--surface-2)', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', minWidth: tableMinWidth, borderBottom: '2px solid var(--border-strong)', background: 'var(--surface-2)' }}>
                         <div style={{ width: 56, flexShrink: 0 }} />
-                        <div style={{ flex: 1, minWidth: 0, display: 'grid', alignItems: 'center', padding: '7px 16px 7px 0', gap: 12,
-                            gridTemplateColumns: '72px 1fr 170px 120px 110px 130px 130px 88px 76px' }}>
-                            <span>Nr</span>
-                            <span>Klient</span>
-                            <span>Email</span>
-                            <span>Telefon</span>
-                            <span>Paczki</span>
-                            <span>Kurier</span>
-                            <span>Data</span>
-                            <span>Status</span>
-                            <span>Podjazd</span>
+                        <div className="shipping-table-header" style={{ gridTemplateColumns: columnGridTemplate }}>
+                            {SHIPPING_COLUMNS.map(column => {
+                                const active = sortState.key === column.id
+                                const ariaSort = active
+                                    ? (sortState.direction === 'asc' ? 'ascending' : 'descending')
+                                    : 'none'
+                                return (
+                                    <div
+                                        key={column.id}
+                                        className="shipping-table-heading"
+                                        role="columnheader"
+                                        aria-sort={column.sortable ? ariaSort : undefined}
+                                    >
+                                        <button
+                                            type="button"
+                                            className="shipping-table-sort"
+                                            onClick={() => handleSort(column)}
+                                            disabled={!column.sortable}
+                                            title={column.sortable ? `Sortuj: ${column.label}` : column.label}
+                                        >
+                                            <span>{column.label}</span>
+                                            {active && (
+                                                <Icon name={sortState.direction === 'asc' ? 'caretUp' : 'caret'} size={12} />
+                                            )}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="shipping-column-resize"
+                                            onPointerDown={event => startColumnResize(event, column)}
+                                            aria-label={`Zmień szerokość kolumny ${column.label}`}
+                                            title={`Zmień szerokość kolumny ${column.label}`}
+                                        />
+                                    </div>
+                                )
+                            })}
                         </div>
                     </div>
                 )}
                 {!loading && !error && filtered.length > 0 && selectableIds.length > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 16px 6px 0', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: tableMinWidth, padding: '6px 16px 6px 0', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
                         <div style={{ width: 56, flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
                             <input type="checkbox" checked={allSelected} onChange={handleSelectAll}
                                 style={{ cursor: 'pointer', accentColor: 'var(--primary, #3b82f6)' }} />
@@ -1211,7 +1356,7 @@ export default function ShippingView() {
                         {search ? 'Brak wyników.' : 'Brak draftów wysyłek.'}
                     </div>
                 )}
-                {!loading && filtered.map(draft => (
+                {!loading && visibleDrafts.map(draft => (
                     <DraftRow
                         key={draft.id}
                         draft={draft}
@@ -1230,6 +1375,8 @@ export default function ShippingView() {
                         forceOpen={expandAll}
                         getToken={getToken}
                         onDraftUpdate={load}
+                        columnGridTemplate={columnGridTemplate}
+                        tableMinWidth={tableMinWidth}
                     />
                 ))}
             </div>
