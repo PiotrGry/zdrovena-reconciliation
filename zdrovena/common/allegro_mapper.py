@@ -96,5 +96,8 @@ def allegro_to_shopify_order(form: dict[str, Any]) -> dict[str, Any]:
         "line_items": line_items,
         "note_attributes": note_attributes,
         "created_at": ((form.get("lineItems") or [{}])[0]).get("boughtAt"),
+        "updated_at": form.get("updatedAt"),
+        "status": form.get("status"),
+        "fulfillment_status": ((form.get("fulfillment") or {}).get("status")),
     }
     return order

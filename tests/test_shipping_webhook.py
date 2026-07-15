@@ -2283,7 +2283,13 @@ class TestCancelApaczkaOrderEndpoint:
 class TestSyncOrdersEndpoint:
     def test_returns_200_with_both_sources(self, client):
         allegro_stats = {"fetched": 2, "created": 1, "skipped_duplicate": 1, "errors": 0}
-        shopify_stats = {"fetched": 3, "created": 2, "skipped": 1, "errors": 0}
+        shopify_stats = {
+            "fetched": 3,
+            "created": 2,
+            "updated": 0,
+            "unchanged": 1,
+            "errors": 0,
+        }
 
         mock_allegro_client = MagicMock()
 
@@ -2478,9 +2484,15 @@ class TestSyncShopifyOrdersFromApi:
                 storage=storage,
             )
 
-        assert stats == {"fetched": 0, "created": 0, "skipped": 0, "errors": 0}
+        assert stats == {
+            "fetched": 0,
+            "created": 0,
+            "updated": 0,
+            "unchanged": 0,
+            "errors": 0,
+        }
 
-    def test_existing_order_is_skipped(self, tmp_path):
+    def test_existing_order_is_unchanged_when_payload_matches(self, tmp_path):
         from responses import RequestsMock
 
         from zdrovena.api.routers.webhooks import _create_draft, _sync_shopify_orders_from_api
@@ -2506,8 +2518,93 @@ class TestSyncShopifyOrdersFromApi:
             )
 
         assert stats["fetched"] == 1
-        assert stats["skipped"] == 1
+        assert stats["unchanged"] == 1
         assert stats["created"] == 0
+
+    def test_existing_order_status_updates_from_pending_to_fulfilled(self, tmp_path):
+        from responses import RequestsMock
+
+        from zdrovena.api.routers.webhooks import _create_draft, _sync_shopify_orders_from_api
+        from zdrovena.common.storage import LocalStorageService
+
+        store = ShippingStore(local_root=tmp_path / "store")
+        storage = LocalStorageService(root=tmp_path / "storage")
+        order = self._make_order(order_id=7777)
+        _create_draft(order, store, storage, source="shopify")
+
+        fulfilled = {
+            **order,
+            "fulfillment_status": "fulfilled",
+            "updated_at": "2026-07-15T10:00:00Z",
+            "fulfillments": [{"tracking_number": "TRK-777"}],
+        }
+        with RequestsMock() as rsps:
+            rsps.add(
+                rsps.GET,
+                "https://shop.myshopify.com/admin/api/2024-01/orders.json",
+                json={"orders": [fulfilled]},
+                status=200,
+            )
+            stats = _sync_shopify_orders_from_api(
+                shop_domain="shop.myshopify.com",
+                api_token="tok",
+                shipping_store=store,
+                storage=storage,
+            )
+
+        drafts = store.list_drafts()
+        assert stats["updated"] == 1
+        assert len(drafts) == 1
+        assert drafts[0]["status"] == "created"
+        assert drafts[0]["fulfillment_status"] == "fulfilled"
+        assert drafts[0]["fulfilled_at"] == "2026-07-15T10:00:00Z"
+
+    def test_sync_does_not_regress_created_draft_to_pending(self, tmp_path):
+        from responses import RequestsMock
+
+        from zdrovena.api.routers.webhooks import _sync_shopify_orders_from_api
+        from zdrovena.common.storage import LocalStorageService
+
+        store = ShippingStore(local_root=tmp_path / "store")
+        storage = LocalStorageService(root=tmp_path / "storage")
+        order = self._make_order(order_id=8888)
+        store.upsert_draft(
+            {
+                "id": "existing-created",
+                "created_at": "2026-07-01T00:00:00+00:00",
+                "source": "shopify",
+                "external_order_id": "8888",
+                "shopify_order_id": "8888",
+                "shopify_order_number": "8888",
+                "customer_name": "Jan Kowalski",
+                "courier": "inpost",
+                "service": "inpost_courier_standard",
+                "status": "created",
+                "tracking_number": "TRK-OLD",
+                "courier_draft_id": "SHIP-OLD",
+                "pickup_ordered": False,
+            }
+        )
+
+        with RequestsMock() as rsps:
+            rsps.add(
+                rsps.GET,
+                "https://shop.myshopify.com/admin/api/2024-01/orders.json",
+                json={"orders": [order]},
+                status=200,
+            )
+            stats = _sync_shopify_orders_from_api(
+                shop_domain="shop.myshopify.com",
+                api_token="tok",
+                shipping_store=store,
+                storage=storage,
+            )
+
+        draft = store.get_draft("existing-created")
+        assert stats["updated"] == 1
+        assert draft["status"] == "created"
+        assert draft["tracking_number"] == "TRK-OLD"
+        assert draft["courier_draft_id"] == "SHIP-OLD"
 
     def test_http_error_propagates(self, tmp_path):
         import requests

@@ -59,6 +59,31 @@ function fmtOrderNum(num) {
     return `#${s}`
 }
 
+function syncStat(result, key) {
+    if (!result) return 0
+    return ['allegro', 'shopify'].reduce((sum, source) => {
+        const value = result[source]?.[key]
+        return sum + (Number.isFinite(value) ? value : 0)
+    }, 0)
+}
+
+function syncErrorCount(result) {
+    if (!result) return 0
+    return ['allegro', 'shopify'].reduce((sum, source) => {
+        const sourceResult = result[source]
+        if (!sourceResult) return sum
+        return sum + (sourceResult.error ? 1 : 0) + (Number(sourceResult.errors) || 0)
+    }, 0)
+}
+
+function syncSummary(result) {
+    const created = syncStat(result, 'created')
+    const updated = syncStat(result, 'updated')
+    const unchanged = syncStat(result, 'unchanged') + syncStat(result, 'skipped') + syncStat(result, 'skipped_duplicate')
+    const errors = syncErrorCount(result)
+    return `Synchronizacja zakończona: ${created} nowe, ${updated} zaktualizowanych, ${unchanged} bez zmian, ${errors} błędów.`
+}
+
 function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
     const [loading, setLoading] = useState(true)
     const [creating, setCreating] = useState(false)
@@ -766,8 +791,13 @@ export default function ShippingView() {
             const token = await getToken()
             const body = await fetchJson('/api/shipping/sync', { method: 'POST', token })
             setSyncResult(body)
-            pushToast({ kind: 'success', msg: 'Synchronizacja zamówień zakończona' })
             await load()
+            const summary = syncSummary(body)
+            pushToast({
+                kind: syncErrorCount(body) > 0 ? 'error' : 'success',
+                msg: summary,
+                sticky: syncErrorCount(body) > 0,
+            })
         } catch (e) {
             setSyncResult({ error: e.message })
             pushToast({ kind: 'error', msg: `Synchronizacja nie powiodła się: ${e.message}` })
