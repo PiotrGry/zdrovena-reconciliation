@@ -78,12 +78,6 @@ variable "swa_location" {
   default     = "westeurope"
 }
 
-variable "terraform_ip_allowlist" {
-  description = "List of IPs allowed to access storage account (needed for Terraform to manage storage containers). Remove after initial apply if desired."
-  type        = list(string)
-  default     = []
-}
-
 variable "swa_custom_domain" {
   description = "Custom domain hostname for the Static Web App (e.g. app.zdrovena.com). Leave empty to skip — domain must be CNAME'd to the SWA default_host_name before apply."
   type        = string
@@ -101,4 +95,3 @@ variable "enable_private_network" {
   type        = bool
   default     = false
 }
-

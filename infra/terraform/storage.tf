@@ -21,19 +21,28 @@ resource "azurerm_storage_account" "storage" {
   min_tls_version                 = "TLS1_2"
   tags                            = local.tags
 
-  # Network ACLs intentionally permissive when public (default_action=Allow):
+  # Network ACLs are only configured when private networking is enabled.
+  # In public mode Azure omits the network_rules block from state when ACLs are
+  # equivalent to default public access, so declaring it would cause perpetual
+  # Terraform drift.
+  #
+  # Public mode:
   # storage is fully RBAC-locked (shared_access_key_enabled=false, no SAS issued),
   # so identity-based access — not network position — is the security boundary.
   # Container Apps' "AzureServices" bypass is unreliable; rather than special-case
   # its outbound IPs, we let the RBAC layer enforce policy.
   #
-  # When private network is enabled (var.enable_private_network=true):
+  # Private network mode:
   # default_action=Deny, access only via Private Endpoint from VNet.
-  network_rules {
-    default_action             = var.enable_private_network ? "Deny" : "Allow"
-    bypass                     = ["AzureServices"]
-    ip_rules                   = var.enable_private_network ? [] : var.terraform_ip_allowlist
-    virtual_network_subnet_ids = var.enable_private_network ? [azurerm_subnet.container_apps[0].id] : []
+  dynamic "network_rules" {
+    for_each = var.enable_private_network ? [1] : []
+
+    content {
+      default_action             = "Deny"
+      bypass                     = ["AzureServices"]
+      ip_rules                   = []
+      virtual_network_subnet_ids = [azurerm_subnet.container_apps[0].id]
+    }
   }
 
   blob_properties {
