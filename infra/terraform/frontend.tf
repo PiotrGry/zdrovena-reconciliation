@@ -11,6 +11,13 @@ resource "azurerm_static_web_app" "ui" {
   sku_tier            = "Standard"
   sku_size            = "Standard"
   tags                = local.tags
+
+  lifecycle {
+    ignore_changes = [
+      repository_branch,
+      repository_url,
+    ]
+  }
 }
 
 # Custom domain — opt-in via swa_custom_domain variable.
