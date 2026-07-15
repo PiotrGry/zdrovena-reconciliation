@@ -19,7 +19,7 @@ import os
 from typing import Any
 
 from zdrovena.api.routers.allegro_invoicer import create_invoice_for_order
-from zdrovena.api.routers.webhooks import _create_draft
+from zdrovena.api.routers.webhooks import _create_draft, _sync_draft_from_order
 from zdrovena.common.allegro_mapper import allegro_to_shopify_order
 
 logger = logging.getLogger("zdrovena.api.routers.allegro_poller")
@@ -45,7 +45,7 @@ def poll_orders_once(
     storage: Any,
     fakturownia_client: Any = None,
     status: str = "READY_FOR_PROCESSING",
-    fulfillment_status: str = "NEW",
+    fulfillment_status: str | None = "NEW",
 ) -> dict[str, int]:
     """One polling cycle. Returns per-cycle stats.
 
@@ -61,6 +61,8 @@ def poll_orders_once(
     stats = {
         "fetched": 0,
         "created": 0,
+        "updated": 0,
+        "unchanged": 0,
         "skipped_duplicate": 0,
         "errors": 0,
         "invoices_created": 0,
@@ -95,18 +97,28 @@ def poll_orders_once(
             stats["errors"] += 1
             continue
 
-        if _existing_active_allegro_draft(drafts, allegro_id):
-            logger.info("Allegro order %s already has a draft — skipping", allegro_id)
-            stats["skipped_duplicate"] += 1
-            continue
-
+        existing = _existing_active_allegro_draft(drafts, allegro_id)
         try:
             shopify_like = allegro_to_shopify_order(form)
+            if existing:
+                changed = _sync_draft_from_order(
+                    shopify_like,
+                    shipping_store,
+                    storage,
+                    source="allegro",
+                    existing=existing,
+                )
+                if changed:
+                    stats["updated"] += 1
+                else:
+                    stats["unchanged"] += 1
+                stats["skipped_duplicate"] += 1
+                continue
             _create_draft(shopify_like, shipping_store, storage, source="allegro")
         except Exception:
             # Resilience boundary: one malformed/failing order must not abort the
             # rest of the cycle. logger.exception captures the traceback (TRY400).
-            logger.exception("Failed to create draft for Allegro order %s", allegro_id)
+            logger.exception("Failed to sync draft for Allegro order %s", allegro_id)
             stats["errors"] += 1
             continue
 

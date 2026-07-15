@@ -277,24 +277,36 @@ def _sync_shopify_orders_from_api(
     shipping_store: ShippingStore,
     storage: Any,
 ) -> dict[str, int]:
-    """Fetch unfulfilled open Shopify orders via REST API and create missing drafts.
+    """Fetch Shopify orders via REST API and create or refresh shipping drafts.
 
-    Uses external_order_id (Shopify order id) for idempotency — existing drafts
-    (any status) with the same id are skipped so we never create duplicates.
+    Uses external_order_id (Shopify order id) for idempotency. Existing drafts
+    are refreshed instead of skipped so the visible list reflects status changes
+    made outside this app.
     """
     import requests
 
-    stats: dict[str, int] = {"fetched": 0, "created": 0, "skipped": 0, "errors": 0}
+    stats: dict[str, int] = {
+        "fetched": 0,
+        "created": 0,
+        "updated": 0,
+        "unchanged": 0,
+        "errors": 0,
+    }
     # limit=50 is intentional for v1 — covers typical daily volume.
-    # If >50 unfulfilled orders pile up, a second sync call will catch the rest
-    # (dedup skips already-created drafts). No cursor pagination implemented.
+    # If >50 recently open orders pile up, a second sync call will catch the rest.
+    # No cursor pagination implemented.
     resp = requests.get(
         f"https://{shop_domain}/admin/api/2024-01/orders.json",
         params={
             "status": "open",
-            "fulfillment_status": "unfulfilled",
+            "fulfillment_status": "any",
             "limit": 50,
-            "fields": "id,order_number,name,email,phone,shipping_address,shipping_lines,line_items,note_attributes,customer",
+            "fields": (
+                "id,order_number,name,email,phone,created_at,updated_at,"
+                "cancelled_at,closed_at,financial_status,fulfillment_status,"
+                "fulfillments,shipping_address,shipping_lines,line_items,"
+                "note_attributes,customer"
+            ),
         },
         headers={"X-Shopify-Access-Token": api_token},
         timeout=15,
@@ -309,23 +321,32 @@ def _sync_shopify_orders_from_api(
     # only affects the returned slice. 10_000 covers any realistic store size
     # and prevents silent duplicate-draft creation on stores with >200 total orders.
     existing_drafts = shipping_store.list_drafts(limit=10_000)
-    existing_order_ids = {
-        str(d.get("external_order_id", ""))
+    existing_by_order_id = {
+        str(d.get("external_order_id", "")): d
         for d in existing_drafts
         if d.get("source") == "shopify" and d.get("external_order_id")
     }
 
     for order in orders:
         order_id = str(order.get("id", ""))
-        if order_id in existing_order_ids:
-            stats["skipped"] += 1
-            continue
         try:
-            _create_draft(order, shipping_store, storage, source="shopify")
-            stats["created"] += 1
+            existing = existing_by_order_id.get(order_id)
+            changed = _sync_draft_from_order(
+                order,
+                shipping_store,
+                storage,
+                source="shopify",
+                existing=existing,
+            )
+            if existing is None:
+                stats["created"] += 1
+            elif changed:
+                stats["updated"] += 1
+            else:
+                stats["unchanged"] += 1
         except Exception:
             logger.exception(
-                "Shopify sync: draft creation failed for order %s", order.get("order_number")
+                "Shopify sync: draft refresh failed for order %s", order.get("order_number")
             )
             stats["errors"] += 1
 
@@ -1174,13 +1195,66 @@ def _create_draft_safely(
                 )
 
 
-def _create_draft(
+_SYNC_PRESERVED_FIELDS = {
+    "id",
+    "created_at",
+    "tracking_number",
+    "courier_draft_id",
+    "dispatch_order_id",
+    "allegro_shipment_id",
+    "allegro_dispatch_id",
+    "pickup_ordered",
+    "fakturownia_invoice_id",
+    "fakturownia_invoice_number",
+    "fulfilled_at",
+    "allegro_fulfillment_status",
+}
+
+_SYNC_TERMINAL_STATUSES = {"created", "cancelled"}
+_SYNC_BUSY_STATUSES = {"executing", "pending_confirmation"}
+
+
+def _source_fulfillment_status(order: dict[str, Any], *, source: str) -> str | None:
+    raw = str(order.get("fulfillment_status") or "").strip().lower()
+    if source == "allegro":
+        if raw in {"sent", "picked_up"}:
+            return "fulfilled"
+        if raw in {"processing", "ready_for_shipment"}:
+            return "processing"
+        if raw:
+            return raw
+        return None
+    if raw == "fulfilled":
+        return "fulfilled"
+    if raw == "partial":
+        return "partial"
+    if raw:
+        return raw
+    fulfillments = order.get("fulfillments") or []
+    if fulfillments:
+        return "fulfilled"
+    return None
+
+
+def _source_cancelled(order: dict[str, Any]) -> bool:
+    return bool(order.get("cancelled_at") or order.get("cancelled") is True)
+
+
+def _status_from_source(order: dict[str, Any], fallback: str, *, source: str) -> str:
+    if _source_cancelled(order):
+        return "cancelled"
+    if _source_fulfillment_status(order, source=source) == "fulfilled":
+        return "created"
+    return fallback
+
+
+def _build_draft_record(
     order: dict[str, Any],
-    shipping_store: ShippingStore,
-    storage: Any,
     *,
     source: str = "shopify",
-) -> None:
+    draft_id: str | None = None,
+    created_at: str | None = None,
+) -> dict[str, Any]:
     order_id = str(order.get("id", ""))
     order_number = order.get("order_number") or order.get("name", "")
     shipping_lines = order.get("shipping_lines") or []
@@ -1259,9 +1333,13 @@ def _create_draft(
 
     needs_review = phone is None or (courier == "apaczka" and apaczka_service_id is None)
 
+    source_fulfillment = _source_fulfillment_status(order, source=source)
+    now = datetime.now(timezone.utc).isoformat()
+    base_status = "needs_review" if needs_review else "pending"
     record: dict[str, Any] = {
-        "id": str(uuid.uuid4()),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "id": draft_id or str(uuid.uuid4()),
+        "created_at": created_at or now,
+        "updated_at": now,
         "order_date": order.get("created_at"),
         "source": source,
         "external_order_id": order_id,
@@ -1274,7 +1352,7 @@ def _create_draft(
         "tracking_number": None,
         "courier_draft_id": None,
         "dispatch_order_id": None,  # fix #6: field exists from creation
-        "status": "needs_review" if needs_review else "pending",
+        "status": _status_from_source(order, base_status, source=source),
         "packages_count": packages_count,
         "packages_breakdown": packages_breakdown,
         "total_qty": total_qty,
@@ -1299,6 +1377,11 @@ def _create_draft(
         },
         "parcel": {"template": "large", "weight_kg": None},  # fix #4: large is safe default
         "error": None,
+        "source_order_status": order.get("financial_status") or order.get("status"),
+        "source_fulfillment_status": order.get("fulfillment_status"),
+        "fulfillment_status": source_fulfillment,
+        "cancelled_at": order.get("cancelled_at"),
+        "source_updated_at": order.get("updated_at"),
     }
 
     # Wysyłam z Allegro — dodatkowe pola potrzebne dla /shipment-management/*
@@ -1307,17 +1390,102 @@ def _create_draft(
         record["allegro_credentials_id"] = None  # Allegro Standard; nadpisze się dla własnej umowy
         record["allegro_sending_method"] = allegro_sending_method
 
-    shipping_store.upsert_draft(record)
-    log_event(
-        "draft.created",
-        order_number=record["shopify_order_number"],
-        draft_id=record["id"],
+    return record
+
+
+def _merge_synced_draft(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    merged = {**existing, **incoming}
+    for field in _SYNC_PRESERVED_FIELDS:
+        if field in existing:
+            merged[field] = existing[field]
+
+    existing_status = existing.get("status")
+    incoming_status = incoming.get("status")
+
+    if existing_status in _SYNC_TERMINAL_STATUSES or existing_status in _SYNC_BUSY_STATUSES:
+        merged["status"] = existing_status
+    elif incoming_status == "created":
+        merged["status"] = "created"
+        if not merged.get("fulfilled_at"):
+            merged["fulfilled_at"] = incoming.get("source_updated_at") or incoming.get("updated_at")
+    elif incoming_status == "cancelled":
+        merged["status"] = "cancelled"
+    elif existing_status == "pending" and incoming_status == "needs_review":
+        merged["status"] = "pending"
+    else:
+        merged["status"] = incoming_status or existing_status
+
+    if (
+        existing.get("fulfillment_status") == "fulfilled"
+        or incoming.get("fulfillment_status") == "fulfilled"
+    ):
+        merged["fulfillment_status"] = "fulfilled"
+
+    if existing.get("apaczka_service_id") and incoming.get("courier") == existing.get("courier"):
+        merged["apaczka_service_id"] = existing["apaczka_service_id"]
+    if existing.get("service") and existing_status in _SYNC_BUSY_STATUSES | _SYNC_TERMINAL_STATUSES:
+        merged["service"] = existing["service"]
+        merged["courier"] = existing.get("courier", merged.get("courier"))
+
+    return merged
+
+
+def _meaningful_draft_diff(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    ignored = {"updated_at"}
+    keys = (set(before) | set(after)) - ignored
+    return any(before.get(key) != after.get(key) for key in keys)
+
+
+def _sync_draft_from_order(
+    order: dict[str, Any],
+    shipping_store: ShippingStore,
+    storage: Any,
+    *,
+    source: str = "shopify",
+    existing: dict[str, Any] | None = None,
+) -> bool:
+    record = _build_draft_record(
+        order,
         source=source,
-        courier=record["courier"],
-        status=record["status"],
-        packages_count=record["packages_count"],
+        draft_id=existing.get("id") if existing else None,
+        created_at=existing.get("created_at") if existing else None,
     )
-    _maybe_send_new_order_sms(record)
+    if existing is not None:
+        record = _merge_synced_draft(existing, record)
+    changed = existing is None or _meaningful_draft_diff(existing, record)
+    if changed:
+        shipping_store.upsert_draft(record)
+    if existing is None:
+        log_event(
+            "draft.created",
+            order_number=record["shopify_order_number"],
+            draft_id=record["id"],
+            source=source,
+            courier=record["courier"],
+            status=record["status"],
+            packages_count=record["packages_count"],
+        )
+        _maybe_send_new_order_sms(record)
+    elif changed:
+        log_event(
+            "draft.updated_from_sync",
+            order_number=record["shopify_order_number"],
+            draft_id=record["id"],
+            source=source,
+            status=record["status"],
+            fulfillment_status=record.get("fulfillment_status"),
+        )
+    return changed
+
+
+def _create_draft(
+    order: dict[str, Any],
+    shipping_store: ShippingStore,
+    storage: Any,
+    *,
+    source: str = "shopify",
+) -> None:
+    _sync_draft_from_order(order, shipping_store, storage, source=source)
 
 
 # ── Webhook endpoint ──────────────────────────────────────────────────────────
@@ -2663,6 +2831,7 @@ def sync_orders(
                 client=allegro_client,
                 shipping_store=shipping_store,
                 storage=storage,
+                fulfillment_status=None,
                 # fakturownia_client omitted — invoicing is manual via the shipping UI
             )
         except Exception as exc:

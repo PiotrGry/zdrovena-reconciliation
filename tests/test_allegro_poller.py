@@ -95,14 +95,18 @@ class TestPollOrdersOnce:
         client.list_orders.return_value = [_form("af1")]
         store = MagicMock()
         store.list_drafts.return_value = [
-            {"source": "allegro", "external_order_id": "af1", "status": "pending"}
+            {
+                "id": "draft-af1",
+                "created_at": "2026-07-01T00:00:00+00:00",
+                "source": "allegro",
+                "external_order_id": "af1",
+                "status": "pending",
+            }
         ]
         stats = poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
         assert stats["skipped_duplicate"] == 1
-        store.upsert_draft.assert_not_called()
-        # Still safe to (re-)ack Allegro side so it drops from the queue
-        # — but only if not already ack'd. Poller MAY choose to skip mark:
-        # we tolerate either.
+        assert stats["updated"] + stats["unchanged"] == 1
+        store.upsert_draft.assert_called_once()
 
     def test_error_draft_is_retried(self):
         client = MagicMock()
@@ -253,7 +257,13 @@ class TestInvoiceCreationWiring:
         client.list_orders.return_value = [_form("af1")]
         store = MagicMock()
         store.list_drafts.return_value = [
-            {"source": "allegro", "external_order_id": "af1", "status": "created"}
+            {
+                "id": "draft-af1",
+                "created_at": "2026-07-01T00:00:00+00:00",
+                "source": "allegro",
+                "external_order_id": "af1",
+                "status": "created",
+            }
         ]
         fakturownia = MagicMock()
 
@@ -266,6 +276,35 @@ class TestInvoiceCreationWiring:
             )
 
         mock_invoicer.assert_not_called()
+
+    def test_existing_pending_order_updates_to_fulfilled_without_regression(self):
+        form = _form("af1")
+        form["fulfillment"] = {"status": "SENT"}
+        form["updatedAt"] = "2026-07-15T10:00:00Z"
+        client = MagicMock()
+        client.list_orders.return_value = [form]
+        store = MagicMock()
+        store.list_drafts.return_value = [
+            {
+                "id": "draft-af1",
+                "created_at": "2026-07-01T00:00:00+00:00",
+                "source": "allegro",
+                "external_order_id": "af1",
+                "status": "pending",
+            }
+        ]
+
+        stats = poll_orders_once(
+            client=client,
+            shipping_store=store,
+            storage=MagicMock(),
+            fulfillment_status=None,
+        )
+
+        saved = store.upsert_draft.call_args.args[0]
+        assert stats["updated"] == 1
+        assert saved["status"] == "created"
+        assert saved["fulfillment_status"] == "fulfilled"
 
     def test_invoicer_failure_does_not_abort_cycle(self, monkeypatch):
         """One order's invoice failing must not block the next order's draft."""
