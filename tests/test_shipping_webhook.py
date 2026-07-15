@@ -536,6 +536,68 @@ class TestExecuteDraft:
         assert retry.status_code == 200
         assert store.get_draft(draft["id"])["status"] == "created"
 
+    def test_exception_after_claim_before_courier_ends_in_error(self, client, store):
+        # #136: a failure between the claim and the courier call (here _get_sender)
+        # must not leave the draft stuck in `executing`, and must not call the courier.
+        draft = self._seed_error_draft(store)
+        with patch(
+            "zdrovena.api.routers.webhooks._get_sender", side_effect=RuntimeError("kv down")
+        ):
+            with patch("zdrovena.api.routers.webhooks._run_inpost") as mock_run:
+                resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 502
+        mock_run.assert_not_called()
+        assert store.get_draft(draft["id"])["status"] == "error"
+
+    def test_result_write_failure_ends_in_error(self, client, store, monkeypatch):
+        # #136: courier succeeded, but persisting the `created` result fails. The
+        # draft must not remain `executing` — cleanup returns it to `error`.
+        draft = self._seed_error_draft(store)
+        original_update = store.update_draft
+
+        def flaky_update(draft_id, fields):
+            if fields.get("status") == "created":
+                raise RuntimeError("table write failed")
+            return original_update(draft_id, fields)
+
+        monkeypatch.setattr(store, "update_draft", flaky_update)
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "ship-x",
+                "tracking_number": "TRKX",
+                "status": "created",
+                "error": None,
+            },
+        ):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 502
+        assert store.get_draft(draft["id"])["status"] == "error"
+        # Still retryable (error is executable).
+        assert store.try_claim_execution(draft["id"]) is True
+
+    def test_cleanup_does_not_clobber_created_after_postwrite_error(self, client, store):
+        # #136: an exception AFTER the draft was legitimately written to `created`
+        # (here log_event) must NOT reset it — conditional cleanup only touches
+        # a still-`executing` draft.
+        draft = self._seed_error_draft(store)
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "ship-y",
+                "tracking_number": "TRKY",
+                "status": "created",
+                "error": None,
+            },
+        ):
+            with patch(
+                "zdrovena.api.routers.webhooks.log_event",
+                side_effect=RuntimeError("log sink down"),
+            ):
+                client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        # The created state written before log_event must survive the cleanup.
+        assert store.get_draft(draft["id"])["status"] == "created"
+
     def _seed_allegro_error_draft(self, store, courier, service):
         draft = {
             "id": f"draft-allegro-{courier}",

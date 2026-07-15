@@ -62,6 +62,7 @@ from zdrovena.common.shipping_format import (
     normalize_pl_phone,
     parse_pl_address,
 )
+from zdrovena.common.shipping_state import EXECUTING
 from zdrovena.common.shipping_store import ShippingStore
 from zdrovena.common.shopify_dedup_store import DedupStoreError
 
@@ -1544,6 +1545,26 @@ def delete_dlq_entry(
 # ── Execute draft ─────────────────────────────────────────────────────────────
 
 
+def _release_execution_claim(shipping_store: ShippingStore, draft_id: str, error: str) -> None:
+    """Conditionally return a claimed draft to ``error`` (R5-A/#136).
+
+    Only acts when the draft is still ``executing`` — i.e. the claim was taken
+    but no legitimate final state was reached. If the happy path already wrote a
+    later state (``created``), or a concurrent actor changed it, this is a no-op,
+    so cleanup never clobbers a good state. ``error`` is an executable state, so a
+    subsequent retry can re-claim the draft.
+
+    Best-effort: a failure to write the cleanup is logged, not raised, so it
+    cannot mask the original exception being handled.
+    """
+    try:
+        current = shipping_store.get_draft(draft_id)
+        if current and current.get("status") == EXECUTING:
+            shipping_store.update_draft(draft_id, {"status": "error", "error": error})
+    except Exception:
+        logger.exception("Failed to release execution claim for draft %s (left as-is)", draft_id)
+
+
 @router.post(
     "/shipping/drafts/{draft_id}/execute",
     summary="(Re)create courier shipment for a draft",
@@ -1580,13 +1601,17 @@ def execute_draft(
             detail="Draft already executed or in progress — nie realizuj ponownie.",
         )
 
-    pickup_schedule = {
-        "pickup_date": pickup_date,
-        "pickup_from": pickup_from,
-        "pickup_to": pickup_to,
-    }
-
+    # From here on the draft is claimed (status=executing). EVERY path to the end
+    # of the endpoint must be guarded so an exception before a legitimate final
+    # state cannot leave the draft stuck in `executing` (R5-A/#136). Cleanup is
+    # conditional — see _release_execution_claim — so it never clobbers a state
+    # the happy path already wrote (e.g. `created`).
     try:
+        pickup_schedule = {
+            "pickup_date": pickup_date,
+            "pickup_from": pickup_from,
+            "pickup_to": pickup_to,
+        }
         sender = _get_sender()
         courier = draft.get("courier", "apaczka")
         if courier == "allegro_delivery":
@@ -1595,35 +1620,38 @@ def execute_draft(
             patch = _run_inpost(draft, sender, **pickup_schedule)
         else:
             patch = _run_apaczka(draft, sender, storage, **pickup_schedule)
+
+        # Success write moves executing → created. If THIS fails, the draft is
+        # still `executing`, and the except-block cleanup returns it to `error`.
+        shipping_store.update_draft(draft_id, patch)
+        updated = shipping_store.get_draft(draft_id)
+        log_event(
+            "shipment.created",
+            draft_id=draft_id,
+            order_number=draft.get("shopify_order_number"),
+            courier=draft.get("courier"),
+            tracking_number=patch.get("tracking_number"),
+            status=patch.get("status"),
+        )
+        if updated:
+            # Never re-raises (see its docstring) — safe inside the guarded block.
+            _maybe_push_tracking_to_allegro(updated)
+        return updated or patch
     except ZdrovenaShippingError as exc:
         logger.exception("execute_draft failed for %s", draft_id)
-        shipping_store.update_draft(draft_id, {"status": "error", "error": str(exc)})
+        _release_execution_claim(shipping_store, draft_id, str(exc))
         # Wyjątek domenowy przesyłki → koperta błędu (zdrovena.api.errors)
         # mapuje go na właściwy status i polski komunikat dla operatora.
         raise
     except Exception as exc:
         logger.exception("execute_draft failed for %s", draft_id)
-        shipping_store.update_draft(draft_id, {"status": "error", "error": str(exc)})
+        _release_execution_claim(shipping_store, draft_id, str(exc))
         # Ogólny błąd komunikacji z przewoźnikiem → 502 z polskim komunikatem,
         # bez wyciekania surowego (angielskiego) str(exc) do operatora.
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Błąd komunikacji z przewoźnikiem — spróbuj ponownie za chwilę.",
         ) from exc
-
-    shipping_store.update_draft(draft_id, patch)
-    updated = shipping_store.get_draft(draft_id)
-    log_event(
-        "shipment.created",
-        draft_id=draft_id,
-        order_number=draft.get("shopify_order_number"),
-        courier=draft.get("courier"),
-        tracking_number=patch.get("tracking_number"),
-        status=patch.get("status"),
-    )
-    if updated:
-        _maybe_push_tracking_to_allegro(updated)
-    return updated or patch
 
 
 # ── Confirm pending Allegro create-command ───────────────────────────────────
