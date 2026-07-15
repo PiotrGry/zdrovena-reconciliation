@@ -6,6 +6,8 @@ No I/O — every case is a plain dict-in, dict-out (or None) assertion.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from zdrovena.common.allegro_invoice_mapper import allegro_order_to_fakturownia_invoice
 
 
@@ -205,3 +207,34 @@ class TestQuantityMultiplication:
         product_total = invoice["positions"][0]["total_price_gross"]
         deposit_total = float(invoice["settlement_positions"][0]["amount"])
         assert product_total + deposit_total == 158.00
+
+
+class TestAllegroExpectedPayable:
+    """R4.3: shared helper the preview and parity cross-check both use, so they
+    compare the final invoice against the identical Allegro figure."""
+
+    def test_total_minus_delivery(self):
+        from zdrovena.common.allegro_invoice_mapper import allegro_expected_payable
+
+        order = {
+            "summary": {"totalToPay": {"amount": "32.50"}},
+            "delivery": {"cost": {"amount": "12.50"}},
+        }
+        assert allegro_expected_payable(order) == Decimal("20.00")
+
+    def test_missing_delivery_treated_as_zero(self):
+        from zdrovena.common.allegro_invoice_mapper import allegro_expected_payable
+
+        order = {"summary": {"totalToPay": {"amount": "20.00"}}}
+        assert allegro_expected_payable(order) == Decimal("20.00")
+
+    def test_absent_total_to_pay_returns_none(self):
+        from zdrovena.common.allegro_invoice_mapper import allegro_expected_payable
+
+        assert allegro_expected_payable({}) is None
+
+    def test_unparseable_total_returns_none(self):
+        from zdrovena.common.allegro_invoice_mapper import allegro_expected_payable
+
+        order = {"summary": {"totalToPay": {"amount": "not-a-number"}}}
+        assert allegro_expected_payable(order) is None

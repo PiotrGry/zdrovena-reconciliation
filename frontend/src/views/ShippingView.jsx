@@ -64,8 +64,17 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
     const [creating, setCreating] = useState(false)
     const [preview, setPreview] = useState(null)
     const [error, setError] = useState(null)
+    // R4.3: when the preview total does not match Allegro's "Do zapłaty", block
+    // unsafe invoice creation until the operator explicitly acknowledges it.
+    const [ackMismatch, setAckMismatch] = useState(false)
 
     useEffect(() => {
+        // R4.3/#135: a fresh preview load (draft change OR reload) must clear any
+        // prior mismatch acknowledgement — consent must never carry across drafts
+        // or across preview versions of the same draft.
+        setAckMismatch(false)
+        setLoading(true)
+        setError(null)
         const ctrl = new AbortController()
         getToken().then(token =>
             fetchJson(`/api/shipping/drafts/${draft.id}/invoice-preview`, {
@@ -181,9 +190,15 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
                                     border: `1px solid ${preview.matches_allegro ? 'var(--ok, #86efac)' : 'var(--warn, #fcd34d)'}` }}>
                                     {preview.matches_allegro
                                         ? <><Icon name="check" size={13} /> Zgadza się z Allegro „Do zapłaty” ({preview.allegro_total_to_pay.toFixed(2)} zł, bez dostawy)</>
-                                        : <><Icon name="alertTriangle" size={13} /> Uwaga: różni się od Allegro „Do zapłaty” ({preview.allegro_total_to_pay.toFixed(2)} zł, bez dostawy) — sprawdź przed wysłaniem</>
+                                        : <><Icon name="alertTriangle" size={13} /> Uwaga: różni się od Allegro „Do zapłaty” ({preview.allegro_total_to_pay.toFixed(2)} zł, bez dostawy){preview.difference != null && ` — różnica ${preview.difference > 0 ? '+' : ''}${preview.difference.toFixed(2)} zł`} — sprawdź przed wysłaniem</>
                                     }
                                 </div>
+                            )}
+                            {preview.matches_allegro === false && (
+                                <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: '0.85em', color: 'var(--warn, #b45309)' }}>
+                                    <input type="checkbox" checked={ackMismatch} onChange={e => setAckMismatch(e.target.checked)} />
+                                    Rozumiem rozbieżność z Allegro i chcę mimo to utworzyć fakturę
+                                </label>
                             )}
                         </>
                     )}
@@ -191,7 +206,7 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
 
                 <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8 }}>
                     {preview?.status === 'preview_ready' && (
-                        <button className="btn btn-primary" onClick={handleCreate} disabled={creating}>
+                        <button className="btn btn-primary" onClick={handleCreate} disabled={creating || (preview.matches_allegro === false && !ackMismatch)}>
                             {creating
                                 ? <><Icon name="loader" size={13} className="spin" /> Tworzenie…</>
                                 : <><Icon name="invoice" size={13} /> Utwórz i załącz do Allegro</>

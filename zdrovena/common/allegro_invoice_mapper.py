@@ -43,6 +43,25 @@ from zdrovena.common.kaucja import calculate_kaucja, parse_line_quantity
 _CENTS = Decimal("0.01")
 
 
+def allegro_expected_payable(order: dict[str, Any]) -> Decimal | None:
+    """Allegro's own payable total for the invoice, as a ``Decimal``.
+
+    This is ``summary.totalToPay`` minus the delivery cost, because the invoice
+    carries no shipping line item. Returns ``None`` when ``totalToPay`` is
+    absent or unparseable. Shared by the invoice preview and any parity
+    cross-check so both compare against the identical figure (R4.3).
+    """
+    summary = order.get("summary") or {}
+    total_to_pay_raw = (summary.get("totalToPay") or {}).get("amount")
+    if total_to_pay_raw is None:
+        return None
+    delivery_cost_raw = ((order.get("delivery") or {}).get("cost") or {}).get("amount")
+    try:
+        return Decimal(str(total_to_pay_raw)) - Decimal(str(delivery_cost_raw or "0"))
+    except (ArithmeticError, ValueError):
+        return None
+
+
 def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any]:
     invoice_request = order.get("invoice") or {}
     buyer = order.get("buyer") or {}
