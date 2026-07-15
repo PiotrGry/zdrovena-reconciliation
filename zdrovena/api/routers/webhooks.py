@@ -1261,9 +1261,12 @@ def _source_fulfillment_details(order: dict[str, Any]) -> dict[str, Any]:
 
 
 def _status_from_source(order: dict[str, Any], fallback: str, *, source: str) -> str:
+    source_fulfillment = _source_fulfillment_status(order, source=source)
     if _source_cancelled(order):
         return "cancelled"
-    if _source_fulfillment_status(order, source=source) == "fulfilled":
+    if source_fulfillment == "cancelled":
+        return "cancelled"
+    if source_fulfillment == "fulfilled":
         return "created"
     return fallback
 
