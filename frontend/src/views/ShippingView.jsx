@@ -54,9 +54,38 @@ function sourcePillKind(source) {
 function fmtOrderNum(num) {
     if (!num) return '—'
     const s = String(num)
-    // Allegro order IDs are UUIDs (36 chars) — truncate for display
-    if (s.length > 10) return `#${s.slice(0, 8)}…`
     return `#${s}`
+}
+
+function OrderNumberCell({ draft }) {
+    const orderNumber = draft.shopify_order_number
+    if (!orderNumber) return <span className="mono">—</span>
+
+    const value = String(orderNumber)
+    const displayValue = fmtOrderNum(value)
+    if (draft.source !== 'allegro') {
+        return <span className="mono" title={value}>{displayValue}</span>
+    }
+
+    async function copyOrderNumber(event) {
+        event.stopPropagation()
+        await navigator.clipboard?.writeText(value)
+    }
+
+    return (
+        <span className="order-id-cell" title={value}>
+            <span className="mono order-id-full">{displayValue}</span>
+            <button
+                type="button"
+                className="order-id-copy"
+                onClick={copyOrderNumber}
+                aria-label="Kopiuj pełne ID Allegro"
+                title="Kopiuj pełne ID Allegro"
+            >
+                <Icon name="copy" size={12} />
+            </button>
+        </span>
+    )
 }
 
 function syncStat(result, key) {
@@ -431,9 +460,9 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
             <div
                 className="accordion-header"
                 style={{ padding: '10px 16px 10px 0', cursor: 'default', display: 'grid', alignItems: 'center',
-                    gridTemplateColumns: '72px 1fr 170px 120px 110px 130px 130px 88px 76px' }}
+                    gridTemplateColumns: 'minmax(150px, 190px) 1fr 170px 120px 110px 130px 130px 88px 76px' }}
             >
-                <span className="mono" title={draft.shopify_order_number}>{fmtOrderNum(draft.shopify_order_number)}</span>
+                <OrderNumberCell draft={draft} />
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {draft.customer_name || '—'}
                     {draft.source && (
@@ -1169,7 +1198,7 @@ export default function ShippingView() {
                     <div style={{ display: 'flex', alignItems: 'center', borderBottom: '2px solid var(--border-strong)', background: 'var(--surface-2)', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                         <div style={{ width: 56, flexShrink: 0 }} />
                         <div style={{ flex: 1, minWidth: 0, display: 'grid', alignItems: 'center', padding: '7px 16px 7px 0', gap: 12,
-                            gridTemplateColumns: '72px 1fr 170px 120px 110px 130px 130px 88px 76px' }}>
+                            gridTemplateColumns: 'minmax(150px, 190px) 1fr 170px 120px 110px 130px 130px 88px 76px' }}>
                             <span>Nr</span>
                             <span>Klient</span>
                             <span>Email</span>

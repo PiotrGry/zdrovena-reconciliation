@@ -794,6 +794,37 @@ table.files td {
     color: var(--text-2);
 }
 
+.order-id-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.order-id-full {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
+}
+
+.order-id-copy {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-3);
+    background: var(--surface);
+}
+
+.order-id-copy:hover {
+    color: var(--primary);
+    border-color: var(--border-strong);
+}
+
 .num {
     font-variant-numeric: tabular-nums;
 }
@@ -2363,5 +2394,4 @@ table.files tbody tr:hover .row-actions {
 .spin {
     animation: spin 0.8s linear infinite;
     display: inline-block;
-}
 }
