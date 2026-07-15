@@ -85,6 +85,24 @@ class TestParseLineQuantity:
         with pytest.raises(ValueError):
             parse_line_quantity("abc")
 
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            1.5,  # fractional float
+            1.0,  # integral float — still a float, reject (no silent coercion)
+            "1.5",  # fractional string
+            True,  # bool must NOT become 1
+            False,  # bool must NOT become 0
+        ],
+    )
+    def test_rejects_non_integer_and_bool(self, bad):
+        with pytest.raises(ValueError):
+            parse_line_quantity(bad)
+
+    @pytest.mark.parametrize("good,expected", [(0, 0), (3, 3), ("4", 4), (None, 1)])
+    def test_accepts_valid(self, good, expected):
+        assert parse_line_quantity(good) == expected
+
 
 class TestKaucjaQuantityEdge:
     def test_zero_quantity_line_contributes_zero_not_full_deposit(self):

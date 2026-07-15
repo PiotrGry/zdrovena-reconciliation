@@ -21,26 +21,43 @@ To NIE zmienia mechanizmu KSeF/Rozliczenie — kwota nadal trafia do
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Any
+
+# Only a pure integer literal (optional sign, digits). Rejects "1.5", "abc", "".
+_INT_STR = re.compile(r"^[+-]?\d+$")
 
 
 def parse_line_quantity(raw: Any) -> int:
     """Parse an Allegro line-item quantity with an explicit, tested rule (R4.2).
 
-    Rules (never silently promote 0 → 1, which would inflate money):
-      * absent / ``None`` → ``1`` (Allegro always sends quantity; be lenient
-        only for a genuinely missing key)
-      * ``0`` → ``0`` (zero units contribute zero — kept, not promoted)
-      * negative or non-integer → :class:`ValueError` (a malformed order must
-        fail loud rather than miscompute an invoice)
+    Never silently coerce or truncate — a wrong quantity miscomputes invoice and
+    kaucja amounts, so anything ambiguous fails loud:
+
+      * absent / ``None`` → ``1`` (Allegro always sends quantity; lenient only
+        for a genuinely missing key)
+      * ``0`` → ``0`` (zero units contribute zero — kept, never promoted to 1)
+      * accepted: a non-bool ``int`` ≥ 0, or an integer string like ``"4"``
+      * rejected (``ValueError``): ``bool`` (``True``/``False`` must not become
+        1/0), any ``float`` incl. ``1.0``, fractional values, non-integer
+        strings like ``"1.5"``, negatives, and garbage like ``"abc"``
+
+    ``int(raw)`` is deliberately NOT used as a catch-all: it would turn ``1.5``,
+    ``True`` and ``1.0`` into ``1`` by silent truncation/coercion.
     """
     if raw is None:
         return 1
-    try:
-        quantity = int(raw)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"invalid line-item quantity {raw!r}") from exc
+    # bool is a subclass of int — must be rejected BEFORE the int check.
+    if isinstance(raw, bool):
+        raise ValueError(f"invalid line-item quantity {raw!r} (bool not allowed)")
+    if isinstance(raw, int):
+        quantity = raw
+    elif isinstance(raw, str) and _INT_STR.match(raw.strip()):
+        quantity = int(raw.strip())
+    else:
+        # float (incl. 1.0), Decimal, "1.5", "abc", etc. — reject, don't truncate.
+        raise ValueError(f"invalid line-item quantity {raw!r} (must be an integer)")
     if quantity < 0:
         raise ValueError(f"negative line-item quantity {quantity}")
     return quantity
