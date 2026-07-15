@@ -2536,7 +2536,14 @@ class TestSyncShopifyOrdersFromApi:
             **order,
             "fulfillment_status": "fulfilled",
             "updated_at": "2026-07-15T10:00:00Z",
-            "fulfillments": [{"tracking_number": "TRK-777"}],
+            "fulfillments": [
+                {
+                    "id": 123,
+                    "tracking_number": "TRK-777",
+                    "tracking_company": "InPost",
+                    "updated_at": "2026-07-15T09:59:00Z",
+                }
+            ],
         }
         with RequestsMock() as rsps:
             rsps.add(
@@ -2557,7 +2564,44 @@ class TestSyncShopifyOrdersFromApi:
         assert len(drafts) == 1
         assert drafts[0]["status"] == "created"
         assert drafts[0]["fulfillment_status"] == "fulfilled"
-        assert drafts[0]["fulfilled_at"] == "2026-07-15T10:00:00Z"
+        assert drafts[0]["fulfilled_at"] == "2026-07-15T09:59:00Z"
+        assert drafts[0]["tracking_number"] == "TRK-777"
+        assert drafts[0]["tracking_company"] == "InPost"
+
+    def test_sync_queries_any_status_ordered_by_recent_updates(self, tmp_path):
+        import json
+        from urllib.parse import parse_qs, urlparse
+
+        from responses import RequestsMock
+
+        from zdrovena.api.routers.webhooks import _sync_shopify_orders_from_api
+        from zdrovena.common.storage import LocalStorageService
+
+        store = ShippingStore(local_root=tmp_path / "store")
+        storage = LocalStorageService(root=tmp_path / "storage")
+        request_urls: list[str] = []
+
+        def capture_request(request):
+            request_urls.append(request.url)
+            return 200, {}, json.dumps({"orders": []})
+
+        with RequestsMock() as rsps:
+            rsps.add_callback(
+                rsps.GET,
+                "https://shop.myshopify.com/admin/api/2024-01/orders.json",
+                callback=capture_request,
+            )
+            _sync_shopify_orders_from_api(
+                shop_domain="shop.myshopify.com",
+                api_token="tok",
+                shipping_store=store,
+                storage=storage,
+            )
+
+        query = parse_qs(urlparse(request_urls[0]).query)
+        assert query["status"] == ["any"]
+        assert query["fulfillment_status"] == ["any"]
+        assert query["order"] == ["updated_at desc"]
 
     def test_sync_does_not_regress_created_draft_to_pending(self, tmp_path):
         from responses import RequestsMock
