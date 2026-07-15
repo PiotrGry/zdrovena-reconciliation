@@ -306,6 +306,36 @@ class TestInvoiceCreationWiring:
         assert saved["status"] == "created"
         assert saved["fulfillment_status"] == "fulfilled"
 
+    def test_existing_pending_order_updates_to_cancelled(self):
+        form = _form("af1")
+        form["fulfillment"] = {"status": "CANCELLED"}
+        form["updatedAt"] = "2026-07-15T10:00:00Z"
+        client = MagicMock()
+        client.list_orders.return_value = [form]
+        store = MagicMock()
+        store.list_drafts.return_value = [
+            {
+                "id": "draft-af1",
+                "created_at": "2026-07-01T00:00:00+00:00",
+                "source": "allegro",
+                "external_order_id": "af1",
+                "status": "pending",
+            }
+        ]
+
+        stats = poll_orders_once(
+            client=client,
+            shipping_store=store,
+            storage=MagicMock(),
+            fulfillment_status=None,
+        )
+
+        saved = store.upsert_draft.call_args.args[0]
+        assert stats["updated"] == 1
+        assert saved["status"] == "cancelled"
+        assert saved["fulfillment_status"] == "cancelled"
+        assert saved["source_fulfillment_status"] == "CANCELLED"
+
     def test_invoicer_failure_does_not_abort_cycle(self, monkeypatch):
         """One order's invoice failing must not block the next order's draft."""
         monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
