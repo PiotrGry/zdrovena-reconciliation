@@ -20,4 +20,7 @@ azure_client_id_entra = ""
 # Static Web Apps region (westeurope recommended — polandcentral not supported)
 swa_location = "westeurope"
 
+# E-mail właściciela — odbiorca alertów Azure Monitor (error-rate, latency, DLQ)
+ops_alert_email = "owner@example.com"
+
 

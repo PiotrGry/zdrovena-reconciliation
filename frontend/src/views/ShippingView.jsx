@@ -7,6 +7,7 @@ import { Pill } from '../components/Pill'
 import { Icon } from '../components/Icon'
 import { useToast } from '../components/Toast'
 import { fetchJson } from '../api'
+import { usePolling } from '../hooks/usePolling'
 
 function fmtDate(iso) {
     if (!iso) return '—'
@@ -63,18 +64,24 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
     const [creating, setCreating] = useState(false)
     const [preview, setPreview] = useState(null)
     const [error, setError] = useState(null)
+    // R4.3: when the preview total does not match Allegro's "Do zapłaty", block
+    // unsafe invoice creation until the operator explicitly acknowledges it.
+    const [ackMismatch, setAckMismatch] = useState(false)
 
     useEffect(() => {
+        // R4.3/#135: a fresh preview load (draft change OR reload) must clear any
+        // prior mismatch acknowledgement — consent must never carry across drafts
+        // or across preview versions of the same draft.
+        setAckMismatch(false)
+        setLoading(true)
+        setError(null)
         const ctrl = new AbortController()
         getToken().then(token =>
-            fetch(`/api/shipping/drafts/${draft.id}/invoice-preview`, {
-                headers: { Authorization: `Bearer ${token}` },
+            fetchJson(`/api/shipping/drafts/${draft.id}/invoice-preview`, {
+                token,
                 signal: ctrl.signal,
             })
-        ).then(r => r.json().then(data => {
-            if (!r.ok) throw new Error(data?.detail || `HTTP ${r.status}`)
-            return data
-        })).then(data => {
+        ).then(data => {
             if (!ctrl.signal.aborted) { setPreview(data); setLoading(false) }
         }).catch(e => {
             if (e.name !== 'AbortError' && !ctrl.signal.aborted) { setError(e.message); setLoading(false) }
@@ -87,13 +94,11 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
         setError(null)
         try {
             const token = await getToken()
-            const r = await fetch(`/api/shipping/drafts/${draft.id}/create-invoice`, {
+            const data = await fetchJson(`/api/shipping/drafts/${draft.id}/create-invoice`, {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
+                token,
             })
-            const data = await r.json()
-            if (r.ok) { onCreated(data) }
-            else setError(data.detail || `Błąd ${r.status}`)
+            onCreated(data)
         } catch (e) {
             setError(e.message)
         } finally {
@@ -145,7 +150,10 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
                                     <tbody>
                                         {preview.positions.map((p, i) => (
                                             <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                                                <td style={{ padding: '6px 8px 6px 0' }}>{p.name}</td>
+                                                <td style={{ padding: '6px 8px 6px 0' }}>
+                                                    {p.name}
+                                                    {p.vat_rate && <span className="dim" style={{ fontSize: '0.8em', marginLeft: 6 }}>VAT {p.vat_rate}</span>}
+                                                </td>
                                                 <td style={{ padding: '6px 8px', textAlign: 'center' }}>{p.quantity}</td>
                                                 <td style={{ padding: '6px 0 6px 8px', textAlign: 'right', fontWeight: 500 }}>{p.line_total.toFixed(2)} zł</td>
                                             </tr>
@@ -159,20 +167,46 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
                                         ))}
                                     </tbody>
                                     <tfoot>
+                                        <tr style={{ color: 'var(--text-2)', fontSize: '0.92em' }}>
+                                            <td colSpan={2} style={{ padding: '8px 8px 2px 0' }}>Suma pozycji</td>
+                                            <td style={{ padding: '8px 0 2px 8px', textAlign: 'right' }}>{(preview.positions_total ?? 0).toFixed(2)} zł</td>
+                                        </tr>
+                                        {(preview.settlement_total ?? 0) > 0 && (
+                                            <tr style={{ color: 'var(--text-2)', fontSize: '0.92em' }}>
+                                                <td colSpan={2} style={{ padding: '2px 8px 2px 0' }}>Kaucja za opakowania zwrotne</td>
+                                                <td style={{ padding: '2px 0 2px 8px', textAlign: 'right' }}>{(preview.settlement_total ?? 0).toFixed(2)} zł</td>
+                                            </tr>
+                                        )}
                                         <tr>
-                                            <td colSpan={2} style={{ padding: '10px 8px 4px 0', fontWeight: 700, fontSize: '1em' }}>Suma brutto</td>
-                                            <td style={{ padding: '10px 0 4px 8px', textAlign: 'right', fontWeight: 700, fontSize: '1em' }}>{preview.total_gross.toFixed(2)} zł</td>
+                                            <td colSpan={2} style={{ padding: '8px 8px 4px 0', fontWeight: 700, fontSize: '1em', borderTop: '2px solid var(--border)' }}>Do zapłaty</td>
+                                            <td style={{ padding: '8px 0 4px 8px', textAlign: 'right', fontWeight: 700, fontSize: '1em', borderTop: '2px solid var(--border)' }}>{preview.total_gross.toFixed(2)} zł</td>
                                         </tr>
                                     </tfoot>
                                 </table>
                             </div>
+                            {preview.allegro_total_to_pay != null && (
+                                <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 6, fontSize: '0.88em',
+                                    background: preview.matches_allegro ? 'var(--ok-bg, #f0fdf4)' : 'var(--warn-bg, #fffbeb)',
+                                    border: `1px solid ${preview.matches_allegro ? 'var(--ok, #86efac)' : 'var(--warn, #fcd34d)'}` }}>
+                                    {preview.matches_allegro
+                                        ? <><Icon name="check" size={13} /> Zgadza się z Allegro „Do zapłaty” ({preview.allegro_total_to_pay.toFixed(2)} zł, bez dostawy)</>
+                                        : <><Icon name="alertTriangle" size={13} /> Uwaga: różni się od Allegro „Do zapłaty” ({preview.allegro_total_to_pay.toFixed(2)} zł, bez dostawy){preview.difference != null && ` — różnica ${preview.difference > 0 ? '+' : ''}${preview.difference.toFixed(2)} zł`} — sprawdź przed wysłaniem</>
+                                    }
+                                </div>
+                            )}
+                            {preview.matches_allegro === false && (
+                                <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: '0.85em', color: 'var(--warn, #b45309)' }}>
+                                    <input type="checkbox" checked={ackMismatch} onChange={e => setAckMismatch(e.target.checked)} />
+                                    Rozumiem rozbieżność z Allegro i chcę mimo to utworzyć fakturę
+                                </label>
+                            )}
                         </>
                     )}
                 </div>
 
                 <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8 }}>
                     {preview?.status === 'preview_ready' && (
-                        <button className="btn btn-primary" onClick={handleCreate} disabled={creating}>
+                        <button className="btn btn-primary" onClick={handleCreate} disabled={creating || (preview.matches_allegro === false && !ackMismatch)}>
                             {creating
                                 ? <><Icon name="loader" size={13} className="spin" /> Tworzenie…</>
                                 : <><Icon name="invoice" size={13} /> Utwórz i załącz do Allegro</>
@@ -706,21 +740,22 @@ export default function ShippingView() {
     const [syncing, setSyncing] = useState(false)
     const [syncResult, setSyncResult] = useState(null)
 
-    const load = useCallback(async () => {
-        setLoading(true)
-        setError(null)
+    // silent=true dla odświeżania w tle (polling): nie miga spinnerem i nie
+    // podmienia listy na komunikat błędu — zostawia ostatnie dobre dane.
+    const load = useCallback(async ({ silent = false } = {}) => {
+        if (!silent) {
+            setLoading(true)
+            setError(null)
+        }
         try {
             const token = await getToken()
-            const res = await fetch('/api/shipping/drafts', {
-                headers: { Authorization: `Bearer ${token}` },
-            })
-            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-            const data = await res.json()
+            const data = await fetchJson('/api/shipping/drafts', { token })
             setDrafts(data.drafts ?? [])
+            if (silent) setError(null)
         } catch (e) {
-            setError(e.message)
+            if (!silent) setError(e.message)
         } finally {
-            setLoading(false)
+            if (!silent) setLoading(false)
         }
     }, [getToken])
 
@@ -741,28 +776,11 @@ export default function ShippingView() {
         }
     }, [getToken, load, pushToast])
 
-    useEffect(() => {
-        let cancelled = false
-        async function run() {
-            setLoading(true)
-            setError(null)
-            try {
-                const token = await getToken()
-                const res = await fetch('/api/shipping/drafts', {
-                    headers: { Authorization: `Bearer ${token}` },
-                })
-                if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-                const data = await res.json()
-                if (!cancelled) setDrafts(data.drafts ?? [])
-            } catch (e) {
-                if (!cancelled) setError(e.message)
-            } finally {
-                if (!cancelled) setLoading(false)
-            }
-        }
-        run()
-        return () => { cancelled = true }
-    }, [getToken])
+    useEffect(() => { load() }, [load])
+
+    // Reaktywność: nowe drafty z webhooków Shopify / pollera Allegro pojawiają się
+    // w ≤20 s bez F5. Visibility-aware — nie odpytuje, gdy karta jest w tle.
+    usePolling(() => load({ silent: true }), 20_000)
 
     useEffect(() => {
         let cancelled = false
@@ -805,13 +823,20 @@ export default function ShippingView() {
             const token = await getToken()
             const url = `/api/shipping/drafts/${draft.id}/label?courier=${draft.courier}`
             const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+            if (res.status === 409) {
+                // R5-B: label not ready yet (shipment not confirmed by courier) —
+                // an informational, transient state, not an error.
+                const body = await res.json().catch(() => ({}))
+                pushToast({ kind: 'info', msg: body.message_pl || 'Etykieta nie jest jeszcze gotowa — spróbuj ponownie za chwilę.' })
+                return
+            }
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
             const blob = await res.blob()
             const objUrl = URL.createObjectURL(blob)
             window.open(objUrl, '_blank')
             setTimeout(() => URL.revokeObjectURL(objUrl), 30_000)
         } catch (e) {
-            alert(`Błąd pobierania etykiety: ${e.message}`)
+            pushToast({ kind: 'error', msg: `Błąd pobierania etykiety: ${e.message}` })
         }
     }
 
@@ -910,7 +935,7 @@ export default function ShippingView() {
                         headers: { Authorization: `Bearer ${token}` },
                     }).catch(() => {})
                 ))
-                load()
+                load({ silent: true })
             } catch { /* retry on next tick */ }
         }, 5000)
         return () => clearInterval(interval)

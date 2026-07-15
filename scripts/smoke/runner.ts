@@ -26,6 +26,7 @@ const ALL_TESTS: SmokeTest[] = [
 // ── CLI args ───────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
 const verbose = args.includes("--verbose");
+const strict = args.includes("--strict") || process.env.SMOKE_STRICT === "true";
 const outputArg = args.find((a) => a.startsWith("--output"));
 const outputFile = outputArg ? outputArg.split("=")[1] ?? args[args.indexOf(outputArg) + 1] : null;
 const excludeArg = args.find((a) => a.startsWith("--exclude-test="));
@@ -122,6 +123,7 @@ const ctx: TestContext = {
   smokeAccountantSpClientId: process.env.SMOKE_ACCOUNTANT_SP_CLIENT_ID ?? "",
   smokeAccountantSpClientSecret: process.env.SMOKE_ACCOUNTANT_SP_CLIENT_SECRET ?? "",
   verbose,
+  strict,
   fetch: fetchWithTimeout,
   getViewerToken,
   getAccountantToken,
@@ -135,6 +137,7 @@ async function run(): Promise<void> {
   console.log(`\nSmoke test suite — ${TESTS.length} tests${excludedTests.size > 0 ? ` (${excludedTests.size} excluded)` : ""}`);
   console.log(`API:     ${ctx.apiUrl}`);
   console.log(`SWA:     ${ctx.swaUrl}`);
+  console.log(`Mode:    ${ctx.strict ? "STRICT (missing creds/token = FAIL)" : "non-strict (optional tests may SKIP)"}`);
   console.log("─".repeat(60));
 
   for (const test of TESTS) {
@@ -167,7 +170,7 @@ async function run(): Promise<void> {
   const skipped = results.filter((r) => r.status === "SKIP").length;
 
   console.log("─".repeat(60));
-  console.log(`Results: ${passed} passed, ${failed} failed, ${skipped} skipped`);
+  console.log(`Results: ${passed} passed, ${failed} failed, ${skipped} skipped (mode: ${ctx.strict ? "strict" : "non-strict"})`);
 
   const report: SmokeReport = {
     timestamp: new Date().toISOString(),

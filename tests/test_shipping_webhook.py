@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import io
 import json
 import os
 from pathlib import Path
@@ -487,6 +488,116 @@ class TestExecuteDraft:
         with patch("zdrovena.api.routers.webhooks._run_inpost", side_effect=Exception("API down")):
             resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
         assert resp.status_code == 502
+
+    def test_second_execute_after_success_is_409_and_does_not_recall_courier(self, client, store):
+        # R5-A: once a draft is created, a repeat execute must be rejected and
+        # must NOT call the courier again (no duplicate shipment).
+        draft = self._seed_error_draft(store)
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "ship-1",
+                "tracking_number": "TRK1",
+                "status": "created",
+                "error": None,
+            },
+        ) as mock_run:
+            first = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+            assert first.status_code == 200
+            second = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert second.status_code == 409
+        mock_run.assert_called_once()  # courier hit exactly once
+
+    def test_execute_on_cancelled_draft_is_409(self, client, store):
+        draft = self._seed_error_draft(store)
+        store.update_draft(draft["id"], {"status": "cancelled"})
+        with patch("zdrovena.api.routers.webhooks._run_inpost") as mock_run:
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 409
+        mock_run.assert_not_called()
+
+    def test_execute_failure_leaves_draft_retryable(self, client, store):
+        # R5-A: a transient failure releases the claim back to `error`, which is
+        # an executable state, so a retry can proceed.
+        draft = self._seed_error_draft(store)
+        with patch("zdrovena.api.routers.webhooks._run_inpost", side_effect=Exception("API down")):
+            client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert store.get_draft(draft["id"])["status"] == "error"
+        # Retry now succeeds.
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "ship-2",
+                "tracking_number": "TRK2",
+                "status": "created",
+                "error": None,
+            },
+        ):
+            retry = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert retry.status_code == 200
+        assert store.get_draft(draft["id"])["status"] == "created"
+
+    def test_exception_after_claim_before_courier_ends_in_error(self, client, store):
+        # #136: a failure between the claim and the courier call (here _get_sender)
+        # must not leave the draft stuck in `executing`, and must not call the courier.
+        draft = self._seed_error_draft(store)
+        with patch(
+            "zdrovena.api.routers.webhooks._get_sender", side_effect=RuntimeError("kv down")
+        ):
+            with patch("zdrovena.api.routers.webhooks._run_inpost") as mock_run:
+                resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 502
+        mock_run.assert_not_called()
+        assert store.get_draft(draft["id"])["status"] == "error"
+
+    def test_result_write_failure_ends_in_error(self, client, store, monkeypatch):
+        # #136: courier succeeded, but persisting the `created` result fails. The
+        # draft must not remain `executing` — cleanup returns it to `error`.
+        draft = self._seed_error_draft(store)
+        original_update = store.update_draft
+
+        def flaky_update(draft_id, fields):
+            if fields.get("status") == "created":
+                raise RuntimeError("table write failed")
+            return original_update(draft_id, fields)
+
+        monkeypatch.setattr(store, "update_draft", flaky_update)
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "ship-x",
+                "tracking_number": "TRKX",
+                "status": "created",
+                "error": None,
+            },
+        ):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 502
+        assert store.get_draft(draft["id"])["status"] == "error"
+        # Still retryable (error is executable).
+        assert store.try_claim_execution(draft["id"]) is True
+
+    def test_cleanup_does_not_clobber_created_after_postwrite_error(self, client, store):
+        # #136: an exception AFTER the draft was legitimately written to `created`
+        # (here log_event) must NOT reset it — conditional cleanup only touches
+        # a still-`executing` draft.
+        draft = self._seed_error_draft(store)
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "ship-y",
+                "tracking_number": "TRKY",
+                "status": "created",
+                "error": None,
+            },
+        ):
+            with patch(
+                "zdrovena.api.routers.webhooks.log_event",
+                side_effect=RuntimeError("log sink down"),
+            ):
+                client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        # The created state written before log_event must survive the cleanup.
+        assert store.get_draft(draft["id"])["status"] == "created"
 
     def _seed_allegro_error_draft(self, store, courier, service):
         draft = {
@@ -2422,3 +2533,99 @@ class TestSyncShopifyOrdersFromApi:
                     shipping_store=store,
                     storage=storage,
                 )
+
+
+class TestBatchLabels:
+    """R5-B: POST /shipping/labels/batch — merge selected labels into one PDF,
+    with deterministic errors for missing / not-ready / oversized batches."""
+
+    @staticmethod
+    def _valid_pdf() -> bytes:
+        from pypdf import PdfWriter
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=200, height=200)
+        buf = io.BytesIO()
+        writer.write(buf)
+        return buf.getvalue()
+
+    def _seed(self, store, draft_id, courier="inpost", courier_draft_id="cd-1"):
+        store.upsert_draft(
+            {
+                "id": draft_id,
+                "source": "shopify",
+                "status": "created",
+                "courier": courier,
+                "courier_draft_id": courier_draft_id,
+                "shopify_order_number": draft_id,
+            }
+        )
+
+    def test_400_on_empty(self, client):
+        resp = client.post("/api/shipping/labels/batch", json={"draft_ids": []})
+        assert resp.status_code == 400
+
+    def test_404_on_missing_draft(self, client, store):
+        self._seed(store, "b-1")
+        resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ["b-1", "ghost"]})
+        assert resp.status_code == 404
+        assert "ghost" in resp.json()["detail"]
+
+    def test_merges_labels_into_single_pdf(self, client, store):
+        self._seed(store, "b-1", courier_draft_id="cd-1")
+        self._seed(store, "b-2", courier_draft_id="cd-2")
+        pdf = self._valid_pdf()
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.get_label", return_value=pdf):
+                resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ["b-1", "b-2"]})
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/pdf"
+        assert resp.content[:4] == b"%PDF"
+
+    def test_409_when_label_not_ready(self, client, store):
+        from zdrovena.common.shipping_exceptions import InPostBusinessError
+
+        self._seed(store, "b-1", courier_draft_id="cd-1")
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                side_effect=InPostBusinessError("shipment not confirmed", courier="inpost"),
+            ):
+                resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ["b-1"]})
+        assert resp.status_code == 409
+        assert "b-1" in resp.json()["detail"]
+
+    def test_409_when_draft_has_no_label_id(self, client, store):
+        self._seed(store, "b-1", courier_draft_id=None)
+        resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ["b-1"]})
+        assert resp.status_code == 409
+
+    def test_400_when_over_limit(self, client, store):
+        ids = [f"x-{i}" for i in range(101)]
+        resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ids})
+        assert resp.status_code == 400
+
+
+class TestSingleLabelNotReady:
+    def test_inpost_business_error_maps_to_409(self, client, store):
+        from zdrovena.common.shipping_exceptions import InPostBusinessError
+
+        store.upsert_draft(
+            {
+                "id": "lnr-1",
+                "source": "shopify",
+                "status": "created",
+                "courier": "inpost",
+                "courier_draft_id": "cd-1",
+                "shopify_order_number": "lnr-1",
+            }
+        )
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                side_effect=InPostBusinessError("not confirmed yet", courier="inpost"),
+            ):
+                resp = client.get("/api/shipping/drafts/lnr-1/label?courier=inpost")
+        # R5-B: pre-confirmation → 409 LABEL_NOT_READY, not a generic 502.
+        assert resp.status_code == 409
+        assert resp.json()["error_code"] == "LabelNotReadyError"

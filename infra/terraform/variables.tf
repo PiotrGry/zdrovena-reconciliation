@@ -47,6 +47,19 @@ variable "azure_client_id_entra" {
   # Cross-variable validation (checking var.environment) not supported in Terraform.
 }
 
+variable "ops_alert_email" {
+  description = "E-mail właściciela — odbiorca alertów Azure Monitor (error-rate, latency, DLQ). Ustaw w terraform.tfvars."
+  type        = string
+
+  # Fail-fast at plan time: an empty or malformed recipient would silently make
+  # every alert undeliverable — the exact "declared but not operational" gap R4-C
+  # closes. Basic RFC-ish shape check (local@domain.tld).
+  validation {
+    condition     = can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.ops_alert_email))
+    error_message = "ops_alert_email musi być poprawnym adresem e-mail (np. owner@example.com) — alerty Azure Monitor są niedostarczalne bez prawidłowego odbiorcy."
+  }
+}
+
 variable "container_app_cpu" {
   description = "vCPU allocated to the API container"
   type        = number

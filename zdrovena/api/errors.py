@@ -34,6 +34,7 @@ from zdrovena.common.shipping_exceptions import (
     CourierAuthError,
     CourierBusinessError,
     CourierTransientError,
+    LabelNotReadyError,
     ShopifyPayloadError,
     ZdrovenaShippingError,
 )
@@ -72,6 +73,10 @@ _MESSAGES_PL: dict[str, str] = {
         "Brak dostępnych slotów podjazdu (po godzinie granicznej lub pełna rezerwacja)."
     ),
     "AddressGeocodingError": "Przewoźnik nie może zlokalizować podanego adresu.",
+    "LabelNotReadyError": (
+        "Etykieta nie jest jeszcze gotowa — przesyłka nie została jeszcze "
+        "potwierdzona przez przewoźnika. Spróbuj ponownie za chwilę."
+    ),
     # ── Anulowanie ──
     "ShipmentAlreadyDispatchedError": (
         "Przesyłka została już nadana — nie można anulować przez API."
@@ -94,6 +99,13 @@ _CATEGORY_FALLBACK: list[tuple[type, int, str]] = [
         CourierTransientError,
         status.HTTP_502_BAD_GATEWAY,
         "Chwilowy problem z przewoźnikiem — spróbuj ponownie za chwilę.",
+    ),
+    # LabelNotReadyError must precede the generic CourierBusinessError entry so
+    # it maps to 409 (transient/informational), not 422 (operator must fix).
+    (
+        LabelNotReadyError,
+        status.HTTP_409_CONFLICT,
+        "Etykieta nie jest jeszcze gotowa — spróbuj ponownie za chwilę.",
     ),
     (
         CourierBusinessError,

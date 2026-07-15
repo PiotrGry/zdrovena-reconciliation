@@ -4,6 +4,7 @@ import { useToast } from '../../components/Toast'
 import { Icon } from '../../components/Icon'
 import { PIPELINE_STEPS } from '../../data'
 import { fetchJson } from '../../api'
+import { usePolling } from '../../hooks/usePolling'
 
 const STATUS_CONFIG = {
     success: { kind: 'ok',   label: 'Sukces',          desc: 'Wszystkie kroki wykonane, e-mail wysłany' },
@@ -22,18 +23,23 @@ export function CloseHistoryTable({ refreshKey = 0 }) {
     const [history, setHistory] = useState([])
     const [loading, setLoading] = useState(true)
 
-    const load = useCallback(async () => {
+    // silent=true dla odświeżania w tle (polling): bez toasta błędu, zostawia
+    // ostatnie dobre dane.
+    const load = useCallback(async ({ silent = false } = {}) => {
         try {
             const token = await getToken()
             setHistory(await fetchJson('/api/close/history?limit=15', { token }))
         } catch (e) {
-            pushToast({ kind: 'error', msg: `Nie udało się wczytać historii zamknięć: ${e.message}` })
+            if (!silent) {
+                pushToast({ kind: 'error', msg: `Nie udało się wczytać historii zamknięć: ${e.message}` })
+            }
         } finally {
-            setLoading(false)
+            if (!silent) setLoading(false)
         }
     }, [getToken, pushToast])
 
     useEffect(() => { load() }, [load, refreshKey])
+    usePolling(() => load({ silent: true }), 20_000)
 
     const deleteEntry = async (ts) => {
         if (!window.confirm('Usuń ten wpis z historii?')) return

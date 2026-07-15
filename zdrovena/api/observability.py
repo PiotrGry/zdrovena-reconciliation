@@ -23,8 +23,10 @@ from fastapi import Request, Response
 from zdrovena.common.correlation import (
     CorrelationIdFilter,
     correlation_id_var,
+    correlation_scope,
     get_correlation_id,
     new_correlation_id,
+    sanitize_correlation_id,
     set_correlation_id,
 )
 
@@ -33,8 +35,10 @@ __all__ = [
     "CorrelationIdFilter",
     "correlation_id_middleware",
     "correlation_id_var",
+    "correlation_scope",
     "get_correlation_id",
     "new_correlation_id",
+    "sanitize_correlation_id",
     "set_correlation_id",
 ]
 
@@ -45,10 +49,9 @@ _WEBHOOK_ID_HEADER = "X-Shopify-Webhook-Id"
 async def correlation_id_middleware(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
-    incoming = (
-        request.headers.get(CORRELATION_HEADER) or request.headers.get(_WEBHOOK_ID_HEADER) or ""
-    ).strip()
-    cid = incoming or new_correlation_id()
+    incoming = request.headers.get(CORRELATION_HEADER) or request.headers.get(_WEBHOOK_ID_HEADER)
+    # Validate/normalise attacker-controlled input; invalid → fresh safe ID.
+    cid = sanitize_correlation_id(incoming)
     token = correlation_id_var.set(cid)
     try:
         response = await call_next(request)

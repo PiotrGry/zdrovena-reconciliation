@@ -11,6 +11,24 @@ resource "azurerm_application_insights" "ai" {
   tags                = local.tags
 }
 
+# ── Action group: powiadamia właściciela e-mailem ────────────────────────────
+# Bez odbiorcy alerty istniały, ale nikt nie był powiadamiany ([LOG] H1 —
+# największe "pozorne bezpieczeństwo" audytu monitoringu). Ten action_group jest
+# podpięty do wszystkich reguł alertów poniżej.
+
+resource "azurerm_monitor_action_group" "ops" {
+  name                = "${var.prefix}-ag-ops"
+  resource_group_name = azurerm_resource_group.rg.name
+  short_name          = "zdrovena" # max 12 znaków
+
+  email_receiver {
+    name          = "owner"
+    email_address = var.ops_alert_email
+  }
+
+  tags = local.tags
+}
+
 # ── Alert: high error rate (5xx > 1% over 5 minutes) ─────────────────────────
 
 resource "azurerm_monitor_metric_alert" "high_error_rate" {
@@ -28,6 +46,10 @@ resource "azurerm_monitor_metric_alert" "high_error_rate" {
     aggregation      = "Count"
     operator         = "GreaterThan"
     threshold        = 5
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.ops.id
   }
 
   tags = local.tags
@@ -50,6 +72,64 @@ resource "azurerm_monitor_metric_alert" "high_latency" {
     aggregation      = "Average"
     operator         = "GreaterThan"
     threshold        = 3000
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.ops.id
+  }
+
+  tags = local.tags
+}
+
+# ── Alert: DLQ backlog (dowolna nowa porażka trafiająca do DLQ) ──────────────
+# DLQ to Azure Table Storage (shippingdraftsdlq), nie kolejka — brak natywnej
+# metryki "liczba wiadomości". Reguła oparta na logach: liczy rekordy emitowane
+# przy enqueue do DLQ przez ``logger.exception(... "enqueueing to DLQ")`` w
+# zdrovena/api/routers/webhooks.py::_create_draft_safely. Próg > 0 w oknie 15 min
+# ⇒ każde nowe niepowodzenie utworzenia draftu powiadamia właściciela
+# ([LOG] H3, [EVT] R2/H3, [API] M3).
+#
+# WAŻNE — schemat: scope tej reguły to zasób Application Insights
+# (azurerm_application_insights.ai), więc KQL działa na schemacie App Insights
+# (tabele ``traces`` / ``exceptions`` mapowane do workspace'u Log Analytics przez
+# ``workspace_id``), a NIE na surowej tabeli ContainerAppConsoleLogs_CL. Log
+# ``logger.exception`` trafia do ``traces`` z ``severityLevel >= 3`` (Error);
+# filtr severity eliminuje ewentualne dopasowania spoza ścieżki błędu.
+#
+# Procedurę weryfikacji nazw tabel, `terraform plan/apply`, kontrolowany
+# test-alert i checklistę dowodową opisuje infra/terraform/MONITORING_RUNBOOK.md.
+
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dlq_backlog" {
+  name                = "${var.prefix}-alert-dlq-backlog"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  description         = "Nowy wpis w DLQ (nieudane utworzenie draftu) — wymaga retry/discard przez operatora"
+  severity            = 1
+
+  evaluation_frequency = "PT5M"
+  window_duration      = "PT15M"
+  scopes               = [azurerm_application_insights.ai.id]
+
+  criteria {
+    query                   = <<-KQL
+      traces
+      | where severityLevel >= 3
+      | where message has "enqueueing to DLQ"
+    KQL
+    time_aggregation_method = "Count"
+    threshold               = 0
+    operator                = "GreaterThan"
+
+    failing_periods {
+      minimum_failing_periods_to_trigger_alert = 1
+      number_of_evaluation_periods             = 1
+    }
+  }
+
+  auto_mitigation_enabled = false
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
   }
 
   tags = local.tags

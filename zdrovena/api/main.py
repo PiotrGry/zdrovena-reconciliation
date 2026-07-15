@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from zdrovena.api.errors import install_exception_handlers
 from zdrovena.api.observability import CorrelationIdFilter, correlation_id_middleware
 from zdrovena.api.routers import close, files, invoices, webhooks
+from zdrovena.common.appenv import UNKNOWN_ENV, is_production_env, resolve_app_env
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -58,16 +59,12 @@ if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
 
 
 def _is_production_env() -> bool:
-    """True gdy APP_ENV / DEPLOY_ENV / AZURE_ENV / ENV wskazuje deploy produkcyjny.
+    """True gdy kanoniczny ``APP_ENV`` wskazuje deploy produkcyjny.
 
-    Za produkcję uznajemy dowolną z wartości {production, prod, live}. Development,
-    sandbox, staging i brak wartości są nie-produkcyjne. Bez rozróżniania wielkości
-    liter. (Odpowiada logice w ``zdrovena.api.routers.webhooks``.)
+    Delegates to :func:`zdrovena.common.appenv.is_production_env` — jedno
+    kanoniczne źródło rozstrzygania środowiska dla całej aplikacji (R4-B).
     """
-    for var in ("APP_ENV", "DEPLOY_ENV", "AZURE_ENV", "ENV"):
-        if os.environ.get(var, "").strip().lower() in {"production", "prod", "live"}:
-            return True
-    return False
+    return is_production_env()
 
 
 @asynccontextmanager
@@ -81,8 +78,21 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
 
     keyvault_url = os.environ.get("AZURE_KEYVAULT_URL")
     auth_disabled = os.environ.get("AZURE_AUTH_DISABLED", "").lower() in ("1", "true", "yes")
+    app_env = resolve_app_env()
+    # A Key Vault URL is only ever configured for a real Azure deployment; local
+    # dev has none. It is our "am I deployed?" signal for the fail-closed rules.
+    deployed = bool(keyvault_url)
 
-    # Strażnik: uruchomienie w produkcji z wyłączoną autoryzacją to krytyczna
+    # Strażnik 1: jawnie ustawione, ale nierozpoznane APP_ENV jest niejednoznaczne
+    # — nie potrafimy stwierdzić, czy to produkcja. Fail-closed.
+    if app_env == UNKNOWN_ENV:
+        logger.critical(
+            "APP_ENV ustawione na nierozpoznaną wartość — środowisko jest niejednoznaczne. "
+            "Odmawiam startu. Ustaw APP_ENV na jedno z: development / staging / production."
+        )
+        sys.exit(1)
+
+    # Strażnik 2: uruchomienie w produkcji z wyłączoną autoryzacją to krytyczna
     # dziura bezpieczeństwa (każdy JWT przechodzi). Odmawiamy startu, żeby
     # orchestrator Container App zgłosił błąd zamiast wystawić otwarte API.
     if auth_disabled and _is_production_env():
@@ -90,6 +100,17 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
             "AZURE_AUTH_DISABLED=true w środowisku produkcyjnym — API byłoby otwarte "
             "bez autoryzacji. Odmawiam startu. Usuń AZURE_AUTH_DISABLED z konfiguracji "
             "produkcyjnej."
+        )
+        sys.exit(1)
+
+    # Strażnik 3: wyłączona autoryzacja w realnym deploymencie (Key Vault ustawiony)
+    # bez jawnego APP_ENV=development jest niejednoznaczne — traktujemy jak potencjalną
+    # produkcję i odmawiamy startu. Lokalny dev (bez Key Vault) nie jest tym objęty.
+    if auth_disabled and deployed and app_env != "development":
+        logger.critical(
+            "AZURE_AUTH_DISABLED=true w deploymencie (AZURE_KEYVAULT_URL ustawione), a APP_ENV "
+            "!= development — niejednoznaczne, potencjalnie produkcyjne, otwarte API. Odmawiam "
+            "startu. Ustaw APP_ENV=development, jeśli to celowe środowisko deweloperskie."
         )
         sys.exit(1)
 

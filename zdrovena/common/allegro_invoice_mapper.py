@@ -34,10 +34,32 @@ both are checked.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from zdrovena.common.fakturownia import KAUCJA_DESCRIPTION
+from zdrovena.common.kaucja import calculate_kaucja, parse_line_quantity
+
+_CENTS = Decimal("0.01")
+
+
+def allegro_expected_payable(order: dict[str, Any]) -> Decimal | None:
+    """Allegro's own payable total for the invoice, as a ``Decimal``.
+
+    This is ``summary.totalToPay`` minus the delivery cost, because the invoice
+    carries no shipping line item. Returns ``None`` when ``totalToPay`` is
+    absent or unparseable. Shared by the invoice preview and any parity
+    cross-check so both compare against the identical figure (R4.3).
+    """
+    summary = order.get("summary") or {}
+    total_to_pay_raw = (summary.get("totalToPay") or {}).get("amount")
+    if total_to_pay_raw is None:
+        return None
+    delivery_cost_raw = ((order.get("delivery") or {}).get("cost") or {}).get("amount")
+    try:
+        return Decimal(str(total_to_pay_raw)) - Decimal(str(delivery_cost_raw or "0"))
+    except (ArithmeticError, ValueError):
+        return None
 
 
 def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any]:
@@ -48,14 +70,17 @@ def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any
     is_company = bool(company.get("name"))
 
     positions: list[dict[str, Any]] = []
-    deposit_total = Decimal("0")
 
     for item in order.get("lineItems") or []:
         offer = item.get("offer") or {}
-        quantity = int(item.get("quantity", 1) or 1)
+        quantity = parse_line_quantity(item.get("quantity"))
         unit_price = Decimal(str((item.get("price") or {}).get("amount", "0")))
         tax_rate = Decimal(str((item.get("tax") or {}).get("rate", "23")))
-        line_total = unit_price * quantity
+        # Money stays Decimal through the arithmetic; quantize to cents once and
+        # only then cross the wire as a float (Fakturownia's position schema
+        # expects a number). Quantizing before float() avoids binary-float drift
+        # like 3 * 0.1 → 0.30000000000000004.
+        line_total = (unit_price * quantity).quantize(_CENTS, rounding=ROUND_HALF_UP)
         positions.append(
             {
                 "name": offer.get("name", ""),
@@ -64,17 +89,10 @@ def allegro_order_to_fakturownia_invoice(order: dict[str, Any]) -> dict[str, Any
                 "tax": int(tax_rate),
             }
         )
-        deposit = item.get("deposit")
-        if deposit:
-            # Verified against a real production order (quantity=2,
-            # price.amount="73.00", deposit.price.amount="6.00",
-            # order.summary.totalToPay="158.00"): both price.amount and
-            # deposit.price.amount are PER-UNIT values in Allegro's schema,
-            # not line totals. (73.00 + 6.00) * 2 = 158.00 matches exactly;
-            # treating them as already-line-totals (73.00 + 6.00 = 79.00)
-            # does not. Both must be multiplied by quantity.
-            unit_deposit = Decimal(str((deposit.get("price") or {}).get("amount", "0")))
-            deposit_total += unit_deposit * quantity
+
+    # Kaucja — jedno kanoniczne źródło (natywny deposit z Allegro × quantity),
+    # współdzielone z patcherem, żeby obie ścieżki liczyły tę samą kwotę.
+    deposit_total = calculate_kaucja(order)
 
     invoice: dict[str, Any] = {
         "kind": "vat",

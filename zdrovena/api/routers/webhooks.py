@@ -43,8 +43,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, ShopifyDedupStoreDep, StorageDep
-from zdrovena.api.observability import get_correlation_id, set_correlation_id
+from zdrovena.api.observability import correlation_scope, get_correlation_id
 from zdrovena.audit.bottles import SKIP_RE, is_glass
+from zdrovena.common.appenv import is_production_env
 from zdrovena.common.events import log_event
 from zdrovena.common.secrets import get_secret
 from zdrovena.common.shipping_exceptions import (
@@ -55,6 +56,8 @@ from zdrovena.common.shipping_exceptions import (
     CourierAuthError,
     CourierBusinessError,
     CourierTransientError,
+    InPostBusinessError,
+    LabelNotReadyError,
     ZdrovenaShippingError,
 )
 from zdrovena.common.shipping_format import (
@@ -62,6 +65,7 @@ from zdrovena.common.shipping_format import (
     normalize_pl_phone,
     parse_pl_address,
 )
+from zdrovena.common.shipping_state import EXECUTING
 from zdrovena.common.shipping_store import ShippingStore
 from zdrovena.common.shopify_dedup_store import DedupStoreError
 
@@ -121,16 +125,12 @@ def _is_shopify_topic_allowed(topic: str) -> bool:
 
 
 def _is_production_env() -> bool:
-    """True when APP_ENV / DEPLOY_ENV / AZURE_ENV signals a production deploy.
+    """True when the canonical ``APP_ENV`` signals a production deploy.
 
-    We treat *any* of {production, prod, live} as production. Development,
-    sandbox, staging, and unset values are non-production. Case-insensitive.
+    Delegates to :func:`zdrovena.common.appenv.is_production_env` so the whole
+    application resolves "is this production?" from one canonical place (R4-B).
     """
-    for var in ("APP_ENV", "DEPLOY_ENV", "AZURE_ENV", "ENV"):
-        value = os.environ.get(var, "").strip().lower()
-        if value in {"production", "prod", "live"}:
-            return True
-    return False
+    return is_production_env()
 
 
 def _is_shopify_domain_allowed(shop_domain: str) -> bool:
@@ -1148,28 +1148,30 @@ def _create_draft_safely(
     ``POST /shipping/drafts/dlq/{entry_id}/retry``.
 
     ``correlation_id`` jest ustawiany na starcie, aby logi tworzenia draftu w tle
-    dzieliły identyfikator z logiem webhooka, który je zakolejkował.
+    dzieliły identyfikator z logiem webhooka, który je zakolejkował. Używamy
+    ``correlation_scope`` (token/reset w ``finally``), aby ID nie wyciekło do
+    kolejnego zadania tła na tym samym workerze (R4-B).
     """
-    set_correlation_id(correlation_id)
-    try:
-        _create_draft(order, shipping_store, storage, source=source)
-    except Exception as exc:
-        logger.exception(
-            "Draft creation failed for order %s (source=%s) — enqueueing to DLQ",
-            order.get("id") or order.get("order_number"),
-            source,
-        )
+    with correlation_scope(correlation_id):
         try:
-            shipping_store.enqueue_dlq(
-                payload=order,
-                error=f"{type(exc).__name__}: {exc}",
-                source=source,
-            )
-        except Exception:
+            _create_draft(order, shipping_store, storage, source=source)
+        except Exception as exc:
             logger.exception(
-                "DLQ enqueue itself failed for order %s",
+                "Draft creation failed for order %s (source=%s) — enqueueing to DLQ",
                 order.get("id") or order.get("order_number"),
+                source,
             )
+            try:
+                shipping_store.enqueue_dlq(
+                    payload=order,
+                    error=f"{type(exc).__name__}: {exc}",
+                    source=source,
+                )
+            except Exception:
+                logger.exception(
+                    "DLQ enqueue itself failed for order %s",
+                    order.get("id") or order.get("order_number"),
+                )
 
 
 def _create_draft(
@@ -1544,6 +1546,26 @@ def delete_dlq_entry(
 # ── Execute draft ─────────────────────────────────────────────────────────────
 
 
+def _release_execution_claim(shipping_store: ShippingStore, draft_id: str, error: str) -> None:
+    """Conditionally return a claimed draft to ``error`` (R5-A/#136).
+
+    Only acts when the draft is still ``executing`` — i.e. the claim was taken
+    but no legitimate final state was reached. If the happy path already wrote a
+    later state (``created``), or a concurrent actor changed it, this is a no-op,
+    so cleanup never clobbers a good state. ``error`` is an executable state, so a
+    subsequent retry can re-claim the draft.
+
+    Best-effort: a failure to write the cleanup is logged, not raised, so it
+    cannot mask the original exception being handled.
+    """
+    try:
+        current = shipping_store.get_draft(draft_id)
+        if current and current.get("status") == EXECUTING:
+            shipping_store.update_draft(draft_id, {"status": "error", "error": error})
+    except Exception:
+        logger.exception("Failed to release execution claim for draft %s (left as-is)", draft_id)
+
+
 @router.post(
     "/shipping/drafts/{draft_id}/execute",
     summary="(Re)create courier shipment for a draft",
@@ -1570,19 +1592,27 @@ def execute_draft(
             status_code=409,
             detail="Draft requires review (multi-package) — use PATCH to override",
         )
-    if draft.get("status") == "created":
+    # Atomic execution claim (R5-A): move the draft to `executing` under
+    # optimistic concurrency. If the claim fails the draft is already
+    # executing/created/cancelled or a concurrent request won the race — either
+    # way we must not call the courier again (that would duplicate the shipment).
+    if not shipping_store.try_claim_execution(draft_id):
         raise HTTPException(
             status_code=409,
-            detail="Draft already executed — use pickup endpoint to order collection",
+            detail="Draft already executed or in progress — nie realizuj ponownie.",
         )
 
-    pickup_schedule = {
-        "pickup_date": pickup_date,
-        "pickup_from": pickup_from,
-        "pickup_to": pickup_to,
-    }
-
+    # From here on the draft is claimed (status=executing). EVERY path to the end
+    # of the endpoint must be guarded so an exception before a legitimate final
+    # state cannot leave the draft stuck in `executing` (R5-A/#136). Cleanup is
+    # conditional — see _release_execution_claim — so it never clobbers a state
+    # the happy path already wrote (e.g. `created`).
     try:
+        pickup_schedule = {
+            "pickup_date": pickup_date,
+            "pickup_from": pickup_from,
+            "pickup_to": pickup_to,
+        }
         sender = _get_sender()
         courier = draft.get("courier", "apaczka")
         if courier == "allegro_delivery":
@@ -1591,35 +1621,38 @@ def execute_draft(
             patch = _run_inpost(draft, sender, **pickup_schedule)
         else:
             patch = _run_apaczka(draft, sender, storage, **pickup_schedule)
+
+        # Success write moves executing → created. If THIS fails, the draft is
+        # still `executing`, and the except-block cleanup returns it to `error`.
+        shipping_store.update_draft(draft_id, patch)
+        updated = shipping_store.get_draft(draft_id)
+        log_event(
+            "shipment.created",
+            draft_id=draft_id,
+            order_number=draft.get("shopify_order_number"),
+            courier=draft.get("courier"),
+            tracking_number=patch.get("tracking_number"),
+            status=patch.get("status"),
+        )
+        if updated:
+            # Never re-raises (see its docstring) — safe inside the guarded block.
+            _maybe_push_tracking_to_allegro(updated)
+        return updated or patch
     except ZdrovenaShippingError as exc:
         logger.exception("execute_draft failed for %s", draft_id)
-        shipping_store.update_draft(draft_id, {"status": "error", "error": str(exc)})
+        _release_execution_claim(shipping_store, draft_id, str(exc))
         # Wyjątek domenowy przesyłki → koperta błędu (zdrovena.api.errors)
         # mapuje go na właściwy status i polski komunikat dla operatora.
         raise
     except Exception as exc:
         logger.exception("execute_draft failed for %s", draft_id)
-        shipping_store.update_draft(draft_id, {"status": "error", "error": str(exc)})
+        _release_execution_claim(shipping_store, draft_id, str(exc))
         # Ogólny błąd komunikacji z przewoźnikiem → 502 z polskim komunikatem,
         # bez wyciekania surowego (angielskiego) str(exc) do operatora.
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Błąd komunikacji z przewoźnikiem — spróbuj ponownie za chwilę.",
         ) from exc
-
-    shipping_store.update_draft(draft_id, patch)
-    updated = shipping_store.get_draft(draft_id)
-    log_event(
-        "shipment.created",
-        draft_id=draft_id,
-        order_number=draft.get("shopify_order_number"),
-        courier=draft.get("courier"),
-        tracking_number=patch.get("tracking_number"),
-        status=patch.get("status"),
-    )
-    if updated:
-        _maybe_push_tracking_to_allegro(updated)
-    return updated or patch
 
 
 # ── Confirm pending Allegro create-command ───────────────────────────────────
@@ -1932,6 +1965,18 @@ def mark_fulfilled(
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
 
+    # R5-A: a cancelled or errored draft was never successfully shipped, so it
+    # must not be marked fulfilled (that would push a bogus SENT to Allegro).
+    # Re-running on an already-fulfilled draft stays idempotent (handled below).
+    if (
+        draft.get("status") in ("cancelled", "error")
+        and draft.get("fulfillment_status") != "fulfilled"
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Nie można oznaczyć jako zrealizowane: przesyłka jest anulowana lub w błędzie.",
+        )
+
     is_allegro = draft.get("source") == "allegro"
     external_order_id = (
         draft.get("external_order_id") or draft.get("allegro_order_id") if is_allegro else None
@@ -2186,6 +2231,154 @@ def update_draft(
 
 # ── Label streaming ───────────────────────────────────────────────────────────
 
+_SUPPORTED_LABEL_COURIERS = ("inpost", "apaczka", "allegro_delivery")
+_MAX_BATCH_LABELS = 100  # provider-agnostic safety cap on one batch print
+
+
+def _fetch_label_pdf(draft: dict[str, Any], courier: str, storage: Any) -> bytes:
+    """Fetch one label PDF for a draft. Shared by the single-label and batch
+    endpoints (R5-B).
+
+    Raises :class:`LabelNotReadyError` (HTTP 409) when the label is not printable
+    yet — either the draft has no courier id, or InPost rejects the fetch with a
+    business error (almost always "shipment not confirmed/processed yet"). Other
+    courier failures surface as HTTP 502.
+    """
+    if courier == "allegro_delivery":
+        label_id = draft.get("allegro_shipment_id") or draft.get("courier_draft_id")
+    else:
+        label_id = draft.get("courier_draft_id")
+    if not label_id:
+        raise HTTPException(status_code=404, detail="No courier draft ID — draft may have failed")
+
+    try:
+        if courier == "inpost":
+            from zdrovena.common.inpost import InPostClient
+
+            token = get_secret("inpost_api_token")
+            org_id = get_secret("inpost_organization_id")
+            try:
+                return InPostClient(token, org_id).get_label(label_id)
+            except InPostBusinessError as exc:
+                # A business rejection while fetching a label means the shipment
+                # is not confirmed/processed yet → not ready, not a hard failure.
+                raise LabelNotReadyError(str(exc), courier="inpost", action="get_label") from exc
+        elif courier == "apaczka":
+            from zdrovena.common.apaczka import ApaczkaClient
+
+            app_id = get_secret("apaczka_app_id")
+            app_secret = get_secret("apaczka_app_secret")
+            service_id = draft.get("apaczka_service_id") or ""
+            return ApaczkaClient(app_id, app_secret, service_id, storage).get_label(label_id)
+        else:  # allegro_delivery
+            client = _get_allegro_client()
+            if client is None:
+                raise HTTPException(status_code=502, detail="Allegro credentials missing")
+            try:
+                return client.get_ship_with_allegro_label(str(label_id))
+            except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
+                logger.exception("Allegro label fetch failed for draft %s", draft.get("id"))
+                raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
+    except (HTTPException, ZdrovenaShippingError):
+        raise
+    except Exception as exc:
+        logger.exception("Label fetch failed for draft %s", draft.get("id"))
+        raise HTTPException(status_code=502, detail=f"Courier API error: {exc}") from exc
+
+
+def _merge_pdfs(pdfs: list[bytes]) -> bytes:
+    """Merge label PDFs into a single document (R5-B batch printing)."""
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    for pdf in pdfs:
+        writer.append(io.BytesIO(pdf))
+    out = io.BytesIO()
+    writer.write(out)
+    writer.close()
+    return out.getvalue()
+
+
+@router.post(
+    "/shipping/labels/batch",
+    summary="Fetch and merge labels for several drafts into one printable PDF",
+    responses={
+        400: {"description": "No draft_ids, too many, or unsupported courier"},
+        404: {"description": "None of the drafts exist"},
+        409: {"description": "One or more labels are not ready yet"},
+    },
+)
+def batch_labels(
+    shipping_store: ShippingStoreDep,
+    storage: StorageDep,
+    principal: Annotated[Principal, Depends(require_viewer_or_above)],
+    draft_ids: Annotated[list[str], Body(embed=True)],
+) -> StreamingResponse:
+    """Merge the labels of the given drafts into one PDF (R5-B).
+
+    Drafts are grouped by courier (each fetched via the same path as the single
+    label endpoint), then concatenated in the request order. Fails deterministically:
+      * empty / oversized ``draft_ids`` → 400
+      * a not-yet-ready label → 409 listing the offending drafts
+      * an unknown draft id → 404 listing them
+    """
+    if not draft_ids:
+        raise HTTPException(status_code=400, detail="draft_ids must not be empty")
+    if len(draft_ids) > _MAX_BATCH_LABELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many labels in one batch (max {_MAX_BATCH_LABELS}, got {len(draft_ids)})",
+        )
+
+    drafts: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for did in draft_ids:
+        d = shipping_store.get_draft(did)
+        if d is None:
+            missing.append(did)
+        else:
+            drafts.append(d)
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Draft(s) not found: {', '.join(missing)}")
+
+    bad_courier = [d.get("id") for d in drafts if d.get("courier") not in _SUPPORTED_LABEL_COURIERS]
+    if bad_courier:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported courier for draft(s): {', '.join(map(str, bad_courier))}",
+        )
+
+    # Group by courier so a future provider bulk-label API can be slotted in per
+    # group; today we fetch each label and merge. Order within the response
+    # follows the original draft_ids order for predictable printing.
+    pdfs: list[bytes] = []
+    not_ready: list[str] = []
+    for d in drafts:
+        try:
+            pdfs.append(_fetch_label_pdf(d, d["courier"], storage))
+        except LabelNotReadyError:
+            not_ready.append(str(d.get("id")))
+        except HTTPException as exc:
+            # A missing courier id (404) means the draft exists but has no label
+            # yet — for a batch that is just another "not ready" case, not a hard
+            # failure. Any other courier error (502) aborts the whole batch.
+            if exc.status_code == 404:
+                not_ready.append(str(d.get("id")))
+            else:
+                raise
+    if not_ready:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Etykiety nie są jeszcze gotowe dla: {', '.join(not_ready)}",
+        )
+
+    merged = _merge_pdfs(pdfs)
+    return StreamingResponse(
+        io.BytesIO(merged),
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'inline; filename="labels_batch.pdf"'},
+    )
+
 
 @router.get(
     "/shipping/drafts/{draft_id}/label",
@@ -2214,47 +2407,7 @@ def get_label(
             detail=f"courier must be one of: {', '.join(_SUPPORTED_COURIERS)}",
         )
 
-    # For Ship-with-Allegro the label id is the shipment_id, stored under courier_draft_id
-    # (set by _run_allegro_delivery) and mirrored to allegro_shipment_id.
-    if courier == "allegro_delivery":
-        label_id = draft.get("allegro_shipment_id") or draft.get("courier_draft_id")
-    else:
-        label_id = draft.get("courier_draft_id")
-    if not label_id:
-        raise HTTPException(status_code=404, detail="No courier draft ID — draft may have failed")
-
-    try:
-        if courier == "inpost":
-            from zdrovena.common.inpost import InPostClient
-
-            token = get_secret("inpost_api_token")
-            org_id = get_secret("inpost_organization_id")
-            pdf_bytes = InPostClient(token, org_id).get_label(label_id)
-        elif courier == "apaczka":
-            from zdrovena.common.apaczka import ApaczkaClient
-
-            app_id = get_secret("apaczka_app_id")
-            app_secret = get_secret("apaczka_app_secret")
-            # get_label() never reads service_id (verified in apaczka.py), but
-            # pass the real per-draft value anyway for consistency/future-proofing.
-            service_id = draft.get("apaczka_service_id") or ""
-            pdf_bytes = ApaczkaClient(app_id, app_secret, service_id, storage).get_label(label_id)
-        elif courier == "allegro_delivery":
-            client = _get_allegro_client()
-            if client is None:
-                raise HTTPException(status_code=502, detail="Allegro credentials missing")
-            try:
-                pdf_bytes = client.get_ship_with_allegro_label(str(label_id))
-            except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
-                logger.exception("Allegro label fetch failed for draft %s", draft_id)
-                raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown courier: {courier}")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Label fetch failed for draft %s", draft_id)
-        raise HTTPException(status_code=502, detail=f"Courier API error: {exc}") from exc
+    pdf_bytes = _fetch_label_pdf(draft, courier, storage)
 
     order_num = draft.get("shopify_order_number", draft_id).lstrip("#")
     filename = f"label_{courier}_{order_num}.pdf"
@@ -2325,19 +2478,38 @@ def get_invoice_preview(
     order_id = draft.get("external_order_id") or draft.get("shopify_order_number", "")
     order = allegro_client.get_order(order_id)
 
-    from zdrovena.common.allegro_invoice_mapper import allegro_order_to_fakturownia_invoice
+    from zdrovena.common.allegro_invoice_mapper import (
+        allegro_expected_payable,
+        allegro_order_to_fakturownia_invoice,
+    )
 
     payload = allegro_order_to_fakturownia_invoice(order)
     positions = payload.get("positions") or []
     settlements = payload.get("settlement_positions") or []
 
-    total = sum(Decimal(str(p.get("total_price_gross", 0))) for p in positions)
-    total += sum(Decimal(str(s.get("amount", 0))) for s in settlements)
+    positions_total = sum(Decimal(str(p.get("total_price_gross", 0))) for p in positions)
+    settlement_total = sum(Decimal(str(s.get("amount", 0))) for s in settlements)
+    total = positions_total + settlement_total
 
     buyer = order.get("buyer") or {}
     invoice_req = order.get("invoice") or {}
     addr = invoice_req.get("address") or buyer.get("address") or {}
     company = addr.get("company") or {}
+
+    # Cross-check "Do zapłaty" (positions + kaucja) against Allegro's own
+    # summary.totalToPay minus delivery (invoice has no shipping line), via the
+    # shared allegro_expected_payable helper so preview and final invoice compare
+    # against the identical figure. `difference` is the signed, explainable delta
+    # (our total − Allegro's) so a mismatch is inspectable, not just a boolean.
+    allegro_expected = allegro_expected_payable(order)
+    allegro_total_to_pay: float | None = None
+    matches_allegro: bool | None = None
+    difference: float | None = None
+    if allegro_expected is not None:
+        allegro_total_to_pay = float(allegro_expected)
+        delta = total - allegro_expected
+        difference = float(delta)
+        matches_allegro = abs(delta) <= Decimal("0.01")
 
     return {
         "status": "preview_ready",
@@ -2354,7 +2526,7 @@ def get_invoice_preview(
                 "unit_price_gross": float(Decimal(str(p["total_price_gross"])) / p["quantity"])
                 if p.get("quantity")
                 else 0.0,
-                "vat_rate": p.get("tax_name", "8%"),
+                "vat_rate": f"{int(p.get('tax', 0))}%",
                 "line_total": float(p["total_price_gross"]),
             }
             for p in positions
@@ -2363,7 +2535,12 @@ def get_invoice_preview(
             {"description": s.get("description", ""), "amount": float(s.get("amount", 0) or 0)}
             for s in settlements
         ],
+        "positions_total": float(positions_total),
+        "settlement_total": float(settlement_total),
         "total_gross": float(total),
+        "allegro_total_to_pay": allegro_total_to_pay,
+        "matches_allegro": matches_allegro,
+        "difference": difference,
     }
 
 
@@ -2433,8 +2610,28 @@ def create_draft_invoice(
         order, fakturownia_client=fakturownia_client, allegro_client=allegro_client
     )
 
-    if result.get("status") != "created":
-        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": None})
+    result_status = result.get("status")
+
+    # "already_exists" is a success: Fakturownia already holds the invoice for
+    # this order (idempotent create via oid). Persist the recovered id and
+    # report "already_created" — never 502, never reset state to None (that was
+    # the loop bug: clearing the slot re-armed the poller to try forever).
+    if result_status == "already_exists":
+        recovered_id = result.get("fakturownia_invoice_id")
+        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": recovered_id})
+        return {
+            "status": "already_created",
+            "fakturownia_invoice_id": recovered_id,
+            "fakturownia_invoice_number": result.get("fakturownia_invoice_number"),
+        }
+
+    if result_status != "created":
+        # On failure, keep any invoice id Fakturownia already produced (e.g. the
+        # invoice was created but the Allegro push failed) so a retry attaches to
+        # the same document instead of orphaning it. Only clear the slot when we
+        # truly have nothing to keep.
+        recovered_id = result.get("fakturownia_invoice_id")
+        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": recovered_id})
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=result.get("error", "Invoice creation failed"),

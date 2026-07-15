@@ -242,6 +242,16 @@ class InPostBusinessError(InPostError, CourierBusinessError):
     """4xx business/validation rejection from InPost (bad address, dimensions, 422)."""
 
 
+class LabelNotReadyError(CourierBusinessError):
+    """The courier label is not printable yet (R5-B).
+
+    Raised when a label is requested before the shipment is confirmed/processed
+    by the courier — a transient, operator-informational condition, mapped to
+    HTTP 409 (not a hard 5xx) so the UI can show a clear "label not ready yet,
+    try again shortly" message instead of a generic error.
+    """
+
+
 class ApaczkaBusinessError(ApaczkaError, CourierBusinessError):
     """4xx or in-body business error from Apaczka (invalid service, address, waybill)."""
 

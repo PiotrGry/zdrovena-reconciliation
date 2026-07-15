@@ -466,3 +466,36 @@ class TestUpsertDedupTable:
         store.upsert_draft(_draft("t-uuid-ddd", shopify_order_id="shop-2"))
         assert store.get_draft("t-uuid-ccc") is not None
         assert store.get_draft("t-uuid-ddd") is not None
+
+
+# ── R5-A: atomic execution claim ───────────────────────────────────────────
+
+
+class TestTryClaimExecution:
+    def test_claims_from_pending(self, store):
+        store.upsert_draft(_draft("c-1", status="pending"))
+        assert store.try_claim_execution("c-1") is True
+        assert store.get_draft("c-1")["status"] == "executing"
+
+    def test_claims_from_error(self, store):
+        # Retry after a transient failure must be possible.
+        store.upsert_draft(_draft("c-2", status="error"))
+        assert store.try_claim_execution("c-2") is True
+
+    def test_second_claim_loses(self, store):
+        # Simulates two concurrent execute requests: only one wins.
+        store.upsert_draft(_draft("c-3", status="pending"))
+        first = store.try_claim_execution("c-3")
+        second = store.try_claim_execution("c-3")
+        assert first is True
+        assert second is False
+
+    @pytest.mark.parametrize("state", ["created", "executing", "cancelled", "needs_review"])
+    def test_rejects_non_executable_states(self, store, state):
+        store.upsert_draft(_draft("c-4", status=state))
+        assert store.try_claim_execution("c-4") is False
+        # Status is left untouched.
+        assert store.get_draft("c-4")["status"] == state
+
+    def test_missing_draft_loses(self, store):
+        assert store.try_claim_execution("does-not-exist") is False

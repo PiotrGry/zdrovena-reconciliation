@@ -68,6 +68,54 @@ class TestAuthDisabledGuard:
         _run_lifespan()  # brak SystemExit (KV nie skonfigurowany)
 
 
+class TestAmbiguousEnvGuard:
+    """R4-B: fail-closed on ambiguous environment / auth combinations."""
+
+    def test_unknown_app_env_refuses_boot(self, monkeypatch):
+        _clear_env(monkeypatch)
+        monkeypatch.setenv("APP_ENV", "prd-typo")  # nierozpoznane → niejednoznaczne
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "false")
+        monkeypatch.delenv("AZURE_KEYVAULT_URL", raising=False)
+        with pytest.raises(SystemExit) as exc:
+            _run_lifespan()
+        assert exc.value.code == 1
+
+    def test_deployed_with_auth_disabled_and_no_env_refuses_boot(self, monkeypatch):
+        # Key Vault set (deployment) + auth off + APP_ENV unset → ambiguous prod.
+        _clear_env(monkeypatch)
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "true")
+        monkeypatch.setenv("AZURE_KEYVAULT_URL", "https://kv.example.net/")
+        with pytest.raises(SystemExit) as exc:
+            _run_lifespan()
+        assert exc.value.code == 1
+
+    def test_deployed_with_auth_disabled_and_staging_refuses_boot(self, monkeypatch):
+        _clear_env(monkeypatch)
+        monkeypatch.setenv("APP_ENV", "staging")
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "true")
+        monkeypatch.setenv("AZURE_KEYVAULT_URL", "https://kv.example.net/")
+        with pytest.raises(SystemExit) as exc:
+            _run_lifespan()
+        assert exc.value.code == 1
+
+    def test_deployed_with_auth_disabled_and_explicit_dev_boots(self, monkeypatch):
+        # Explicit development env is the one safe way to disable auth in a
+        # Key-Vault-backed context — KV ping is skipped when auth is disabled.
+        _clear_env(monkeypatch)
+        monkeypatch.setenv("APP_ENV", "development")
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "true")
+        monkeypatch.setenv("AZURE_KEYVAULT_URL", "https://kv.example.net/")
+        _run_lifespan()  # brak SystemExit
+
+    def test_local_dev_no_keyvault_still_boots_without_app_env(self, monkeypatch):
+        # Backward-compat: local dev (no Key Vault) with auth off and no APP_ENV
+        # must still start — the deployment guard only fires when KV is set.
+        _clear_env(monkeypatch)
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "true")
+        monkeypatch.delenv("AZURE_KEYVAULT_URL", raising=False)
+        _run_lifespan()  # brak SystemExit
+
+
 class TestCorsMethods:
     @pytest.mark.parametrize("method", ["PATCH", "OPTIONS", "GET", "POST", "PUT", "DELETE"])
     def test_cors_preflight_allows_method(self, method):

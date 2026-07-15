@@ -22,6 +22,11 @@ export interface TestContext {
   smokeAccountantSpClientId: string;
   smokeAccountantSpClientSecret: string;
   verbose: boolean;
+  /** Strict mode (--strict / SMOKE_STRICT=true). When true, missing required
+   *  credentials or an unacquirable token becomes FAIL instead of SKIP, so a
+   *  run cannot stay green without proving authenticated staging flows work.
+   *  Conditional branch skips (e.g. 422 vs 200 alternate paths) stay SKIP. */
+  strict: boolean;
   /** Fetch with a timeout. Default 10s. */
   fetch(url: string, opts?: RequestInit & { timeoutMs?: number }): Promise<Response>;
   /** Lazy-acquired viewer access token, cached for the run.
