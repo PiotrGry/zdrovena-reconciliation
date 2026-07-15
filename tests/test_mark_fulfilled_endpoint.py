@@ -181,6 +181,16 @@ class TestMarkFulfilledErrors:
         assert resp.status_code == 404
         assert resp.json()["detail"] == "Draft not found"
 
+    @pytest.mark.parametrize("state", ["cancelled", "error"])
+    def test_409_when_cancelled_or_errored(self, client, store, state):
+        # R5-A: a cancelled/errored draft was never shipped — refuse to fulfill.
+        draft_id = _make_draft(store, id=f"draft-{state}", status=state)
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client") as get_client:
+            resp = client.post(f"/api/shipping/drafts/{draft_id}/mark-fulfilled")
+        assert resp.status_code == 409
+        get_client.assert_not_called()
+        assert store.get_draft(draft_id).get("fulfillment_status") != "fulfilled"
+
     def test_409_when_allegro_draft_missing_external_id(self, client, store):
         draft_id = _make_draft(
             store,
