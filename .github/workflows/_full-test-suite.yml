@@ -68,13 +68,20 @@ jobs:
       - name: Scale to min 1 replica
         run: |
           az containerapp update \
+            --name zdrovena-fake-providers-staging \
+            --resource-group zdrovena-rg \
+            --min-replicas 1 \
+            --max-replicas 1
+          az containerapp update \
             --name zdrovena-api-staging \
             --resource-group zdrovena-rg \
             --min-replicas 1 \
             --max-replicas 3
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Wait for health
-        run: bash scripts/ci/wait-containerapp.sh zdrovena-api-staging zdrovena-rg 12 10
+        run: |
+          bash scripts/ci/wait-containerapp.sh zdrovena-fake-providers-staging zdrovena-rg 12 10
+          bash scripts/ci/wait-containerapp.sh zdrovena-api-staging zdrovena-rg 12 10
 
   # ── 1. Build and push staging image ───────────────────────────────────────
   build:
@@ -128,6 +135,7 @@ jobs:
     if: needs.detect-changes.outputs.backend == 'true'
     env:
       STAGING_APP: zdrovena-api-staging
+      FAKE_PROVIDER_APP: zdrovena-fake-providers-staging
       RG: zdrovena-rg
     outputs:
       api-url: ${{ steps.url.outputs.url }}
@@ -144,13 +152,21 @@ jobs:
       - name: Deploy to staging Container App
         run: |
           az containerapp update \
+            --name            "$FAKE_PROVIDER_APP" \
+            --resource-group  "$RG" \
+            --image           "${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:staging-${{ github.sha }}" \
+            --min-replicas    1
+
+          az containerapp update \
             --name            "$STAGING_APP" \
             --resource-group  "$RG" \
             --image           "${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:staging-${{ github.sha }}" \
             --min-replicas    1
 
       - name: Wait for deployment
-        run: bash scripts/ci/wait-containerapp.sh "$STAGING_APP" "$RG" 36 10
+        run: |
+          bash scripts/ci/wait-containerapp.sh "$FAKE_PROVIDER_APP" "$RG" 36 10
+          bash scripts/ci/wait-containerapp.sh "$STAGING_APP" "$RG" 36 10
 
       - name: Get staging API URL
         id: url
@@ -473,6 +489,7 @@ jobs:
     environment: staging
     env:
       STAGING_APP: zdrovena-api-staging
+      FAKE_PROVIDER_APP: zdrovena-fake-providers-staging
       RG: zdrovena-rg
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -485,7 +502,9 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Scale staging to zero
-        run: bash scripts/ci/teardown-staging.sh "$STAGING_APP" "$RG"
+        run: |
+          bash scripts/ci/teardown-staging.sh "$STAGING_APP" "$RG"
+          bash scripts/ci/teardown-staging.sh "$FAKE_PROVIDER_APP" "$RG"
 
       - name: Delete SWA staging environment
         env:

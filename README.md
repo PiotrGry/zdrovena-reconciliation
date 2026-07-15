@@ -167,6 +167,44 @@ MOCK_COURIER=true AZURE_AUTH_DISABLED=true uvicorn zdrovena.api.main:app --reloa
 
 Swagger UI dostępne pod `http://localhost:8000/docs` (na roocie, nie pod `/api`).
 
+### Fake providerzy HTTP
+
+Do bezpiecznych testów integracji uruchom fake provider service:
+
+```bash
+uvicorn zdrovena.fake_providers.app:app --port 9009
+```
+
+Następnie skieruj realnych klientów aplikacji na fake HTTP endpointy:
+
+```bash
+PROVIDER_MODE=fake
+ALLEGRO_CLIENT_ID=fake
+ALLEGRO_CLIENT_SECRET=fake
+ALLEGRO_REFRESH_TOKEN=fake
+ALLEGRO_BASE_URL=http://localhost:9009/allegro
+ALLEGRO_AUTH_URL=http://localhost:9009/allegro/auth/oauth/token
+INPOST_API_TOKEN=fake
+INPOST_ORGANIZATION_ID=fake
+INPOST_BASE_URL=http://localhost:9009/inpost
+APACZKA_APP_ID=fake
+APACZKA_APP_SECRET=fake
+APACZKA_BASE_URL=http://localhost:9009/apaczka/api/v2
+FAKTUROWNIA_BASE_URL=http://localhost:9009/fakturownia
+FAKTUROWNIA_API_TOKEN=fake
+```
+
+Reset stanu i scenariusze awarii:
+
+```bash
+curl -X POST http://localhost:9009/__fake__/reset
+curl -X POST http://localhost:9009/__fake__/scenario \
+  -H 'Content-Type: application/json' \
+  -d '{"provider":"inpost","operation":"get_label","mode":"label_not_ready"}'
+```
+
+W `APP_ENV=staging` aplikacja wymaga `PROVIDER_MODE=fake` i odmawia startu, jeśli którykolwiek provider write endpoint wskazuje na znany live host.
+
 ---
 
 ## Frontend

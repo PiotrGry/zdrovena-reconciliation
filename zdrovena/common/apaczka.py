@@ -16,6 +16,7 @@ import hmac
 import io
 import json
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from http import HTTPStatus
@@ -45,7 +46,7 @@ __all__ = [
 
 logger = logging.getLogger("zdrovena.common.apaczka")
 
-_BASE = "https://www.apaczka.pl/api/v2"
+_BASE = os.environ.get("APACZKA_BASE_URL", "https://www.apaczka.pl/api/v2").rstrip("/")
 _TIMEOUT = 15
 _SERVICE_CACHE_KEY = "apaczka/service_structure.json"
 _SERVICE_CACHE_TTL_H = 23

@@ -196,15 +196,24 @@ class AllegroClient:
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
+        override_base_url = os.environ.get("ALLEGRO_BASE_URL", "").strip()
+        override_auth_url = os.environ.get("ALLEGRO_AUTH_URL", "").strip()
+        provider_mode = os.environ.get("PROVIDER_MODE", "").strip().lower()
         # If a store is supplied AND it already holds a (possibly newer, rotated)
         # token, prefer that — the value in `refresh_token` may be stale from env.
-        self._token_store: AllegroTokenStore = token_store or InMemoryAllegroTokenStore(
-            refresh_token
-        )
+        if provider_mode == "fake" and override_base_url:
+            # Fake provider OAuth returns deterministic fake refresh tokens. Never
+            # persist those through SecretsAllegroTokenStore into Key Vault.
+            self._token_store = InMemoryAllegroTokenStore(refresh_token)
+        else:
+            self._token_store = token_store or InMemoryAllegroTokenStore(refresh_token)
         stored = self._token_store.load_refresh_token()
         self._refresh_token = stored or refresh_token
         self._env = env
-        if env == "sandbox":
+        if override_base_url:
+            self._base_url = override_base_url.rstrip("/")
+            self._auth_url = override_auth_url or f"{self._base_url}/auth/oauth/token"
+        elif env == "sandbox":
             self._base_url = _BASE_URL_SANDBOX
             self._auth_url = _AUTH_URL_SANDBOX
         else:
