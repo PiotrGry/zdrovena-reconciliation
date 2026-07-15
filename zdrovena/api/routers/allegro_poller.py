@@ -45,7 +45,7 @@ def poll_orders_once(
     storage: Any,
     fakturownia_client: Any = None,
     status: str = "READY_FOR_PROCESSING",
-    fulfillment_status: str = "NEW",
+    fulfillment_status: str | None = "NEW",
 ) -> dict[str, int]:
     """One polling cycle. Returns per-cycle stats.
 
