@@ -7,6 +7,7 @@ import { Pill } from '../components/Pill'
 import { Icon } from '../components/Icon'
 import { useToast } from '../components/Toast'
 import { fetchJson } from '../api'
+import { getShippingDrafts, syncShipping } from '../api/endpoints'
 import { usePolling } from '../hooks/usePolling'
 import {
     SHIPPING_COLUMNS,
@@ -885,7 +886,7 @@ export default function ShippingView() {
         }
         try {
             const token = await getToken()
-            const data = await fetchJson('/api/shipping/drafts', { token })
+            const data = await getShippingDrafts({ token })
             setDrafts(data.drafts ?? [])
             if (silent) setError(null)
         } catch (e) {
@@ -900,7 +901,7 @@ export default function ShippingView() {
         setSyncResult(null)
         try {
             const token = await getToken()
-            const body = await fetchJson('/api/shipping/sync', { method: 'POST', token })
+            const body = await syncShipping({ token })
             setSyncResult(body)
             await load()
             const summary = syncSummary(body)

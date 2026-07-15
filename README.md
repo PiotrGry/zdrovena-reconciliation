@@ -186,6 +186,16 @@ swa start frontend --api-location http://localhost:8000
 # → http://localhost:4280
 ```
 
+### Kontrakty API
+
+Kontrakty frontendu są generowane z FastAPI OpenAPI schema. Nie edytuj ręcznie plików `contracts/openapi.json` ani `frontend/src/api/generated/schema.d.ts`.
+
+```bash
+scripts/generate-api-contracts.sh
+```
+
+CI uruchamia drift check. Jeżeli backend schema zmieni się bez zaktualizowanych kontraktów, napraw to tym samym poleceniem i commituj wygenerowane pliki.
+
 ### Wersjonowanie
 
 Przy każdym deploy frontend pobiera `/version.json` i `/api/health`, porównuje major version. Niezgodność = żółty banner informacyjny.

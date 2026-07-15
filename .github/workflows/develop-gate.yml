@@ -15,6 +15,7 @@ on:
       - "zdrovena/**"
       - "tests/**"
       - "scripts/**"
+      - "contracts/**"
       - "pyproject.toml"
       - "Dockerfile"
       - "e2e/**"

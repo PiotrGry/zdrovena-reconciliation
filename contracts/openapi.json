@@ -1,0 +1,2245 @@
+{
+  "components": {
+    "schemas": {
+      "Body_batch_labels_api_shipping_labels_batch_post": {
+        "properties": {
+          "draft_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Draft Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "draft_ids"
+        ],
+        "title": "Body_batch_labels_api_shipping_labels_batch_post",
+        "type": "object"
+      },
+      "Body_execute_draft_api_shipping_drafts__draft_id__execute_post": {
+        "properties": {
+          "pickup_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup Date"
+          },
+          "pickup_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup From"
+          },
+          "pickup_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup To"
+          }
+        },
+        "title": "Body_execute_draft_api_shipping_drafts__draft_id__execute_post",
+        "type": "object"
+      },
+      "Body_order_pickup_api_shipping_drafts__draft_id__pickup_post": {
+        "properties": {
+          "pickup_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup Date"
+          },
+          "pickup_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup From"
+          },
+          "pickup_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup To"
+          }
+        },
+        "title": "Body_order_pickup_api_shipping_drafts__draft_id__pickup_post",
+        "type": "object"
+      },
+      "Body_update_draft_api_shipping_drafts__draft_id__patch": {
+        "properties": {
+          "apaczka_service_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apaczka Service Id"
+          },
+          "locker_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locker Id"
+          },
+          "packages_count": {
+            "anyOf": [
+              {
+                "maximum": 99.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packages Count"
+          },
+          "reviewed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed"
+          },
+          "service": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service"
+          }
+        },
+        "title": "Body_update_draft_api_shipping_drafts__draft_id__patch",
+        "type": "object"
+      },
+      "CloseRequest": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "ignore_vendors": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Ignore Vendors",
+            "type": "array"
+          },
+          "ignore_warnings": {
+            "default": false,
+            "title": "Ignore Warnings",
+            "type": "boolean"
+          },
+          "month": {
+            "title": "Month",
+            "type": "integer"
+          },
+          "year": {
+            "title": "Year",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "year",
+          "month"
+        ],
+        "title": "CloseRequest",
+        "type": "object"
+      },
+      "CloseResponse": {
+        "properties": {
+          "bank_statement_found": {
+            "title": "Bank Statement Found",
+            "type": "boolean"
+          },
+          "cost_found_vendors": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Cost Found Vendors",
+            "type": "object"
+          },
+          "cost_invoice_count": {
+            "title": "Cost Invoice Count",
+            "type": "integer"
+          },
+          "cost_missing_vendors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cost Missing Vendors",
+            "type": "array"
+          },
+          "email_sent": {
+            "title": "Email Sent",
+            "type": "boolean"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "has_critical_errors": {
+            "title": "Has Critical Errors",
+            "type": "boolean"
+          },
+          "ksef_count": {
+            "title": "Ksef Count",
+            "type": "integer"
+          },
+          "log_lines": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Log Lines",
+            "type": "array"
+          },
+          "sales_gross_total": {
+            "title": "Sales Gross Total",
+            "type": "string"
+          },
+          "sales_invoice_count": {
+            "title": "Sales Invoice Count",
+            "type": "integer"
+          },
+          "sales_pdfs_downloaded": {
+            "title": "Sales Pdfs Downloaded",
+            "type": "integer"
+          },
+          "steps_completed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Steps Completed",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "zip_files": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zip Files"
+          },
+          "zip_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zip Path"
+          }
+        },
+        "required": [
+          "sales_invoice_count",
+          "sales_gross_total",
+          "sales_pdfs_downloaded",
+          "cost_invoice_count",
+          "cost_found_vendors",
+          "cost_missing_vendors",
+          "ksef_count",
+          "bank_statement_found",
+          "zip_path",
+          "email_sent",
+          "warnings",
+          "errors",
+          "steps_completed",
+          "has_critical_errors"
+        ],
+        "title": "CloseResponse",
+        "type": "object"
+      },
+      "CloseStateResponse": {
+        "properties": {
+          "completed_steps": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Completed Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "completed_steps"
+        ],
+        "title": "CloseStateResponse",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "InvoiceItem": {
+        "properties": {
+          "buyer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buyer Name"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "issue_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue Date"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "number": {
+            "title": "Number",
+            "type": "string"
+          },
+          "price_gross": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Gross"
+          },
+          "price_net": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Net"
+          },
+          "price_tax": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Tax"
+          },
+          "sell_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sell Date"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "kind",
+          "sell_date",
+          "issue_date",
+          "buyer_name",
+          "price_net",
+          "price_tax",
+          "price_gross",
+          "currency",
+          "status"
+        ],
+        "title": "InvoiceItem",
+        "type": "object"
+      },
+      "ProductItem": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "price_gross": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Gross"
+          },
+          "price_net": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Net"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "code",
+          "price_net",
+          "price_gross",
+          "currency",
+          "active"
+        ],
+        "title": "ProductItem",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "REST API for the Zdrovena monthly accounting close pipeline. All endpoints require a valid Azure Entra ID JWT (Bearer token). Set AZURE_AUTH_DISABLED=true for local dev.",
+    "title": "Zdrovena Reconciliation API",
+    "version": "2.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/apaczka/orders/{order_id}": {
+      "delete": {
+        "operationId": "cancel_apaczka_order_api_apaczka_orders__order_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "title": "Order Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Order cannot be cancelled (already sent / unknown)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Apaczka API transient error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Cancel an Apaczka order",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/close": {
+      "post": {
+        "description": "Run the month-close pipeline for the given year/month.\n\nRequires ``zdrovena-accountant`` or ``zdrovena-admin`` role.\nUse ``dry_run=true`` to simulate without writing files or sending email.",
+        "operationId": "run_close_api_close_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Invalid month/year"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "description": "Pipeline error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Run monthly close pipeline",
+        "tags": [
+          "close"
+        ]
+      }
+    },
+    "/api/close/history": {
+      "get": {
+        "description": "Return last N close runs, newest first. Accessible to viewer role and above.",
+        "operationId": "get_close_history_api_close_history_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Close History Api Close History Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get history of month-closing runs",
+        "tags": [
+          "close"
+        ]
+      }
+    },
+    "/api/close/history/{ts}": {
+      "delete": {
+        "description": "Remove one history entry. Requires accountant or admin role.",
+        "operationId": "delete_close_history_entry_api_close_history__ts__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ts",
+            "required": true,
+            "schema": {
+              "title": "Ts",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete a history entry by timestamp",
+        "tags": [
+          "close"
+        ]
+      }
+    },
+    "/api/close/state": {
+      "get": {
+        "description": "Return which pipeline steps have already been completed for the given month.\n\nRead-only — accessible to viewer role and above (D3 decision from eng review).",
+        "operationId": "get_close_state_api_close_state_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "year",
+            "required": true,
+            "schema": {
+              "title": "Year",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "month",
+            "required": true,
+            "schema": {
+              "maximum": 12,
+              "minimum": 1,
+              "title": "Month",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloseStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get pipeline checkpoint state for a given month",
+        "tags": [
+          "close"
+        ]
+      }
+    },
+    "/api/files": {
+      "get": {
+        "description": "List files in storage under an optional prefix.\n\nBy default returns virtual folder entries for subdirectories so the\nfrontend can navigate the tree one level at a time.  Pass ``flat=true``\nto get the old behaviour (every blob, no folder entries).",
+        "operationId": "list_files_api_files_get",
+        "parameters": [
+          {
+            "description": "Key prefix filter",
+            "in": "query",
+            "name": "prefix",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "Key prefix filter",
+              "title": "Prefix",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Return all files recursively without virtual folders",
+            "in": "query",
+            "name": "flat",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Return all files recursively without virtual folders",
+              "title": "Flat",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Files Api Files Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List files",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/api/files/{key}": {
+      "delete": {
+        "description": "Delete a file from storage. Requires accountant or admin role.",
+        "operationId": "delete_file_api_files__key__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted successfully"
+          },
+          "400": {
+            "description": "Invalid key"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete a file from storage",
+        "tags": [
+          "files"
+        ]
+      },
+      "get": {
+        "description": "Stream a file from storage. Requires viewer role or above.\n\n``key`` is the full storage path, e.g. ``invoices/sales/2026/03/faktura-001.pdf``.",
+        "operationId": "download_file_api_files__key__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "File stream"
+          },
+          "400": {
+            "description": "Invalid key"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Download a stored file",
+        "tags": [
+          "files"
+        ]
+      },
+      "put": {
+        "description": "Upload a file to storage. Requires accountant or admin role.",
+        "operationId": "upload_file_api_files__key__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Uploaded successfully"
+          },
+          "400": {
+            "description": "Invalid key"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Upload a file to storage",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/api/inpost/dispatch_orders/{dispatch_order_id}": {
+      "delete": {
+        "operationId": "cancel_inpost_dispatch_api_inpost_dispatch_orders__dispatch_order_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "dispatch_order_id",
+            "required": true,
+            "schema": {
+              "title": "Dispatch Order Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Dispatch cannot be cancelled (already accepted / unknown)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "InPost API transient error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Cancel an InPost dispatch order before courier acceptance",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/inpost/shipments/{shipment_id}": {
+      "delete": {
+        "operationId": "cancel_inpost_shipment_api_inpost_shipments__shipment_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shipment_id",
+            "required": true,
+            "schema": {
+              "title": "Shipment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Shipment cannot be cancelled (already dispatched / unknown)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "InPost API transient error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Cancel an InPost shipment before dispatch",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/invoices/products": {
+      "get": {
+        "description": "Return the product catalogue from Fakturownia API.",
+        "operationId": "list_products_api_invoices_products_get",
+        "parameters": [
+          {
+            "description": "Return only active products",
+            "in": "query",
+            "name": "active_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Return only active products",
+              "title": "Active Only",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProductItem"
+                  },
+                  "title": "Response List Products Api Invoices Products Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Fakturownia credentials not configured"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List products",
+        "tags": [
+          "invoices"
+        ]
+      }
+    },
+    "/api/invoices/sales": {
+      "get": {
+        "description": "Return sales invoices for the given year/month from Fakturownia API.",
+        "operationId": "list_sales_invoices_api_invoices_sales_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "year",
+            "required": false,
+            "schema": {
+              "default": 2026,
+              "maximum": 2100,
+              "minimum": 2020,
+              "title": "Year",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 12,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InvoiceItem"
+                  },
+                  "title": "Response List Sales Invoices Api Invoices Sales Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Fakturownia credentials not configured"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List sales invoices",
+        "tags": [
+          "invoices"
+        ]
+      }
+    },
+    "/api/shipping/apaczka-services": {
+      "get": {
+        "operationId": "list_apaczka_services_api_shipping_apaczka_services_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Apaczka Services Api Shipping Apaczka Services Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List the curated Apaczka courier services available for draft selection",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts": {
+      "get": {
+        "operationId": "list_drafts_api_shipping_drafts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Drafts Api Shipping Drafts Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List shipping drafts",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts/dlq": {
+      "get": {
+        "operationId": "list_dlq_api_shipping_drafts_dlq_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Dlq Api Shipping Drafts Dlq Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List failed draft-creation attempts (DLQ)",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts/dlq/{entry_id}": {
+      "delete": {
+        "operationId": "delete_dlq_entry_api_shipping_drafts_dlq__entry_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "DLQ entry not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Discard a DLQ entry without retrying",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts/dlq/{entry_id}/retry": {
+      "post": {
+        "operationId": "retry_dlq_entry_api_shipping_drafts_dlq__entry_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Retry Dlq Entry Api Shipping Drafts Dlq  Entry Id  Retry Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "DLQ entry not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "description": "Retry failed — entry left in DLQ with updated error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Retry a failed draft-creation attempt from DLQ",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts/{draft_id}": {
+      "patch": {
+        "operationId": "update_draft_api_shipping_drafts__draft_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "title": "Draft Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_update_draft_api_shipping_drafts__draft_id__patch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Draft Api Shipping Drafts  Draft Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Invalid service for courier"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "Draft not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update draft metadata (packages_count, service, locker_id)",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts/{draft_id}/confirm": {
+      "post": {
+        "description": "Poll an outstanding Allegro create-command and finalise the draft.\n\nShip-with-Allegro create-commands are asynchronous. ``execute_draft`` returns\n``pending_confirmation`` when the command is still IN_PROGRESS after the\nshort in-request polling window. This endpoint is the durable follow-up:\ncall it (via UI action or a cron/worker) to check the command status and\neither promote the draft to ``created`` (SUCCESS) or ``error`` (ERROR).\n\nIdempotent: safe to call multiple times. Returns the current draft.",
+        "operationId": "confirm_pending_command_api_shipping_drafts__draft_id__confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "title": "Draft Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Confirm Pending Command Api Shipping Drafts  Draft Id  Confirm Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "202": {
+            "description": "Still pending"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "Draft not found"
+          },
+          "409": {
+            "description": "Draft not in pending_confirmation state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "description": "Allegro API error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Poll Allegro create-command and finalise a pending_confirmation draft",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts/{draft_id}/create-invoice": {
+      "post": {
+        "operationId": "create_draft_invoice_api_shipping_drafts__draft_id__create_invoice_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "title": "Draft Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Draft Invoice Api Shipping Drafts  Draft Id  Create Invoice Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Not an Allegro draft"
+          },
+          "404": {
+            "description": "Draft not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Credentials not configured"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Fakturownia invoice for an Allegro order and attach it",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts/{draft_id}/dispatch": {
+      "delete": {
+        "description": "Cancel the Allegro dispatch (pickup) order created for this draft.",
+        "operationId": "cancel_dispatch_api_shipping_drafts__draft_id__dispatch_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "title": "Draft Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Cancel Dispatch Api Shipping Drafts  Draft Id  Dispatch Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "Draft not found"
+          },
+          "409": {
+            "description": "No Allegro dispatch to cancel"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "description": "Allegro API error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Cancel a Ship-with-Allegro dispatch (pickup) before acceptance",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts/{draft_id}/execute": {
+      "post": {
+        "operationId": "execute_draft_api_shipping_drafts__draft_id__execute_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "title": "Draft Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_execute_draft_api_shipping_drafts__draft_id__execute_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Execute Draft Api Shipping Drafts  Draft Id  Execute Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "Draft not found"
+          },
+          "409": {
+            "description": "Draft already executed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "(Re)create courier shipment for a draft",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts/{draft_id}/invoice-preview": {
+      "get": {
+        "operationId": "get_invoice_preview_api_shipping_drafts__draft_id__invoice_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "title": "Draft Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Invoice Preview Api Shipping Drafts  Draft Id  Invoice Preview Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Not an Allegro draft"
+          },
+          "404": {
+            "description": "Draft not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Allegro credentials not configured"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Compute Fakturownia invoice preview for an Allegro order",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts/{draft_id}/label": {
+      "get": {
+        "operationId": "get_label_api_shipping_drafts__draft_id__label_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "title": "Draft Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "inpost, apaczka, or allegro_delivery (defaults to draft's courier)",
+            "in": "query",
+            "name": "courier",
+            "required": false,
+            "schema": {
+              "description": "inpost, apaczka, or allegro_delivery (defaults to draft's courier)",
+              "title": "Courier",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "Draft not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Stream shipping label PDF",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts/{draft_id}/mark-fulfilled": {
+      "post": {
+        "description": "Idempotent operator action to mark the draft as fulfilled.\n\nA draft only represents \"we intend to ship\", not \"we shipped\". The operator\nconfirms via the UI once the parcel actually leaves — this endpoint sets the\nlocal ``fulfillment_status=\"fulfilled\"`` flag (with ``fulfilled_at`` /\n``fulfilled_by``) for every draft, regardless of source.\n\nFor Allegro drafts we additionally invoke\n``AllegroClient.mark_order_processed(external_order_id, status=\"SENT\")`` to\nmove the order to ``SENT`` on Allegro's side (the parcel has left), and mirror\nthe timestamps into the legacy ``allegro_fulfillment_status`` /\n``allegro_marked_processed_*`` fields.\n\nRe-running this endpoint is safe: if the draft is already fulfilled we\nreturn 200 without hitting Allegro again.",
+        "operationId": "mark_fulfilled_api_shipping_drafts__draft_id__mark_fulfilled_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "title": "Draft Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Mark Fulfilled Api Shipping Drafts  Draft Id  Mark Fulfilled Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "Draft not found"
+          },
+          "409": {
+            "description": "Allegro draft has no external Allegro order id"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "description": "Allegro API error (only for Allegro drafts)"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Manually mark the draft as fulfilled (operator action)",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts/{draft_id}/pickup": {
+      "post": {
+        "operationId": "order_pickup_api_shipping_drafts__draft_id__pickup_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "title": "Draft Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_order_pickup_api_shipping_drafts__draft_id__pickup_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Order Pickup Api Shipping Drafts  Draft Id  Pickup Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Courier does not support pickup (not InPost kurier)"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "Draft not found"
+          },
+          "409": {
+            "description": "Pickup already ordered or draft not ready"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Order InPost kurier pickup for an executed draft",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts/{draft_id}/shipment": {
+      "delete": {
+        "description": "Cancel the Allegro shipment created for this draft (before it is dispatched).",
+        "operationId": "cancel_shipment_api_shipping_drafts__draft_id__shipment_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "title": "Draft Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Cancel Shipment Api Shipping Drafts  Draft Id  Shipment Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "Draft not found"
+          },
+          "409": {
+            "description": "No Allegro shipment to cancel"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "description": "Allegro API error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Cancel a Ship-with-Allegro shipment before dispatch",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/labels/batch": {
+      "post": {
+        "description": "Merge the labels of the given drafts into one PDF (R5-B).\n\nDrafts are grouped by courier (each fetched via the same path as the single\nlabel endpoint), then concatenated in the request order. Fails deterministically:\n  * empty / oversized ``draft_ids`` → 400\n  * a not-yet-ready label → 409 listing the offending drafts\n  * an unknown draft id → 404 listing them",
+        "operationId": "batch_labels_api_shipping_labels_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_batch_labels_api_shipping_labels_batch_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "No draft_ids, too many, or unsupported courier"
+          },
+          "404": {
+            "description": "None of the drafts exist"
+          },
+          "409": {
+            "description": "One or more labels are not ready yet"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Fetch and merge labels for several drafts into one printable PDF",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/sync": {
+      "post": {
+        "operationId": "sync_orders_api_shipping_sync_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Sync Orders Api Shipping Sync Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Manually trigger order sync from Allegro and Shopify",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Health Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "health"
+        ]
+      }
+    }
+  }
+}
