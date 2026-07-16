@@ -55,6 +55,27 @@ function courierPillKind(draft) {
     return 'default'
 }
 
+function matchStatusLabel(status) {
+    switch (status) {
+        case 'auto_matched':
+            return 'Dopasowano automatycznie'
+        case 'manual':
+            return 'Wybrano ręcznie'
+        case 'unrecognized':
+            return 'Nie rozpoznano'
+        case 'requires_selection':
+            return 'Wymaga wyboru'
+        default:
+            return 'Wymaga wyboru'
+    }
+}
+
+function matchStatusPillKind(status) {
+    if (status === 'auto_matched') return 'ok'
+    if (status === 'manual') return 'info'
+    return 'warn'
+}
+
 function sourcePillKind(source) {
     if (source === 'allegro') return 'warn'
     if (source === 'shopify') return 'info'
@@ -623,6 +644,16 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                     {draft.courier === 'apaczka' && (
                         <div style={{ marginTop: 12 }}>
                             <div className="detail-label">{T.sh_apaczka_service_label ?? 'Serwis Apaczka'}</div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', margin: '4px 0 6px' }}>
+                                <Pill kind={matchStatusPillKind(draft.shipping_service_match_status)}>
+                                    {matchStatusLabel(draft.shipping_service_match_status)}
+                                </Pill>
+                                {draft.shipping_service_match_source && (
+                                    <span className="dim" style={{ fontSize: '0.85em' }}>
+                                        Źródło: {draft.shipping_service_match_source}
+                                    </span>
+                                )}
+                            </div>
                             {draft.apaczka_service_id ? (
                                 <div>{apaczkaServices.find(s => s.service_id === draft.apaczka_service_id)?.label || draft.apaczka_service_id}</div>
                             ) : (
