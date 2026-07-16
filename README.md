@@ -171,7 +171,7 @@ Swagger UI dostępne pod `http://localhost:8000/docs` (na roocie, nie pod `/api`
 
 ## Frontend
 
-Vanilla HTML + MSAL.js — logowanie przez Microsoft (Entra ID), brak frameworka, brak bundlera.
+React + Vite + MSAL.js — logowanie przez Microsoft (Entra ID).
 
 ### Uruchomienie lokalne
 
@@ -184,6 +184,18 @@ npm install -g @azure/static-web-apps-cli
 AZURE_AUTH_DISABLED=true uvicorn zdrovena.api.main:app --port 8000 &
 swa start frontend --api-location http://localhost:8000
 # → http://localhost:4280
+```
+
+### Testy frontendu
+
+Frontend używa Vitest, React Testing Library i jsdom. Testy komponentów powinny sprawdzać zachowanie widoczne dla użytkownika, a zależności API mockować na granicy HTTP (`fetch`).
+
+```bash
+cd frontend
+npm ci
+npm test
+npm run lint
+npm run build
 ```
 
 ### Wersjonowanie
