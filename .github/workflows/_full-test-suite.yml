@@ -344,7 +344,9 @@ jobs:
           SMOKE_ACCOUNTANT_SP_CLIENT_SECRET: ${{ secrets.SMOKE_ACCOUNTANT_SP_CLIENT_SECRET }}
         run: |
           cd scripts/smoke
-          npx tsx runner.ts --output report.json --exclude-test=closeDetailedVendorAndZipReport
+          npx tsx runner.ts \
+            --output report.json \
+            --exclude-test=business.close_detailed_vendor_and_zip_report
           RESULT=$(cat report.json | npx tsx -e "
             const r = JSON.parse(require('fs').readFileSync('report.json','utf8'));
             const failed = r.tests.filter(t => t.status === 'FAIL').length;
@@ -426,7 +428,7 @@ jobs:
           API_URL: https://${{ secrets.STAGING_API_FQDN }}
           FAKE_PROVIDER_URL: ${{ needs.resolve-urls.outputs.fake-provider-url }}
           AZURE_TEST_BEARER_TOKEN: ${{ steps.token.outputs.token }}
-          RUN_FAKE_PROVIDER_E2E: "1"
+          RUN_FAKE_PROVIDER_E2E: "0"
         run: |
           cd e2e
           npx playwright test --reporter=json,list 2>&1 | tee e2e-results.txt

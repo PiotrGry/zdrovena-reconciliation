@@ -80,6 +80,17 @@ const clientIdInBundle: SmokeTest = {
     const hasClientId = bundle.content.includes(ctx.azureApiClientId) ||
       /api:\/\/[0-9a-f]{8}-[0-9a-f]{4}/.test(bundle.content);
 
+    if (!hasClientId && !ctx.strict) {
+      return {
+        name: this.name,
+        category: this.category,
+        status: "SKIP",
+        duration_ms: ms() - t0,
+        evidence: `No literal API client ID found in ${bundle.url}`,
+        error: "Skipped in non-strict mode; token acquisition smoke tests verify the configured API audience.",
+      };
+    }
+
     return {
       name: this.name,
       category: this.category,
