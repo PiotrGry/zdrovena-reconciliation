@@ -96,6 +96,12 @@ variable "container_name" {
   description = "Logical container name inside the Container App revision."
 }
 
+variable "initial_image" {
+  type        = string
+  default     = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+  description = "Bootstrap image used at Terraform create time. CI owns later image updates."
+}
+
 variable "command" {
   type        = list(string)
   default     = null

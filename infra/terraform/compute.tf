@@ -48,6 +48,7 @@ module "fake_providers_staging" {
   azure_client_id_entra        = var.azure_client_id_entra
   allowed_origins              = "https://${azurerm_static_web_app.ui.default_host_name}"
   container_name               = "fake-providers"
+  initial_image                = "${azurerm_container_registry.acr.login_server}/zdrovena-api:latest"
   target_port                  = 9009
   command = [
     "uvicorn",
