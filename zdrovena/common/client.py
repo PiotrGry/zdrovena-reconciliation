@@ -10,10 +10,14 @@ Provides:
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import re
 import time
+import zipfile
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +37,17 @@ from zdrovena.common.retry import retry_request
 from zdrovena.common.secrets import get_secret
 
 logger = logging.getLogger("zdrovena.common")
+
+
+@dataclass(frozen=True, slots=True)
+class DownloadedCostDocument:
+    """One selected cost document and the source used for the final package."""
+
+    path: Path
+    invoice_id: int
+    invoice_number: str
+    vendor: str
+    source_kind: str
 
 
 class FakturowniaClient:
@@ -226,6 +241,62 @@ class FakturowniaClient:
         logger.debug("Saved PDF → %s", save_path)
         return save_path
 
+    def download_original_attachments(
+        self,
+        invoice_id: int,
+        target_dir: Path,
+        *,
+        filename_prefix: str,
+    ) -> list[Path]:
+        """Download original PDF attachments assigned to a Fakturownia expense.
+
+        Fakturownia returns all attachments as a ZIP archive. Only regular PDF
+        files are extracted and every archive path is reduced to its basename,
+        so a malformed archive cannot write outside ``target_dir``.
+        """
+        resp = self._request(
+            "GET",
+            f"invoices/{invoice_id}/attachments_zip.json",
+            stream=True,
+        )
+        target_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(resp.content))
+        except zipfile.BadZipFile as exc:
+            raise RuntimeError(
+                f"Fakturownia returned an invalid attachment archive for invoice {invoice_id}"
+            ) from exc
+
+        saved: list[Path] = []
+        with archive:
+            members = [
+                member
+                for member in archive.infolist()
+                if not member.is_dir() and Path(member.filename).suffix.casefold() == ".pdf"
+            ]
+            if not members:
+                raise RuntimeError(
+                    f"No original PDF attachment found for Fakturownia invoice {invoice_id}"
+                )
+            for idx, member in enumerate(members, 1):
+                original_name = Path(member.filename).name
+                safe_original = re.sub(r"[^A-Za-z0-9._-]+", "_", original_name).strip("._")
+                if not safe_original:
+                    safe_original = f"attachment-{idx}.pdf"
+                dest = target_dir / f"{filename_prefix}__original__{safe_original}"
+                payload = archive.read(member)
+                if dest.exists() and dest.read_bytes() == payload:
+                    saved.append(dest)
+                    continue
+                dest.write_bytes(payload)
+                saved.append(dest)
+                logger.info(
+                    "Downloaded original attachment for invoice %s → %s",
+                    invoice_id,
+                    dest.name,
+                )
+        return saved
+
     def download_all_pdfs(
         self,
         invoices: list[dict[str, Any]],
@@ -272,47 +343,126 @@ class FakturowniaClient:
         *,
         dry_run: bool = False,
     ) -> list[Path]:
-        """Download cost-invoice PDFs with vendor-prefixed filenames."""
+        """Compatibility wrapper returning selected cost-document paths."""
+        return [
+            item.path
+            for item in self.download_cost_documents(
+                invoices,
+                target_dir,
+                dry_run=dry_run,
+            )
+        ]
 
-        def _cost_name(inv: dict[str, Any]) -> str:
-            vendor = (inv.get("buyer_name") or "unknown")[:30]
-            safe_vendor = (
-                vendor.replace(" ", "_").replace("/", "_").replace(".", "").replace(",", "")
-            )
-            safe_number = (
-                inv.get("number", str(inv["id"]))
-                .replace("/", "_")
-                .replace("\\", "_")
-                .replace(" ", "_")
-            )
-            return f"{safe_vendor}_{safe_number}"
+    def download_cost_documents(
+        self,
+        invoices: list[dict[str, Any]],
+        target_dir: Path,
+        *,
+        dry_run: bool = False,
+        source_policy: Callable[[dict[str, Any]], str] | None = None,
+    ) -> list[DownloadedCostDocument]:
+        """Select and download one source family for every cost invoice.
+
+        ``source_policy`` returns ``original_preferred``, ``original_required``
+        or ``generated``.
+        """
 
         target_dir.mkdir(parents=True, exist_ok=True)
-        saved: list[Path] = []
+        saved: list[DownloadedCostDocument] = []
         seen: set[str] = set()
 
         for idx, inv in enumerate(invoices, 1):
-            inv_id = inv["id"]
+            inv_id = int(inv["id"])
             number: str = inv.get("number", str(inv_id))
             if number in seen:
                 logger.warning("Duplicate invoice number %s – skipped", number)
                 continue
             seen.add(number)
 
-            safe_name = _cost_name(inv)
+            safe_name = self.cost_document_stem(inv)
             pdf_path = target_dir / f"{safe_name}.pdf"
+            vendor = str(inv.get("buyer_name") or "unknown")
+            policy = source_policy(inv) if source_policy else "original_preferred"
+            has_attachments = bool(inv.get("has_attachments"))
 
             if dry_run:
-                logger.info("[DRY-RUN] Would download: %s", pdf_path.name)
-                continue
-            if pdf_path.exists():
-                logger.debug("Already exists, skipping: %s", pdf_path.name)
-                saved.append(pdf_path)
+                source_kind = (
+                    "original_attachment"
+                    if has_attachments and policy != "generated"
+                    else "generated_pdf"
+                )
+                logger.info("[DRY-RUN] Would download %s from %s", number, source_kind)
                 continue
 
-            self.download_pdf(inv_id, pdf_path)
-            saved.append(pdf_path)
-            logger.info("[%d/%d] Downloaded: %s", idx, len(invoices), pdf_path.name)
+            if has_attachments and policy != "generated":
+                try:
+                    original_paths = self.download_original_attachments(
+                        inv_id,
+                        target_dir,
+                        filename_prefix=safe_name,
+                    )
+                except Exception:
+                    if policy == "original_required":
+                        raise
+                    logger.warning(
+                        "Could not download original attachment for %s; "
+                        "falling back to generated PDF",
+                        number,
+                        exc_info=True,
+                    )
+                else:
+                    saved.extend(
+                        DownloadedCostDocument(
+                            path=path,
+                            invoice_id=inv_id,
+                            invoice_number=number,
+                            vendor=vendor,
+                            source_kind="original_attachment",
+                        )
+                        for path in original_paths
+                    )
+                    logger.info(
+                        "[%d/%d] Downloaded %d original attachment(s): %s",
+                        idx,
+                        len(invoices),
+                        len(original_paths),
+                        number,
+                    )
+                    time.sleep(self.pdf_delay)
+                    continue
+
+            if policy == "original_required":
+                logger.warning(
+                    "Original attachment required but unavailable: %s (%s)",
+                    number,
+                    vendor,
+                )
+                continue
+
+            if not pdf_path.exists():
+                self.download_pdf(inv_id, pdf_path)
+            else:
+                logger.debug("Already exists, skipping: %s", pdf_path.name)
+            saved.append(
+                DownloadedCostDocument(
+                    path=pdf_path,
+                    invoice_id=inv_id,
+                    invoice_number=number,
+                    vendor=vendor,
+                    source_kind="generated_pdf",
+                )
+            )
+            logger.info("[%d/%d] Downloaded generated PDF: %s", idx, len(invoices), pdf_path.name)
             time.sleep(self.pdf_delay)
 
         return saved
+
+    @staticmethod
+    def cost_document_stem(inv: dict[str, Any]) -> str:
+        """Return the stable vendor-and-number stem used for cost documents."""
+        vendor = str(inv.get("buyer_name") or "unknown")[:30]
+        safe_vendor = vendor.replace(" ", "_").replace("/", "_").replace(".", "").replace(",", "")
+        safe_number = (
+            str(inv.get("number", inv["id"])).replace("/", "_").replace("\\", "_").replace(" ", "_")
+        )
+        return f"{safe_vendor}_{safe_number}"

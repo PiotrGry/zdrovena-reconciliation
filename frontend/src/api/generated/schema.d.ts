@@ -106,6 +106,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/close/workflow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get durable month-close dashboard state */
+        get: operations["get_close_workflow_api_close_workflow_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/close/workflow/actions/{action}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Execute one explicit month-close stage */
+        post: operations["execute_close_workflow_action_api_close_workflow_actions__action__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/close/workflow/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a fresh month-close run for the selected period */
+        post: operations["reset_close_workflow_api_close_workflow_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/files": {
         parameters: {
             query?: never;
@@ -707,6 +758,114 @@ export interface components {
             /** Completed Steps */
             completed_steps: string[];
         };
+        /** CloseWorkflowActionRequest */
+        CloseWorkflowActionRequest: {
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
+            /** Ignore Vendors */
+            ignore_vendors?: string[];
+            /** Month */
+            month: number;
+            /** Override Reason */
+            override_reason?: string | null;
+            /** Year */
+            year: number;
+        };
+        /** CloseWorkflowArtifact */
+        CloseWorkflowArtifact: {
+            /** Files */
+            files?: string[];
+            /** Key */
+            key: string;
+            /** Kind */
+            kind: string;
+        };
+        /** CloseWorkflowDocument */
+        CloseWorkflowDocument: {
+            /** Category */
+            category: string;
+            /** File Key */
+            file_key?: string | null;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Message */
+            message?: string | null;
+            /**
+             * Required
+             * @default true
+             */
+            required: boolean;
+            /** Source */
+            source?: string | null;
+            /** Status */
+            status: string;
+        };
+        /** CloseWorkflowIssue */
+        CloseWorkflowIssue: {
+            /** Id */
+            id: string;
+            /** Message */
+            message: string;
+            /** Severity */
+            severity: string;
+            /** Stage */
+            stage: string;
+        };
+        /** CloseWorkflowRunResponse */
+        CloseWorkflowRunResponse: {
+            /** Active Action */
+            active_action?: string | null;
+            /** Artifacts */
+            artifacts?: components["schemas"]["CloseWorkflowArtifact"][];
+            /** Created At */
+            created_at: string;
+            /** Documents */
+            documents?: components["schemas"]["CloseWorkflowDocument"][];
+            /** Issues */
+            issues?: components["schemas"]["CloseWorkflowIssue"][];
+            /** Logs */
+            logs?: string[];
+            /** Metrics */
+            metrics?: {
+                [key: string]: unknown;
+            };
+            /** Month */
+            month: number;
+            /** Overrides */
+            overrides?: {
+                [key: string]: unknown;
+            }[];
+            /** Requested By */
+            requested_by: string;
+            /** Run Id */
+            run_id: string;
+            /** Status */
+            status: string;
+            /** Steps */
+            steps: {
+                [key: string]: components["schemas"]["CloseWorkflowStep"];
+            };
+            /** Updated At */
+            updated_at: string;
+            /** Year */
+            year: number;
+        };
+        /** CloseWorkflowStep */
+        CloseWorkflowStep: {
+            /** Completed At */
+            completed_at?: string | null;
+            /** Message */
+            message?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Status */
+            status: string;
+        };
         /** EnvironmentHealth */
         EnvironmentHealth: {
             /** App Env */
@@ -933,6 +1092,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Live all-in-one pipeline disabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -1032,6 +1198,113 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CloseStateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_close_workflow_api_close_workflow_get: {
+        parameters: {
+            query: {
+                year: number;
+                month: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseWorkflowRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    execute_close_workflow_action_api_close_workflow_actions__action__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                action: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseWorkflowActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseWorkflowRunResponse"];
+                };
+            };
+            /** @description Another action already owns this period */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_close_workflow_api_close_workflow_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseWorkflowActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseWorkflowRunResponse"];
                 };
             };
             /** @description Validation Error */

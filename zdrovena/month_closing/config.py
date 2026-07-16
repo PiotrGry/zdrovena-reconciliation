@@ -139,6 +139,7 @@ class VendorConfig:
     invoice_file_tpl: str | None = None
     browser_download: bool = False
     skip: bool = False
+    source_policy: str = "original_preferred"
 
 
 EXPECTED_VENDORS: list[VendorConfig] = [
@@ -167,7 +168,12 @@ EXPECTED_VENDORS: list[VendorConfig] = [
         invoice_id_re=r"(?:Invoice|Faktura)[^0-9]*?(\d{10,})",
         invoice_file_tpl="{id}.pdf",
     ),
-    VendorConfig(name="PulsePure", pattern="pulsepure", email="pulsepureltd@gmail.com"),
+    VendorConfig(
+        name="PulsePure",
+        pattern="pulsepure",
+        email="pulsepureltd@gmail.com",
+        source_policy="original_required",
+    ),
     VendorConfig(name="Accounting/Bożena", pattern="ogorzalek", email="ogorzalek"),
 ]
 

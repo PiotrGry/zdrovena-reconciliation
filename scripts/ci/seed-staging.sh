@@ -57,8 +57,14 @@ az storage blob upload-batch \
   --destination-path "faktury/inbox" \
   --source "$TMPDIR" \
   --auth-mode login
+az storage blob upload-batch \
+  --account-name "$ACCOUNT" \
+  --destination zdrovena-files-staging \
+  --destination-path "faktury/inbox/${PREV_YEAR}-${MONTH_PAD}" \
+  --source "$TMPDIR" \
+  --auth-mode login
 rm -rf "$TMPDIR"
-echo "Seeded 6 files to zdrovena-files-staging/faktury/inbox/"
+echo "Seeded 6 files to the legacy and period-scoped staging inboxes."
 
 echo "Resetting and seeding fake Fakturownia for ${PREV_YEAR}-${MONTH_PAD}..."
 curl --fail --silent --show-error \
@@ -71,11 +77,12 @@ seed_fakturownia_invoice() {
   local income="$3"
   local buyer_name="$4"
   local price_gross="$5"
+  local has_attachments="${6:-false}"
 
   curl --fail --silent --show-error \
     --request POST \
     --header "Content-Type: application/json" \
-    --data "{\"invoice\":{\"number\":\"$number\",\"oid\":\"$oid\",\"income\":\"$income\",\"buyer_name\":\"$buyer_name\",\"sell_date\":\"${PREV_YEAR}-${MONTH_PAD}-15\",\"issue_date\":\"${PREV_YEAR}-${MONTH_PAD}-15\",\"price_gross\":\"$price_gross\"}}" \
+    --data "{\"invoice\":{\"number\":\"$number\",\"oid\":\"$oid\",\"income\":\"$income\",\"buyer_name\":\"$buyer_name\",\"sell_date\":\"${PREV_YEAR}-${MONTH_PAD}-15\",\"issue_date\":\"${PREV_YEAR}-${MONTH_PAD}-15\",\"price_gross\":\"$price_gross\",\"has_attachments\":$has_attachments}}" \
     "$FAKE_PROVIDER_URL/fakturownia/invoices.json?api_token=fake" >/dev/null
 }
 
@@ -85,7 +92,7 @@ seed_fakturownia_invoice "COST-2/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-allegro
 seed_fakturownia_invoice "COST-3/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-payu" "no" "PayU" "49.00"
 seed_fakturownia_invoice "COST-4/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-inpost" "no" "InPost" "49.00"
 seed_fakturownia_invoice "COST-5/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-apaczka" "no" "Alsendo Apaczka" "49.00"
-seed_fakturownia_invoice "COST-6/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-pulsepure" "no" "PulsePure" "49.00"
+seed_fakturownia_invoice "COST-6/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-pulsepure" "no" "PulsePure" "49.00" true
 seed_fakturownia_invoice "COST-7/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-accounting" "no" "Ogorzalek accounting" "49.00"
 
 echo "Seeded 1 sales and 7 cost invoices in fake Fakturownia."
