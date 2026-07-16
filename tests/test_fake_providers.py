@@ -4,6 +4,7 @@ import socket
 import threading
 import time
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -286,6 +287,7 @@ def test_fakturownia_client_stateful_success_and_existing_invoice(
 def test_month_close_fakturownia_client_uses_environment_base_url_and_filters(
     fake_provider_url: str,
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     endpoint = f"{fake_provider_url}/fakturownia/invoices.json?api_token=fake"
     for invoice in [
@@ -305,6 +307,7 @@ def test_month_close_fakturownia_client_uses_environment_base_url_and_filters(
             "issue_date": "2026-06-16",
             "buyer_name": "Shopify",
             "price_gross": "49.00",
+            "has_attachments": True,
         },
         {
             "number": "OLD/SMOKE",
@@ -332,6 +335,9 @@ def test_month_close_fakturownia_client_uses_environment_base_url_and_filters(
 
     assert [invoice["number"] for invoice in sales] == ["1/SMOKE"]
     assert [invoice["number"] for invoice in costs] == ["COST/SMOKE"]
+    selected = client.download_cost_documents(costs, tmp_path)
+    assert selected[0].source_kind == "original_attachment"
+    assert selected[0].path.read_bytes().startswith(b"%PDF")
 
 
 def test_fake_provider_validates_contracts_and_can_reset_state(fake_provider_url: str) -> None:

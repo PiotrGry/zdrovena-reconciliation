@@ -99,6 +99,8 @@ class MonthCloseOrchestrator:
         non_interactive: bool = False,
         ignore_warnings: bool = False,
         ignore_vendors: list[str] | None = None,
+        manage_state: bool = True,
+        inbox_prefix: str | None = None,
     ) -> None:
         if not (1 <= month <= 12):
             raise ValueError(f"Invalid month: {month}")
@@ -111,6 +113,8 @@ class MonthCloseOrchestrator:
         self.non_interactive = non_interactive
         self.ignore_warnings = ignore_warnings
         self.ignore_vendors: set[str] = {v.lower() for v in (ignore_vendors or [])}
+        self.manage_state = manage_state
+        self.inbox_prefix = inbox_prefix or "faktury/inbox"
         self.ksef_enabled = (
             KSEF_ENABLED and os.environ.get("PROVIDER_MODE", "").strip().lower() != "fake"
         )
@@ -146,6 +150,8 @@ class MonthCloseOrchestrator:
         return _get_secret_impl(service, required=required)
 
     def _skip_if_done(self, step_name: str) -> bool:
+        if not self.manage_state:
+            return False
         if self.state.is_done(step_name):
             self.out.skip(f"{step_name} (already done — skipping)")
             # Do NOT add to report.steps_completed — checkpoint steps are tracked
@@ -186,8 +192,31 @@ class MonthCloseOrchestrator:
 
     def _mark_step_done(self, step_name: str) -> None:
         self.report.steps_completed.append(step_name)
-        if not self.dry_run:
+        if not self.dry_run and self.manage_state:
             self.state.mark_done(step_name)
+
+    def _make_preflight_checker(self) -> PreflightChecker:
+        return PreflightChecker(
+            year=self.year,
+            month=self.month,
+            month_dir=self.month_dir,
+            date_from=self.date_from,
+            date_to=self.date_to,
+            cost_date_to=self.cost_date_to,
+            dry_run=self.dry_run,
+            get_secret=self._get_secret,
+            no_browser=self.non_interactive,
+            storage=self.storage,
+            blob_inbox_prefix=self.inbox_prefix,
+            out_fn=self.out.plain,
+        )
+
+    def _prepare_uploaded_inputs(self) -> None:
+        """Copy period-scoped manual inputs without enforcing the legacy gate."""
+        checker = self._make_preflight_checker()
+        checker.run()
+        self._preflight_checker = checker
+        self._step_1_create_folders()
 
     # ── Execution modes ──────────────────────────────────────────────────────
 
@@ -233,14 +262,15 @@ class MonthCloseOrchestrator:
 
     def execute_send_only(self) -> CloseReport:
         self.out.banner(f"HUMIO – Send email only – {self.month_en} {self.year}")
-        zip_name = f"{self.month_pl}_{self.year}_HUMIO.zip"
-        zip_path = self.month_dir / zip_name
-        if zip_path.exists():
-            self.report.zip_path = zip_path
+        try:
+            self._load_existing_zip()
+            zip_path = self.report.zip_path
+            if zip_path is None:
+                raise RuntimeError("ZIP path was not restored")
             self.out.info(f"📦 Using existing ZIP: {zip_path.name}")
-        else:
-            self.report.errors.append(f"ZIP not found: {zip_path}. Run with --zip first.")
-            self.out.error(f"ZIP not found: {zip_path}")
+        except RuntimeError as exc:
+            self.report.errors.append(str(exc))
+            self.out.error(str(exc))
             self.out.detail(f"Run first: zdrovena close {self.year}-{self.month:02d} --zip")
             self._print_summary()
             return self.report
@@ -261,23 +291,55 @@ class MonthCloseOrchestrator:
             self._print_summary()
         return self.report
 
+    def execute_stage(self, stage: str) -> CloseReport:
+        """Execute one operator-visible, independently retryable stage."""
+        stage = stage.strip().casefold()
+        self.out.banner(f"HUMIO – {stage} – {self.month_en} {self.year}")
+        try:
+            if stage == "sales":
+                self._step_1_create_folders()
+                self._step_2_sales_invoices()
+            elif stage == "costs":
+                self._prepare_uploaded_inputs()
+                self._step_4_cost_invoices()
+            elif stage == "reports":
+                self._prepare_uploaded_inputs()
+                self._step_3_jpk_reports()
+            elif stage == "bank":
+                self._prepare_uploaded_inputs()
+                self._step_5_bank_statement()
+            elif stage == "package":
+                self._step_6_zip_archive()
+            elif stage == "send":
+                self._load_existing_zip()
+                self._step_7_email()
+            else:
+                raise ValueError(f"Unknown month-close stage: {stage}")
+        except Exception as exc:
+            self.report.errors.append(str(exc))
+            logger.exception("Month-close stage %s failed", stage)
+            raise
+        finally:
+            self._print_summary()
+        return self.report
+
+    def _load_existing_zip(self) -> None:
+        zip_name = f"{self.month_pl}_{self.year}_HUMIO.zip"
+        local_path = self.month_dir / zip_name
+        blob_key = f"{self._blob_prefix}/{zip_name}"
+        if local_path.exists():
+            self.report.zip_path = local_path
+            return
+        if self.storage.exists(blob_key):
+            self.report.zip_path = Path(blob_key)
+            return
+        raise RuntimeError(f"ZIP not found: {zip_name}. Build the package first.")
+
     # ── Pipeline steps ───────────────────────────────────────────────────────
 
     def _step_0_preflight(self) -> None:
         self.out.step(0, "Pre-flight: manual invoices, reports & bank statement")
-        checker = PreflightChecker(
-            year=self.year,
-            month=self.month,
-            month_dir=self.month_dir,
-            date_from=self.date_from,
-            date_to=self.date_to,
-            cost_date_to=self.cost_date_to,
-            dry_run=self.dry_run,
-            get_secret=self._get_secret,
-            no_browser=self.non_interactive,
-            storage=self.storage,
-            out_fn=self.out.plain,
-        )
+        checker = self._make_preflight_checker()
         pf = checker.run()
         self.report.bank_statement_found = pf.bank_statement_found
         self.report.warnings.extend(pf.warnings)
@@ -491,24 +553,82 @@ class MonthCloseOrchestrator:
             <= self.date_to
         ]
 
-        for vendor_cfg in EXPECTED_VENDORS:
-            if vendor_cfg.skip:
-                continue
-            pat = vendor_cfg.pattern.casefold()
+        if fakt_invoices:
+            vendor_by_invoice: dict[int, VendorConfig] = {}
+            downloadable: list[dict] = []
             for inv in fakt_invoices:
                 buyer = (inv.get("buyer_name") or "").casefold()
                 buyer_nip = (inv.get("buyer_tax_no") or "").casefold()
-                if pat in buyer or pat in buyer_nip:
-                    source = "Fakturownia (KSeF)" if inv.get("gov_id") else "Fakturownia"
-                    if vendor_cfg.name not in found_vendors:
-                        found_vendors[vendor_cfg.name] = source
-                    break
+                vendor_cfg = next(
+                    (
+                        cfg
+                        for cfg in EXPECTED_VENDORS
+                        if not cfg.skip
+                        and (cfg.pattern.casefold() in buyer or cfg.pattern.casefold() in buyer_nip)
+                    ),
+                    None,
+                )
+                if vendor_cfg is not None:
+                    vendor_by_invoice[int(inv["id"])] = vendor_cfg
+                    if vendor_cfg.source_policy == "original_required" and not inv.get(
+                        "has_attachments"
+                    ):
+                        self.out.warn(
+                            f"{vendor_cfg.name}: brak oryginalnego załącznika w Fakturowni "
+                            "— sprawdzę Zoho Mail"
+                        )
+                        continue
+                downloadable.append(inv)
 
-        if fakt_invoices:
-            saved = fakt_client.download_cost_pdfs(
-                fakt_invoices, self.costs_dir, dry_run=self.dry_run
+            def _source_policy(inv: dict) -> str:
+                vendor = vendor_by_invoice.get(int(inv["id"]))
+                return vendor.source_policy if vendor else "original_preferred"
+
+            selected = fakt_client.download_cost_documents(
+                downloadable,
+                self.costs_dir,
+                dry_run=self.dry_run,
+                source_policy=_source_policy,
             )
-            total_cost_files += len(saved) if not self.dry_run else len(fakt_invoices)
+            total_cost_files += len(selected) if not self.dry_run else len(downloadable)
+
+            if self.dry_run:
+                for inv in downloadable:
+                    vendor_cfg = vendor_by_invoice.get(int(inv["id"]))
+                    if vendor_cfg and vendor_cfg.name not in found_vendors:
+                        found_vendors[vendor_cfg.name] = (
+                            "Fakturownia — oryginalny załącznik"
+                            if inv.get("has_attachments")
+                            else "Fakturownia — wygenerowany PDF"
+                        )
+            else:
+                for document in selected:
+                    vendor_cfg = vendor_by_invoice.get(document.invoice_id)
+                    if vendor_cfg and vendor_cfg.name not in found_vendors:
+                        found_vendors[vendor_cfg.name] = (
+                            "Fakturownia — oryginalny załącznik"
+                            if document.source_kind == "original_attachment"
+                            else "Fakturownia — wygenerowany PDF"
+                        )
+                    if document.source_kind == "original_attachment":
+                        invoice = next(
+                            (
+                                item
+                                for item in downloadable
+                                if int(item["id"]) == document.invoice_id
+                            ),
+                            None,
+                        )
+                        if invoice is not None:
+                            generated_name = f"{fakt_client.cost_document_stem(invoice)}.pdf"
+                            (self.costs_dir / generated_name).unlink(missing_ok=True)
+                            try:
+                                self.storage.delete(f"{self._blob_prefix}/koszty/{generated_name}")
+                            except Exception:
+                                logger.debug(
+                                    "No generated cost copy to remove: %s",
+                                    generated_name,
+                                )
             cost_gross = sum(to_decimal(inv.get("price_gross", 0)) for inv in fakt_invoices)
             self.out.item(
                 f"✅ Fakturownia: {len(fakt_invoices)} expense(s), gross total: {cost_gross:,.2f} PLN"
@@ -589,6 +709,26 @@ class MonthCloseOrchestrator:
                         self.out.item(
                             f"✅ {vendor_cfg.name}: {result['downloaded']} PDF(s) from email"
                         )
+                        if vendor_cfg.source_policy == "original_required":
+                            for invoice in fakt_invoices:
+                                buyer = (invoice.get("buyer_name") or "").casefold()
+                                buyer_nip = (invoice.get("buyer_tax_no") or "").casefold()
+                                if (
+                                    vendor_cfg.pattern.casefold() not in buyer
+                                    and vendor_cfg.pattern.casefold() not in buyer_nip
+                                ):
+                                    continue
+                                generated_name = f"{fakt_client.cost_document_stem(invoice)}.pdf"
+                                (self.costs_dir / generated_name).unlink(missing_ok=True)
+                                try:
+                                    self.storage.delete(
+                                        f"{self._blob_prefix}/koszty/{generated_name}"
+                                    )
+                                except Exception:
+                                    logger.debug(
+                                        "No generated cost copy to remove: %s",
+                                        generated_name,
+                                    )
                     else:
                         logger.info("Zoho Mail: no invoices found for %s", vendor_cfg.name)
                 # Phase 3b: Browser-download vendors (e.g. Canva)
@@ -828,9 +968,11 @@ class MonthCloseOrchestrator:
         self.report.email_sent = True
         self.out.ok(f"Email sent → {ACCOUNTANT_EMAIL}")
         self._mark_step_done("Email")
-        # Delete blob checkpoint — pipeline complete
-        self.state.reset()
-        self.out.ok("Pipeline checkpoint removed from blob")
+        # The legacy all-in-one pipeline owns its checkpoint. The dashboard
+        # persists state separately and must survive the explicit send action.
+        if self.manage_state:
+            self.state.reset()
+            self.out.ok("Pipeline checkpoint removed from blob")
 
     # ── Summary & helpers ────────────────────────────────────────────────────
 

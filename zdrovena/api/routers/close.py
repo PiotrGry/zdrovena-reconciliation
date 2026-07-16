@@ -9,7 +9,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from zdrovena.api.auth import Principal, require_accountant_or_admin, require_viewer_or_above
-from zdrovena.api.models import CloseRequest, CloseResponse, CloseStateResponse
+from zdrovena.api.models import (
+    CloseRequest,
+    CloseResponse,
+    CloseStateResponse,
+    CloseWorkflowActionRequest,
+    CloseWorkflowRunResponse,
+)
 from zdrovena.common.storage import get_storage_service
 from zdrovena.month_closing.close_history import (
     append_close_history,
@@ -20,7 +26,9 @@ from zdrovena.month_closing.close_history import (
 from zdrovena.month_closing.config import BASE_DIR, POLISH_MONTHS
 from zdrovena.month_closing.console import ConsoleReporter
 from zdrovena.month_closing.orchestrator import MonthCloseOrchestrator
+from zdrovena.month_closing.run_store import RunBusyError
 from zdrovena.month_closing.state import PipelineState
+from zdrovena.month_closing.workflow import MonthCloseWorkflow
 
 logger = logging.getLogger("zdrovena.api.routers.close")
 router = APIRouter(prefix="/close", tags=["close"])
@@ -34,6 +42,7 @@ router = APIRouter(prefix="/close", tags=["close"])
     responses={
         400: {"description": "Invalid month/year"},
         403: {"description": "Insufficient role"},
+        409: {"description": "Live all-in-one pipeline disabled"},
         500: {"description": "Pipeline error"},
     },
 )
@@ -55,6 +64,14 @@ def run_close(
         req.ignore_warnings,
         req.ignore_vendors or [],
     )
+    if not req.dry_run:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Automatyczny pipeline live został wyłączony. "
+                "Użyj etapowego workflow /api/close/workflow/actions/{action}."
+            ),
+        )
     try:
         buf = StringIO()
         orchestrator = MonthCloseOrchestrator(
@@ -130,6 +147,70 @@ def run_close(
         ),
     )
     return CloseResponse.from_close_report(report, log_lines=log_lines)
+
+
+@router.get(
+    "/workflow",
+    response_model=CloseWorkflowRunResponse,
+    summary="Get durable month-close dashboard state",
+)
+def get_close_workflow(
+    principal: Annotated[Principal, Depends(require_viewer_or_above)],
+    year: int = Query(..., ge=2020),
+    month: int = Query(..., ge=1, le=12),
+) -> CloseWorkflowRunResponse:
+    workflow = MonthCloseWorkflow()
+    run = workflow.get_run(year, month, principal.email)
+    return CloseWorkflowRunResponse.model_validate(run)
+
+
+@router.post(
+    "/workflow/actions/{action}",
+    response_model=CloseWorkflowRunResponse,
+    summary="Execute one explicit month-close stage",
+    responses={409: {"description": "Another action already owns this period"}},
+)
+def execute_close_workflow_action(
+    action: str,
+    req: CloseWorkflowActionRequest,
+    principal: Annotated[Principal, Depends(require_accountant_or_admin)],
+) -> CloseWorkflowRunResponse:
+    if action not in {"check", "sales", "costs", "reports", "bank", "package", "send"}:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown workflow action")
+    workflow = MonthCloseWorkflow()
+    try:
+        run = workflow.perform(
+            req.year,
+            req.month,
+            action,
+            principal.email,
+            confirm=req.confirm,
+            override_reason=req.override_reason,
+            ignore_vendors=req.ignore_vendors,
+        )
+    except RunBusyError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return CloseWorkflowRunResponse.model_validate(run)
+
+
+@router.post(
+    "/workflow/reset",
+    response_model=CloseWorkflowRunResponse,
+    summary="Start a fresh month-close run for the selected period",
+)
+def reset_close_workflow(
+    req: CloseWorkflowActionRequest,
+    principal: Annotated[Principal, Depends(require_accountant_or_admin)],
+) -> CloseWorkflowRunResponse:
+    workflow = MonthCloseWorkflow()
+    current = workflow.get_run(req.year, req.month, principal.email)
+    if current.get("active_action"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Nie można resetować workflow podczas wykonywania etapu.",
+        )
+    run = workflow.reset(req.year, req.month, principal.email)
+    return CloseWorkflowRunResponse.model_validate(run)
 
 
 @router.get(

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class CloseRequest(BaseModel):
@@ -73,6 +73,71 @@ class ErrorResponse(BaseModel):
 
 class CloseStateResponse(BaseModel):
     completed_steps: list[str]
+
+
+class CloseWorkflowActionRequest(BaseModel):
+    year: int
+    month: int
+    confirm: bool = False
+    override_reason: str | None = None
+    ignore_vendors: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_date(self) -> CloseWorkflowActionRequest:
+        if not (1 <= self.month <= 12):
+            raise ValueError(f"Invalid month: {self.month}")
+        if self.year < 2020:
+            raise ValueError(f"Suspicious year: {self.year}")
+        return self
+
+
+class CloseWorkflowStep(BaseModel):
+    status: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    message: str | None = None
+
+
+class CloseWorkflowDocument(BaseModel):
+    id: str
+    category: str
+    label: str
+    status: str
+    required: bool = True
+    source: str | None = None
+    file_key: str | None = None
+    message: str | None = None
+
+
+class CloseWorkflowIssue(BaseModel):
+    id: str
+    severity: str
+    message: str
+    stage: str
+
+
+class CloseWorkflowArtifact(BaseModel):
+    kind: str
+    key: str
+    files: list[str] = Field(default_factory=list)
+
+
+class CloseWorkflowRunResponse(BaseModel):
+    run_id: str
+    year: int
+    month: int
+    status: str
+    active_action: str | None = None
+    requested_by: str
+    created_at: str
+    updated_at: str
+    steps: dict[str, CloseWorkflowStep]
+    documents: list[CloseWorkflowDocument] = Field(default_factory=list)
+    issues: list[CloseWorkflowIssue] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    artifacts: list[CloseWorkflowArtifact] = Field(default_factory=list)
+    logs: list[str] = Field(default_factory=list)
+    overrides: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class InvoiceItem(BaseModel):
