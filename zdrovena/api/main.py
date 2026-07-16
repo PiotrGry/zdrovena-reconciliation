@@ -16,6 +16,7 @@ from zdrovena.api.errors import install_exception_handlers
 from zdrovena.api.observability import CorrelationIdFilter, correlation_id_middleware
 from zdrovena.api.routers import close, files, invoices, webhooks
 from zdrovena.common.appenv import UNKNOWN_ENV, is_production_env, resolve_app_env
+from zdrovena.common.provider_safety import ProviderSafetyError, assert_provider_write_safety
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -112,6 +113,12 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
             "!= development — niejednoznaczne, potencjalnie produkcyjne, otwarte API. Odmawiam "
             "startu. Ustaw APP_ENV=development, jeśli to celowe środowisko deweloperskie."
         )
+        sys.exit(1)
+
+    try:
+        assert_provider_write_safety()
+    except ProviderSafetyError as exc:
+        logger.critical("Unsafe provider routing: %s", exc)
         sys.exit(1)
 
     if keyvault_url and not auth_disabled:

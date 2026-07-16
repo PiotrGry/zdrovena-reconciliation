@@ -19,7 +19,11 @@ export async function fetchJson(url, { token, ...opts } = {}) {
             body?.message_pl ||
             body?.detail ||
             `Błąd serwera (HTTP ${res.status})` // NIGDY pusty statusText
-        const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg))
+        const safeMsg = typeof msg === 'string' ? msg : JSON.stringify(msg)
+        const displayMsg = body?.correlation_id
+            ? `${safeMsg} (ID: ${body.correlation_id})`
+            : safeMsg
+        const err = new Error(displayMsg)
         err.code = body?.error_code
         err.correlationId = body?.correlation_id
         err.details = body?.details

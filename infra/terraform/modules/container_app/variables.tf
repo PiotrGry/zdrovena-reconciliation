@@ -84,6 +84,30 @@ variable "tags" {
   type = map(string)
 }
 
+variable "target_port" {
+  type        = number
+  default     = 8000
+  description = "Container ingress target port."
+}
+
+variable "container_name" {
+  type        = string
+  default     = "api"
+  description = "Logical container name inside the Container App revision."
+}
+
+variable "command" {
+  type        = list(string)
+  default     = null
+  description = "Optional container command override."
+}
+
+variable "extra_env" {
+  type        = map(string)
+  default     = {}
+  description = "Additional plain environment variables for the container."
+}
+
 variable "applicationinsights_connection_string" {
   type        = string
   default     = null

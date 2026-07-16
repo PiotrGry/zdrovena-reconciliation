@@ -175,7 +175,7 @@ jobs:
           soft_fail: false
 
   frontend-check:
-    name: Frontend lint + build
+    name: Frontend lint + test + build
     runs-on: ubuntu-latest
     needs: detect-changes
     if: needs.detect-changes.outputs.frontend == 'true'
@@ -188,4 +188,4 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - working-directory: frontend
-        run: npm ci && npm run lint && npm run build
+        run: npm ci && npm run lint && npm test && npm run build
