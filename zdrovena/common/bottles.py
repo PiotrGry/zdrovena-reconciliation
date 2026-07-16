@@ -29,8 +29,8 @@ SKIP_RE = re.compile(
     re.IGNORECASE,
 )
 
-# "- 36 butelek" or ", 12 butelek"
-BUTELEK_RE = re.compile(r"(\d+)\s*butelek", re.IGNORECASE)
+# "- 36 butelek", ", 24 butelki", "1 butelka"
+BUTELEK_RE = re.compile(r"(\d+)\s*butel(?:ek|ki|ka)", re.IGNORECASE)
 
 # "500ml x 12" (older product naming scheme)
 X_RE = re.compile(r"x\s*(\d+)", re.IGNORECASE)
