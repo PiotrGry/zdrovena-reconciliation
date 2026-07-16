@@ -5,6 +5,7 @@ import { PageHead } from '../components/PageHead'
 import { Pill } from '../components/Pill'
 import { Icon } from '../components/Icon'
 import { fmtPLN } from '../data'
+import { getProducts } from '../api/endpoints'
 
 export default function ProductsView() {
     const { getToken } = useAuth()
@@ -22,11 +23,7 @@ export default function ProductsView() {
         setLoading(true)
         try {
             const token = await getToken()
-            const res = await fetch(`/api/invoices/products${activeOnly ? '?active_only=true' : ''}`, {
-                headers: { Authorization: `Bearer ${token}` },
-            })
-            if (!res.ok) throw new Error(`HTTP ${res.status}`)
-            setItems(await res.json())
+            setItems(await getProducts({ activeOnly, token }))
         } catch (e) {
             showToast(`Błąd ładowania: ${e.message}`)
         } finally {

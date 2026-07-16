@@ -45,6 +45,20 @@ services:
         required: false
     environment:
       AZURE_AUTH_DISABLED: "true"
+      PROVIDER_MODE: "${PROVIDER_MODE:-fake}"
+      SHOPIFY_WEBHOOK_SECRET: "${SHOPIFY_WEBHOOK_SECRET:-e2e-webhook-secret}"
+      ALLEGRO_CLIENT_ID: "${ALLEGRO_CLIENT_ID:-fake}"
+      ALLEGRO_CLIENT_SECRET: "${ALLEGRO_CLIENT_SECRET:-fake}"
+      ALLEGRO_REFRESH_TOKEN: "${ALLEGRO_REFRESH_TOKEN:-fake}"
+      ALLEGRO_BASE_URL: "http://fake-providers:9009/allegro"
+      ALLEGRO_AUTH_URL: "http://fake-providers:9009/allegro/auth/oauth/token"
+      INPOST_API_TOKEN: "${INPOST_API_TOKEN:-fake}"
+      INPOST_ORGANIZATION_ID: "${INPOST_ORGANIZATION_ID:-fake}"
+      INPOST_BASE_URL: "http://fake-providers:9009/inpost"
+      APACZKA_APP_ID: "${APACZKA_APP_ID:-fake}"
+      APACZKA_APP_SECRET: "${APACZKA_APP_SECRET:-fake}"
+      APACZKA_BASE_URL: "http://fake-providers:9009/apaczka/api/v2"
+      FAKTUROWNIA_BASE_URL: "http://fake-providers:9009/fakturownia"
       FAKTUROWNIA_BASE_DIR: "/app/data/faktury"
       FAKTUROWNIA_API_TOKEN: "${FAKTUROWNIA_API_TOKEN:-dev-placeholder}"
       KSEF_ENABLED: "false"
@@ -55,8 +69,28 @@ services:
     depends_on:
       azurite:
         condition: service_healthy
+      fake-providers:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  fake-providers:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: zdrovena-fake-providers
+    command: ["uvicorn", "zdrovena.fake_providers.app:app", "--reload", "--host", "0.0.0.0", "--port", "9009"]
+    ports:
+      - "9009:9009"
+    volumes:
+      - ./zdrovena:/app/zdrovena
+    environment:
+      APP_ENV: "development"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9009/health')"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -5,6 +5,7 @@
   "description": "Playwright E2E tests for zdrovena dashboard",
   "scripts": {
     "test": "playwright test",
+    "test:critical": "RUN_FAKE_PROVIDER_E2E=1 playwright test tests/critical-fake-providers.spec.ts",
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug"
   },

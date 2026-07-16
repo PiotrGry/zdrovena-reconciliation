@@ -146,6 +146,9 @@ curl -H "Authorization: Bearer $TOKEN" "$BASE/shipping/drafts/dlq"
 # health check (bez tokenu, na roocie — nie pod /api)
 curl "https://<API_URL>/health"
 # → {"status": "ok", "version": "2.0.0"}
+
+# status środowiska i integracji (wymaga roli viewer+)
+curl -H "Authorization: Bearer $TOKEN" "$BASE/integrations/health"
 ```
 
 ### Uruchomienie lokalne
@@ -167,11 +170,68 @@ MOCK_COURIER=true AZURE_AUTH_DISABLED=true uvicorn zdrovena.api.main:app --reloa
 
 Swagger UI dostępne pod `http://localhost:8000/docs` (na roocie, nie pod `/api`).
 
+### Fake providerzy HTTP
+
+Do bezpiecznych testów integracji uruchom fake provider service:
+
+```bash
+uvicorn zdrovena.fake_providers.app:app --port 9009
+```
+
+Następnie skieruj realnych klientów aplikacji na fake HTTP endpointy:
+
+```bash
+PROVIDER_MODE=fake
+ALLEGRO_CLIENT_ID=fake
+ALLEGRO_CLIENT_SECRET=fake
+ALLEGRO_REFRESH_TOKEN=fake
+ALLEGRO_BASE_URL=http://localhost:9009/allegro
+ALLEGRO_AUTH_URL=http://localhost:9009/allegro/auth/oauth/token
+INPOST_API_TOKEN=fake
+INPOST_ORGANIZATION_ID=fake
+INPOST_BASE_URL=http://localhost:9009/inpost
+APACZKA_APP_ID=fake
+APACZKA_APP_SECRET=fake
+APACZKA_BASE_URL=http://localhost:9009/apaczka/api/v2
+FAKTUROWNIA_BASE_URL=http://localhost:9009/fakturownia
+FAKTUROWNIA_API_TOKEN=fake
+```
+
+Reset stanu i scenariusze awarii:
+
+```bash
+curl -X POST http://localhost:9009/__fake__/reset
+curl -X POST http://localhost:9009/__fake__/scenario \
+  -H 'Content-Type: application/json' \
+  -d '{"provider":"inpost","operation":"get_label","mode":"label_not_ready"}'
+```
+
+W `APP_ENV=staging` aplikacja wymaga `PROVIDER_MODE=fake` i odmawia startu, jeśli którykolwiek provider write endpoint wskazuje na znany live host.
+
+### Status integracji
+
+Widok Ustawienia pobiera `/api/integrations/health` i pokazuje bieżące środowisko,
+storage, Key Vault oraz konfigurację integracji Shopify, Fakturownia, Allegro,
+InPost i Apaczka. Endpoint nie wykonuje zapisów ani live-calli do dostawców i nie
+zwraca wartości sekretów; status wynika z trybu środowiska, obecności wymaganych
+zmiennych oraz konfiguracji Key Vault. Każdy wynik zawiera `checked_at`,
+`latency_ms`, tryb, bezpieczną wykonaną operację i publiczny komunikat.
+
+Ręczne wymuszenie pełniejszych checków jest zarezerwowane dla administratorów:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" "$BASE/integrations/health?run_checks=true"
+```
+
+Sekcja procesów operacyjnych pokazuje ostatnie znane podsumowania tam, gdzie
+system je persystuje. Brak persystencji jest raportowany jawnie jako
+`not_configured`, bez zgadywania danych operacyjnych.
+
 ---
 
 ## Frontend
 
-Vanilla HTML + MSAL.js — logowanie przez Microsoft (Entra ID), brak frameworka, brak bundlera.
+React + Vite + MSAL.js — logowanie przez Microsoft (Entra ID).
 
 ### Uruchomienie lokalne
 
@@ -184,6 +244,28 @@ npm install -g @azure/static-web-apps-cli
 AZURE_AUTH_DISABLED=true uvicorn zdrovena.api.main:app --port 8000 &
 swa start frontend --api-location http://localhost:8000
 # → http://localhost:4280
+```
+
+### Kontrakty API
+
+Kontrakty frontendu są generowane z FastAPI OpenAPI schema. Nie edytuj ręcznie plików `contracts/openapi.json` ani `frontend/src/api/generated/schema.d.ts`.
+
+```bash
+scripts/generate-api-contracts.sh
+```
+
+CI uruchamia drift check. Jeżeli backend schema zmieni się bez zaktualizowanych kontraktów, napraw to tym samym poleceniem i commituj wygenerowane pliki.
+
+### Testy frontendu
+
+Frontend używa Vitest, React Testing Library i jsdom. Testy komponentów powinny sprawdzać zachowanie widoczne dla użytkownika, a zależności API mockować na granicy HTTP (`fetch`).
+
+```bash
+cd frontend
+npm ci
+npm test
+npm run lint
+npm run build
 ```
 
 ### Wersjonowanie

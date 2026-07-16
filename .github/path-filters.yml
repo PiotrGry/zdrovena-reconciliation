@@ -2,9 +2,11 @@ backend:
   - 'zdrovena/**'
   - 'tests/**'
   - 'scripts/**'
+  - 'contracts/**'
   - 'pyproject.toml'
   - 'Dockerfile'
 frontend:
   - 'frontend/**'
+  - 'contracts/**'
 infra:
   - 'infra/terraform/**'

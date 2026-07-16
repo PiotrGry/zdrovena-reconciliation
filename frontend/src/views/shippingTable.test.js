@@ -1,5 +1,4 @@
-import { strict as assert } from 'node:assert'
-import { describe, it } from 'node:test'
+import { describe, expect, it } from 'vitest'
 
 import {
     mergeColumnWidths,
@@ -14,9 +13,9 @@ describe('shipping table sorting', () => {
         const desc = nextSortState(asc, 'customer')
         const none = nextSortState(desc, 'customer')
 
-        assert.deepEqual(asc, { key: 'customer', direction: 'asc' })
-        assert.deepEqual(desc, { key: 'customer', direction: 'desc' })
-        assert.deepEqual(none, { key: null, direction: null })
+        expect(asc).toEqual({ key: 'customer', direction: 'asc' })
+        expect(desc).toEqual({ key: 'customer', direction: 'desc' })
+        expect(none).toEqual({ key: null, direction: null })
     })
 
     it('keeps empty values last in both directions', () => {
@@ -29,8 +28,8 @@ describe('shipping table sorting', () => {
         const ascending = sortDrafts(drafts, { key: 'customer', direction: 'asc' }, draft => draft.customer_name)
         const descending = sortDrafts(drafts, { key: 'customer', direction: 'desc' }, draft => draft.customer_name)
 
-        assert.deepEqual(ascending.map(draft => draft.id), ['adam', 'zofia', 'empty'])
-        assert.deepEqual(descending.map(draft => draft.id), ['zofia', 'adam', 'empty'])
+        expect(ascending.map(draft => draft.id)).toEqual(['adam', 'zofia', 'empty'])
+        expect(descending.map(draft => draft.id)).toEqual(['zofia', 'adam', 'empty'])
     })
 
     it('sorts package counts from explicit count or breakdown', () => {
@@ -41,7 +40,7 @@ describe('shipping table sorting', () => {
 
         const sorted = sortDrafts(drafts, { key: 'packages', direction: 'asc' }, packagesSortValue)
 
-        assert.deepEqual(sorted.map(draft => draft.id), ['one', 'three'])
+        expect(sorted.map(draft => draft.id)).toEqual(['one', 'three'])
     })
 })
 
@@ -49,7 +48,7 @@ describe('shipping table column widths', () => {
     it('merges saved widths without going below configured minimums', () => {
         const widths = mergeColumnWidths({ order: 20, customer: 260 })
 
-        assert.equal(widths.order, 150)
-        assert.equal(widths.customer, 260)
+        expect(widths.order).toBe(150)
+        expect(widths.customer).toBe(260)
     })
 })

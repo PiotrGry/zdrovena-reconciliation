@@ -1057,8 +1057,11 @@ class TestUpdateDraft:
         )
         assert resp.status_code == 200
         assert resp.json()["apaczka_service_id"] == "21"
+        assert resp.json()["shipping_service_match_status"] == "manual"
+        assert resp.json()["shipping_service_match_source"] == "operator"
         updated = store.get_draft(draft["id"])
         assert updated["apaczka_service_id"] == "21"
+        assert updated["shipping_service_match_detail"] == "Manual Apaczka service override"
 
     def test_rejects_unknown_apaczka_service_id(self, client, store):
         draft = self._seed_draft(store)
@@ -1154,7 +1157,7 @@ _PACZKOMAT_DRAFT = {
 
 
 class TestRunInpost:
-    def test_kurier_creates_shipment_and_dispatch(self):
+    def test_kurier_execute_creates_shipment_without_dispatch(self):
         from zdrovena.api.routers.webhooks import _run_inpost
 
         with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
@@ -1168,11 +1171,11 @@ class TestRunInpost:
         assert result["courier_draft_id"] == "ship-1"
         assert result["tracking_number"] == "TRK1"
         assert result["status"] == "created"
-        mock_disp.assert_called_once_with(
-            "ship-1", _SENDER, pickup_date=None, pickup_from=None, pickup_to=None
-        )
+        assert result["pickup_ordered"] is False
+        assert result["dispatch_order_id"] is None
+        mock_disp.assert_not_called()
 
-    def test_kurier_dispatch_failure_is_logged_not_raised(self):
+    def test_kurier_execute_does_not_attempt_dispatch(self):
         from zdrovena.api.routers.webhooks import _run_inpost
 
         with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
@@ -1180,10 +1183,12 @@ class TestRunInpost:
                 with patch(
                     "zdrovena.common.inpost.InPostClient.create_dispatch_order",
                     side_effect=Exception("dispatch fail"),
-                ):
+                ) as mock_disp:
                     mock_ship.return_value = {"id": "ship-2", "tracking_number": "TRK2"}
                     result = _run_inpost(_KURIER_DRAFT, _SENDER)
         assert result["status"] == "created"
+        assert result["pickup_ordered"] is False
+        mock_disp.assert_not_called()
 
     def test_paczkomat_creates_shipment(self):
         from zdrovena.api.routers.webhooks import _run_inpost
@@ -1786,6 +1791,9 @@ class TestCreateDraftApaczka:
             _create_draft(order, store, storage)
             drafts = store.list_drafts()
             assert drafts[0]["apaczka_service_id"] == "21"
+            assert drafts[0]["shipping_service_match_status"] == "auto_matched"
+            assert drafts[0]["shipping_service_match_source"] == "Apaczka DPD"
+            assert "APACZKA_SERVICE_TITLE_MAP" in drafts[0]["shipping_service_match_detail"]
         finally:
             monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
             _reset_courier_maps_cache()
@@ -1806,6 +1814,8 @@ class TestCreateDraftApaczka:
             _create_draft(order, store, storage)
             drafts = store.list_drafts()
             assert drafts[0]["apaczka_service_id"] is None
+            assert drafts[0]["shipping_service_match_status"] == "requires_selection"
+            assert drafts[0]["shipping_service_match_source"] == "Apaczka DPD"
             assert drafts[0]["status"] == "needs_review"
         finally:
             monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
@@ -1866,6 +1876,45 @@ class TestCreateDraftApaczka:
         _create_draft(order, store, storage)
         drafts = store.list_drafts()
         assert drafts[0]["apaczka_service_id"] is None
+
+    def test_manual_apaczka_service_match_survives_later_sync(self, store, monkeypatch):
+        from zdrovena.api.routers.webhooks import (
+            _create_draft,
+            _reset_courier_maps_cache,
+            _sync_draft_from_order,
+        )
+
+        monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
+        _reset_courier_maps_cache()
+        order = _load_fixture("shopify_order_apaczka.json")
+        order["shipping_address"]["phone"] = "500600700"
+        order["customer"]["phone"] = "500600700"
+        try:
+            _create_draft(order, store, object())
+            draft = store.list_drafts()[0]
+            store.update_draft(
+                draft["id"],
+                {
+                    "apaczka_service_id": "53",
+                    "shipping_service_match_status": "manual",
+                    "shipping_service_match_source": "operator",
+                    "shipping_service_match_detail": "Manual Apaczka service override",
+                    "status": "pending",
+                },
+            )
+
+            monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21")
+            _reset_courier_maps_cache()
+            _sync_draft_from_order(order, store, object(), existing=store.get_draft(draft["id"]))
+
+            updated = store.get_draft(draft["id"])
+            assert updated["apaczka_service_id"] == "53"
+            assert updated["shipping_service_match_status"] == "manual"
+            assert updated["shipping_service_match_source"] == "operator"
+            assert updated["shipping_service_match_detail"] == "Manual Apaczka service override"
+        finally:
+            monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
+            _reset_courier_maps_cache()
 
 
 class TestExecuteDraftApaczka:

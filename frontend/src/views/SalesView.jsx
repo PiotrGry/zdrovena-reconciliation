@@ -6,6 +6,7 @@ import { Pill } from '../components/Pill'
 import { Icon } from '../components/Icon'
 import { fmtDate, fmtPLN, MONTHS_PL } from '../data'
 import { usePolling } from '../hooks/usePolling'
+import { getSalesInvoices } from '../api/endpoints'
 
 const STATUS_KIND = {
     paid: 'ok',
@@ -41,11 +42,7 @@ export default function SalesView() {
         }
         try {
             const token = await getToken()
-            const res = await fetch(`/api/invoices/sales?year=${year}&month=${month}`, {
-                headers: { Authorization: `Bearer ${token}` },
-            })
-            if (!res.ok) throw new Error(`HTTP ${res.status}`)
-            setItems(await res.json())
+            setItems(await getSalesInvoices({ year, month, token }))
         } catch (e) {
             if (!silent) {
                 setError(e.message)

@@ -4,7 +4,7 @@ import { useToast } from '../components/Toast'
 import { PageHead } from '../components/PageHead'
 import { Pill } from '../components/Pill'
 import { Icon } from '../components/Icon'
-import { fetchJson } from '../api'
+import { discardDlqEntry, getDlqEntries, retryDlqEntry } from '../api/endpoints'
 import { usePolling } from '../hooks/usePolling'
 
 // Widok DLQ (dead-letter queue) — nieudane próby utworzenia draftu przesyłki.
@@ -46,7 +46,7 @@ export default function DlqView() {
         }
         try {
             const token = await getToken()
-            const data = await fetchJson('/api/shipping/drafts/dlq', { token })
+            const data = await getDlqEntries({ token })
             setEntries(data.entries ?? [])
             if (silent) setError(null)
         } catch (e) {
@@ -71,7 +71,7 @@ export default function DlqView() {
     const retry = (id) => withBusy(id, async () => {
         try {
             const token = await getToken()
-            await fetchJson(`/api/shipping/drafts/dlq/${id}/retry`, { method: 'POST', token })
+            await retryDlqEntry({ id, token })
             pushToast({ kind: 'success', msg: 'Wpis DLQ ponowiony — draft utworzony.' })
             await load({ silent: true })
         } catch (e) {
@@ -83,7 +83,7 @@ export default function DlqView() {
         if (!window.confirm('Usunąć wpis DLQ trwale? Zamówienie zostanie zignorowane i nie będzie już próby utworzenia draftu.')) return
         try {
             const token = await getToken()
-            await fetchJson(`/api/shipping/drafts/dlq/${id}`, { method: 'DELETE', token })
+            await discardDlqEntry({ id, token })
             pushToast({ kind: 'success', msg: 'Wpis DLQ usunięty.' })
             await load({ silent: true })
         } catch (e) {
@@ -138,7 +138,7 @@ export default function DlqView() {
                                 const isOpen = expanded.has(entry.id)
                                 return (
                                     <Fragment key={entry.id}>
-                                        <tr>
+                                        <tr data-testid={`dlq-row-${entry.id}`}>
                                             <td className="mono">{fmtTs(entry.created_at)}</td>
                                             <td><Pill kind="default">{entry.source ?? 'shopify'}</Pill></td>
                                             <td className="mono" style={{ fontWeight: 500 }}>{orderLabel(entry.payload)}</td>
@@ -148,7 +148,13 @@ export default function DlqView() {
                                                 <button className="btn btn-ghost btn-sm" onClick={() => toggleExpand(entry.id)} title="Podgląd payloadu">
                                                     <Icon name={isOpen ? 'chevronUp' : 'chevronDown'} size={13} /> Payload
                                                 </button>
-                                                <button className="btn btn-ghost btn-sm" onClick={retry(entry.id)} disabled={isBusy} title="Ponów utworzenie draftu">
+                                                <button
+                                                    className="btn btn-ghost btn-sm"
+                                                    data-testid={`dlq-retry-${entry.id}`}
+                                                    onClick={retry(entry.id)}
+                                                    disabled={isBusy}
+                                                    title="Ponów utworzenie draftu"
+                                                >
                                                     {isBusy
                                                         ? <><Icon name="loader" size={13} className="spin" /> Ponawianie…</>
                                                         : <><Icon name="refresh" size={13} /> Ponów</>}
