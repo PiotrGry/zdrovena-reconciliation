@@ -48,21 +48,12 @@ module "fake_providers_staging" {
   azure_client_id_entra        = var.azure_client_id_entra
   allowed_origins              = "https://${azurerm_static_web_app.ui.default_host_name}"
   container_name               = "fake-providers"
-  initial_image                = "${azurerm_container_registry.acr.login_server}/zdrovena-api:latest"
   target_port                  = 9009
-  command = [
-    "uvicorn",
-    "zdrovena.fake_providers.app:app",
-    "--host",
-    "0.0.0.0",
-    "--port",
-    "9009",
-  ]
-  min_replicas = 0
-  max_replicas = 1
-  cpu          = 0.25
-  memory       = "0.5Gi"
-  tags         = merge(local.tags, { environment = "staging", role = "fake-providers" })
+  min_replicas                 = 0
+  max_replicas                 = 1
+  cpu                          = 0.25
+  memory                       = "0.5Gi"
+  tags                         = merge(local.tags, { environment = "staging", role = "fake-providers" })
 }
 
 module "api_staging" {
