@@ -595,6 +595,17 @@ def _reset_courier_maps_cache() -> None:
     _apaczka_service_title_map.cache_clear()
 
 
+_MATCH_AUTO = "auto_matched"
+_MATCH_MANUAL = "manual"
+_MATCH_REQUIRES_SELECTION = "requires_selection"
+_MATCH_UNRECOGNIZED = "unrecognized"
+_MATCH_FIELDS = (
+    "shipping_service_match_status",
+    "shipping_service_match_source",
+    "shipping_service_match_detail",
+)
+
+
 def _pick_courier(order: dict[str, Any]) -> str:
     """Route shipping-line title to a courier backend.
 
@@ -643,6 +654,50 @@ def _pick_apaczka_service(title: str) -> str | None:
         if keyword and keyword in lowered:
             return service_id
     return None
+
+
+def _shipping_service_match_fields(
+    *,
+    courier: str,
+    title: str,
+    inpost_service: str | None,
+    apaczka_service_id: str | None,
+    allegro_method_id: str | None,
+) -> dict[str, str | None]:
+    source_title = (title or "").strip() or None
+    if courier == "allegro_delivery":
+        return {
+            "shipping_service_match_status": _MATCH_AUTO
+            if allegro_method_id
+            else _MATCH_UNRECOGNIZED,
+            "shipping_service_match_source": source_title or allegro_method_id,
+            "shipping_service_match_detail": "Allegro delivery method id matched",
+        }
+    if courier == "inpost":
+        return {
+            "shipping_service_match_status": _MATCH_AUTO if inpost_service else _MATCH_UNRECOGNIZED,
+            "shipping_service_match_source": source_title,
+            "shipping_service_match_detail": (
+                "InPost service matched from shipping method"
+                if inpost_service
+                else "No InPost service mapping matched"
+            ),
+        }
+    if courier == "apaczka" and apaczka_service_id:
+        return {
+            "shipping_service_match_status": _MATCH_AUTO,
+            "shipping_service_match_source": source_title,
+            "shipping_service_match_detail": "Apaczka service matched from APACZKA_SERVICE_TITLE_MAP",
+        }
+    return {
+        "shipping_service_match_status": _MATCH_REQUIRES_SELECTION
+        if source_title
+        else _MATCH_UNRECOGNIZED,
+        "shipping_service_match_source": source_title,
+        "shipping_service_match_detail": (
+            "No Apaczka service mapping matched" if source_title else "No source shipping method"
+        ),
+    }
 
 
 # ── Courier execution helpers ─────────────────────────────────────────────────
@@ -1376,6 +1431,13 @@ def _build_draft_record(
         "courier": courier,
         "service": service,
         "apaczka_service_id": apaczka_service_id,
+        **_shipping_service_match_fields(
+            courier=courier,
+            title=title,
+            inpost_service=inpost_service,
+            apaczka_service_id=apaczka_service_id,
+            allegro_method_id=allegro_method_id,
+        ),
         "tracking_number": fulfillment_details.get("tracking_number"),
         "tracking_company": fulfillment_details.get("tracking_company"),
         "courier_draft_id": None,
@@ -1455,6 +1517,10 @@ def _merge_synced_draft(existing: dict[str, Any], incoming: dict[str, Any]) -> d
 
     if existing.get("apaczka_service_id") and incoming.get("courier") == existing.get("courier"):
         merged["apaczka_service_id"] = existing["apaczka_service_id"]
+        if existing.get("shipping_service_match_status") == _MATCH_MANUAL:
+            for field in _MATCH_FIELDS:
+                if field in existing:
+                    merged[field] = existing[field]
     if existing.get("service") and existing_status in _SYNC_BUSY_STATUSES | _SYNC_TERMINAL_STATUSES:
         merged["service"] = existing["service"]
         merged["courier"] = existing.get("courier", merged.get("courier"))
@@ -2486,6 +2552,9 @@ def update_draft(
         if draft.get("courier") == "inpost" and service == "apaczka":
             raise HTTPException(status_code=400, detail="Cannot switch InPost draft to apaczka")
         patch["service"] = service
+        patch["shipping_service_match_status"] = _MATCH_MANUAL
+        patch["shipping_service_match_source"] = "operator"
+        patch["shipping_service_match_detail"] = "Manual service override"
     if locker_id is not None:
         receiver = dict(draft.get("receiver") or {})
         receiver["locker_id"] = locker_id
@@ -2499,6 +2568,9 @@ def update_draft(
                 detail=f"Unknown apaczka_service_id: {apaczka_service_id}",
             )
         patch["apaczka_service_id"] = apaczka_service_id
+        patch["shipping_service_match_status"] = _MATCH_MANUAL
+        patch["shipping_service_match_source"] = "operator"
+        patch["shipping_service_match_detail"] = "Manual Apaczka service override"
     if reviewed is True and draft.get("status") == "needs_review":
         patch["status"] = "pending"
         patch["error"] = None

@@ -40,11 +40,17 @@ function draft(overrides = {}) {
     }
 }
 
-function installShippingFetch({ drafts = [], afterSyncDrafts, syncDeferred, errorEnvelope } = {}) {
+function installShippingFetch({
+    drafts = [],
+    afterSyncDrafts,
+    syncDeferred,
+    errorEnvelope,
+    apaczkaServices = [],
+} = {}) {
     let draftsCalls = 0
     let confirmCalls = 0
     const fetchMock = mockFetch((url, init = {}) => {
-        if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
+        if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: apaczkaServices })
         if (url === '/api/shipping/sync') {
             return syncDeferred
                 ? syncDeferred.promise.then(() => jsonResponse({
@@ -89,6 +95,27 @@ describe('ShippingView', () => {
         expect(addressLabel).toBeInTheDocument()
         expect(addressLabel.nextElementSibling).toHaveTextContent('Prosta 1')
         expect(addressLabel.nextElementSibling).toHaveTextContent('00-001 Warszawa')
+    })
+
+    it('shows Apaczka shipping service match status and source', async () => {
+        installShippingFetch({
+            apaczkaServices: [{ service_id: '21', label: 'DPD Kurier' }],
+            drafts: [draft({
+                courier: 'apaczka',
+                service: 'apaczka',
+                apaczka_service_id: '21',
+                shipping_service_match_status: 'auto_matched',
+                shipping_service_match_source: 'Apaczka DPD',
+            })],
+        })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+        await userEvent.click(screen.getByRole('button', { name: 'Rozwiń' }))
+
+        expect(screen.getByText('Dopasowano automatycznie')).toBeInTheDocument()
+        expect(screen.getByText('Źródło: Apaczka DPD')).toBeInTheDocument()
+        expect(screen.getAllByText(/DPD Kurier/).length).toBeGreaterThan(0)
     })
 
     it('distinguishes pickup point delivery from a street address', async () => {
