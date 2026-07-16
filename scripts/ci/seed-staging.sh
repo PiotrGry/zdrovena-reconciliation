@@ -5,6 +5,8 @@ set -euo pipefail
 
 ACCOUNT="${AZURE_STORAGE_ACCOUNT:?AZURE_STORAGE_ACCOUNT is required}"
 RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:?AZURE_RESOURCE_GROUP is required}"
+FAKE_PROVIDER_URL="${FAKE_PROVIDER_URL:?FAKE_PROVIDER_URL is required}"
+FAKE_PROVIDER_URL="${FAKE_PROVIDER_URL%/}"
 
 NOW=$(date -u +"%Y-%m")
 YEAR="${NOW%-*}"
@@ -57,3 +59,33 @@ az storage blob upload-batch \
   --auth-mode login
 rm -rf "$TMPDIR"
 echo "Seeded 6 files to zdrovena-files-staging/faktury/inbox/"
+
+echo "Resetting and seeding fake Fakturownia for ${PREV_YEAR}-${MONTH_PAD}..."
+curl --fail --silent --show-error \
+  --request POST \
+  "$FAKE_PROVIDER_URL/__fake__/reset" >/dev/null
+
+seed_fakturownia_invoice() {
+  local number="$1"
+  local oid="$2"
+  local income="$3"
+  local buyer_name="$4"
+  local price_gross="$5"
+
+  curl --fail --silent --show-error \
+    --request POST \
+    --header "Content-Type: application/json" \
+    --data "{\"invoice\":{\"number\":\"$number\",\"oid\":\"$oid\",\"income\":\"$income\",\"buyer_name\":\"$buyer_name\",\"sell_date\":\"${PREV_YEAR}-${MONTH_PAD}-15\",\"issue_date\":\"${PREV_YEAR}-${MONTH_PAD}-15\",\"price_gross\":\"$price_gross\"}}" \
+    "$FAKE_PROVIDER_URL/fakturownia/invoices.json?api_token=fake" >/dev/null
+}
+
+seed_fakturownia_invoice "1/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-sale" "yes" "HUMIO smoke sale" "123.00"
+seed_fakturownia_invoice "COST-1/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-shopify" "no" "Shopify" "49.00"
+seed_fakturownia_invoice "COST-2/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-allegro" "no" "Allegro" "49.00"
+seed_fakturownia_invoice "COST-3/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-payu" "no" "PayU" "49.00"
+seed_fakturownia_invoice "COST-4/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-inpost" "no" "InPost" "49.00"
+seed_fakturownia_invoice "COST-5/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-apaczka" "no" "Alsendo Apaczka" "49.00"
+seed_fakturownia_invoice "COST-6/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-pulsepure" "no" "PulsePure" "49.00"
+seed_fakturownia_invoice "COST-7/SMOKE-${PREV_YEAR}-${MONTH_PAD}" "smoke-accounting" "no" "Ogorzalek accounting" "49.00"
+
+echo "Seeded 1 sales and 7 cost invoices in fake Fakturownia."

@@ -12,6 +12,7 @@ from uvicorn import Config, Server
 
 from zdrovena.common.allegro import AllegroClient
 from zdrovena.common.apaczka import ApaczkaClient
+from zdrovena.common.client import FakturowniaClient as MonthCloseFakturowniaClient
 from zdrovena.common.fakturownia import FakturowniaClient
 from zdrovena.common.inpost import InPostClient
 from zdrovena.common.shipping_exceptions import (
@@ -280,6 +281,57 @@ def test_fakturownia_client_stateful_success_and_existing_invoice(
         {"kind": "vat", "number": "FV/3/2026", "oid": "order-1", "positions": []}
     )
     assert duplicate["id"] == invoice["id"]
+
+
+def test_month_close_fakturownia_client_uses_environment_base_url_and_filters(
+    fake_provider_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint = f"{fake_provider_url}/fakturownia/invoices.json?api_token=fake"
+    for invoice in [
+        {
+            "number": "1/SMOKE",
+            "oid": "smoke-sale",
+            "income": "yes",
+            "sell_date": "2026-06-15",
+            "issue_date": "2026-06-15",
+            "price_gross": "123.00",
+        },
+        {
+            "number": "COST/SMOKE",
+            "oid": "smoke-cost",
+            "income": "no",
+            "sell_date": "2026-06-16",
+            "issue_date": "2026-06-16",
+            "buyer_name": "Shopify",
+            "price_gross": "49.00",
+        },
+        {
+            "number": "OLD/SMOKE",
+            "oid": "old-sale",
+            "income": "yes",
+            "sell_date": "2026-05-15",
+            "issue_date": "2026-05-15",
+            "price_gross": "10.00",
+        },
+    ]:
+        response = requests.post(endpoint, json={"invoice": invoice}, timeout=2)
+        response.raise_for_status()
+
+    monkeypatch.setenv("FAKTUROWNIA_BASE_URL", f"{fake_provider_url}/fakturownia")
+    monkeypatch.setenv("FAKTUROWNIA_API_TOKEN", "fake")
+    client = MonthCloseFakturowniaClient.from_keyring(
+        retry_count=1,
+        retry_delay=0,
+        timeout=2,
+        pdf_delay=0,
+    )
+
+    sales = client.fetch_sales_invoices("2026-06-01", "2026-06-30")
+    costs = client.fetch_cost_invoices("2026-06-01", "2026-06-30")
+
+    assert [invoice["number"] for invoice in sales] == ["1/SMOKE"]
+    assert [invoice["number"] for invoice in costs] == ["COST/SMOKE"]
 
 
 def test_fake_provider_validates_contracts_and_can_reset_state(fake_provider_url: str) -> None:

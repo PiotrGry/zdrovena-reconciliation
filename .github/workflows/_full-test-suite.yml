@@ -303,6 +303,7 @@ jobs:
         env:
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
           AZURE_STORAGE_ACCOUNT: zdrovenafiles
+          FAKE_PROVIDER_URL: ${{ needs.resolve-urls.outputs.fake-provider-url }}
         run: bash scripts/ci/seed-staging.sh
 
   # ── 5. Smoke test suite ────────────────────────────────────────────────────
