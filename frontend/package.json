@@ -8,14 +8,10 @@
         "build": "vite build",
         "preview": "vite preview",
         "lint": "eslint src --max-warnings 0",
-<<<<<<< HEAD
-        "test": "node --test src/views/*.test.js",
+        "test": "vitest run",
         "generate:api": "cd .. && scripts/generate-api-contracts.sh",
         "check:api-contracts": "cd .. && scripts/check-api-contracts.sh",
         "check:api-types": "tsc -p tsconfig.api-contracts.json"
-=======
-        "test": "vitest run"
->>>>>>> origin/develop
     },
     "dependencies": {
         "@azure/msal-browser": "^3.27.0",
@@ -24,26 +20,18 @@
     },
     "devDependencies": {
         "@eslint/js": "^9.24.0",
-<<<<<<< HEAD
-        "@vitejs/plugin-react": "^4.3.4",
-=======
         "@testing-library/jest-dom": "^6.9.1",
         "@testing-library/react": "^16.3.2",
         "@testing-library/user-event": "^14.6.1",
         "@vitejs/plugin-react": "^6.0.3",
->>>>>>> origin/develop
         "eslint": "^9.24.0",
         "eslint-plugin-react": "^7.37.5",
         "eslint-plugin-react-hooks": "^5.2.0",
         "globals": "^16.0.0",
-<<<<<<< HEAD
+        "jsdom": "^29.1.1",
         "openapi-typescript": "^7.13.0",
         "typescript": "^5.9.3",
-        "vite": "^5.4.14"
-=======
-        "jsdom": "^29.1.1",
         "vite": "^8.1.4",
         "vitest": "^4.1.10"
->>>>>>> origin/develop
     }
 }
