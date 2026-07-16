@@ -116,6 +116,18 @@ class TestOrchestratorInit:
         assert orch.date_from == "2025-06-01"
         assert orch.date_to == "2025-06-30"
 
+    @patch.dict(os.environ, {"PROVIDER_MODE": "fake"})
+    @patch("zdrovena.month_closing.orchestrator.KSEF_ENABLED", True)
+    def test_fake_provider_mode_disables_ksef(self):
+        orch = MonthCloseOrchestrator(year=2025, month=6, dry_run=True)
+        assert orch.ksef_enabled is False
+
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("zdrovena.month_closing.orchestrator.KSEF_ENABLED", True)
+    def test_live_provider_mode_respects_ksef_config(self):
+        orch = MonthCloseOrchestrator(year=2025, month=6, dry_run=True)
+        assert orch.ksef_enabled is True
+
 
 # ── _get_secret env fallback ─────────────────────────────────────────────────
 
