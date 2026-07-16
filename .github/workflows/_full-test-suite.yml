@@ -241,6 +241,31 @@ jobs:
           output_location: ""
           skip_app_build: true
 
+      - name: Wait for SWA staging readiness
+        env:
+          SWA_URL: https://icy-water-0e2b04d03-${{ github.event.pull_request.number }}.westeurope.7.azurestaticapps.net
+        run: |
+          for attempt in $(seq 1 30); do
+            HTTP_STATUS=$(curl -sS \
+              --connect-timeout 5 \
+              --max-time 10 \
+              -o /tmp/swa-index.html \
+              -w "%{http_code}" \
+              "$SWA_URL" || true)
+
+            if [[ "$HTTP_STATUS" == "200" ]] \
+              && grep -Eq 'src="/assets/[^"]+\.js"' /tmp/swa-index.html; then
+              echo "SWA staging is ready (attempt $attempt)"
+              exit 0
+            fi
+
+            echo "SWA not ready yet (attempt $attempt/30, HTTP $HTTP_STATUS)"
+            sleep 10
+          done
+
+          echo "::error::SWA staging did not become ready within 5 minutes"
+          exit 1
+
   # ── 3b. Resolve staging URLs (no az login needed — staging FQDN is static) ──
   resolve-urls:
     name: Resolve staging URLs
