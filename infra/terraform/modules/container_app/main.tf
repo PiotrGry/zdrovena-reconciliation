@@ -28,7 +28,7 @@ resource "azurerm_container_app" "this" {
   # /api/* requests to this Container App.
   ingress {
     external_enabled = true
-    target_port      = 8000
+    target_port      = var.target_port
     transport        = "auto" # Enables HTTP/2 and gRPC support
 
     traffic_weight {
@@ -42,11 +42,12 @@ resource "azurerm_container_app" "this" {
     max_replicas = var.max_replicas
 
     container {
-      name = "api"
+      name = var.container_name
       # Placeholder — GitHub Actions replaces on first deploy
-      image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
-      cpu    = var.cpu
-      memory = var.memory
+      image   = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+      cpu     = var.cpu
+      memory  = var.memory
+      command = var.command
 
       env {
         name  = "APP_ENV"
@@ -107,6 +108,14 @@ resource "azurerm_container_app" "this" {
         content {
           name  = "SHOPIFY_ALLOWED_DOMAINS"
           value = var.shopify_allowed_domains
+        }
+      }
+
+      dynamic "env" {
+        for_each = var.extra_env
+        content {
+          name  = env.key
+          value = env.value
         }
       }
     }

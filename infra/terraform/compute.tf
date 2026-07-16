@@ -29,6 +29,41 @@ module "api_prod" {
   tags                                  = local.tags
 }
 
+module "fake_providers_staging" {
+  source = "./modules/container_app"
+
+  name                         = "${var.prefix}-fake-providers-staging"
+  environment                  = "staging"
+  resource_group_name          = azurerm_resource_group.rg.name
+  container_app_environment_id = azurerm_container_app_environment.env.id
+  acr_login_server             = azurerm_container_registry.acr.login_server
+  acr_id                       = azurerm_container_registry.acr.id
+  storage_account_url          = "https://${azurerm_storage_account.storage.name}.blob.core.windows.net"
+  storage_container_name       = azurerm_storage_container.files_staging.name
+  storage_container_id         = azurerm_storage_container.files_staging.id
+  storage_account_id           = azurerm_storage_account.storage.id
+  key_vault_id                 = azurerm_key_vault.kv.id
+  key_vault_url                = azurerm_key_vault.kv.vault_uri
+  azure_tenant_id              = var.azure_tenant_id
+  azure_client_id_entra        = var.azure_client_id_entra
+  allowed_origins              = "https://${azurerm_static_web_app.ui.default_host_name}"
+  container_name               = "fake-providers"
+  target_port                  = 9009
+  command = [
+    "uvicorn",
+    "zdrovena.fake_providers.app:app",
+    "--host",
+    "0.0.0.0",
+    "--port",
+    "9009",
+  ]
+  min_replicas = 0
+  max_replicas = 1
+  cpu          = 0.25
+  memory       = "0.5Gi"
+  tags         = merge(local.tags, { environment = "staging", role = "fake-providers" })
+}
+
 module "api_staging" {
   source = "./modules/container_app"
 
@@ -48,11 +83,27 @@ module "api_staging" {
   azure_client_id_entra                 = var.azure_client_id_entra
   allowed_origins                       = "https://${azurerm_static_web_app.ui.default_host_name}"
   applicationinsights_connection_string = azurerm_application_insights.ai.connection_string
-  min_replicas                          = 0
-  max_replicas                          = 1
-  cpu                                   = var.container_app_cpu
-  memory                                = var.container_app_memory
-  tags                                  = merge(local.tags, { environment = "staging" })
+  extra_env = {
+    ALLEGRO_CLIENT_ID      = "fake"
+    ALLEGRO_CLIENT_SECRET  = "fake"
+    ALLEGRO_REFRESH_TOKEN  = "fake"
+    PROVIDER_MODE          = "fake"
+    ALLEGRO_BASE_URL       = "https://${module.fake_providers_staging.fqdn}/allegro"
+    ALLEGRO_AUTH_URL       = "https://${module.fake_providers_staging.fqdn}/allegro/auth/oauth/token"
+    INPOST_API_TOKEN       = "fake"
+    INPOST_ORGANIZATION_ID = "fake"
+    INPOST_BASE_URL        = "https://${module.fake_providers_staging.fqdn}/inpost"
+    APACZKA_APP_ID         = "fake"
+    APACZKA_APP_SECRET     = "fake"
+    APACZKA_BASE_URL       = "https://${module.fake_providers_staging.fqdn}/apaczka/api/v2"
+    FAKTUROWNIA_BASE_URL   = "https://${module.fake_providers_staging.fqdn}/fakturownia"
+    FAKTUROWNIA_API_TOKEN  = "fake"
+  }
+  min_replicas = 0
+  max_replicas = 1
+  cpu          = var.container_app_cpu
+  memory       = var.container_app_memory
+  tags         = merge(local.tags, { environment = "staging" })
 }
 
 # ── Allegro Poller — Container App Job (scheduled cron) ───────────────────────

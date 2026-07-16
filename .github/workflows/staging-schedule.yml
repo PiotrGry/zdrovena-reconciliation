@@ -42,10 +42,20 @@ jobs:
             --resource-group zdrovena-rg \
             --min-replicas 0 \
             --max-replicas 0
+          az containerapp update \
+            --name zdrovena-fake-providers-staging \
+            --resource-group zdrovena-rg \
+            --min-replicas 0 \
+            --max-replicas 0
 
       - name: Warm up staging (scale to 1)
         if: github.event.inputs.action == 'warmup'
         run: |
+          az containerapp update \
+            --name zdrovena-fake-providers-staging \
+            --resource-group zdrovena-rg \
+            --min-replicas 1 \
+            --max-replicas 1
           az containerapp update \
             --name zdrovena-api-staging \
             --resource-group zdrovena-rg \
