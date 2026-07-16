@@ -26,8 +26,26 @@ def _sample_order(order_id: str = "fake-order-1") -> dict[str, Any]:
         "id": order_id,
         "status": "READY_FOR_PROCESSING",
         "fulfillment": {"status": "NEW"},
-        "lineItems": [{"id": "line-1", "offer": {"name": "HUMIO"}, "quantity": 1}],
-        "buyer": {"email": "buyer@example.test"},
+        "lineItems": [
+            {
+                "id": "line-1",
+                "offer": {"name": "HUMIO"},
+                "quantity": 1,
+                "price": {"amount": "29.99", "currency": "PLN"},
+                "tax": {"rate": "23"},
+            }
+        ],
+        "buyer": {
+            "email": "buyer@example.test",
+            "firstName": "Fake",
+            "lastName": "Buyer",
+            "address": {
+                "street": "Prosta 1",
+                "postCode": "00-001",
+                "city": "Warszawa",
+                "countryCode": "PL",
+            },
+        },
         "delivery": {"method": {"name": "Fake delivery"}, "cost": {"amount": "0.00"}},
         "summary": {"totalToPay": {"amount": "29.99", "currency": "PLN"}},
     }
@@ -117,8 +135,12 @@ def state() -> dict[str, Any]:
             "orders": deepcopy(STATE.allegro_orders),
             "shipments": deepcopy(STATE.allegro_shipments),
             "invoices": deepcopy(STATE.allegro_invoices),
+            "dispatches": deepcopy(STATE.allegro_dispatches),
         },
-        "inpost": {"shipments": deepcopy(STATE.inpost_shipments)},
+        "inpost": {
+            "shipments": deepcopy(STATE.inpost_shipments),
+            "dispatches": deepcopy(STATE.inpost_dispatches),
+        },
         "apaczka": {"orders": deepcopy(STATE.apaczka_orders)},
         "fakturownia": {"invoices": deepcopy(STATE.fakturownia_invoices)},
     }

@@ -149,6 +149,12 @@ function syncSummary(result) {
     return `Synchronizacja zakończona: ${created} nowe, ${updated} zaktualizowanych, ${unchanged} bez zmian, ${errors} błędów.`
 }
 
+function apiErrorMessage(body, response) {
+    const message = body?.message_pl || body?.detail || `${response.status}`
+    const correlationId = body?.correlation_id || response.headers?.get?.('X-Correlation-ID')
+    return correlationId ? `${message} (ID: ${correlationId})` : message
+}
+
 function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
     const [loading, setLoading] = useState(true)
     const [creating, setCreating] = useState(false)
@@ -474,7 +480,11 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
     )
 
     return (
-        <div className={`accordion-row${open ? ' open' : ''}`} style={{ display: 'flex', alignItems: 'stretch', minWidth: tableMinWidth }}>
+        <div
+            className={`accordion-row${open ? ' open' : ''}`}
+            data-testid={`shipping-row-${draft.id}`}
+            style={{ display: 'flex', alignItems: 'stretch', minWidth: tableMinWidth }}
+        >
             <div style={{ width: 56, flexShrink: 0, display: 'flex', alignItems: open ? 'flex-start' : 'center', justifyContent: 'center', gap: 6, paddingTop: open ? 4 : 0 }}>
                 {isSelectable ? (
                     <input
@@ -487,6 +497,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                 <button
                     onClick={() => setOpen(o => !o)}
                     aria-expanded={open}
+                    data-testid={`shipping-expand-${draft.id}`}
                     style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px 8px', color: 'var(--text-2)', display: 'flex', alignItems: 'center', borderRadius: 4 }}
                 >
                     <Icon name={open ? 'chevronUp' : 'chevronDown'} size={20} />
@@ -652,11 +663,12 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 10 }}>
                                     <span className="dim" style={{ fontSize: '0.88em' }}>Brak faktury</span>
                                     {canManage && (
-                                        <button
-                                            className="btn btn-secondary"
-                                            style={{ fontSize: '0.82em', padding: '3px 10px' }}
-                                            onClick={() => setShowInvoicePanel(true)}
-                                        >
+                            <button
+                                className="btn btn-secondary"
+                                data-testid={`shipping-invoice-${draft.id}`}
+                                style={{ fontSize: '0.82em', padding: '3px 10px' }}
+                                onClick={() => setShowInvoicePanel(true)}
+                            >
                                             <Icon name="invoice" size={12} /> Podgląd i załącz
                                         </button>
                                     )}
@@ -691,6 +703,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                         {canManage && (draft.status === 'pending' || draft.status === 'error') && (
                             <button
                                 className="btn btn-primary"
+                                data-testid={`shipping-execute-${draft.id}`}
                                 onClick={() => needsPickupSchedule
                                     ? setPickupModal('execute')
                                     : onExecute(draft, null)
@@ -745,6 +758,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                         {canManage && canPickup && (
                             <button
                                 className="btn btn-secondary"
+                                data-testid={`shipping-pickup-${draft.id}`}
                                 onClick={() => setPickupModal('pickup')}
                                 disabled={isBusy}
                             >
@@ -992,7 +1006,7 @@ export default function ShippingView() {
             })
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
-                throw new Error(body.detail || `${res.status}`)
+                throw new Error(apiErrorMessage(body, res))
             }
         }, 'Nie udało się zrealizować przesyłki')()
     }
@@ -1007,7 +1021,7 @@ export default function ShippingView() {
             })
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
-                throw new Error(body.detail || `${res.status}`)
+                throw new Error(apiErrorMessage(body, res))
             }
         }, 'Nie udało się zamówić podjazdu')()
     }
@@ -1022,7 +1036,7 @@ export default function ShippingView() {
             })
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
-                throw new Error(body.detail || `${res.status}`)
+                throw new Error(apiErrorMessage(body, res))
             }
         }, 'Nie udało się zapisać usługi Apaczka')()
     }
@@ -1037,7 +1051,7 @@ export default function ShippingView() {
             })
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
-                throw new Error(body.detail || `${res.status}`)
+                throw new Error(apiErrorMessage(body, res))
             }
         }, 'Nie udało się zatwierdzić draftu')()
     }
@@ -1053,7 +1067,7 @@ export default function ShippingView() {
             // (or another manual click) will check again.
             if (!res.ok && res.status !== 202) {
                 const body = await res.json().catch(() => ({}))
-                throw new Error(body.detail || `${res.status}`)
+                throw new Error(apiErrorMessage(body, res))
             }
         }, 'Nie udało się sprawdzić statusu')()
     }
@@ -1098,7 +1112,7 @@ export default function ShippingView() {
             })
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
-                throw new Error(body.detail || `${res.status}`)
+                throw new Error(apiErrorMessage(body, res))
             }
             await load()
         }, 'Nie udało się oznaczyć jako zrealizowane')()

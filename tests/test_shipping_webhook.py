@@ -1154,7 +1154,7 @@ _PACZKOMAT_DRAFT = {
 
 
 class TestRunInpost:
-    def test_kurier_creates_shipment_and_dispatch(self):
+    def test_kurier_execute_creates_shipment_without_dispatch(self):
         from zdrovena.api.routers.webhooks import _run_inpost
 
         with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
@@ -1168,11 +1168,11 @@ class TestRunInpost:
         assert result["courier_draft_id"] == "ship-1"
         assert result["tracking_number"] == "TRK1"
         assert result["status"] == "created"
-        mock_disp.assert_called_once_with(
-            "ship-1", _SENDER, pickup_date=None, pickup_from=None, pickup_to=None
-        )
+        assert result["pickup_ordered"] is False
+        assert result["dispatch_order_id"] is None
+        mock_disp.assert_not_called()
 
-    def test_kurier_dispatch_failure_is_logged_not_raised(self):
+    def test_kurier_execute_does_not_attempt_dispatch(self):
         from zdrovena.api.routers.webhooks import _run_inpost
 
         with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
@@ -1180,10 +1180,12 @@ class TestRunInpost:
                 with patch(
                     "zdrovena.common.inpost.InPostClient.create_dispatch_order",
                     side_effect=Exception("dispatch fail"),
-                ):
+                ) as mock_disp:
                     mock_ship.return_value = {"id": "ship-2", "tracking_number": "TRK2"}
                     result = _run_inpost(_KURIER_DRAFT, _SENDER)
         assert result["status"] == "created"
+        assert result["pickup_ordered"] is False
+        mock_disp.assert_not_called()
 
     def test_paczkomat_creates_shipment(self):
         from zdrovena.api.routers.webhooks import _run_inpost

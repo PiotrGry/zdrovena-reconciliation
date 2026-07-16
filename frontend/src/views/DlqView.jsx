@@ -138,7 +138,7 @@ export default function DlqView() {
                                 const isOpen = expanded.has(entry.id)
                                 return (
                                     <Fragment key={entry.id}>
-                                        <tr>
+                                        <tr data-testid={`dlq-row-${entry.id}`}>
                                             <td className="mono">{fmtTs(entry.created_at)}</td>
                                             <td><Pill kind="default">{entry.source ?? 'shopify'}</Pill></td>
                                             <td className="mono" style={{ fontWeight: 500 }}>{orderLabel(entry.payload)}</td>
@@ -148,7 +148,13 @@ export default function DlqView() {
                                                 <button className="btn btn-ghost btn-sm" onClick={() => toggleExpand(entry.id)} title="Podgląd payloadu">
                                                     <Icon name={isOpen ? 'chevronUp' : 'chevronDown'} size={13} /> Payload
                                                 </button>
-                                                <button className="btn btn-ghost btn-sm" onClick={retry(entry.id)} disabled={isBusy} title="Ponów utworzenie draftu">
+                                                <button
+                                                    className="btn btn-ghost btn-sm"
+                                                    data-testid={`dlq-retry-${entry.id}`}
+                                                    onClick={retry(entry.id)}
+                                                    disabled={isBusy}
+                                                    title="Ponów utworzenie draftu"
+                                                >
                                                     {isBusy
                                                         ? <><Icon name="loader" size={13} className="spin" /> Ponawianie…</>
                                                         : <><Icon name="refresh" size={13} /> Ponów</>}
