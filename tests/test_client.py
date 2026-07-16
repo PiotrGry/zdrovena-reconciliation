@@ -22,6 +22,20 @@ class TestClientInit:
         c = FakturowniaClient("tok123", domain="custom.fakturownia.pl")
         assert c.base_url == "https://custom.fakturownia.pl"
 
+    def test_base_url_from_environment(self, monkeypatch):
+        monkeypatch.setenv("FAKTUROWNIA_BASE_URL", "http://fake-provider:9009/fakturownia/")
+        c = FakturowniaClient("tok123")
+        assert c.base_url == "http://fake-provider:9009/fakturownia"
+
+    def test_explicit_domain_overrides_environment(self, monkeypatch):
+        monkeypatch.setenv("FAKTUROWNIA_BASE_URL", "http://fake-provider:9009/fakturownia")
+        c = FakturowniaClient("tok123", domain="custom.fakturownia.pl")
+        assert c.base_url == "https://custom.fakturownia.pl"
+
+    def test_explicit_base_url(self):
+        c = FakturowniaClient("tok123", base_url="http://localhost:9009/fakturownia/")
+        assert c.base_url == "http://localhost:9009/fakturownia"
+
     def test_defaults(self):
         c = FakturowniaClient("tok123")
         assert c.retry_count == 3
@@ -40,6 +54,13 @@ class TestFromKeyring:
     def test_success(self, mock_get_secret):
         c = FakturowniaClient.from_keyring()
         assert c.api_token == "my_token"
+        mock_get_secret.assert_called_once_with("fakturownia_api_token")
+
+    @patch("zdrovena.common.client.get_secret", return_value="fake")
+    def test_uses_environment_base_url(self, mock_get_secret, monkeypatch):
+        monkeypatch.setenv("FAKTUROWNIA_BASE_URL", "http://fake-provider:9009/fakturownia")
+        c = FakturowniaClient.from_keyring()
+        assert c.base_url == "http://fake-provider:9009/fakturownia"
         mock_get_secret.assert_called_once_with("fakturownia_api_token")
 
     @patch(

@@ -11,6 +11,7 @@ Provides:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -40,8 +41,9 @@ class FakturowniaClient:
     def __init__(
         self,
         api_token: str,
-        domain: str = DEFAULT_DOMAIN,
+        domain: str | None = None,
         *,
+        base_url: str | None = None,
         retry_count: int = DEFAULT_RETRY_COUNT,
         retry_delay: float = DEFAULT_RETRY_DELAY,
         timeout: int = DEFAULT_TIMEOUT,
@@ -49,7 +51,15 @@ class FakturowniaClient:
         pdf_delay: float = DEFAULT_PDF_DELAY,
     ) -> None:
         self.api_token = api_token
-        self.base_url = f"https://{domain}"
+        if base_url:
+            resolved_base_url = base_url
+        elif domain:
+            resolved_base_url = f"https://{domain}"
+        else:
+            resolved_base_url = (
+                os.environ.get("FAKTUROWNIA_BASE_URL", "").strip() or f"https://{DEFAULT_DOMAIN}"
+            )
+        self.base_url = resolved_base_url.rstrip("/")
         self.retry_count = retry_count
         self.retry_delay = retry_delay
         self.timeout = timeout
@@ -64,7 +74,8 @@ class FakturowniaClient:
     def from_keyring(
         cls,
         *,
-        domain: str = DEFAULT_DOMAIN,
+        domain: str | None = None,
+        base_url: str | None = None,
         service: str = KEYCHAIN_SERVICE,
         **kwargs: Any,
     ) -> FakturowniaClient:
@@ -78,7 +89,7 @@ class FakturowniaClient:
             If the token is not found in any location.
         """
         token = get_secret(service)
-        return cls(api_token=token, domain=domain, **kwargs)
+        return cls(api_token=token, domain=domain, base_url=base_url, **kwargs)
 
     # ── Low-level request with retry ─────────────────────────────────────────
 
