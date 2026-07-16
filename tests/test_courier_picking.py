@@ -7,6 +7,7 @@ import logging
 import pytest
 
 from zdrovena.api.routers.webhooks import (
+    _extract_shopify_pickup_point,
     _parse_title_map,
     _pick_apaczka_service,
     _pick_courier,
@@ -235,3 +236,66 @@ class TestPickApaczkaServiceCatalogValidation:
             result = _pick_apaczka_service("Apaczka DPD")
         assert result is None
         assert any("999999" in record.message for record in caplog.records)
+
+
+class TestExtractShopifyPickupPoint:
+    def test_uses_octolize_code_and_note_attributes(self) -> None:
+        order = {
+            "order_number": 1648,
+            "shipping_lines": [
+                {
+                    "source": "Octolize Pick-up Points PRO",
+                    "code": "pickup-points:8830:147893:171",
+                    "title": 'DPD • DPD Pickup- "Stokrotka Express" • 0.17 km • PL55338',
+                }
+            ],
+            "note_attributes": [
+                {"name": "PickupPointCourier", "value": "DPD"},
+                {"name": "PickupPointId", "value": "PL55338"},
+                {"name": "PickupPointName", "value": 'DPD Pickup- "Stokrotka Express"'},
+                {"name": "PickupPointCity", "value": "Lublin"},
+            ],
+        }
+
+        assert _extract_shopify_pickup_point(order) == {
+            "provider": "dpd",
+            "id": "PL55338",
+            "name": 'DPD Pickup- "Stokrotka Express"',
+            "address": "",
+            "post_code": "",
+            "city": "Lublin",
+        }
+
+    def test_code_provider_wins_over_inconsistent_note(self, caplog) -> None:
+        order = {
+            "order_number": 1648,
+            "shipping_lines": [
+                {
+                    "source": "Octolize Pick-up Points PRO",
+                    "code": "pickup-points:8830:147893:171",
+                    "title": "DPD Pickup • PL55338",
+                }
+            ],
+            "note_attributes": [
+                {"name": "PickupPointCourier", "value": "InPost"},
+                {"name": "PickupPointId", "value": "PL55338"},
+            ],
+        }
+
+        with caplog.at_level(logging.WARNING):
+            point = _extract_shopify_pickup_point(order)
+
+        assert point is not None
+        assert point["provider"] == "dpd"
+        assert any("provider mismatch" in record.message for record in caplog.records)
+
+    def test_ignores_customer_note_without_octolize_shipping_method(self) -> None:
+        order = {
+            "shipping_lines": [{"source": "shopify", "code": "STANDARD", "title": "Kurier"}],
+            "note_attributes": [
+                {"name": "PickupPointCourier", "value": "DPD"},
+                {"name": "PickupPointId", "value": "PL55338"},
+            ],
+        }
+
+        assert _extract_shopify_pickup_point(order) is None

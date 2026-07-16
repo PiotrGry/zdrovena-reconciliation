@@ -541,7 +541,7 @@ def _apaczka_ok(response: Any) -> dict[str, Any]:
     return {"status": 200, "message": "OK", "response": response}
 
 
-@app.post("/apaczka/api/v2/{endpoint}/")
+@app.post("/apaczka/api/v2/{endpoint:path}/")
 async def apaczka_call(
     endpoint: str,
     http_request: Request,
@@ -554,29 +554,42 @@ async def apaczka_call(
     if not app_id or not expires or not signature:
         raise HTTPException(status_code=401, detail="Apaczka signature fields required")
     data = _parse_apaczka_request(request)
-    _apply_scenario("apaczka", endpoint)
-    if STATE.scenarios.get(_scenario_key("apaczka", endpoint)) == "provider_validation_failure":
+    scenario_endpoint = endpoint.split("/", 1)[0]
+    _apply_scenario("apaczka", scenario_endpoint)
+    if (
+        STATE.scenarios.get(_scenario_key("apaczka", scenario_endpoint))
+        == "provider_validation_failure"
+    ):
         return {"status": 422, "message": "provider validation failure", "response": {}}
     if endpoint == "service_structure":
         return _apaczka_ok({"services": [{"service_id": "21", "name": "DPD Kurier"}]})
     if endpoint == "order_send":
-        _require_json_fields(data, ["service_id", "order_id", "address", "shipment"])
-        if data["order_id"] in STATE.apaczka_orders:
-            return _apaczka_ok(STATE.apaczka_orders[data["order_id"]])
+        _require_json_fields(data, ["order"])
+        order_data = data["order"]
+        if not isinstance(order_data, dict):
+            raise HTTPException(status_code=422, detail="Apaczka order must be an object")
+        _require_json_fields(order_data, ["service_id", "address", "shipment", "pickup"])
+        external_id = str(order_data.get("externalId") or "")
+        if external_id and external_id in STATE.apaczka_orders:
+            return _apaczka_ok({"order": STATE.apaczka_orders[external_id]})
         order = {
             "id": STATE.next_id("apaczka-order"),
-            "order_id": data["order_id"],
+            "externalId": external_id,
             "status": "created",
         }
-        STATE.apaczka_orders[data["order_id"]] = order
-        return _apaczka_ok(order)
-    if endpoint == "cancel_order":
-        _require_json_fields(data, ["order_id"])
-        order = STATE.apaczka_orders.setdefault(data["order_id"], {"id": data["order_id"]})
+        STATE.apaczka_orders[external_id or order["id"]] = order
+        return _apaczka_ok({"order": order})
+    if endpoint.startswith("cancel_order/"):
+        order_id = endpoint.removeprefix("cancel_order/")
+        order = next(
+            (item for item in STATE.apaczka_orders.values() if item.get("id") == order_id),
+            None,
+        )
+        if order is None:
+            order = STATE.apaczka_orders.setdefault(order_id, {"id": order_id})
         order["status"] = "cancelled"
         return _apaczka_ok(order)
-    if endpoint == "waybill":
-        _require_json_fields(data, ["order_id"])
+    if endpoint.startswith("waybill/"):
         return _apaczka_ok({"waybill": base64.b64encode(PDF_BYTES).decode("ascii")})
     raise HTTPException(status_code=404, detail=f"Unsupported Apaczka endpoint: {endpoint}")
 

@@ -478,6 +478,9 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
     const T = t[lang]
     const [open, setOpen] = useState(false)
     const [selectedApaczkaService, setSelectedApaczkaService] = useState(draft.apaczka_service_id || '')
+    const [editingApaczkaService, setEditingApaczkaService] = useState(
+        draft.shipping_service_match_status !== 'auto_matched'
+    )
     const [showInvoicePanel, setShowInvoicePanel] = useState(false)
     const [localInvoiceId, setLocalInvoiceId] = useState(draft.fakturownia_invoice_id || null)
 
@@ -486,9 +489,18 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
     }, [forceOpen])
     useEffect(() => {
         setSelectedApaczkaService(draft.apaczka_service_id || '')
-    }, [draft.apaczka_service_id, draft.id])
+        setEditingApaczkaService(draft.shipping_service_match_status !== 'auto_matched')
+    }, [draft.apaczka_service_id, draft.id, draft.shipping_service_match_status])
     const [pickupModal, setPickupModal] = useState(null) // 'execute' | 'pickup' | null
     const isBusy = busy.has(draft.id)
+    const matchedApaczkaService = apaczkaServices.find(
+        service => service.service_id === draft.apaczka_service_id
+    )
+    const showApaczkaServiceEditor = (
+        editingApaczkaService ||
+        draft.shipping_service_match_status !== 'auto_matched' ||
+        !matchedApaczkaService
+    )
     const needsPickupSchedule = draft.courier === 'inpost'
     const canPickup = (
         needsPickupSchedule &&
@@ -657,31 +669,55 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                     </span>
                                 )}
                             </div>
-                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
-                                <select
-                                    value={selectedApaczkaService}
-                                    onChange={e => setSelectedApaczkaService(e.target.value)}
-                                    disabled={isBusy}
-                                >
-                                    <option value="">{T.sh_apaczka_service_placeholder ?? '— wybierz serwis —'}</option>
-                                    {apaczkaServices.map(s => (
-                                        <option key={s.service_id} value={s.service_id}>{s.label}</option>
-                                    ))}
-                                </select>
-                                <button
-                                    className="btn btn-secondary"
-                                    disabled={
-                                        isBusy ||
-                                        !selectedApaczkaService ||
-                                        selectedApaczkaService === draft.apaczka_service_id
-                                    }
-                                    onClick={() => onSetApaczkaService(draft, selectedApaczkaService)}
-                                >
-                                    {isBusy
-                                        ? (T.sh_apaczka_service_save_busy ?? 'Zapisywanie…')
-                                        : (T.sh_apaczka_service_save ?? 'Zapisz')}
-                                </button>
-                            </div>
+                            {draft.pickup_point?.id && (
+                                <div style={{ margin: '4px 0 8px', fontSize: '0.88em' }}>
+                                    <span className="dim">Punkt: </span>
+                                    <span className="mono">{draft.pickup_point.id}</span>
+                                    {draft.pickup_point.name && (
+                                        <span className="dim"> · {draft.pickup_point.name}</span>
+                                    )}
+                                </div>
+                            )}
+                            {showApaczkaServiceEditor ? (
+                                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+                                    <select
+                                        value={selectedApaczkaService}
+                                        onChange={e => setSelectedApaczkaService(e.target.value)}
+                                        disabled={isBusy}
+                                    >
+                                        <option value="">{T.sh_apaczka_service_placeholder ?? '— wybierz serwis —'}</option>
+                                        {apaczkaServices.map(s => (
+                                            <option key={s.service_id} value={s.service_id}>{s.label}</option>
+                                        ))}
+                                    </select>
+                                    <button
+                                        className="btn btn-secondary"
+                                        disabled={
+                                            isBusy ||
+                                            !selectedApaczkaService ||
+                                            selectedApaczkaService === draft.apaczka_service_id
+                                        }
+                                        onClick={() => onSetApaczkaService(draft, selectedApaczkaService)}
+                                    >
+                                        {isBusy
+                                            ? (T.sh_apaczka_service_save_busy ?? 'Zapisywanie…')
+                                            : (T.sh_apaczka_service_save ?? 'Zapisz')}
+                                    </button>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+                                    <strong>{matchedApaczkaService.label}</strong>
+                                    {canManage && (
+                                        <button
+                                            className="btn btn-ghost"
+                                            onClick={() => setEditingApaczkaService(true)}
+                                            disabled={isBusy}
+                                        >
+                                            Zmień
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -1253,6 +1289,7 @@ export default function ShippingView() {
                         style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}>
                         <option value="all">{T.sh_filter_all_status ?? 'Wszystkie statusy'}</option>
                         <option value="pending">{T.sh_status_pending ?? 'oczekujące'}</option>
+                        <option value="needs_review">{T.sh_status_needs_review ?? 'do sprawdzenia'}</option>
                         <option value="created">{T.sh_status_created ?? 'nadane'}</option>
                         <option value="pending_confirmation">{T.sh_status_pending_confirmation ?? 'czeka na Allegro'}</option>
                         <option value="error">{T.sh_status_error ?? 'błąd'}</option>
