@@ -133,6 +133,26 @@ def _is_production_env() -> bool:
     return is_production_env()
 
 
+def _test_support_enabled() -> bool:
+    return os.getenv("PROVIDER_MODE", "").strip().lower() == "fake" and not _is_production_env()
+
+
+def _require_test_support() -> None:
+    if not _test_support_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+
+def _is_e2e_record(record: dict[str, Any]) -> bool:
+    record_id = str(record.get("id") or "")
+    order_number = str(
+        record.get("shopify_order_number")
+        or record.get("order_number")
+        or (record.get("payload") or {}).get("order_number")
+        or ""
+    )
+    return record_id.startswith("e2e-") or order_number.startswith("990")
+
+
 def _is_shopify_domain_allowed(shop_domain: str) -> bool:
     """Return True when the shop domain is on the SHOPIFY_ALLOWED_DOMAINS whitelist.
 
@@ -716,9 +736,6 @@ def _run_inpost(
     reference = str(draft.get("shopify_order_number", ""))
     inpost_service = "paczkomat" if draft.get("service") == "inpost_locker_standard" else "kurier"
 
-    pickup_ordered = False
-    dispatch_order_id: str | None = None
-
     if inpost_service == "paczkomat":
         template = _parcel_template(draft)  # fix #4: correct locker size
         result = client.create_paczkomat_shipment(
@@ -750,26 +767,12 @@ def _run_inpost(
             dimensions=dims,
         )
 
-    # Both paczkomat (drzwi→paczkomat) and kurier use dispatch_order for sender pickup
-    try:
-        dispatch_result = client.create_dispatch_order(
-            str(result["id"]),
-            sender,
-            pickup_date=pickup_date,
-            pickup_from=pickup_from,
-            pickup_to=pickup_to,
-        )
-        dispatch_order_id = str(dispatch_result.get("id", "")) or None  # fix #6: save ID
-        pickup_ordered = True
-    except Exception as exc:
-        logger.warning("InPost dispatch order failed for %s: %s", reference, exc)
-
     return {
         "courier_draft_id": str(result.get("id", "")),
-        "dispatch_order_id": dispatch_order_id,  # fix #6
+        "dispatch_order_id": None,
         "tracking_number": result.get("tracking_number"),
         "status": "created",
-        "pickup_ordered": pickup_ordered,
+        "pickup_ordered": False,
         "error": None,
     }
 
@@ -1743,6 +1746,83 @@ def delete_dlq_entry(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+# ── Fake-provider E2E support ────────────────────────────────────────────────
+
+
+@router.post(
+    "/__test__/shipping/reset",
+    include_in_schema=False,
+    responses={404: {"description": "Disabled outside fake non-production mode"}},
+)
+def reset_e2e_shipping_state(
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, int]:
+    _require_test_support()
+    removed_drafts = 0
+    for draft in shipping_store.list_drafts(limit=200):
+        if _is_e2e_record(draft):
+            shipping_store.delete_draft(str(draft["id"]))
+            removed_drafts += 1
+
+    removed_dlq = 0
+    for entry in shipping_store.list_dlq(limit=200):
+        if _is_e2e_record(entry):
+            shipping_store.delete_dlq_entry(str(entry["id"]))
+            removed_dlq += 1
+
+    return {"removed_drafts": removed_drafts, "removed_dlq": removed_dlq}
+
+
+@router.post(
+    "/__test__/shipping/drafts",
+    include_in_schema=False,
+    responses={404: {"description": "Disabled outside fake non-production mode"}},
+)
+def seed_e2e_shipping_draft(
+    draft: Annotated[dict[str, Any], Body()],
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    _require_test_support()
+    if not _is_e2e_record(draft):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="E2E draft id must start with e2e- or order number with 990",
+        )
+    if not draft.get("id"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Draft id required")
+    shipping_store.upsert_draft(draft)
+    return shipping_store.get_draft(str(draft["id"])) or draft
+
+
+@router.post(
+    "/__test__/shipping/dlq",
+    include_in_schema=False,
+    responses={404: {"description": "Disabled outside fake non-production mode"}},
+)
+def seed_e2e_dlq_entry(
+    body: Annotated[dict[str, Any], Body()],
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    _require_test_support()
+    payload = body.get("payload") or {}
+    entry_id = str(body.get("id") or "")
+    probe = {"id": entry_id, "payload": payload}
+    if not _is_e2e_record(probe):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="E2E DLQ id must start with e2e- or payload order number with 990",
+        )
+    return shipping_store.enqueue_dlq(
+        payload=payload,
+        error=str(body.get("error") or "E2E seeded failure"),
+        source=str(body.get("source") or "shopify"),
+        entry_id=entry_id or None,
+    )
+
+
 # ── Execute draft ─────────────────────────────────────────────────────────────
 
 
@@ -2636,7 +2716,8 @@ def _get_fakturownia_invoice_client() -> Any | None:
         return None
     from zdrovena.common.fakturownia import FakturowniaClient
 
-    return FakturowniaClient(api_token=token, base_url=f"https://{DEFAULT_DOMAIN}")
+    base_url = os.getenv("FAKTUROWNIA_BASE_URL", "").strip() or f"https://{DEFAULT_DOMAIN}"
+    return FakturowniaClient(api_token=token, base_url=base_url)
 
 
 @router.get(

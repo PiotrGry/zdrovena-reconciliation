@@ -46,6 +46,7 @@ services:
     environment:
       AZURE_AUTH_DISABLED: "true"
       PROVIDER_MODE: "${PROVIDER_MODE:-fake}"
+      SHOPIFY_WEBHOOK_SECRET: "${SHOPIFY_WEBHOOK_SECRET:-e2e-webhook-secret}"
       ALLEGRO_CLIENT_ID: "${ALLEGRO_CLIENT_ID:-fake}"
       ALLEGRO_CLIENT_SECRET: "${ALLEGRO_CLIENT_SECRET:-fake}"
       ALLEGRO_REFRESH_TOKEN: "${ALLEGRO_REFRESH_TOKEN:-fake}"
