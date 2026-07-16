@@ -43,8 +43,8 @@ resource "azurerm_container_app" "this" {
 
     container {
       name = var.container_name
-      # Placeholder — GitHub Actions replaces on first deploy
-      image   = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+      # Bootstrap image — GitHub Actions owns later deploy images.
+      image   = var.initial_image
       cpu     = var.cpu
       memory  = var.memory
       command = var.command
