@@ -26,6 +26,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
+from math import ceil
 from typing import Annotated, Any
 
 from fastapi import (
@@ -44,7 +45,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, ShopifyDedupStoreDep, StorageDep
 from zdrovena.api.observability import correlation_scope, get_correlation_id
-from zdrovena.audit.bottles import SKIP_RE, is_glass
+from zdrovena.audit.bottles import SKIP_RE, bottles_per_unit, is_glass
 from zdrovena.common.appenv import is_production_env
 from zdrovena.common.events import log_event
 from zdrovena.common.secrets import get_secret
@@ -1172,29 +1173,32 @@ def _calc_packages(
     operators can catch a mis-configured PARCEL_SPECS (e.g. a box larger than
     the paczkomat slot) early.
     """
-    plastic_qty = 0
-    glass_qty = 0
+    plastic_half_packs = 0
+    glass_half_packs = 0
     for item in product_items:
         qty = item.get("quantity", 1)
+        name = item.get("name", "")
+        bottle_count = bottles_per_unit(name)
+        half_packs = ceil(float(qty) * bottle_count / 6) if bottle_count else int(qty) * 2
         if is_glass(item.get("name", "")):
-            glass_qty += qty
+            glass_half_packs += half_packs
         else:
-            plastic_qty += qty
+            plastic_half_packs += half_packs
 
     breakdown: list[dict[str, Any]] = []
 
     # Plastik — greedy
-    remaining = plastic_qty
+    remaining = plastic_half_packs // 2
     for box_size, label in ((3, "3-pak"), (2, "2-pak"), (1, "1-pak")):
         if remaining >= box_size:
             count = remaining // box_size
             breakdown.append({"type": label, "qty": count})
             remaining -= count * box_size
-    if remaining > 0:
+    if plastic_half_packs % 2:
         breakdown.append({"type": "pół-pak", "qty": 1})
 
     # Szkło — greedy: 2-pak first, then single boxes
-    remaining_glass = glass_qty
+    remaining_glass = (glass_half_packs + 1) // 2
     if remaining_glass >= 2:
         count = remaining_glass // 2
         breakdown.append({"type": "szkło-2pak", "qty": count})

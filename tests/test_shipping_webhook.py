@@ -2168,6 +2168,16 @@ class TestCalcPackages:
         assert count == 1
         assert bd == {"1-pak": 1}
 
+    def test_plastik_6_butelek_one_half_pack_regression_1648(self):
+        count, bd = self._run(("HUMIO - woda alkaliczna, 6 butelek", 1))
+        assert count == 1
+        assert bd == {"pół-pak": 1}
+
+    def test_plastik_24_butelki_one_2pak(self):
+        count, bd = self._run(("HUMIO - woda alkaliczna, 24 butelki", 1))
+        assert count == 1
+        assert bd == {"2-pak": 1}
+
     def test_plastik_7_zgrzewki_two_3pak_plus_1pak(self):
         count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek", 7))
         assert count == 3
@@ -2244,6 +2254,35 @@ class TestCalcPackages:
         assert d["packages_count"] == 2
         bd = {b["type"]: b["qty"] for b in d["packages_breakdown"]}
         assert bd == {"3-pak": 1, "2-pak": 1}
+
+    def test_six_bottle_order_1648_stored_as_half_pack(self, store):
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        order = {
+            "id": "1648",
+            "order_number": 1648,
+            "shipping_lines": [{"title": "InPost Kurier"}],
+            "line_items": [
+                {"name": "HUMIO - woda alkaliczna, 6 butelek", "quantity": 1},
+            ],
+            "shipping_address": {
+                "first_name": "X",
+                "last_name": "Y",
+                "address1": "ul. A 1",
+                "address2": "",
+                "city": "W",
+                "zip": "00-001",
+                "phone": "500600700",
+            },
+            "customer": {},
+            "email": "x@y.pl",
+            "note_attributes": [],
+        }
+        _create_draft(order, store, object())
+        d = store.list_drafts()[0]
+        assert d["shopify_order_number"] == "1648"
+        assert d["packages_count"] == 1
+        assert d["packages_breakdown"] == [{"type": "pół-pak", "qty": 1}]
 
 
 # ── Cancel raw courier id (InPost / Apaczka) ──────────────────────────────────

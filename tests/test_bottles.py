@@ -20,6 +20,8 @@ class TestBottlesPerUnit:
     def test_butelek_pattern(self):
         assert bottles_per_unit("Woda Humio 500ml - 12 butelek") == 12
         assert bottles_per_unit("Woda 36 butelek") == 36
+        assert bottles_per_unit("Woda 24 butelki") == 24
+        assert bottles_per_unit("Woda 1 butelka") == 1
 
     def test_x_pattern(self):
         assert bottles_per_unit("Humio 500ml x 12") == 12
