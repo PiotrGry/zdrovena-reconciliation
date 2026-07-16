@@ -221,6 +221,7 @@ class ApaczkaClient:
         receiver_address: str,
         receiver_city: str,
         receiver_zip: str,
+        receiver_point_id: str | None = None,
         sender: dict[str, str],
         reference: str,
         weight_kg: float = 1.0,
@@ -234,72 +235,81 @@ class ApaczkaClient:
         """pickup_date: YYYY-MM-DD, pickup_from/pickup_to: HH:MM.
         Available slots from Apaczka pickup_hours endpoint (today + 3 biz days).
         """
-        options: dict[str, Any] = {"pickup_type": "courier"}
+        pickup: dict[str, Any] = {"type": "COURIER"}
         if pickup_date:
-            options["pickup"] = {
-                "date": pickup_date,
-                **({"hours_from": pickup_from} if pickup_from else {}),
-                **({"hours_to": pickup_to} if pickup_to else {}),
-            }
-        data = {
+            pickup["date"] = pickup_date
+            if pickup_from:
+                pickup["hours_from"] = pickup_from
+            if pickup_to:
+                pickup["hours_to"] = pickup_to
+
+        sender_contact = " ".join(
+            filter(None, [sender.get("firstname", ""), sender.get("lastname", "")])
+        )
+        receiver_data = {
+            "name": receiver_name,
+            "contact_person": f"{receiver_firstname} {receiver_lastname}".strip(),
+            "email": receiver_email,
+            "phone": receiver_phone,
+            "line1": receiver_address,
+            "line2": "",
+            "city": receiver_city,
+            "postal_code": receiver_zip,
+            "country_code": "PL",
+        }
+        if receiver_point_id:
+            receiver_data["foreign_address_id"] = receiver_point_id
+
+        order = {
             "service_id": self._service_id,
-            "order_id": reference,
+            "externalId": reference,
             "address": {
                 "sender": {
                     "name": sender.get("name", ""),
-                    "firstname": sender.get("firstname", ""),
-                    "lastname": sender.get("lastname", ""),
+                    "contact_person": sender_contact or sender.get("name", ""),
                     "email": sender.get("email", ""),
                     "phone": sender.get("phone", ""),
-                    "address": " ".join(
+                    "line1": " ".join(
                         filter(None, [sender.get("street", ""), sender.get("building_number", "")])
                     ),
+                    "line2": "",
                     "city": sender.get("city", ""),
-                    "zip": sender.get("post_code", ""),
+                    "postal_code": sender.get("post_code", ""),
                     "country_code": "PL",
                 },
-                "receiver": {
-                    "name": receiver_name,
-                    "firstname": receiver_firstname,
-                    "lastname": receiver_lastname,
-                    "email": receiver_email,
-                    "phone": receiver_phone,
-                    "address": receiver_address,
-                    "city": receiver_city,
-                    "zip": receiver_zip,
-                    "country_code": "PL",
-                },
+                "receiver": receiver_data,
             },
             "shipment": [
                 {
-                    "type": "package",
                     "weight": weight_kg,
-                    "width": width_cm,
-                    "height": height_cm,
-                    "depth": depth_cm,
+                    "dimension1": depth_cm,
+                    "dimension2": width_cm,
+                    "dimension3": height_cm,
+                    "is_nstd": 0,
+                    "shipment_type_code": "PACZKA",
                 }
             ],
-            "options": options,
+            "pickup": pickup,
         }
-        result = self._call("order_send", data)
-        order_id = result.get("response", {}).get("id")
+        result = self._call("order_send", {"order": order})
+        response = result.get("response", {})
+        created_order = response.get("order", response) if isinstance(response, dict) else {}
+        order_id = created_order.get("id")
         logger.info("Apaczka shipment created: order_id=%s reference=%s", order_id, reference)
-        return result.get("response", result)
+        return created_order or result
 
     # ── Cancel ────────────────────────────────────────────────────────────────
 
     def cancel_shipment(self, order_id: str) -> dict[str, Any]:
         """Cancel an Apaczka shipment by order_id."""
-        # Apaczka endpoint is /api/v2/cancel_order/, not /api/v2/order_cancel/.
-        # Verified via panel.apaczka.pl API docs.
-        result = self._call("cancel_order", {"order_id": order_id})
+        result = self._call(f"cancel_order/{order_id}", {})
         logger.info("Apaczka shipment cancelled: order_id=%s", order_id)
         return result.get("response", result)
 
     # ── Label ─────────────────────────────────────────────────────────────────
 
     def get_label(self, order_id: str) -> bytes:
-        result = self._call("waybill", {"order_id": order_id})
+        result = self._call(f"waybill/{order_id}", {})
         encoded = result.get("response", {}).get("waybill") or result.get("response", "")
         if not encoded:
             raise ApaczkaBusinessError(

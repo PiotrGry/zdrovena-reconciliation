@@ -7,13 +7,45 @@ import type { SmokeTest, TestContext, TestResult } from "../types.js";
 
 function ms(): number { return Date.now(); }
 
-async function fetchBundle(ctx: TestContext): Promise<{ url: string; content: string } | null> {
-  const html = await ctx.fetch(ctx.swaUrl, { timeoutMs: 15_000 }).then((r) => r.text());
+type Bundle = { url: string; content: string };
+
+let bundlePromise: Promise<Bundle | null> | undefined;
+
+function sleep(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function downloadBundle(ctx: TestContext): Promise<Bundle | null> {
+  const htmlResponse = await ctx.fetch(ctx.swaUrl, { timeoutMs: 20_000 });
+  if (!htmlResponse.ok) {
+    throw new Error(`SWA HTML returned ${htmlResponse.status}`);
+  }
+  const html = await htmlResponse.text();
   const match = html.match(/src="(\/assets\/[^"]*\.js)"/);
   if (!match) return null;
   const bundleUrl = ctx.swaUrl + match[1];
-  const content = await ctx.fetch(bundleUrl, { timeoutMs: 20_000 }).then((r) => r.text());
+  const bundleResponse = await ctx.fetch(bundleUrl, { timeoutMs: 30_000 });
+  if (!bundleResponse.ok) {
+    throw new Error(`SWA bundle returned ${bundleResponse.status}`);
+  }
+  const content = await bundleResponse.text();
   return { url: bundleUrl, content };
+}
+
+async function fetchBundle(ctx: TestContext): Promise<Bundle | null> {
+  bundlePromise ??= (async () => {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        return await downloadBundle(ctx);
+      } catch (error) {
+        lastError = error;
+        if (attempt < 3) await sleep(attempt * 1_000);
+      }
+    }
+    throw lastError;
+  })();
+  return bundlePromise;
 }
 
 const swaLoads: SmokeTest = {
