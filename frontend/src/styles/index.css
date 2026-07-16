@@ -1441,7 +1441,7 @@ table.files tbody tr:hover .row-actions {
 /* Integrations row */
 .integr-row {
     display: grid;
-    grid-template-columns: 1fr auto auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 14px;
     align-items: center;
     padding: 12px 16px;
@@ -1450,6 +1450,68 @@ table.files tbody tr:hover .row-actions {
 
 .integr-row:last-child {
     border-bottom: 0;
+}
+
+.env-health-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+}
+
+.env-health-item {
+    min-width: 0;
+    padding: 12px 16px;
+    border-right: 1px solid var(--border);
+}
+
+.env-health-item:last-child {
+    border-right: 0;
+}
+
+.env-health-item span {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text-3);
+    font-size: 11px;
+}
+
+.env-health-item strong {
+    display: block;
+    overflow-wrap: anywhere;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.integr-main {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.integr-checks {
+    margin-top: 3px;
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+    .env-health-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .env-health-item:nth-child(2) {
+        border-right: 0;
+    }
+
+    .env-health-item:nth-child(-n+2) {
+        border-bottom: 1px solid var(--border);
+    }
 }
 
 /* Close pipeline */
