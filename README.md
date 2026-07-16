@@ -146,6 +146,9 @@ curl -H "Authorization: Bearer $TOKEN" "$BASE/shipping/drafts/dlq"
 # health check (bez tokenu, na roocie — nie pod /api)
 curl "https://<API_URL>/health"
 # → {"status": "ok", "version": "2.0.0"}
+
+# status środowiska i integracji (wymaga roli viewer+)
+curl -H "Authorization: Bearer $TOKEN" "$BASE/integrations/health"
 ```
 
 ### Uruchomienie lokalne
@@ -204,6 +207,25 @@ curl -X POST http://localhost:9009/__fake__/scenario \
 ```
 
 W `APP_ENV=staging` aplikacja wymaga `PROVIDER_MODE=fake` i odmawia startu, jeśli którykolwiek provider write endpoint wskazuje na znany live host.
+
+### Status integracji
+
+Widok Ustawienia pobiera `/api/integrations/health` i pokazuje bieżące środowisko,
+storage, Key Vault oraz konfigurację integracji Shopify, Fakturownia, Allegro,
+InPost i Apaczka. Endpoint nie wykonuje zapisów ani live-calli do dostawców i nie
+zwraca wartości sekretów; status wynika z trybu środowiska, obecności wymaganych
+zmiennych oraz konfiguracji Key Vault. Każdy wynik zawiera `checked_at`,
+`latency_ms`, tryb, bezpieczną wykonaną operację i publiczny komunikat.
+
+Ręczne wymuszenie pełniejszych checków jest zarezerwowane dla administratorów:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" "$BASE/integrations/health?run_checks=true"
+```
+
+Sekcja procesów operacyjnych pokazuje ostatnie znane podsumowania tam, gdzie
+system je persystuje. Brak persystencji jest raportowany jawnie jako
+`not_configured`, bez zgadywania danych operacyjnych.
 
 ---
 

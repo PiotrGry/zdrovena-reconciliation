@@ -332,6 +332,39 @@
         "title": "CloseStateResponse",
         "type": "object"
       },
+      "EnvironmentHealth": {
+        "properties": {
+          "app_env": {
+            "title": "App Env",
+            "type": "string"
+          },
+          "auth_disabled": {
+            "title": "Auth Disabled",
+            "type": "boolean"
+          },
+          "keyvault_configured": {
+            "title": "Keyvault Configured",
+            "type": "boolean"
+          },
+          "storage_backend": {
+            "title": "Storage Backend",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_env",
+          "auth_disabled",
+          "keyvault_configured",
+          "storage_backend",
+          "version"
+        ],
+        "title": "EnvironmentHealth",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -343,6 +376,116 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IntegrationHealthItem": {
+        "properties": {
+          "checked_at": {
+            "title": "Checked At",
+            "type": "string"
+          },
+          "checks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation Id"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "latency_ms": {
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "safe_operation": {
+            "title": "Safe Operation",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "healthy",
+              "degraded",
+              "unavailable",
+              "not_configured"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "status",
+          "checked_at",
+          "latency_ms",
+          "environment",
+          "mode",
+          "safe_operation",
+          "message",
+          "detail"
+        ],
+        "title": "IntegrationHealthItem",
+        "type": "object"
+      },
+      "IntegrationsHealthResponse": {
+        "properties": {
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentHealth"
+          },
+          "integrations": {
+            "items": {
+              "$ref": "#/components/schemas/IntegrationHealthItem"
+            },
+            "title": "Integrations",
+            "type": "array"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/OperationHealthItem"
+            },
+            "title": "Operations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "environment",
+          "integrations",
+          "operations"
+        ],
+        "title": "IntegrationsHealthResponse",
         "type": "object"
       },
       "InvoiceItem": {
@@ -462,6 +605,62 @@
           "status"
         ],
         "title": "InvoiceItem",
+        "type": "object"
+      },
+      "OperationHealthItem": {
+        "properties": {
+          "checked_at": {
+            "title": "Checked At",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Metrics",
+            "type": "object"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "healthy",
+              "degraded",
+              "unavailable",
+              "not_configured"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "status",
+          "checked_at",
+          "message"
+        ],
+        "title": "OperationHealthItem",
         "type": "object"
       },
       "ProductItem": {
@@ -1165,6 +1364,56 @@
         "summary": "Cancel an InPost shipment before dispatch",
         "tags": [
           "shipping"
+        ]
+      }
+    },
+    "/api/integrations/health": {
+      "get": {
+        "operationId": "integration_health_api_integrations_health_get",
+        "parameters": [
+          {
+            "description": "Reserved for admin-triggered live read-only checks.",
+            "in": "query",
+            "name": "run_checks",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Reserved for admin-triggered live read-only checks.",
+              "title": "Run Checks",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationsHealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Integration Health",
+        "tags": [
+          "integrations"
         ]
       }
     },

@@ -194,6 +194,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/integrations/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Integration Health */
+        get: operations["integration_health_api_integrations_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/invoices/products": {
         parameters: {
             query?: never;
@@ -690,10 +707,61 @@ export interface components {
             /** Completed Steps */
             completed_steps: string[];
         };
+        /** EnvironmentHealth */
+        EnvironmentHealth: {
+            /** App Env */
+            app_env: string;
+            /** Auth Disabled */
+            auth_disabled: boolean;
+            /** Keyvault Configured */
+            keyvault_configured: boolean;
+            /** Storage Backend */
+            storage_backend: string;
+            /** Version */
+            version: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** IntegrationHealthItem */
+        IntegrationHealthItem: {
+            /** Checked At */
+            checked_at: string;
+            /** Checks */
+            checks?: string[];
+            /** Correlation Id */
+            correlation_id?: string | null;
+            /** Detail */
+            detail: string;
+            /** Environment */
+            environment: string;
+            /** Key */
+            key: string;
+            /** Latency Ms */
+            latency_ms: number;
+            /** Message */
+            message: string;
+            /** Mode */
+            mode: string;
+            /** Name */
+            name: string;
+            /** Safe Operation */
+            safe_operation: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "healthy" | "degraded" | "unavailable" | "not_configured";
+        };
+        /** IntegrationsHealthResponse */
+        IntegrationsHealthResponse: {
+            environment: components["schemas"]["EnvironmentHealth"];
+            /** Integrations */
+            integrations: components["schemas"]["IntegrationHealthItem"][];
+            /** Operations */
+            operations: components["schemas"]["OperationHealthItem"][];
         };
         /** InvoiceItem */
         InvoiceItem: {
@@ -719,6 +787,26 @@ export interface components {
             sell_date: string | null;
             /** Status */
             status: string | null;
+        };
+        /** OperationHealthItem */
+        OperationHealthItem: {
+            /** Checked At */
+            checked_at: string;
+            /** Key */
+            key: string;
+            /** Message */
+            message: string;
+            /** Metrics */
+            metrics?: {
+                [key: string]: number | string | null;
+            };
+            /** Name */
+            name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "healthy" | "degraded" | "unavailable" | "not_configured";
         };
         /** ProductItem */
         ProductItem: {
@@ -1242,6 +1330,38 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    integration_health_api_integrations_health_get: {
+        parameters: {
+            query?: {
+                /** @description Reserved for admin-triggered live read-only checks. */
+                run_checks?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationsHealthResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };

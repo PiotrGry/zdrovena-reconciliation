@@ -314,6 +314,18 @@ class InPostClient:
 
     # ── Shipment creation ─────────────────────────────────────────────────────
 
+    def get_organization(self) -> dict[str, Any]:
+        """Read organisation metadata from ShipX.
+
+        This is used by operational health checks and must stay read-only.
+        """
+        resp = self._request(
+            "get",
+            f"{_BASE}/v1/organizations/{self._org_id}",
+            action="get_organization",
+        )
+        return resp.json() or {}
+
     def create_paczkomat_shipment(
         self,
         *,
