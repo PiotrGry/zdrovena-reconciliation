@@ -4,8 +4,8 @@ output "name" {
 }
 
 output "fqdn" {
-  description = "Latest revision FQDN"
-  value       = azurerm_container_app.this.latest_revision_fqdn
+  description = "Stable Container App ingress FQDN"
+  value       = azurerm_container_app.this.ingress[0].fqdn
 }
 
 output "latest_revision_name" {

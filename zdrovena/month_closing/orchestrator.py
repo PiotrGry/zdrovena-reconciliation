@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import calendar
 import logging
+import os
 import shutil
 import tempfile
 import zipfile
@@ -110,6 +111,9 @@ class MonthCloseOrchestrator:
         self.non_interactive = non_interactive
         self.ignore_warnings = ignore_warnings
         self.ignore_vendors: set[str] = {v.lower() for v in (ignore_vendors or [])}
+        self.ksef_enabled = (
+            KSEF_ENABLED and os.environ.get("PROVIDER_MODE", "").strip().lower() != "fake"
+        )
         self.month_pl = POLISH_MONTHS[month]
         self.month_en = ENGLISH_MONTHS[month]
         last_day = calendar.monthrange(year, month)[1]
@@ -437,7 +441,7 @@ class MonthCloseOrchestrator:
 
         # Phase 1: KSeF
         ksef_numbers: set[str] = set()
-        if KSEF_ENABLED:
+        if self.ksef_enabled:
             self.out.section_start("Phase 1: KSeF verification")
             ksef_client = KSeFClient()
             ksef_client.authenticate()
@@ -461,7 +465,7 @@ class MonthCloseOrchestrator:
         self._cost_invoices = fakt_invoices
 
         # Phase 2a: Cross-verify KSeF vs Fakturownia
-        if KSEF_ENABLED and ksef_numbers:
+        if self.ksef_enabled and ksef_numbers:
             fakt_gov_ids = {inv.get("gov_id", "") for inv in fakt_invoices if inv.get("gov_id")}
             missing_in_fakt = ksef_numbers - fakt_gov_ids
             if missing_in_fakt:
@@ -840,7 +844,7 @@ class MonthCloseOrchestrator:
         if r.cost_found_vendors:
             for vname, vsrc in r.cost_found_vendors.items():
                 self.out.plain(f"  Vendor: {vname:<20s} source: {vsrc}")
-        if KSEF_ENABLED:
+        if self.ksef_enabled:
             self.out.summary_line("KSeF invoices:", str(r.ksef_count))
         self.out.summary_line(
             "Bank statement:", "✅ found" if r.bank_statement_found else "❌ MISSING"

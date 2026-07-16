@@ -591,7 +591,14 @@ def _require_fakturownia_token(api_token: str | None) -> None:
 
 @app.get("/fakturownia/invoices.json")
 def fakturownia_list(
-    api_token: str | None = None, number: str | None = None, oid: str | None = None
+    api_token: str | None = None,
+    number: str | None = None,
+    oid: str | None = None,
+    income: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    page: int = 1,
+    per_page: int = 100,
 ) -> list[dict[str, Any]]:
     _require_fakturownia_token(api_token)
     invoices = list(STATE.fakturownia_invoices.values())
@@ -599,7 +606,18 @@ def fakturownia_list(
         invoices = [i for i in invoices if i.get("number") == number]
     if oid:
         invoices = [i for i in invoices if i.get("oid") == oid]
-    return invoices
+    if income:
+        invoices = [i for i in invoices if i.get("income", "yes") == income]
+    if date_from:
+        invoices = [
+            i for i in invoices if (i.get("sell_date") or i.get("issue_date") or "") >= date_from
+        ]
+    if date_to:
+        invoices = [
+            i for i in invoices if (i.get("sell_date") or i.get("issue_date") or "") <= date_to
+        ]
+    start = max(page - 1, 0) * per_page
+    return invoices[start : start + per_page]
 
 
 @app.post("/fakturownia/invoices.json")

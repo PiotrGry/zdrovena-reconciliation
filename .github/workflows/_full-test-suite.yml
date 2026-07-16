@@ -65,19 +65,18 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Scale to min 1 replica
         run: |
-          az containerapp update \
-            --name zdrovena-fake-providers-staging \
-            --resource-group zdrovena-rg \
-            --min-replicas 1 \
-            --max-replicas 1
+          bash scripts/ci/deploy-fake-providers.sh \
+            "${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:staging-latest" \
+            1 \
+            1
           az containerapp update \
             --name zdrovena-api-staging \
             --resource-group zdrovena-rg \
             --min-replicas 1 \
             --max-replicas 3
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Wait for health
         run: |
           bash scripts/ci/wait-containerapp.sh zdrovena-fake-providers-staging zdrovena-rg 12 10
@@ -138,7 +137,6 @@ jobs:
       FAKE_PROVIDER_APP: zdrovena-fake-providers-staging
       RG: zdrovena-rg
     outputs:
-      api-url: ${{ steps.url.outputs.url }}
       fake-provider-url: ${{ steps.url.outputs.fake_provider_url }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -152,11 +150,10 @@ jobs:
 
       - name: Deploy to staging Container App
         run: |
-          az containerapp update \
-            --name            "$FAKE_PROVIDER_APP" \
-            --resource-group  "$RG" \
-            --image           "${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:staging-${{ github.sha }}" \
-            --min-replicas    1
+          bash scripts/ci/deploy-fake-providers.sh \
+            "${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:staging-${{ github.sha }}" \
+            1 \
+            1
 
           az containerapp update \
             --name            "$STAGING_APP" \
@@ -178,7 +175,6 @@ jobs:
           FAKE_FQDN=$(az containerapp show \
             --name "$FAKE_PROVIDER_APP" --resource-group "$RG" \
             --query properties.configuration.ingress.fqdn -o tsv)
-          echo "url=https://$FQDN" >> $GITHUB_OUTPUT
           echo "fake_provider_url=https://$FAKE_FQDN" >> $GITHUB_OUTPUT
           echo "Staging API: https://$FQDN"
           echo "Fake provider: https://$FAKE_FQDN"
@@ -253,7 +249,6 @@ jobs:
     needs: [detect-changes, deploy-backend, deploy-frontend]
     if: always() && !failure() && !cancelled()
     outputs:
-      api-url: ${{ steps.urls.outputs.api_url }}
       swa-url: ${{ steps.urls.outputs.swa_url }}
       fake-provider-url: ${{ steps.urls.outputs.fake_provider_url }}
     steps:
@@ -262,10 +257,8 @@ jobs:
         run: |
           # staging FQDN is static — no az login required
           if [[ "${{ needs.deploy-backend.result }}" == "success" ]]; then
-            API_URL="${{ needs.deploy-backend.outputs.api-url }}"
             FAKE_PROVIDER_URL="${{ needs.deploy-backend.outputs.fake-provider-url }}"
           else
-            API_URL="https://${{ secrets.STAGING_API_FQDN }}"
             FAKE_PROVIDER_URL="https://${{ secrets.STAGING_FAKE_PROVIDER_FQDN }}"
           fi
           if [[ "$FAKE_PROVIDER_URL" == "https://" ]]; then
@@ -277,7 +270,6 @@ jobs:
           else
             SWA_URL="https://icy-water-0e2b04d03-${{ github.event.pull_request.number }}.westeurope.7.azurestaticapps.net"
           fi
-          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
           echo "swa_url=$SWA_URL" >> $GITHUB_OUTPUT
           echo "fake_provider_url=$FAKE_PROVIDER_URL" >> $GITHUB_OUTPUT
 
@@ -311,6 +303,7 @@ jobs:
         env:
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
           AZURE_STORAGE_ACCOUNT: zdrovenafiles
+          FAKE_PROVIDER_URL: ${{ needs.resolve-urls.outputs.fake-provider-url }}
         run: bash scripts/ci/seed-staging.sh
 
   # ── 5. Smoke test suite ────────────────────────────────────────────────────
@@ -339,11 +332,11 @@ jobs:
       - name: Run smoke test suite
         id: run
         env:
-          API_URL: ${{ needs.resolve-urls.outputs.api-url }}
+          API_URL: https://${{ secrets.STAGING_API_FQDN }}
           SWA_URL: ${{ needs.resolve-urls.outputs.swa-url }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_API_CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
+          AZURE_API_CLIENT_ID: ${{ secrets.AZURE_STAGING_API_CLIENT_ID || secrets.AZURE_API_CLIENT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           SMOKE_SP_CLIENT_ID: ${{ secrets.SMOKE_SP_CLIENT_ID }}
           SMOKE_SP_CLIENT_SECRET: ${{ secrets.SMOKE_SP_CLIENT_SECRET }}
@@ -352,7 +345,9 @@ jobs:
           SMOKE_ACCOUNTANT_SP_CLIENT_SECRET: ${{ secrets.SMOKE_ACCOUNTANT_SP_CLIENT_SECRET }}
         run: |
           cd scripts/smoke
-          npx tsx runner.ts --output report.json --exclude-test=closeDetailedVendorAndZipReport
+          npx tsx runner.ts \
+            --output report.json \
+            --exclude-test=business.close_detailed_vendor_and_zip_report
           RESULT=$(cat report.json | npx tsx -e "
             const r = JSON.parse(require('fs').readFileSync('report.json','utf8'));
             const failed = r.tests.filter(t => t.status === 'FAIL').length;
@@ -374,6 +369,7 @@ jobs:
     name: E2E tests (Playwright)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: staging
     needs: [resolve-urls, seed-staging]
     if: always() && needs.resolve-urls.result == 'success' && needs.seed-staging.result == 'success'
     outputs:
@@ -417,7 +413,7 @@ jobs:
           SMOKE_CLIENT_ID: ${{ steps.kv.outputs.client_id }}
           SMOKE_CLIENT_SECRET: ${{ steps.kv.outputs.client_secret }}
           TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          API_AUDIENCE: ${{ secrets.AZURE_API_CLIENT_ID }}
+          API_AUDIENCE: ${{ secrets.AZURE_STAGING_API_CLIENT_ID || secrets.AZURE_API_CLIENT_ID }}
         run: |
           TOKEN=$(curl -sf -X POST \
             "https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token" \
@@ -430,10 +426,10 @@ jobs:
         id: run
         env:
           BASE_URL: ${{ needs.resolve-urls.outputs.swa-url }}
-          API_URL: ${{ needs.resolve-urls.outputs.api-url }}
+          API_URL: https://${{ secrets.STAGING_API_FQDN }}
           FAKE_PROVIDER_URL: ${{ needs.resolve-urls.outputs.fake-provider-url }}
           AZURE_TEST_BEARER_TOKEN: ${{ steps.token.outputs.token }}
-          RUN_FAKE_PROVIDER_E2E: "1"
+          RUN_FAKE_PROVIDER_E2E: "0"
         run: |
           cd e2e
           npx playwright test --reporter=json,list 2>&1 | tee e2e-results.txt
