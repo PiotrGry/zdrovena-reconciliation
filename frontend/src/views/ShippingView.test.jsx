@@ -49,6 +49,7 @@ function installShippingFetch({
 } = {}) {
     let draftsCalls = 0
     let confirmCalls = 0
+    const updateDraftCalls = []
     const fetchMock = mockFetch((url, init = {}) => {
         if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: apaczkaServices })
         if (url === '/api/shipping/sync') {
@@ -63,6 +64,10 @@ function installShippingFetch({
             confirmCalls += 1
             return jsonResponse({ status: 'created' })
         }
+        if (url.startsWith('/api/shipping/drafts/') && init.method === 'PATCH') {
+            updateDraftCalls.push(JSON.parse(init.body || '{}'))
+            return jsonResponse({ status: 'pending' })
+        }
         if (url === '/api/shipping/drafts') {
             draftsCalls += 1
             if (errorEnvelope) return jsonResponse(errorEnvelope, { status: 500 })
@@ -71,7 +76,7 @@ function installShippingFetch({
         }
         throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
     })
-    return { fetchMock, getConfirmCalls: () => confirmCalls }
+    return { fetchMock, getConfirmCalls: () => confirmCalls, getUpdateDraftCalls: () => updateDraftCalls }
 }
 
 describe('ShippingView', () => {
@@ -98,8 +103,11 @@ describe('ShippingView', () => {
     })
 
     it('shows Apaczka shipping service match status and source', async () => {
-        installShippingFetch({
-            apaczkaServices: [{ service_id: '21', label: 'DPD Kurier' }],
+        const { getUpdateDraftCalls } = installShippingFetch({
+            apaczkaServices: [
+                { service_id: '21', label: 'DPD Kurier' },
+                { service_id: '53', label: 'ORLEN Paczka' },
+            ],
             drafts: [draft({
                 courier: 'apaczka',
                 service: 'apaczka',
@@ -116,6 +124,19 @@ describe('ShippingView', () => {
         expect(screen.getByText('Dopasowano automatycznie')).toBeInTheDocument()
         expect(screen.getByText('Źródło: Apaczka DPD')).toBeInTheDocument()
         expect(screen.getAllByText(/DPD Kurier/).length).toBeGreaterThan(0)
+
+        const select = screen.getByDisplayValue('DPD Kurier')
+        expect(select).toHaveValue('21')
+        const save = screen.getByRole('button', { name: 'Zapisz' })
+        expect(save).toBeDisabled()
+
+        await userEvent.selectOptions(select, '53')
+        expect(save).toBeEnabled()
+        await userEvent.click(save)
+
+        expect(getUpdateDraftCalls()).toEqual([
+            { apaczka_service_id: '53', reviewed: true },
+        ])
     })
 
     it('distinguishes pickup point delivery from a street address', async () => {
