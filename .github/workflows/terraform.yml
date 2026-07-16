@@ -44,7 +44,10 @@ jobs:
     name: Plan
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    # Dependabot-triggered workflows cannot access the Azure secrets needed by
+    # azure/login. Skipping the cloud plan avoids a guaranteed auth failure for
+    # GitHub Actions dependency bumps that only edit workflow files.
+    if: (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]') || github.event_name == 'workflow_dispatch'
     # OIDC subject claim must match an existing federated credential on the
     # gha SP. The `staging` env's federated cred (subject :environment:staging)
     # exists; the default `:pull_request` subject does not. Reuse staging.
