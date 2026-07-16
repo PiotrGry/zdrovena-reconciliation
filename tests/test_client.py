@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import zipfile
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -361,3 +363,84 @@ class TestDownloadCostPdfs:
 
         result = c.download_cost_pdfs(invoices, tmp_path)
         assert result == [existing]
+
+    def test_prefers_original_attachment(self, tmp_path):
+        c = FakturowniaClient("tok", pdf_delay=0)
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            archive.writestr("../PulsePure invoice.pdf", b"%PDF original")
+            archive.writestr("metadata.xml", b"<xml />")
+        response = MagicMock(content=archive_bytes.getvalue())
+        invoices = [
+            {
+                "id": 11,
+                "number": "1/06/2026",
+                "buyer_name": "PulsePure",
+                "has_attachments": True,
+            }
+        ]
+
+        with (
+            patch.object(c, "_request", return_value=response),
+            patch.object(c, "download_pdf") as generated,
+        ):
+            result = c.download_cost_documents(
+                invoices,
+                tmp_path,
+                source_policy=lambda _: "original_required",
+            )
+
+        assert len(result) == 1
+        assert result[0].source_kind == "original_attachment"
+        assert result[0].path.parent == tmp_path
+        assert result[0].path.read_bytes() == b"%PDF original"
+        generated.assert_not_called()
+
+    def test_required_original_never_falls_back_to_generated_pdf(self, tmp_path):
+        c = FakturowniaClient("tok", pdf_delay=0)
+        invoices = [
+            {
+                "id": 12,
+                "number": "2/06/2026",
+                "buyer_name": "PulsePure",
+                "has_attachments": False,
+            }
+        ]
+
+        with patch.object(c, "download_pdf") as generated:
+            result = c.download_cost_documents(
+                invoices,
+                tmp_path,
+                source_policy=lambda _: "original_required",
+            )
+
+        assert result == []
+        generated.assert_not_called()
+
+    def test_preferred_original_falls_back_when_attachment_archive_fails(self, tmp_path):
+        c = FakturowniaClient("tok", pdf_delay=0)
+        invoices = [
+            {
+                "id": 13,
+                "number": "3/06/2026",
+                "buyer_name": "Other Vendor",
+                "has_attachments": True,
+            }
+        ]
+
+        def generated(_invoice_id, save_path):
+            save_path.write_bytes(b"%PDF generated")
+            return save_path
+
+        with (
+            patch.object(
+                c,
+                "download_original_attachments",
+                side_effect=RuntimeError("bad ZIP"),
+            ),
+            patch.object(c, "download_pdf", side_effect=generated),
+        ):
+            result = c.download_cost_documents(invoices, tmp_path)
+
+        assert len(result) == 1
+        assert result[0].source_kind == "generated_pdf"

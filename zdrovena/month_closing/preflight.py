@@ -209,8 +209,11 @@ class PreflightChecker:
         zoho = self._init_zoho()
         zf = self.date_from.replace("-", "/")
         zt = self.cost_date_to.replace("-", "/")
+        prefer_scoped_blob = bool(
+            self._storage and self._blob_inbox_prefix.rstrip("/") != "faktury/inbox"
+        )
 
-        if not watch_dir.exists():
+        if prefer_scoped_blob or not watch_dir.exists():
             if self._storage:
                 blob_files = self._list_blob_inbox()
                 for vendor_cfg in manual_vendors:
@@ -387,7 +390,10 @@ class PreflightChecker:
                 return
 
         watch_dir = DOWNLOAD_WATCH_DIR
-        if watch_dir.exists():
+        prefer_scoped_blob = bool(
+            self._storage and self._blob_inbox_prefix.rstrip("/") != "faktury/inbox"
+        )
+        if watch_dir.exists() and not prefer_scoped_blob:
             pko_downloads = sorted(
                 (f for f in watch_dir.glob("Wyciag_na_zadanie_*.pdf") if f.is_file()),
                 key=lambda f: f.stat().st_mtime,
@@ -457,7 +463,14 @@ class PreflightChecker:
     def _check_reports(self) -> None:
         watch_dir = DOWNLOAD_WATCH_DIR
         self._out("  ┌─ Fakturownia reports")
-        blob_files = self._list_blob_inbox() if not watch_dir.exists() and self._storage else []
+        prefer_scoped_blob = bool(
+            self._storage and self._blob_inbox_prefix.rstrip("/") != "faktury/inbox"
+        )
+        blob_files = (
+            self._list_blob_inbox()
+            if (prefer_scoped_blob or not watch_dir.exists()) and self._storage
+            else []
+        )
 
         missing: list[dict] = []
         for rpt in FAKTUROWNIA_REPORTS:
@@ -465,7 +478,7 @@ class PreflightChecker:
             if dest.exists():
                 self._out(f"  │  ✅ {rpt['name']}: {dest.name} (in month folder)")
                 continue
-            if watch_dir.exists():
+            if watch_dir.exists() and not prefer_scoped_blob:
                 matches = sorted(
                     watch_dir.glob(rpt["glob"]),
                     key=lambda f: f.stat().st_mtime,

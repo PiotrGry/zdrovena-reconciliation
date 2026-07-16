@@ -551,6 +551,8 @@ class TestExecuteModes:
     def test_execute_send_only_zip_missing(self, tmp_path):
         orch = _make_orchestrator()
         orch.month_dir = tmp_path  # no ZIP file here
+        orch.storage = MagicMock()
+        orch.storage.exists.return_value = False
         orch._print_summary = MagicMock()
         report = orch.execute_send_only()
         assert report.errors  # should have an error about missing ZIP

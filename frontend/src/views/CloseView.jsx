@@ -1,147 +1,151 @@
-import { useState, useCallback, useEffect } from 'react'
-import { useAuth } from '../auth'
-import { useToast } from '../components/Toast'
-import { useT } from '../lang'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { fetchJson } from '../api'
-import { CloseHero } from './close/CloseHero'
-import { DocChecklist } from './close/DocChecklist'
-import { RunControls } from './close/RunControls'
-import { RunPanel } from './close/RunPanel'
-import { ResultPanel } from './close/ResultPanel'
-import { CloseHistoryTable } from './close/CloseHistoryTable'
+import { useAuth } from '../auth'
+import { Icon } from '../components/Icon'
+import { useToast } from '../components/Toast'
 import { MONTHS_PL } from '../data'
+import { CloseHero } from './close/CloseHero'
+import { CloseHistoryTable } from './close/CloseHistoryTable'
+import { WorkflowBoard } from './close/WorkflowBoard'
+import { WorkflowDocuments } from './close/WorkflowDocuments'
 
-/**
- * Zamknięcie miesiąca — inline single-page layout.
- *
- * Sekwencja sekcji (od góry):
- *   1. CloseHero — duży tytuł miesiąca + status + ostatnie zamknięcie
- *   2. DocChecklist — 6 wymaganych dokumentów + collapsible inbox
- *   3. RunControls — wybór miesiąca, dry-run, vendorzy, CTA
- *   4. RunPanel — kroki + logi side-by-side (tylko running/error/done)
- *   5. ResultPanel — metryki wyniku (tylko done)
- *   6. CloseHistoryTable — historia ostatnich zamknięć
- */
 export default function CloseView() {
-    useT() // lang context needed for child components
     const { getToken } = useAuth()
     const { pushToast } = useToast()
-
-    // Domyślnie poprzedni miesiąc (ten do zamknięcia)
-    const now = new Date()
+    const now = useMemo(() => new Date(), [])
     const defaultMonth = now.getMonth() === 0 ? 12 : now.getMonth()
     const defaultYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()
-
     const [year, setYear] = useState(defaultYear)
     const [month, setMonth] = useState(defaultMonth)
-    const [dryRun, setDryRun] = useState(true)
-    const [running, setRunning] = useState(false)
-    const [status, setStatus] = useState('ready')
-    const [preCompleted, setPreCompleted] = useState([])
-    const [ignoredVendors, setIgnoredVendors] = useState([])
-    const [inboxReady, setInboxReady] = useState(null) // null=loading, true=ok, false=missing
-    const [hasResult, setHasResult] = useState(false)
-    const [resultData, setResultData] = useState(null)
-    const [runProgress, setRunProgress] = useState(0)
-    const [runKey, setRunKey] = useState(0)
-    const [runDryRun, setRunDryRun] = useState(true) // dry setting dla bieżącego runu (nie zmienia checkboxa)
+    const [run, setRun] = useState(null)
+    const [loading, setLoading] = useState(true)
     const [historyKey, setHistoryKey] = useState(0)
     const [lastClose, setLastClose] = useState(null)
 
     const yearOptions = [defaultYear - 1, defaultYear, defaultYear + 1]
-        .filter(y => y <= now.getFullYear())
+        .filter(value => value <= now.getFullYear())
 
-    const toggleVendor = useCallback((v) => {
-        setIgnoredVendors(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v])
-    }, [])
-
-    // Zmiana miesiąca/roku resetuje stan biegu i wyniku
-    useEffect(() => {
-        setInboxReady(null)
-        setRunning(false)
-        setStatus('ready')
-        setHasResult(false)
-        setResultData(null)
-    }, [month, year])
-
-    // Załaduj checkpoint state dla wybranego miesiąca
-    const loadState = useCallback(async () => {
+    const loadRun = useCallback(async () => {
+        setLoading(true)
         try {
             const token = await getToken()
-            const data = await fetchJson(`/api/close/state?year=${year}&month=${month}`, { token })
-            setPreCompleted(data.completed_steps ?? [])
-        } catch (e) {
-            pushToast({ kind: 'error', msg: `Nie udało się wczytać stanu zamknięcia: ${e.message}` })
+            const data = await fetchJson(`/api/close/workflow?year=${year}&month=${month}`, { token })
+            setRun(data)
+        } catch (error) {
+            pushToast({ kind: 'error', msg: `Nie udało się wczytać workflow: ${error.message}` })
+        } finally {
+            setLoading(false)
         }
-    }, [getToken, year, month, pushToast])
+    }, [getToken, month, pushToast, year])
 
-    useEffect(() => { loadState() }, [loadState])
+    useEffect(() => { loadRun() }, [loadRun])
 
-    // Załaduj informacje o ostatnim zamknięciu (do hero)
+    useEffect(() => {
+        if (!run?.active_action) return undefined
+        const timer = window.setInterval(loadRun, 2000)
+        return () => window.clearInterval(timer)
+    }, [loadRun, run?.active_action])
+
     useEffect(() => {
         let cancelled = false
-        const loadLast = async () => {
+        const loadHistory = async () => {
             try {
                 const token = await getToken()
-                const data = await fetchJson('/api/close/history?limit=1', { token })
-                if (cancelled || !data?.length) return
-                const h = data[0]
+                const history = await fetchJson('/api/close/history?limit=1', { token })
+                if (cancelled || !history?.length) return
+                const item = history[0]
                 setLastClose({
-                    ts: h.ts,
-                    monthName: h.month_name ?? MONTHS_PL[(h.month ?? 1) - 1],
-                    year: h.year,
-                    status: h.status,
+                    ts: item.ts,
+                    monthName: item.month_name ?? MONTHS_PL[(item.month ?? 1) - 1],
+                    year: item.year,
+                    status: item.status,
                 })
-            } catch (e) {
-                if (!cancelled) {
-                    pushToast({ kind: 'error', msg: `Nie udało się wczytać ostatniego zamknięcia: ${e.message}` })
-                }
+            } catch {
+                // Historia jest pomocnicza; sam dashboard pozostaje użyteczny.
             }
         }
-        loadLast()
+        loadHistory()
         return () => { cancelled = true }
-    }, [getToken, historyKey, pushToast])
+    }, [getToken, historyKey])
 
-    // Decyzja: czy CTA jest aktywne i jaki jest powód blokady
-    const canRun = inboxReady === true && !running
-    const runReason = running ? null
-        : inboxReady === null ? 'Sprawdzam dokumenty…'
-        : inboxReady === false ? 'Uzupełnij brakujące dokumenty w checklist powyżej'
-        : null
+    const execute = useCallback(async action => {
+        let overrideReason = null
+        if (action === 'send' && !window.confirm('Czy paczka została przejrzana i ma zostać wysłana do księgowości?')) {
+            return
+        }
+        if (action === 'send' && run?.issues?.some(issue => issue.severity === 'warning')) {
+            overrideReason = window.prompt(
+                'Paczka ma ostrzeżenia. Podaj krótki powód świadomej wysyłki:'
+            )
+            if (!overrideReason?.trim()) return
+        }
+        setRun(previous => previous ? {
+            ...previous,
+            status: 'running',
+            active_action: action,
+            steps: {
+                ...previous.steps,
+                [action]: {
+                    ...(previous.steps?.[action] ?? {}),
+                    status: 'running',
+                    message: null,
+                },
+            },
+        } : previous)
+        try {
+            const token = await getToken()
+            const data = await fetchJson(`/api/close/workflow/actions/${action}`, {
+                method: 'POST',
+                token,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    year,
+                    month,
+                    confirm: action === 'send',
+                    override_reason: overrideReason,
+                }),
+            })
+            setRun(data)
+            const step = data.steps?.[action]
+            pushToast({
+                kind: step?.status === 'done' ? 'success' : 'error',
+                msg: step?.message ?? 'Etap zakończony.',
+            })
+            if (action === 'send' && step?.status === 'done') setHistoryKey(key => key + 1)
+        } catch (error) {
+            pushToast({ kind: 'error', msg: `Nie udało się wykonać etapu: ${error.message}` })
+            await loadRun()
+        }
+    }, [getToken, loadRun, month, pushToast, run?.issues, year])
 
-    // Status pochodny dla hero (uwzględnia inboxReady)
-    const heroStatus = running
+    const reset = async () => {
+        if (!window.confirm('Rozpocząć nowy run dla tego miesiąca? Pobrane pliki nie zostaną usunięte.')) return
+        try {
+            const token = await getToken()
+            const data = await fetchJson('/api/close/workflow/reset', {
+                method: 'POST',
+                token,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ year, month }),
+            })
+            setRun(data)
+        } catch (error) {
+            pushToast({ kind: 'error', msg: `Nie udało się zresetować workflow: ${error.message}` })
+        }
+    }
+
+    const completedCount = run
+        ? Object.values(run.steps ?? {}).filter(step => step.status === 'done').length
+        : 0
+    const heroStatus = run?.active_action
         ? 'running'
-        : status === 'error'
-            ? 'error'
-            : status === 'done'
-                ? 'done'
-                : !inboxReady
+        : run?.status === 'completed'
+            ? 'done'
+            : run?.status === 'failed'
+                ? 'error'
+                : run?.status === 'needs_input'
                     ? 'blocked'
                     : 'ready'
-
-    const start = (forceDry = null) => {
-        // forceDry overrides checkbox (e.g. "Sprawdź dry-run") without changing dryRun state
-        setRunDryRun(forceDry ?? dryRun)
-        setStatus('ready')
-        setHasResult(false)
-        setResultData(null)
-        setRunProgress(0)
-        setRunning(true)
-        setRunKey(k => k + 1)
-    }
-
-    const handleDone = (s, data) => {
-        setStatus(s)
-        setRunning(false)
-        if (s === 'done' || s === 'error') {
-            setHasResult(true)
-            setResultData(data)
-            setHistoryKey(k => k + 1) // odśwież historię zawsze po zakończeniu
-        }
-        if (s === 'done') loadState()
-    }
-
 
     return (
         <div className="close-view">
@@ -149,47 +153,75 @@ export default function CloseView() {
                 year={year}
                 month={month}
                 status={heroStatus}
-                progress={running ? runProgress : null}
+                progress={run ? completedCount / 7 : 0}
                 lastClose={lastClose}
-                isDryRun={running || hasResult ? runDryRun : dryRun}
+                isDryRun={false}
             />
 
-            <DocChecklist onStatusChange={setInboxReady} />
+            <section className="card workflow-period">
+                <div className="workflow-period-fields">
+                    <label className="field">
+                        <span className="field-label">Miesiąc</span>
+                        <select value={month} onChange={event => setMonth(Number(event.target.value))}>
+                            {MONTHS_PL.map((name, index) => (
+                                <option key={name} value={index + 1}>{name}</option>
+                            ))}
+                        </select>
+                    </label>
+                    <label className="field">
+                        <span className="field-label">Rok</span>
+                        <select value={year} onChange={event => setYear(Number(event.target.value))}>
+                            {yearOptions.map(value => <option key={value}>{value}</option>)}
+                        </select>
+                    </label>
+                </div>
+                <div className="workflow-period-actions">
+                    <button type="button" className="btn btn-ghost" onClick={loadRun} disabled={loading}>
+                        <Icon name="refresh-cw" size={13} className={loading ? 'spinning' : ''} />
+                        Odśwież
+                    </button>
+                    <button type="button" className="btn btn-ghost" onClick={reset} disabled={run?.active_action}>
+                        <Icon name="refresh" size={13} /> Nowy run
+                    </button>
+                </div>
+            </section>
 
-            <RunControls
-                year={year}
-                month={month}
-                onYearChange={setYear}
-                onMonthChange={setMonth}
-                yearOptions={yearOptions}
-                dryRun={dryRun}
-                onDryRunChange={setDryRun}
-                ignoredVendors={ignoredVendors}
-                onToggleVendor={toggleVendor}
-                canRun={canRun}
-                runReason={runReason}
-                running={running}
-                hasResult={hasResult}
-                preCompleted={preCompleted}
-                onRun={() => start()}
-                onDryCheck={() => start(true)}
-            />
-
-            {(running || hasResult) && (
-                <RunPanel
-                    key={runKey}
-                    year={year}
-                    month={month}
-                    dryRun={runDryRun}
-                    preCompleted={preCompleted}
-                    ignoredVendors={ignoredVendors}
-                    onProgressChange={setRunProgress}
-                    onDone={handleDone}
-                />
+            {run?.issues?.length > 0 && (
+                <section className="card workflow-issues" aria-label="Problemy do sprawdzenia">
+                    <div className="card-head">
+                        <span className="card-title">
+                            <Icon name="alert-circle" size={14} /> Problemy i ostrzeżenia
+                        </span>
+                    </div>
+                    <ul>
+                        {run.issues.map(issue => (
+                            <li key={issue.id} className={`is-${issue.severity}`}>
+                                <span>{issue.severity === 'warning' ? 'Ostrzeżenie' : 'Blokada'}</span>
+                                {issue.message}
+                            </li>
+                        ))}
+                    </ul>
+                </section>
             )}
 
-            {hasResult && status === 'done' && resultData && (
-                <ResultPanel result={resultData} />
+            {loading && !run && <section className="card workflow-empty">Ładowanie workflow…</section>}
+
+            {run && (
+                <>
+                    <WorkflowBoard run={run} onAction={execute} />
+                    <WorkflowDocuments
+                        year={year}
+                        month={month}
+                        documents={run.documents}
+                        onUploaded={() => execute('check')}
+                    />
+                    {run.logs?.length > 0 && (
+                        <details className="card workflow-logs">
+                            <summary><Icon name="caret" size={11} /> Log wykonania ({run.logs.length})</summary>
+                            <pre>{run.logs.join('\n')}</pre>
+                        </details>
+                    )}
+                </>
             )}
 
             <CloseHistoryTable refreshKey={historyKey} />

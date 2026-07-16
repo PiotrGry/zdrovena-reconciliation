@@ -22,6 +22,7 @@ os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 from zdrovena.api.auth import Principal, get_current_principal
 from zdrovena.api.main import app
 from zdrovena.common.storage import LocalStorageService
+from zdrovena.month_closing.run_store import new_close_run
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -234,13 +235,23 @@ class TestCloseEndpoint:
         )
         with patch("zdrovena.api.routers.close.MonthCloseOrchestrator") as M:
             M.return_value.execute.return_value = report
-            data = c.post("/api/close", json={"year": 2026, "month": 3}).json()
+            data = c.post(
+                "/api/close",
+                json={"year": 2026, "month": 3, "dry_run": True},
+            ).json()
 
         assert data["sales_invoice_count"] == 3
         assert data["sales_gross_total"] == "1500.00"
         assert data["cost_invoice_count"] == 7
         assert data["warnings"] == ["w1"]
         assert data["steps_completed"] == ["step_1"]
+
+    def test_live_all_in_one_pipeline_is_disabled(self, api):
+        c, _ = api
+        resp = c.post("/api/close", json={"year": 2026, "month": 3})
+
+        assert resp.status_code == 409
+        assert "etapowego workflow" in resp.json()["detail"]
 
     def test_invalid_month_returns_422(self, api):
         c, _ = api
@@ -258,7 +269,10 @@ class TestCloseEndpoint:
             "zdrovena.api.routers.close.MonthCloseOrchestrator",
             side_effect=ValueError("bad"),
         ):
-            resp = c.post("/api/close", json={"year": 2026, "month": 3})
+            resp = c.post(
+                "/api/close",
+                json={"year": 2026, "month": 3, "dry_run": True},
+            )
         assert resp.status_code == 400
 
     def test_preflight_blockers_return_422_not_500(self, api):
@@ -300,6 +314,41 @@ class TestCloseEndpoint:
         finally:
             app.dependency_overrides.pop(get_current_principal, None)
         assert resp.status_code == 403
+
+
+class TestCloseWorkflowEndpoints:
+    def test_get_workflow_returns_durable_run(self, api):
+        c, _ = api
+        run = new_close_run(2026, 3, "local-dev@localhost")
+        with patch("zdrovena.api.routers.close.MonthCloseWorkflow") as workflow:
+            workflow.return_value.get_run.return_value = run
+            resp = c.get("/api/close/workflow?year=2026&month=3")
+
+        assert resp.status_code == 200
+        assert resp.json()["run_id"] == run["run_id"]
+        assert "package" in resp.json()["steps"]
+
+    def test_action_endpoint_executes_single_stage(self, api):
+        c, _ = api
+        run = new_close_run(2026, 3, "local-dev@localhost")
+        run["steps"]["check"]["status"] = "done"
+        with patch("zdrovena.api.routers.close.MonthCloseWorkflow") as workflow:
+            workflow.return_value.perform.return_value = run
+            resp = c.post(
+                "/api/close/workflow/actions/check",
+                json={"year": 2026, "month": 3},
+            )
+
+        assert resp.status_code == 200
+        workflow.return_value.perform.assert_called_once()
+
+    def test_unknown_action_returns_404(self, api):
+        c, _ = api
+        resp = c.post(
+            "/api/close/workflow/actions/everything",
+            json={"year": 2026, "month": 3},
+        )
+        assert resp.status_code == 404
 
 
 # ── Principal unit tests ───────────────────────────────────────────────────────

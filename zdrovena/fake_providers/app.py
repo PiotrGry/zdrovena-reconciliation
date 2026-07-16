@@ -8,9 +8,11 @@ by the real Zdrovena provider clients.
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import time
+import zipfile
 from copy import deepcopy
 from typing import Any
 from urllib.parse import parse_qs
@@ -692,6 +694,21 @@ def fakturownia_pdf(invoice_id: int, api_token: str | None = None) -> Response:
     if str(invoice_id) not in STATE.fakturownia_invoices:
         raise HTTPException(status_code=404, detail="invoice not found")
     return Response(PDF_BYTES, media_type="application/pdf")
+
+
+@app.get("/fakturownia/invoices/{invoice_id}/attachments_zip.json")
+def fakturownia_attachments(invoice_id: int, api_token: str | None = None) -> Response:
+    _require_fakturownia_token(api_token)
+    invoice = STATE.fakturownia_invoices.get(str(invoice_id))
+    if not invoice:
+        raise HTTPException(status_code=404, detail="invoice not found")
+    if not invoice.get("has_attachments"):
+        raise HTTPException(status_code=404, detail="invoice has no attachments")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        number = str(invoice.get("number") or invoice_id).replace("/", "_")
+        archive.writestr(f"original-{number}.pdf", PDF_BYTES)
+    return Response(buffer.getvalue(), media_type="application/zip")
 
 
 @app.exception_handler(HTTPException)

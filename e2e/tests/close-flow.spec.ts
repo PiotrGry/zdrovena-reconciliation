@@ -17,31 +17,56 @@ const API_URL = process.env.API_URL ?? "";
 const BEARER_TOKEN = process.env.AZURE_TEST_BEARER_TOKEN ?? "";
 const HAVE_AUTH = !!API_URL && !!BEARER_TOKEN;
 
-// Month with known staging data (seeded by seed-staging.sh in CI)
-const YEAR = 2026;
-const MONTH = 4;
+// seed-staging.sh always prepares the previous calendar month.
+const now = new Date();
+const YEAR = now.getUTCMonth() === 0 ? now.getUTCFullYear() - 1 : now.getUTCFullYear();
+const MONTH = now.getUTCMonth() === 0 ? 12 : now.getUTCMonth();
 
 test.describe("Month-close user journey (authenticated)", () => {
-  test("sales invoice list → dry-run close → verify CloseResponse schema", async ({ request }) => {
+  test("check → collect stages → reviewable package", async ({ request }) => {
     test.skip(!HAVE_AUTH, "API_URL and AZURE_TEST_BEARER_TOKEN required for this test");
 
-    // Step 1: List sales invoices (simulates the UI invoice list view)
-    const listRes = await request.get(
-      `${API_URL}/api/invoices/sales?year=${YEAR}&month=${MONTH}`,
-      { headers: { Authorization: `Bearer ${BEARER_TOKEN}` } },
-    );
-    expect(listRes.status()).toBe(200);
-    const invoices = await listRes.json();
-    expect(Array.isArray(invoices)).toBe(true);
+    const headers = {
+      Authorization: `Bearer ${BEARER_TOKEN}`,
+      "Content-Type": "application/json",
+    };
+    const reset = await request.post(`${API_URL}/api/close/workflow/reset`, {
+      headers,
+      data: { year: YEAR, month: MONTH },
+    });
+    expect(reset.status()).toBe(200);
 
-    // Step 2: Dry-run close (simulates the user pressing "Run" with dry_run=true)
+    for (const action of ["check", "sales", "costs", "reports", "bank", "package"]) {
+      const response = await request.post(
+        `${API_URL}/api/close/workflow/actions/${action}`,
+        {
+          headers,
+          data: { year: YEAR, month: MONTH },
+        },
+      );
+      expect(response.status(), `${action} request failed`).toBe(200);
+      const run = await response.json();
+      expect(run.steps[action].status, `${action} did not finish`).toBe("done");
+      expect(run.active_action).toBeNull();
+      if (action === "check") {
+        expect(run.documents.length).toBeGreaterThan(0);
+      }
+      if (action === "package") {
+        expect(run.status).toBe("package_ready");
+        expect(run.artifacts.some((artifact: { kind: string }) => artifact.kind === "package")).toBe(true);
+      }
+    }
+  });
+
+  test("legacy dry-run remains read-only and schema-compatible", async ({ request }) => {
+    test.skip(!HAVE_AUTH, "API_URL and AZURE_TEST_BEARER_TOKEN required for this test");
+
     const closeRes = await request.post(`${API_URL}/api/close`, {
       headers: { Authorization: `Bearer ${BEARER_TOKEN}` },
       data: { year: YEAR, month: MONTH, dry_run: true, ignore_warnings: true },
     });
     expect(closeRes.status()).toBe(200);
 
-    // Step 3: Verify CloseResponse schema fields are all present
     const report = await closeRes.json();
     const requiredFields = [
       "sales_invoice_count",
@@ -65,10 +90,8 @@ test.describe("Month-close user journey (authenticated)", () => {
       expect(report, `Missing field: ${field}`).toHaveProperty(field);
     }
 
-    // Dry run must never send email
     expect(report.email_sent).toBe(false);
 
-    // Type checks for key fields
     expect(typeof report.sales_invoice_count).toBe("number");
     expect(typeof report.has_critical_errors).toBe("boolean");
     expect(Array.isArray(report.warnings)).toBe(true);
