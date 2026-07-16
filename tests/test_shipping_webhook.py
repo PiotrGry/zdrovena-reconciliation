@@ -1254,6 +1254,73 @@ class TestRunApaczka:
         assert result["tracking_number"] == "WAY001"
         assert result["status"] == "created"
 
+    def test_passes_pickup_point_to_apaczka(self):
+        from zdrovena.api.routers.webhooks import _run_apaczka
+
+        draft = {
+            "id": "d-ap-point",
+            "shopify_order_number": "1648",
+            "courier": "apaczka",
+            "service": "apaczka",
+            "apaczka_service_id": "23",
+            "pickup_point": {
+                "provider": "dpd",
+                "id": "PL55338",
+                "name": 'DPD Pickup- "Stokrotka Express"',
+            },
+            "receiver": {
+                "first_name": "Adam",
+                "last_name": "K",
+                "email": "a@example.com",
+                "phone": "+48500100200",
+                "locker_id": "",
+            },
+            "shipping_address": {
+                "street": "Puławska",
+                "building_number": "5",
+                "city": "Lublin",
+                "post_code": "20-046",
+            },
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship:
+                mock_ship.return_value = {"id": "ap-point", "waybill_number": "WAY-POINT"}
+                _run_apaczka(draft, _SENDER, object())
+
+        assert mock_ship.call_args.kwargs["receiver_point_id"] == "PL55338"
+
+    def test_point_service_without_pickup_point_is_rejected(self):
+        from zdrovena.api.routers.webhooks import _run_apaczka
+        from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
+
+        draft = {
+            "id": "d-ap-no-point",
+            "shopify_order_number": "1648",
+            "courier": "apaczka",
+            "service": "apaczka",
+            "apaczka_service_id": "23",
+            "pickup_point": None,
+            "receiver": {
+                "first_name": "Adam",
+                "last_name": "K",
+                "email": "a@example.com",
+                "phone": "+48500100200",
+                "locker_id": "",
+            },
+            "shipping_address": {
+                "street": "Puławska",
+                "building_number": "5",
+                "city": "Lublin",
+                "post_code": "20-046",
+            },
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.apaczka.ApaczkaClient") as mock_client:
+                with pytest.raises(ApaczkaBusinessError, match="no pickup point id"):
+                    _run_apaczka(draft, _SENDER, object())
+
+        mock_client.assert_not_called()
+
     def test_building_number_included_in_receiver_address(self):
         """Regression: shipping_address stores street and building_number separately
         (parse_pl_address splits Shopify address1). _run_apaczka must join them or
@@ -1754,6 +1821,8 @@ class TestCreateDraftPaczkomat:
         assert d["receiver"]["first_name"] == "Anna"
         assert d["receiver"]["last_name"] == "Kowalska"
         assert d["receiver"]["locker_id"] == "WAW123A"
+        assert d["pickup_point"]["provider"] == "inpost"
+        assert d["pickup_point"]["id"] == "WAW123A"
         assert d["shipping_address"]["city"] == "Warszawa"
         assert d["tracking_number"] is None
         assert d["courier_draft_id"] is None
@@ -1779,6 +1848,156 @@ class TestCreateDraftApaczka:
         assert d["receiver"]["last_name"] == "Wiśniewska"
         assert d["receiver"]["email"] == "maria.wisniewska@example.com"
         assert d["shipping_address"]["city"] == "Gdańsk"
+
+    def test_octolize_dpd_pickup_is_automatic(self, store):
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        order = _load_fixture("shopify_order_dpd_pickup.json")
+        order["order_number"] = 1648
+        order["fulfillment_status"] = None
+        order["fulfillments"] = []
+        order["shipping_address"]["phone"] = "534644600"
+        order["shipping_lines"][0].update(
+            {
+                "code": "pickup-points:8830:147893:171",
+                "title": 'DPD • DPD Pickup- "Stokrotka Express" • 0.17 km • PL55338',
+            }
+        )
+        for attr in order["note_attributes"]:
+            replacements = {
+                "PickupPointId": "PL55338",
+                "PickupPointName": 'DPD Pickup- "Stokrotka Express"',
+                "PickupPointAddress": "Puławska 5",
+                "PickupPointPostCode": "20046",
+                "PickupPointCity": "Lublin",
+            }
+            if attr["name"] in replacements:
+                attr["value"] = replacements[attr["name"]]
+
+        _create_draft(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["shopify_order_number"] == "1648"
+        assert draft["courier"] == "apaczka"
+        assert draft["apaczka_service_id"] == "23"
+        assert draft["pickup_point"]["provider"] == "dpd"
+        assert draft["pickup_point"]["id"] == "PL55338"
+        assert draft["shipping_service_match_status"] == "auto_matched"
+        assert draft["status"] == "pending"
+
+    def test_octolize_poczta_pickup_is_automatic(self, store):
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        order = _load_fixture("shopify_order_dpd_pickup.json")
+        order["order_number"] = 1642
+        order["fulfillment_status"] = None
+        order["fulfillments"] = []
+        order["shipping_address"]["phone"] = "500600700"
+        order["shipping_lines"][0].update(
+            {
+                "code": "pickup-points:8828:1655717:352",
+                "title": "Poczta Polska • Sklep Żabka • 0.35 km • 318409",
+            }
+        )
+        pickup_values = {
+            "PickupPointCourier": "Poczta Polska",
+            "PickupPointId": "318409",
+            "PickupPointName": "Sklep Żabka",
+            "PickupPointAddress": "Stefana Żeromskiego 52",
+            "PickupPointPostCode": "26-110",
+            "PickupPointCity": "Skarżysko-Kamienna",
+        }
+        for attr in order["note_attributes"]:
+            if attr["name"] in pickup_values:
+                attr["value"] = pickup_values[attr["name"]]
+
+        _create_draft(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["courier"] == "apaczka"
+        assert draft["apaczka_service_id"] == "64"
+        assert draft["pickup_point"]["provider"] == "poczta"
+        assert draft["pickup_point"]["id"] == "318409"
+        assert draft["status"] == "pending"
+
+    def test_known_pickup_provider_without_point_id_stays_in_review(self, store):
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        order = _load_fixture("shopify_order_dpd_pickup.json")
+        order["fulfillment_status"] = None
+        order["fulfillments"] = []
+        order["shipping_address"]["phone"] = "500600700"
+        order["shipping_lines"][0]["title"] = "DPD • DPD Pickup"
+        for attr in order["note_attributes"]:
+            if attr["name"] == "PickupPointId":
+                attr["value"] = ""
+
+        _create_draft(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["apaczka_service_id"] is None
+        assert draft["pickup_point"]["provider"] == "dpd"
+        assert draft["pickup_point"]["id"] == ""
+        assert draft["status"] == "needs_review"
+        assert draft["shipping_service_match_detail"] == (
+            "Shopify pickup point is missing PickupPointId"
+        )
+
+    def test_unknown_pickup_provider_is_not_guessed(self, store):
+        from zdrovena.api.routers.webhooks import _create_draft
+
+        order = _load_fixture("shopify_order_dpd_pickup.json")
+        order["fulfillment_status"] = None
+        order["fulfillments"] = []
+        order["shipping_address"]["phone"] = "500600700"
+        order["shipping_lines"][0].update(
+            {
+                "code": "pickup-points:9999:123:100",
+                "title": "Nieznany operator • Punkt • 0.1 km • XYZ123",
+            }
+        )
+        for attr in order["note_attributes"]:
+            if attr["name"] == "PickupPointCourier":
+                attr["value"] = "Nieznany operator"
+            if attr["name"] == "PickupPointId":
+                attr["value"] = "XYZ123"
+
+        _create_draft(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["courier"] == "apaczka"
+        assert draft["apaczka_service_id"] is None
+        assert draft["pickup_point"]["provider"] == ""
+        assert draft["pickup_point"]["id"] == "XYZ123"
+        assert draft["status"] == "needs_review"
+
+    def test_shopify_sync_backfills_existing_unmatched_pickup_draft(self, store):
+        from zdrovena.api.routers.webhooks import _build_draft_record, _sync_draft_from_order
+
+        order = _load_fixture("shopify_order_dpd_pickup.json")
+        order["fulfillment_status"] = None
+        order["fulfillments"] = []
+        order["shipping_address"]["phone"] = "500600700"
+        existing = _build_draft_record(order)
+        existing.update(
+            {
+                "apaczka_service_id": None,
+                "pickup_point": None,
+                "shipping_service_match_status": "requires_selection",
+                "shipping_service_match_detail": "Legacy unmatched draft",
+                "status": "needs_review",
+            }
+        )
+        store.upsert_draft(existing)
+
+        changed = _sync_draft_from_order(order, store, object(), existing=existing)
+
+        updated = store.get_draft(existing["id"])
+        assert changed is True
+        assert updated is not None
+        assert updated["apaczka_service_id"] == "23"
+        assert updated["pickup_point"]["id"] == "PL72095"
+        assert updated["status"] == "pending"
 
     def test_apaczka_service_id_set_from_title_map(self, store, monkeypatch):
         from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache

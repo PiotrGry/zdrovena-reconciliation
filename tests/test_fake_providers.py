@@ -237,7 +237,7 @@ def test_apaczka_client_stateful_success_and_provider_validation_failure(
         reference="order-1639",
     )
     assert duplicate["id"] == shipment["id"]
-    assert client.get_label("order-1639").startswith(b"%PDF")
+    assert client.get_label(shipment["id"]).startswith(b"%PDF")
 
     _set_scenario(fake_provider_url, "apaczka", "order_send", "provider_validation_failure")
     with pytest.raises(ApaczkaBusinessError):

@@ -589,6 +589,84 @@ def _apaczka_service_title_map() -> dict[str, str]:
     return valid_map
 
 
+_OCTOLIZE_PROVIDER_CODES = {
+    "8828": "poczta",
+    "8829": "inpost",
+    "8830": "dpd",
+}
+_PICKUP_PROVIDER_ALIASES = {
+    "dpd": "dpd",
+    "inpost": "inpost",
+    "poczta": "poczta",
+    "poczta polska": "poczta",
+    "pocztex": "poczta",
+}
+_APACZKA_PICKUP_SERVICES = {
+    "dpd": "23",  # DPD Pickup Drzwi-Punkt
+    "poczta": "64",  # Pocztex Kurier Drzwi-Punkt
+}
+_APACZKA_SERVICES_REQUIRING_PICKUP_POINT = frozenset(_APACZKA_PICKUP_SERVICES.values())
+
+
+def _normalize_pickup_provider(value: Any) -> str | None:
+    normalized = " ".join(str(value or "").strip().lower().split())
+    return _PICKUP_PROVIDER_ALIASES.get(normalized)
+
+
+def _extract_shopify_pickup_point(order: dict[str, Any]) -> dict[str, str] | None:
+    """Extract trusted Octolize pickup-point metadata from a Shopify order.
+
+    The human-readable shipping title contains a shop name and distance, so it
+    changes for every order. Octolize also supplies stable structured fields:
+    ``shipping_lines[].code`` identifies the provider and ``PickupPointId`` is
+    the courier's external point identifier. Prefer those fields and keep title
+    parsing only as a point-id fallback for older payloads.
+    """
+    shipping_lines = order.get("shipping_lines") or []
+    line = shipping_lines[0] if shipping_lines else {}
+    code = str(line.get("code") or "").strip()
+    source = str(line.get("source") or "").strip().lower()
+    note_attrs = {
+        str(attr.get("name") or ""): str(attr.get("value") or "").strip()
+        for attr in (order.get("note_attributes") or [])
+        if attr.get("name")
+    }
+
+    code_parts = code.split(":")
+    provider_from_code = (
+        _OCTOLIZE_PROVIDER_CODES.get(code_parts[1])
+        if len(code_parts) >= 2 and code_parts[0] == "pickup-points"
+        else None
+    )
+    provider_from_note = _normalize_pickup_provider(note_attrs.get("PickupPointCourier"))
+    is_octolize = (
+        bool(code_parts) and code_parts[0] == "pickup-points"
+    ) or source == "octolize pick-up points pro"
+    if not is_octolize:
+        return None
+
+    provider = provider_from_code or provider_from_note or ""
+    if provider_from_code and provider_from_note and provider_from_code != provider_from_note:
+        logger.warning(
+            "Shopify pickup provider mismatch: code=%s note=%s order=%s; "
+            "using the structured shipping-line code",
+            provider_from_code,
+            provider_from_note,
+            order.get("order_number") or order.get("id"),
+        )
+
+    title = str(line.get("title") or "")
+    point_id = note_attrs.get("PickupPointId") or extract_locker_id_from_title(title)
+    return {
+        "provider": provider,
+        "id": point_id,
+        "name": note_attrs.get("PickupPointName", ""),
+        "address": note_attrs.get("PickupPointAddress", ""),
+        "post_code": note_attrs.get("PickupPointPostCode", ""),
+        "city": note_attrs.get("PickupPointCity", ""),
+    }
+
+
 def _reset_courier_maps_cache() -> None:
     """Clear cached ENV mapping (test-only helper)."""
     _courier_title_map.cache_clear()
@@ -664,6 +742,7 @@ def _shipping_service_match_fields(
     inpost_service: str | None,
     apaczka_service_id: str | None,
     allegro_method_id: str | None,
+    pickup_point: dict[str, str] | None = None,
 ) -> dict[str, str | None]:
     source_title = (title or "").strip() or None
     if courier == "allegro_delivery":
@@ -685,10 +764,26 @@ def _shipping_service_match_fields(
             ),
         }
     if courier == "apaczka" and apaczka_service_id:
+        structured_provider = (pickup_point or {}).get("provider")
         return {
             "shipping_service_match_status": _MATCH_AUTO,
             "shipping_service_match_source": source_title,
-            "shipping_service_match_detail": "Apaczka service matched from APACZKA_SERVICE_TITLE_MAP",
+            "shipping_service_match_detail": (
+                f"Apaczka service matched from Shopify pickup provider {structured_provider}"
+                if structured_provider
+                else "Apaczka service matched from APACZKA_SERVICE_TITLE_MAP"
+            ),
+        }
+    if courier == "apaczka" and pickup_point and pickup_point.get("provider"):
+        detail = (
+            "Shopify pickup point is missing PickupPointId"
+            if not pickup_point.get("id")
+            else f"No Apaczka service mapping for pickup provider {pickup_point['provider']}"
+        )
+        return {
+            "shipping_service_match_status": _MATCH_REQUIRES_SELECTION,
+            "shipping_service_match_source": source_title,
+            "shipping_service_match_detail": detail,
         }
     return {
         "shipping_service_match_status": _MATCH_REQUIRES_SELECTION
@@ -873,9 +968,18 @@ def _run_apaczka(
             courier="apaczka",
             action="create_shipment",
         )
-    client = ApaczkaClient(app_id, app_secret, service_id, storage)
-
     receiver = draft.get("receiver") or {}
+    pickup_point = draft.get("pickup_point") or {}
+    receiver_point_id = str(pickup_point.get("id") or receiver.get("locker_id") or "").strip()
+    if service_id in _APACZKA_SERVICES_REQUIRING_PICKUP_POINT and not receiver_point_id:
+        raise ApaczkaBusinessError(
+            f"Draft {draft.get('id')} uses Apaczka point service {service_id} "
+            "but has no pickup point id",
+            order_id=str(draft.get("id", "")),
+            courier="apaczka",
+            action="create_shipment",
+        )
+    client = ApaczkaClient(app_id, app_secret, service_id, storage)
     addr = draft.get("shipping_address") or {}
     customer_name = f"{receiver.get('first_name', '')} {receiver.get('last_name', '')}".strip()
     result = client.create_shipment(
@@ -896,6 +1000,7 @@ def _run_apaczka(
         ),
         receiver_city=addr.get("city", ""),
         receiver_zip=addr.get("post_code", ""),
+        receiver_point_id=receiver_point_id or None,
         sender=sender,
         reference=str(draft.get("shopify_order_number", "")),
         pickup_date=pickup_date,
@@ -1355,6 +1460,7 @@ def _build_draft_record(
 
     # fix #2: locker_id from title first, then note_attributes fallbacks
     note_attrs = {a["name"]: a["value"] for a in (order.get("note_attributes") or [])}
+    pickup_point = _extract_shopify_pickup_point(order)
 
     # Wysyłam z Allegro (Ship with Allegro): dla source='allegro' z AllegroDeliveryMethodId
     # całkowicie zastępujemy InPost/Apaczkę — przesyłkę tworzy Allegro po stronie serwera.
@@ -1379,10 +1485,23 @@ def _build_draft_record(
         inpost_service = "paczkomat" if allegro_sending_method == "parcel_locker" else None
         apaczka_service_id: str | None = None
     else:
-        courier = _pick_courier(order)
-        inpost_service = _pick_inpost_service(title) if courier == "inpost" else None
         allegro_sending_method = None
-        apaczka_service_id = _pick_apaczka_service(title) if courier == "apaczka" else None
+        pickup_provider = (pickup_point or {}).get("provider")
+        pickup_point_id = (pickup_point or {}).get("id")
+        if pickup_provider == "inpost":
+            courier = "inpost"
+            inpost_service = "paczkomat"
+            apaczka_service_id = None
+        elif pickup_provider in _APACZKA_PICKUP_SERVICES:
+            courier = "apaczka"
+            inpost_service = None
+            apaczka_service_id = (
+                _APACZKA_PICKUP_SERVICES[pickup_provider] if pickup_point_id else None
+            )
+        else:
+            courier = _pick_courier(order)
+            inpost_service = _pick_inpost_service(title) if courier == "inpost" else None
+            apaczka_service_id = _pick_apaczka_service(title) if courier == "apaczka" else None
 
     line_items = order.get("line_items") or []
     product_items = [item for item in line_items if not SKIP_RE.search(item.get("name", ""))]
@@ -1390,7 +1509,8 @@ def _build_draft_record(
     packages_count, packages_breakdown = _calc_packages(product_items)
     if inpost_service == "paczkomat":
         locker_id = (
-            extract_locker_id_from_title(title)
+            (pickup_point or {}).get("id")
+            or extract_locker_id_from_title(title)
             or note_attrs.get("PickupPointId")
             or note_attrs.get("inpost_locker_id")
             or note_attrs.get("paczkomat_id")
@@ -1417,6 +1537,12 @@ def _build_draft_record(
     phone = normalize_pl_phone(phone) if phone else phone
 
     needs_review = phone is None or (courier == "apaczka" and apaczka_service_id is None)
+    if (
+        courier == "apaczka"
+        and apaczka_service_id in _APACZKA_SERVICES_REQUIRING_PICKUP_POINT
+        and not (pickup_point or {}).get("id")
+    ):
+        needs_review = True
 
     source_fulfillment = _source_fulfillment_status(order, source=source)
     now = datetime.now(timezone.utc).isoformat()
@@ -1435,12 +1561,14 @@ def _build_draft_record(
         "courier": courier,
         "service": service,
         "apaczka_service_id": apaczka_service_id,
+        "pickup_point": pickup_point,
         **_shipping_service_match_fields(
             courier=courier,
             title=title,
             inpost_service=inpost_service,
             apaczka_service_id=apaczka_service_id,
             allegro_method_id=allegro_method_id,
+            pickup_point=pickup_point,
         ),
         "tracking_number": fulfillment_details.get("tracking_number"),
         "tracking_company": fulfillment_details.get("tracking_company"),

@@ -328,7 +328,10 @@ class TestCreateShipment:
     def test_success_returns_response_dict(self):
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
         api_response = _ok_response(
-            {"status": 200, "response": {"id": "ap-1", "waybill_number": "WAY001"}}
+            {
+                "status": 200,
+                "response": {"order": {"id": "ap-1", "waybill_number": "WAY001"}},
+            }
         )
         with patch.object(client._session, "post", return_value=api_response) as mock_post:
             result = client.create_shipment(**self._kwargs())
@@ -347,13 +350,24 @@ class TestCreateShipment:
         sent_form = mock_post.call_args.kwargs["data"]
         data = json.loads(sent_form["request"])
 
-        assert data["service_id"] == _SERVICE_ID
-        assert data["order_id"] == "order-2042"
-        assert data["address"]["sender"]["email"] == "sender@zdrovena.pl"
-        assert data["address"]["receiver"]["address"] == "Kwiatowa 1"
-        assert data["address"]["receiver"]["zip"] == "30-001"
-        assert data["address"]["receiver"]["country_code"] == "PL"
-        assert data["shipment"][0]["type"] == "package"
+        order = data["order"]
+        assert order["service_id"] == _SERVICE_ID
+        assert order["externalId"] == "order-2042"
+        assert order["address"]["sender"]["email"] == "sender@zdrovena.pl"
+        assert order["address"]["receiver"]["line1"] == "Kwiatowa 1"
+        assert order["address"]["receiver"]["postal_code"] == "30-001"
+        assert order["address"]["receiver"]["country_code"] == "PL"
+        assert order["shipment"][0]["shipment_type_code"] == "PACZKA"
+
+    def test_pickup_point_id_sent_as_foreign_address_id(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, "23", storage=MagicMock())
+        api_response = _ok_response({"status": 200, "response": {"id": "ap-point"}})
+        with patch.object(client._session, "post", return_value=api_response) as mock_post:
+            client.create_shipment(**self._kwargs(), receiver_point_id="PL55338")
+
+        sent_form = mock_post.call_args.kwargs["data"]
+        data = json.loads(sent_form["request"])
+        assert data["order"]["address"]["receiver"]["foreign_address_id"] == "PL55338"
 
     def test_sender_building_number_included_in_address(self):
         """Regression: _get_sender() stores building_number separately; create_shipment
@@ -370,7 +384,7 @@ class TestCreateShipment:
 
         sent_form = mock_post.call_args.kwargs["data"]
         data = json.loads(sent_form["request"])
-        assert data["address"]["sender"]["address"] == "Testowa 7"
+        assert data["order"]["address"]["sender"]["line1"] == "Testowa 7"
 
     def test_pickup_window_included_when_provided(self):
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
@@ -384,9 +398,9 @@ class TestCreateShipment:
             )
         sent_form = mock_post.call_args.kwargs["data"]
         data = json.loads(sent_form["request"])
-        assert data["options"]["pickup"]["date"] == "2026-07-01"
-        assert data["options"]["pickup"]["hours_from"] == "10:00"
-        assert data["options"]["pickup"]["hours_to"] == "14:00"
+        assert data["order"]["pickup"]["date"] == "2026-07-01"
+        assert data["order"]["pickup"]["hours_from"] == "10:00"
+        assert data["order"]["pickup"]["hours_to"] == "14:00"
 
     def test_no_pickup_window_when_omitted(self):
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
@@ -395,8 +409,7 @@ class TestCreateShipment:
             client.create_shipment(**self._kwargs())
         sent_form = mock_post.call_args.kwargs["data"]
         data = json.loads(sent_form["request"])
-        assert "pickup" not in data["options"]
-        assert data["options"]["pickup_type"] == "courier"
+        assert data["order"]["pickup"] == {"type": "COURIER"}
 
     def test_business_error_raises_apaczka_error(self):
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
@@ -517,9 +530,9 @@ class TestCancelShipment:
             client.cancel_shipment("ord-99")
 
         url = mock_post.call_args.args[0]
-        assert url.endswith("/cancel_order/")
+        assert url.endswith("/cancel_order/ord-99/")
 
-    def test_passes_order_id_in_payload(self):
+    def test_cancel_payload_is_empty(self):
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
         api_response = _ok_response({"status": 200, "response": {}})
         with patch.object(client._session, "post", return_value=api_response) as mock_post:
@@ -529,7 +542,7 @@ class TestCancelShipment:
         import json
 
         request_payload = json.loads(form_data["request"])
-        assert request_payload["order_id"] == "ord-99"
+        assert request_payload == {}
 
     def test_business_error_propagates(self):
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())

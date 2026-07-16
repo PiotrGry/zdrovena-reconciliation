@@ -114,6 +114,11 @@ describe('ShippingView', () => {
                 apaczka_service_id: '21',
                 shipping_service_match_status: 'auto_matched',
                 shipping_service_match_source: 'Apaczka DPD',
+                pickup_point: {
+                    provider: 'dpd',
+                    id: 'PL55338',
+                    name: 'DPD Pickup — Stokrotka Express',
+                },
             })],
         })
 
@@ -123,7 +128,12 @@ describe('ShippingView', () => {
 
         expect(screen.getByText('Dopasowano automatycznie')).toBeInTheDocument()
         expect(screen.getByText('Źródło: Apaczka DPD')).toBeInTheDocument()
+        expect(screen.getByText('PL55338')).toBeInTheDocument()
+        expect(screen.getByText(/Stokrotka Express/)).toBeInTheDocument()
         expect(screen.getAllByText(/DPD Kurier/).length).toBeGreaterThan(0)
+
+        expect(screen.queryByDisplayValue('DPD Kurier')).not.toBeInTheDocument()
+        await userEvent.click(screen.getByRole('button', { name: 'Zmień' }))
 
         const select = screen.getByDisplayValue('DPD Kurier')
         expect(select).toHaveValue('21')
@@ -137,6 +147,15 @@ describe('ShippingView', () => {
         expect(getUpdateDraftCalls()).toEqual([
             { apaczka_service_id: '53', reviewed: true },
         ])
+    })
+
+    it('offers a needs-review status filter', async () => {
+        installShippingFetch({ drafts: [draft({ status: 'needs_review' })] })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+
+        expect(screen.getByRole('option', { name: 'do sprawdzenia' })).toBeInTheDocument()
     })
 
     it('distinguishes pickup point delivery from a street address', async () => {
