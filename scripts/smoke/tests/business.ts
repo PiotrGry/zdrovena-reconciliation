@@ -171,12 +171,14 @@ const closeStateHasValidStructure: SmokeTest = {
 };
 
 /**
- * Full production flow — no dry_run, ignore_warnings=true.
- * Sends a real email. Validates the complete pipeline runs end-to-end on staging.
- * Requires seeded inbox files (seed-staging CI step).
+ * Live execution through the legacy endpoint must stay disabled.
+ *
+ * The staged workflow is exercised by Playwright in a separate CI job. Keeping
+ * this smoke test read-only avoids two parallel jobs resetting or claiming the
+ * same durable month-close run.
  */
-const closeFullFlowSendsEmail: SmokeTest = {
-  name: "business.close_full_flow_sends_email",
+const closeLiveFlowRequiresManualStages: SmokeTest = {
+  name: "business.close_live_flow_requires_manual_stages",
   category: "business",
   async run(ctx: TestContext): Promise<TestResult> {
     const t0 = ms();
@@ -191,40 +193,48 @@ const closeFullFlowSendsEmail: SmokeTest = {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ year, month, dry_run: false, ignore_warnings: true }),
-      timeoutMs: 180_000,
+      timeoutMs: 10_000,
     });
-    if (res.status !== 200) {
-      const text = await res.text().catch(() => "");
+    const text = await res.text().catch(() => "");
+    if (res.status !== 409 || !text.includes("/api/close/workflow/actions/{action}")) {
       return {
         name: this.name, category: this.category, status: "FAIL",
         duration_ms: ms() - t0,
         evidence: `HTTP ${res.status}: ${text.slice(0, 200)}`,
-        error: `Expected 200, got ${res.status} — pipeline crashed or preflight blocked`,
+        error: "Legacy live close must return 409 and direct the operator to staged actions",
       };
     }
-    const body = await res.json() as Record<string, unknown>;
-    const emailSent = body.email_sent === true;
-    const missingVendors = (body.cost_missing_vendors as string[] | undefined) ?? [];
-    const warnings = (body.warnings as string[] | undefined) ?? [];
 
-    // Fail if any cost vendor is missing — staging uses real Zoho/KV credentials
-    // so missing vendors indicate a real bug (wrong email pattern, date range, etc.)
-    if (missingVendors.length > 0) {
+    const workflowRes = await ctx.fetch(
+      `${ctx.apiUrl}/api/close/workflow?year=${year}&month=${month}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        timeoutMs: 10_000,
+      },
+    );
+    if (workflowRes.status !== 200) {
       return {
         name: this.name, category: this.category, status: "FAIL",
         duration_ms: ms() - t0,
-        evidence: `missing_vendors=${JSON.stringify(missingVendors)}, warnings=${JSON.stringify(warnings).slice(0, 200)}`,
-        error: `Cost vendors missing on staging (real Zoho): ${missingVendors.join(", ")}`,
+        evidence: `legacy=409, workflow=HTTP ${workflowRes.status}`,
+        error: "Staged month-close workflow is not available",
       };
     }
 
+    const workflow = await workflowRes.json() as {
+      steps?: Record<string, unknown>;
+      active_action?: unknown;
+    };
+    const requiredSteps = ["check", "sales", "costs", "reports", "bank", "package", "send"];
+    const missingSteps = requiredSteps.filter((step) => !(step in (workflow.steps ?? {})));
+    const ok = missingSteps.length === 0;
     return {
       name: this.name,
       category: this.category,
-      status: emailSent ? "PASS" : "FAIL",
+      status: ok ? "PASS" : "FAIL",
       duration_ms: ms() - t0,
-      evidence: `sales=${body.sales_invoice_count}, cost=${body.cost_invoice_count}, email_sent=${body.email_sent}, missing_vendors=${JSON.stringify(missingVendors)}`,
-      error: !emailSent ? `Email not sent — check zoho-smtp-password in Key Vault or pipeline errors: ${JSON.stringify(body.errors).slice(0, 200)}` : undefined,
+      evidence: `legacy live endpoint blocked; workflow has ${requiredSteps.length - missingSteps.length}/${requiredSteps.length} stages; active_action=${String(workflow.active_action ?? null)}`,
+      error: !ok ? `Workflow missing stages: ${missingSteps.join(", ")}` : undefined,
     };
   },
 };
@@ -234,7 +244,7 @@ const closeFullFlowSendsEmail: SmokeTest = {
  * - no temp filenames (tmpXXXXXX)
  * - deklaracje/ subfolder present
  * - koszty/ has files
- * Runs only after closeFullFlowSendsEmail would have created output.
+ * Runs only when the staged E2E flow has already created output.
  */
 const closeOutputStructureIsClean: SmokeTest = {
   name: "business.close_output_structure_is_clean",
@@ -299,11 +309,11 @@ const closeOutputStructureIsClean: SmokeTest = {
 };
 
 /**
- * Full-flow: validate per-vendor source breakdown and ZIP file list.
+ * Validate per-vendor source breakdown and ZIP manifest from workflow state.
  * - FAIL if any cost vendor is missing
  * - FAIL if temp filenames appear in zip_files
  * - FAIL if deklaracje/ or koszty/ subfolder absent from zip_files
- * Requires seeded inbox (seed-staging CI step).
+ * This is intentionally read-only so it can run safely beside Playwright.
  */
 const closeDetailedVendorAndZipReport: SmokeTest = {
   name: "business.close_detailed_vendor_and_zip_report",
@@ -317,11 +327,9 @@ const closeDetailedVendorAndZipReport: SmokeTest = {
     const now = new Date();
     const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
     const month = now.getMonth() === 0 ? 12 : now.getMonth();
-    const res = await ctx.fetch(`${ctx.apiUrl}/api/close`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ year, month, dry_run: false, ignore_warnings: true }),
-      timeoutMs: 180_000,
+    const res = await ctx.fetch(`${ctx.apiUrl}/api/close/workflow?year=${year}&month=${month}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeoutMs: 10_000,
     });
     if (res.status !== 200) {
       const text = await res.text().catch(() => "");
@@ -332,12 +340,28 @@ const closeDetailedVendorAndZipReport: SmokeTest = {
         error: `Expected 200, got ${res.status}`,
       };
     }
-    const body = await res.json() as Record<string, unknown>;
+    const body = await res.json() as {
+      metrics?: Record<string, unknown>;
+      artifacts?: Array<{ kind?: string; files?: string[] }>;
+    };
     const errors: string[] = [];
 
-    const foundVendors = (body.cost_found_vendors as Record<string, string> | undefined) ?? {};
-    const missingVendors = (body.cost_missing_vendors as string[] | undefined) ?? [];
-    const zipFiles = (body.zip_files as string[] | null | undefined) ?? null;
+    const foundVendors =
+      (body.metrics?.cost_found_vendors as Record<string, string> | undefined) ?? {};
+    const missingVendors =
+      (body.metrics?.cost_missing_vendors as string[] | undefined) ?? [];
+    const packageArtifact = body.artifacts?.find((artifact) => artifact.kind === "package");
+    const zipFiles = packageArtifact?.files ?? null;
+
+    if (zipFiles === null) {
+      return {
+        name: this.name,
+        category: this.category,
+        status: "SKIP",
+        duration_ms: ms() - t0,
+        evidence: "Workflow package is not ready yet; Playwright owns staged execution",
+      };
+    }
 
     if (missingVendors.length > 0) {
       errors.push(`Missing vendors: ${missingVendors.join(", ")}`);
@@ -377,7 +401,7 @@ export const tests: SmokeTest[] = [
   closeResponseHasRequiredFields,
   closePreflightBlockersAreMeaningful,
   closeStateHasValidStructure,
-  closeFullFlowSendsEmail,
+  closeLiveFlowRequiresManualStages,
   closeOutputStructureIsClean,
   closeDetailedVendorAndZipReport,
 ];
