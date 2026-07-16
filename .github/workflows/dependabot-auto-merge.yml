@@ -11,8 +11,8 @@ name: Dependabot auto-merge
 # Major version bumps for runtime deps are NEVER auto-merged — manual review.
 #
 # All Dependabot PRs target `develop` (per dependabot.yml). After this workflow
-# enables auto-merge, the PR waits for required status checks to pass, then
-# squash-merges automatically.
+# enables auto-merge, the PR waits for required status checks and any branch
+# protection review requirements to pass, then squash-merges automatically.
 #
 # Note: requires "Allow auto-merge" in repo Settings → General → Pull Requests.
 
@@ -22,7 +22,7 @@ on:
 
 permissions:
   contents: write       # merge PRs
-  pull-requests: write  # approve + enable auto-merge
+  pull-requests: write  # enable auto-merge
 
 jobs:
   auto-merge:
@@ -33,7 +33,7 @@ jobs:
     steps:
       - name: Fetch Dependabot metadata
         id: meta
-        uses: dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7 # v2.4.0
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v2.4.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -60,13 +60,6 @@ jobs:
           echo "Dep type: $DEP_TYPE"
           echo "Ecosystem: $ECOSYSTEM"
           echo "Eligible: $eligible"
-
-      - name: Approve PR
-        if: steps.decide.outputs.eligible == 'true'
-        run: gh pr review --approve "$PR_URL"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Enable auto-merge (squash)
         if: steps.decide.outputs.eligible == 'true'
