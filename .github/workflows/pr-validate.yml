@@ -1,8 +1,8 @@
 name: PR Validate — develop → main
 
-# Every PR targeting main — runs quality gate only (~1 min).
-# Full test suite already ran on develop via develop-gate.yml for the same SHA.
-# Quality gate re-runs here to cover fixup commits pushed directly to the PR branch.
+# Every PR targeting main runs the fast quality gate plus the staging smoke/E2E
+# suite. The full suite is intentionally kept here, not on every develop PR,
+# because it deploys staging resources and runs browser workflows.
 #
 # Path filtering: Skip for infra-only changes (terraform.yml handles those).
 
@@ -24,6 +24,7 @@ on:
       - "docs/devops/**"
       - ".github/workflows/pr-validate.yml"
       - ".github/workflows/_quality-gate.yml"
+      - ".github/workflows/_full-test-suite.yml"
       # infra/** intentionally omitted — terraform.yml runs plan for those
   workflow_dispatch:
 
@@ -43,12 +44,21 @@ jobs:
     uses: ./.github/workflows/_quality-gate.yml
     secrets: inherit
 
+  full-test-suite:
+    name: Full staging smoke + E2E
+    needs: [quality-gate]
+    uses: ./.github/workflows/_full-test-suite.yml
+    with:
+      backend_changed: ${{ needs.quality-gate.outputs.backend }}
+      frontend_changed: ${{ needs.quality-gate.outputs.frontend }}
+    secrets: inherit
+
   ci-gate:
     name: CI Gate
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [quality-gate]
+    needs: [quality-gate, full-test-suite]
     steps:
       - name: Check all jobs passed
         run: |

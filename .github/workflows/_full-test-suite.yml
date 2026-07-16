@@ -139,6 +139,7 @@ jobs:
       RG: zdrovena-rg
     outputs:
       api-url: ${{ steps.url.outputs.url }}
+      fake-provider-url: ${{ steps.url.outputs.fake_provider_url }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -174,8 +175,13 @@ jobs:
           FQDN=$(az containerapp show \
             --name "$STAGING_APP" --resource-group "$RG" \
             --query properties.configuration.ingress.fqdn -o tsv)
+          FAKE_FQDN=$(az containerapp show \
+            --name "$FAKE_PROVIDER_APP" --resource-group "$RG" \
+            --query properties.configuration.ingress.fqdn -o tsv)
           echo "url=https://$FQDN" >> $GITHUB_OUTPUT
+          echo "fake_provider_url=https://$FAKE_FQDN" >> $GITHUB_OUTPUT
           echo "Staging API: https://$FQDN"
+          echo "Fake provider: https://$FAKE_FQDN"
 
   # ── 3. Deploy frontend to SWA staging ─────────────────────────────────────
   deploy-frontend:
@@ -249,6 +255,7 @@ jobs:
     outputs:
       api-url: ${{ steps.urls.outputs.api_url }}
       swa-url: ${{ steps.urls.outputs.swa_url }}
+      fake-provider-url: ${{ steps.urls.outputs.fake_provider_url }}
     steps:
       - name: Resolve URLs
         id: urls
@@ -256,8 +263,14 @@ jobs:
           # staging FQDN is static — no az login required
           if [[ "${{ needs.deploy-backend.result }}" == "success" ]]; then
             API_URL="${{ needs.deploy-backend.outputs.api-url }}"
+            FAKE_PROVIDER_URL="${{ needs.deploy-backend.outputs.fake-provider-url }}"
           else
             API_URL="https://${{ secrets.STAGING_API_FQDN }}"
+            FAKE_PROVIDER_URL="https://${{ secrets.STAGING_FAKE_PROVIDER_FQDN }}"
+          fi
+          if [[ "$FAKE_PROVIDER_URL" == "https://" ]]; then
+            echo "::error::Missing STAGING_FAKE_PROVIDER_FQDN secret and no fresh fake-provider deployment output is available."
+            exit 1
           fi
           if [[ "${{ needs.deploy-frontend.result }}" == "success" ]]; then
             SWA_URL="${{ needs.deploy-frontend.outputs.swa-url }}"
@@ -266,6 +279,7 @@ jobs:
           fi
           echo "api_url=$API_URL" >> $GITHUB_OUTPUT
           echo "swa_url=$SWA_URL" >> $GITHUB_OUTPUT
+          echo "fake_provider_url=$FAKE_PROVIDER_URL" >> $GITHUB_OUTPUT
 
   # ── 4. Seed staging storage with test invoice files ──────────────────────
   seed-staging:
@@ -417,7 +431,9 @@ jobs:
         env:
           BASE_URL: ${{ needs.resolve-urls.outputs.swa-url }}
           API_URL: ${{ needs.resolve-urls.outputs.api-url }}
+          FAKE_PROVIDER_URL: ${{ needs.resolve-urls.outputs.fake-provider-url }}
           AZURE_TEST_BEARER_TOKEN: ${{ steps.token.outputs.token }}
+          RUN_FAKE_PROVIDER_E2E: "1"
         run: |
           cd e2e
           npx playwright test --reporter=json,list 2>&1 | tee e2e-results.txt
