@@ -210,6 +210,16 @@ class ApaczkaClient:
 
     # ── Shipment creation ─────────────────────────────────────────────────────
 
+    def list_orders(self, *, page: int = 1, limit: int = 25) -> list[dict[str, Any]]:
+        """Return a page of recent Apaczka orders (maximum 25 per page)."""
+        if page < 1:
+            raise ValueError("Apaczka orders page must be >= 1")
+        if not 1 <= limit <= 25:
+            raise ValueError("Apaczka orders limit must be between 1 and 25")
+        result = self._call("orders", {"page": page, "limit": limit})
+        response = result.get("response") or {}
+        return list(response.get("orders") or []) if isinstance(response, dict) else []
+
     def create_shipment(
         self,
         *,

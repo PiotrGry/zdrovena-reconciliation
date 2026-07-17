@@ -91,7 +91,14 @@ def _build_fakturownia_client():
 def run(args: argparse.Namespace) -> None:
     _setup_logging()
 
+    from zdrovena.api.damage_detection import (
+        build_apaczka_lookup_client,
+        build_zoho_client,
+        scan_allegro_damage_cases,
+        scan_zoho_damage_cases,
+    )
     from zdrovena.api.routers.allegro_poller import poll_orders_once
+    from zdrovena.common.damage_store import get_damage_store
     from zdrovena.common.shipping_store import get_shipping_store
     from zdrovena.common.storage import get_storage_service
 
@@ -100,6 +107,7 @@ def run(args: argparse.Namespace) -> None:
 
     try:
         shipping_store = get_shipping_store()
+        damage_store = get_damage_store()
         storage = get_storage_service()
     except Exception as exc:
         logger.critical("Failed to initialise storage dependencies: %s", exc)
@@ -118,6 +126,34 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     logger.info("Polling cycle complete: %s", stats)
+
+    # Detection only: create manual-review cases, never replacement shipments
+    # and never customer emails. A detection failure must not invalidate the
+    # already completed order/invoice polling cycle.
+    try:
+        allegro_damage = scan_allegro_damage_cases(
+            client=allegro_client,
+            shipping_store=shipping_store,
+            damage_store=damage_store,
+        )
+        logger.info("Allegro damage scan complete: %s", allegro_damage)
+    except Exception:
+        logger.exception("Allegro damage scan failed")
+
+    try:
+        zoho_client = build_zoho_client()
+        if zoho_client is None:
+            logger.warning("Zoho damage scan skipped: OAuth credentials are missing")
+        else:
+            zoho_damage = scan_zoho_damage_cases(
+                client=zoho_client,
+                shipping_store=shipping_store,
+                damage_store=damage_store,
+                apaczka_client=build_apaczka_lookup_client(storage),
+            )
+            logger.info("Zoho damage scan complete: %s", zoho_damage)
+    except Exception:
+        logger.exception("Zoho damage scan failed")
 
 
 def add_subparser(subparsers: argparse._SubParsersAction) -> None:

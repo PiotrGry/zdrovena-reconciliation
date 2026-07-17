@@ -9,6 +9,7 @@ Uses the Zoho Mail REST API (OAuth 2.0).
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import logging
 import re
@@ -111,6 +112,90 @@ class ZohoMailClient:
         resp = self._session.get(url, headers=self._auth_headers(), timeout=30)
         resp.raise_for_status()
         return resp.content
+
+    def search_damage_notifications(self, since_ms: int = 0) -> list[dict[str, Any]]:
+        """Find possible damaged-parcel messages without changing mailbox state.
+
+        Zoho's search API returns messages before a timestamp, not after it, so
+        the durable cursor is applied client-side. Several narrow search terms
+        are queried and then deduplicated by ``messageId``. Message bodies are
+        included because InPost sometimes puts the tracking number there rather
+        than in the subject.
+        """
+        if not self.account_id:
+            raise RuntimeError("Not authenticated.")
+        search_terms = (
+            "entire:uszkodzona",
+            "entire:uszkodzenie",
+            "entire:uszkodzeniu",
+            "entire:damaged",
+        )
+        found: dict[str, dict[str, Any]] = {}
+        for search_key in search_terms:
+            start = 1
+            for _page in range(3):
+                response = self._api_get(
+                    f"/accounts/{self.account_id}/messages/search",
+                    params={"searchKey": search_key, "start": start, "limit": 200},
+                )
+                messages = response.get("data") or []
+                if not isinstance(messages, list) or not messages:
+                    break
+                for message in messages:
+                    if not isinstance(message, dict):
+                        continue
+                    message_id = str(message.get("messageId") or "")
+                    received_ms = int(
+                        message.get("receivedTime") or message.get("receivedtime") or 0
+                    )
+                    if not message_id or received_ms < since_ms:
+                        continue
+                    found[message_id] = dict(message)
+                if len(messages) < 200:
+                    break
+                start += 200
+
+        enriched: list[dict[str, Any]] = []
+        for message in found.values():
+            message_id = str(message.get("messageId") or "")
+            folder_id = str(message.get("folderId") or "")
+            content = ""
+            if message_id and folder_id:
+                try:
+                    detail = self._api_get(
+                        f"/accounts/{self.account_id}/folders/{folder_id}/messages/"
+                        f"{message_id}/content"
+                    )
+                    data = detail.get("data", {})
+                    content = data.get("content", "") if isinstance(data, dict) else str(data)
+                except Exception as exc:
+                    logger.warning("Could not read Zoho message %s: %s", message_id, exc)
+            plain = re.sub(r"<style[^>]*>.*?</style>", " ", content, flags=re.DOTALL)
+            plain = re.sub(r"<[^>]+>", " ", plain)
+            message["content"] = re.sub(r"\s+", " ", html.unescape(plain)).strip()
+            enriched.append(message)
+        return enriched
+
+    def sender_addresses(self) -> set[str]:
+        """Return active From addresses configured for this Zoho account."""
+        if not self.account_id:
+            raise RuntimeError("Not authenticated.")
+        response = self._api_get(f"/accounts/{self.account_id}")
+        data = response.get("data") or {}
+        addresses: set[str] = set()
+        if isinstance(data, dict):
+            for item in data.get("emailAddress") or []:
+                if isinstance(item, dict) and item.get("isConfirmed", True):
+                    address = str(item.get("mailId") or "").strip().lower()
+                    if address:
+                        addresses.add(address)
+            for item in data.get("sendMailDetails") or []:
+                if not isinstance(item, dict) or item.get("status") is False:
+                    continue
+                address = str(item.get("fromAddress") or "").strip().lower()
+                if address:
+                    addresses.add(address)
+        return addresses
 
     def search_and_download_vendor(
         self,

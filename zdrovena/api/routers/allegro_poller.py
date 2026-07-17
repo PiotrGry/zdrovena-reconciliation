@@ -34,6 +34,7 @@ def _existing_active_allegro_draft(
     for d in drafts:
         if (
             d.get("source") == "allegro"
+            and not d.get("is_replacement")
             and str(d.get("external_order_id", "")) == str(external_order_id)
             and d.get("status") != "error"
         ):

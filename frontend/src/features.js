@@ -5,6 +5,7 @@ export const FEATURES = {
     users: false,
     shipping: true,
     dlq: true,
+    damage: true,
 
     // KPI cards in FilesView
     // kpi_files_count  — liczba plików wyliczana live z /api/files (zawsze dostępne)

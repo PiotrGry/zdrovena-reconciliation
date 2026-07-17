@@ -2889,6 +2889,57 @@ class TestSyncShopifyOrdersFromApi:
         assert drafts[0]["tracking_number"] == "TRK-777"
         assert drafts[0]["tracking_company"] == "InPost"
 
+    def test_sync_updates_original_instead_of_replacement_draft(self, tmp_path):
+        from responses import RequestsMock
+
+        from zdrovena.api.routers.webhooks import _create_draft, _sync_shopify_orders_from_api
+        from zdrovena.common.storage import LocalStorageService
+
+        store = ShippingStore(local_root=tmp_path / "store")
+        storage = LocalStorageService(root=tmp_path / "storage")
+        order = self._make_order(order_id=4242)
+        original = _create_draft(order, store, storage, source="shopify")
+        replacement = {
+            **original,
+            "id": "replacement-4242",
+            "created_at": "2026-07-16T10:00:00Z",
+            "shopify_order_id": None,
+            "status": "needs_review",
+            "is_replacement": True,
+            "tracking_number": None,
+        }
+        store.upsert_draft(replacement)
+        fulfilled = {
+            **order,
+            "fulfillment_status": "fulfilled",
+            "updated_at": "2026-07-17T10:00:00Z",
+            "fulfillments": [
+                {
+                    "id": 4243,
+                    "tracking_number": "TRK-ORIGINAL",
+                    "tracking_company": "InPost",
+                }
+            ],
+        }
+
+        with RequestsMock() as rsps:
+            rsps.add(
+                rsps.GET,
+                "https://shop.myshopify.com/admin/api/2024-01/orders.json",
+                json={"orders": [fulfilled]},
+                status=200,
+            )
+            stats = _sync_shopify_orders_from_api(
+                shop_domain="shop.myshopify.com",
+                api_token="tok",
+                shipping_store=store,
+                storage=storage,
+            )
+
+        assert stats["updated"] == 1
+        assert store.get_draft(original["id"])["tracking_number"] == "TRK-ORIGINAL"
+        assert store.get_draft("replacement-4242")["tracking_number"] is None
+
     def test_sync_queries_any_status_ordered_by_recent_updates(self, tmp_path):
         import json
         from urllib.parse import parse_qs, urlparse
