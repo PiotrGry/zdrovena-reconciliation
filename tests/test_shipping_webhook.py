@@ -2599,7 +2599,6 @@ class TestSyncOrdersEndpoint:
         }
 
         mock_allegro_client = MagicMock()
-        mock_fakturownia_client = MagicMock()
 
         def fake_get_secret(name, required=True):
             if name == "shopify_admin_token":
@@ -2610,9 +2609,8 @@ class TestSyncOrdersEndpoint:
             "zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client
         ):
             with patch(
-                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
-                return_value=mock_fakturownia_client,
-            ):
+                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client"
+            ) as mock_build_fakturownia:
                 with patch(
                     "zdrovena.api.routers.allegro_poller.poll_orders_once",
                     return_value=allegro_stats,
@@ -2634,7 +2632,8 @@ class TestSyncOrdersEndpoint:
         body = resp.json()
         assert body["allegro"] == allegro_stats
         assert body["shopify"] == shopify_stats
-        assert mock_poll.call_args.kwargs["fakturownia_client"] is mock_fakturownia_client
+        mock_build_fakturownia.assert_not_called()
+        assert mock_poll.call_args.kwargs["fakturownia_client"] is None
         assert mock_poll.call_args.kwargs["retry_existing_invoices"] is False
 
     def test_allegro_credentials_missing_returns_error_key(self, client):

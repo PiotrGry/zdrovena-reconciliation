@@ -278,6 +278,40 @@ class TestInvoiceCreationWiring:
         assert state["fakturownia_invoice_error"] is None
         assert state["fakturownia_invoice_attempts"] == 2
 
+    def test_retries_unfinished_invoice_after_shipment_creation(self, monkeypatch):
+        monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af1")]
+        store = MagicMock()
+        store.list_drafts.return_value = [
+            {
+                "id": "draft-af1",
+                "created_at": "2026-07-01T00:00:00+00:00",
+                "source": "allegro",
+                "external_order_id": "af1",
+                "status": "created",
+                "fakturownia_invoice_error": "Fakturownia 500",
+                "fakturownia_invoice_attempts": 1,
+            }
+        ]
+
+        with patch(
+            "zdrovena.api.routers.allegro_poller.create_invoice_for_order",
+            return_value={"status": "created", "fakturownia_invoice_id": 42},
+        ) as mock_invoicer:
+            poll_orders_once(
+                client=client,
+                shipping_store=store,
+                storage=MagicMock(),
+                fakturownia_client=MagicMock(),
+            )
+
+        mock_invoicer.assert_called_once()
+        state = store.update_draft.call_args.args[1]
+        assert state["fakturownia_invoice_id"] == 42
+        assert state["fakturownia_invoice_error"] is None
+        assert state["fakturownia_invoice_attempts"] == 2
+
     def test_stops_automatic_invoice_retries_after_three_attempts(self, monkeypatch):
         monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
         client = MagicMock()
@@ -363,6 +397,8 @@ class TestInvoiceCreationWiring:
                 "source": "allegro",
                 "external_order_id": "af1",
                 "status": "created",
+                "fakturownia_invoice_id": 42,
+                "fakturownia_invoice_error": None,
             }
         ]
         fakturownia = MagicMock()

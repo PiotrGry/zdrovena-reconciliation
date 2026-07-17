@@ -53,9 +53,11 @@ def _needs_automatic_invoice_retry(draft: dict[str, Any]) -> bool:
 
     A successful invoice has an id and no error. A partial failure may already
     have an id (for example when PDF upload failed); the invoicer resumes such
-    documents idempotently by Allegro order ``oid``.
+    documents idempotently by Allegro order ``oid``. Shipment creation is an
+    independent lifecycle, so a ``created`` shipment must not suppress invoice
+    recovery.
     """
-    if draft.get("status") in {"created", "cancelled"}:
+    if draft.get("status") == "cancelled":
         return False
     invoice_id = draft.get("fakturownia_invoice_id")
     if invoice_id == "pending":
