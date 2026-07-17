@@ -69,6 +69,24 @@ def _build_allegro_client():
     )
 
 
+def _build_fakturownia_client():
+    from zdrovena.common.config import DEFAULT_DOMAIN, KEYCHAIN_SERVICE_FAKTUROWNIA
+    from zdrovena.common.fakturownia import FakturowniaClient
+    from zdrovena.common.secrets import get_secret
+
+    api_token = get_secret(KEYCHAIN_SERVICE_FAKTUROWNIA, required=False)
+    if not api_token:
+        logger.critical(
+            "Missing Fakturownia credentials (%s). Automatic Allegro invoicing cannot run.",
+            KEYCHAIN_SERVICE_FAKTUROWNIA,
+        )
+        sys.exit(1)
+    base_url = os.environ.get("FAKTUROWNIA_BASE_URL", "").strip()
+    if not base_url:
+        base_url = f"https://{DEFAULT_DOMAIN}"
+    return FakturowniaClient(base_url=base_url, api_token=api_token)
+
+
 def run(args: argparse.Namespace) -> None:
     _setup_logging()
 
@@ -77,6 +95,7 @@ def run(args: argparse.Namespace) -> None:
     from zdrovena.common.storage import get_storage_service
 
     allegro_client = _build_allegro_client()
+    fakturownia_client = _build_fakturownia_client()
 
     try:
         shipping_store = get_shipping_store()
@@ -91,7 +110,7 @@ def run(args: argparse.Namespace) -> None:
             client=allegro_client,
             shipping_store=shipping_store,
             storage=storage,
-            # fakturownia_client omitted — invoicing is manual via the shipping UI
+            fakturownia_client=fakturownia_client,
         )
     except Exception as exc:
         logger.exception("Unexpected error during polling cycle: %s", exc)

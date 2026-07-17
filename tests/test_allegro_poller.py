@@ -231,6 +231,106 @@ class TestInvoiceCreationWiring:
         assert called_order["id"] == "af1"
         assert mock_invoicer.call_args.kwargs["fakturownia_client"] is fakturownia
         assert mock_invoicer.call_args.kwargs["allegro_client"] is client
+        state = store.update_draft.call_args.args[1]
+        assert state["fakturownia_invoice_id"] == 1
+        assert state["fakturownia_invoice_error"] is None
+        assert state["fakturownia_invoice_attempts"] == 1
+        assert state["fakturownia_invoice_attempted_at"]
+
+    def test_retries_unfinished_invoice_and_persists_recovered_document(self, monkeypatch):
+        monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af1")]
+        store = MagicMock()
+        store.list_drafts.return_value = [
+            {
+                "id": "draft-af1",
+                "created_at": "2026-07-01T00:00:00+00:00",
+                "source": "allegro",
+                "external_order_id": "af1",
+                "status": "pending",
+                "fakturownia_invoice_id": 41,
+                "fakturownia_invoice_error": "PDF upload failed",
+                "fakturownia_invoice_attempts": 1,
+            }
+        ]
+        fakturownia = MagicMock()
+
+        with patch(
+            "zdrovena.api.routers.allegro_poller.create_invoice_for_order",
+            return_value={
+                "status": "already_exists",
+                "fakturownia_invoice_id": 41,
+                "fakturownia_invoice_number": "FV/41",
+            },
+        ) as mock_invoicer:
+            poll_orders_once(
+                client=client,
+                shipping_store=store,
+                storage=MagicMock(),
+                fakturownia_client=fakturownia,
+            )
+
+        mock_invoicer.assert_called_once()
+        state = store.update_draft.call_args.args[1]
+        assert state["fakturownia_invoice_id"] == 41
+        assert state["fakturownia_invoice_number"] == "FV/41"
+        assert state["fakturownia_invoice_error"] is None
+        assert state["fakturownia_invoice_attempts"] == 2
+
+    def test_stops_automatic_invoice_retries_after_three_attempts(self, monkeypatch):
+        monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af1")]
+        store = MagicMock()
+        store.list_drafts.return_value = [
+            {
+                "id": "draft-af1",
+                "created_at": "2026-07-01T00:00:00+00:00",
+                "source": "allegro",
+                "external_order_id": "af1",
+                "status": "pending",
+                "fakturownia_invoice_error": "still failing",
+                "fakturownia_invoice_attempts": 3,
+            }
+        ]
+
+        with patch("zdrovena.api.routers.allegro_poller.create_invoice_for_order") as mock_invoicer:
+            poll_orders_once(
+                client=client,
+                shipping_store=store,
+                storage=MagicMock(),
+                fakturownia_client=MagicMock(),
+            )
+
+        mock_invoicer.assert_not_called()
+
+    def test_full_history_sync_does_not_backfill_existing_invoices(self, monkeypatch):
+        monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af1")]
+        store = MagicMock()
+        store.list_drafts.return_value = [
+            {
+                "id": "draft-af1",
+                "created_at": "2026-07-01T00:00:00+00:00",
+                "source": "allegro",
+                "external_order_id": "af1",
+                "status": "pending",
+            }
+        ]
+
+        with patch("zdrovena.api.routers.allegro_poller.create_invoice_for_order") as mock_invoicer:
+            poll_orders_once(
+                client=client,
+                shipping_store=store,
+                storage=MagicMock(),
+                fakturownia_client=MagicMock(),
+                fulfillment_status=None,
+                retry_existing_invoices=False,
+            )
+
+        mock_invoicer.assert_not_called()
 
     def test_does_not_call_invoicer_when_draft_creation_fails(self, monkeypatch):
         monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
@@ -400,3 +500,6 @@ class TestInvoiceCreationWiring:
 
         assert stats["invoice_errors"] == 1
         assert stats["invoices_created"] == 0
+        state = store.update_draft.call_args.args[1]
+        assert state["fakturownia_invoice_error"] == "Fakturownia 500"
+        assert state["fakturownia_invoice_attempts"] == 1

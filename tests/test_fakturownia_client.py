@@ -150,6 +150,28 @@ class TestUpdateInvoice:
                 client.update_invoice(111, {"buyer_name": ""})
 
 
+class TestChangeInvoiceStatus:
+    def test_marks_invoice_paid_through_dedicated_endpoint(self, client):
+        payload = {"id": 111, "status": "paid", "paid": "79.00"}
+        with patch("requests.Session.request", return_value=_resp(payload)) as mock:
+            out = client.change_invoice_status(111, "paid")
+
+        assert out == payload
+        _, kwargs = mock.call_args
+        assert kwargs["method"] == "POST"
+        assert kwargs["url"].endswith("/invoices/111/change_status.json")
+        assert kwargs["params"] == {
+            "api_token": "test-token-abc",
+            "status": "paid",
+        }
+
+    def test_rejects_empty_status_without_request(self, client):
+        with patch("requests.Session.request") as mock:
+            with pytest.raises(ValueError, match="status"):
+                client.change_invoice_status(111, "  ")
+        mock.assert_not_called()
+
+
 # ── create_invoice ───────────────────────────────────────────────────────────
 
 

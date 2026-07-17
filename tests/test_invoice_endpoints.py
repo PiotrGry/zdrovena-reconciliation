@@ -93,6 +93,22 @@ class TestInvoicePreview:
         assert body["status"] == "already_created"
         assert body["fakturownia_invoice_id"] == 42
 
+    def test_returns_retry_ready_when_automatic_invoice_is_incomplete(self, client, store):
+        _make_draft(
+            store,
+            fakturownia_invoice_id=42,
+            fakturownia_invoice_error="Allegro PDF upload failed",
+        )
+
+        resp = client.get("/api/shipping/drafts/draft-inv-1/invoice-preview")
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "status": "retry_ready",
+            "fakturownia_invoice_id": 42,
+            "error": "Allegro PDF upload failed",
+        }
+
     def test_503_when_allegro_not_configured(self, client, store):
         _make_draft(store)
         with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=None):
@@ -336,6 +352,37 @@ class TestCreateInvoice:
         assert body["fakturownia_invoice_number"] == "FV/2026/555"
         draft = store.get_draft("draft-inv-1")
         assert draft["fakturownia_invoice_id"] == 555
+
+    def test_manual_fallback_resumes_an_incomplete_automatic_invoice(self, client, store):
+        _make_draft(
+            store,
+            fakturownia_invoice_id=555,
+            fakturownia_invoice_error="Allegro PDF upload failed",
+        )
+        mock_allegro = MagicMock()
+        mock_allegro.get_order.return_value = _MOCK_ORDER
+        recovered = {
+            "status": "already_exists",
+            "fakturownia_invoice_id": 555,
+            "fakturownia_invoice_number": "FV/2026/555",
+        }
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro):
+            with patch(
+                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                return_value=MagicMock(),
+            ):
+                with patch(
+                    "zdrovena.api.routers.allegro_invoicer.create_invoice_for_order",
+                    return_value=recovered,
+                ) as invoicer:
+                    resp = client.post("/api/shipping/drafts/draft-inv-1/create-invoice")
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "already_created"
+        invoicer.assert_called_once()
+        draft = store.get_draft("draft-inv-1")
+        assert draft["fakturownia_invoice_id"] == 555
+        assert draft["fakturownia_invoice_error"] is None
 
     def test_error_with_recovered_id_preserves_it(self, client, store):
         """PR-11: if Fakturownia created the invoice but a later step (Allegro
