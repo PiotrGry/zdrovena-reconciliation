@@ -3217,12 +3217,14 @@ def sync_orders(
         try:
             from zdrovena.api.routers.allegro_poller import poll_orders_once
 
-            fakturownia_client = _get_fakturownia_invoice_client()
+            # This operator action intentionally performs an import/status sync only.
+            # Passing a Fakturownia client here would invoice every historical paid
+            # order that is new to our local store.
             result["allegro"] = poll_orders_once(
                 client=allegro_client,
                 shipping_store=shipping_store,
                 storage=storage,
-                fakturownia_client=fakturownia_client,
+                fakturownia_client=None,
                 fulfillment_status=None,
                 retry_existing_invoices=False,
             )
