@@ -15,8 +15,10 @@ export function NavGroup({ label, children }) {
 export function NavItem({ iconName, label, page, current, onNavigate, badge }) {
     return (
         <button
+            type="button"
             className={`nav-item${current === page ? ' active' : ''}`}
             onClick={() => onNavigate(page)}
+            aria-current={current === page ? 'page' : undefined}
         >
             <Icon name={iconName} size={16} className="icon" />
             {label}
@@ -56,7 +58,7 @@ export default function Sidebar({ page, onNavigate, damageCount = 0 }) {
                     />
                 )}
                 {FEATURES.dlq && (
-                    <NavItem iconName="alertTriangle" label={T.nav_dlq} page="dlq" current={page} onNavigate={onNavigate} />
+                    <NavItem iconName="alert-circle" label={T.nav_dlq} page="dlq" current={page} onNavigate={onNavigate} />
                 )}
             </NavGroup>
 

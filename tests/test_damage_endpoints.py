@@ -99,6 +99,23 @@ def test_manual_workflow_prepares_separate_draft(client, stores):
     assert damage.get_case("case-1648")["status"] == "replacement_prepared"
 
 
+def test_damage_list_hides_legacy_non_damage_carrier_issue(client, stores):
+    damage, _shipping, _storage = stores
+    damage.upsert_case(
+        {
+            "id": "delay-only",
+            "status": "needs_review",
+            "classification": "carrier_issue",
+            "tracking_number": "DELAY123",
+        }
+    )
+
+    response = client.get("/api/damage-cases")
+
+    assert response.status_code == 200
+    assert response.json() == {"cases": [], "needs_review": 0}
+
+
 def test_create_email_edit_and_send_are_separate_actions(client, stores):
     _seed_case_and_draft(stores)
     damage, shipping, _storage = stores

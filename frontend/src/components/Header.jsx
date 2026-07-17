@@ -7,7 +7,7 @@ import { MONTHS_PL } from '../data'
 const NOW = new Date()
 const PERIOD = `${MONTHS_PL[NOW.getMonth()]} ${NOW.getFullYear()}`
 
-export function Header({ damageCount = 0, onDamageClick }) {
+export function Header({ damageCount = 0, damageActive = false, onDamageClick }) {
     const { account, roles, logout } = useAuth()
     const { t, lang, setLang } = useT()
     const [open, setOpen] = useState(false)
@@ -62,8 +62,11 @@ export function Header({ damageCount = 0, onDamageClick }) {
                 </div>
 
                 <button
-                    className="btn-ghost icon-btn notification-button"
-                    aria-label={damageCount > 0 ? `Uszkodzone przesyłki: ${damageCount}` : 'Brak nowych powiadomień'}
+                    type="button"
+                    className={`btn-ghost icon-btn notification-button${damageActive ? ' active' : ''}`}
+                    aria-label={damageCount > 0 ? `Uszkodzone przesyłki: ${damageCount}` : 'Uszkodzone przesyłki: brak nowych powiadomień'}
+                    aria-current={damageActive ? 'page' : undefined}
+                    title={damageActive ? 'Widok uszkodzonych przesyłek jest otwarty' : 'Otwórz uszkodzone przesyłki'}
                     onClick={onDamageClick}
                 >
                     <Icon name="bell" size={18} />
