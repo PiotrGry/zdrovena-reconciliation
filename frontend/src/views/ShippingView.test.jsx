@@ -232,6 +232,41 @@ describe('ShippingView', () => {
         expect(screen.getByText(/Synchronizacja zakończona/)).toBeInTheDocument()
     })
 
+    it('shows the automatically created invoice after order sync', async () => {
+        installShippingFetch({
+            drafts: [draft({ source: 'allegro' })],
+            afterSyncDrafts: [draft({ source: 'allegro', fakturownia_invoice_id: 88 })],
+        })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+        await userEvent.click(screen.getByRole('button', { name: 'Rozwiń' }))
+        expect(screen.getByText('Oczekiwanie na automatyczną fakturę')).toBeInTheDocument()
+
+        await userEvent.click(screen.getByRole('button', { name: /Synchronizuj/ }))
+
+        expect(await screen.findByText('Faktura #88')).toBeInTheDocument()
+        expect(screen.queryByText('Oczekiwanie na automatyczną fakturę')).not.toBeInTheDocument()
+    })
+
+    it('surfaces an automatic invoice error as a manual fallback', async () => {
+        installShippingFetch({
+            drafts: [draft({
+                source: 'allegro',
+                fakturownia_invoice_id: 88,
+                fakturownia_invoice_error: 'Allegro PDF upload failed',
+            })],
+        })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+        await userEvent.click(screen.getByRole('button', { name: 'Rozwiń' }))
+
+        expect(screen.getByText('Automatyzacja wymaga uwagi (faktura #88)')).toBeInTheDocument()
+        expect(screen.getByText('Allegro PDF upload failed')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /Sprawdź i ponów/ })).toBeInTheDocument()
+    })
+
     it('keeps previous drafts visible and shows a safe Polish error with correlation id', async () => {
         installShippingFetch({
             drafts: [draft()],

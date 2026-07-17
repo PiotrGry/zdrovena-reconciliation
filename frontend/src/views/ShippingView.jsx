@@ -245,6 +245,11 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
                             <Icon name="check" size={14} /> Faktura już istnieje (ID: {preview.fakturownia_invoice_id})
                         </div>
                     )}
+                    {preview?.status === 'retry_ready' && (
+                        <div className="error-banner">
+                            <Icon name="alertTriangle" size={13} /> Automatyczne wystawienie faktury nie zostało dokończone: {preview.error}
+                        </div>
+                    )}
                     {preview?.status === 'preview_ready' && (
                         <>
                             <div style={{ marginBottom: 16 }}>
@@ -322,11 +327,11 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
                 </div>
 
                 <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8 }}>
-                    {preview?.status === 'preview_ready' && (
+                    {(preview?.status === 'preview_ready' || preview?.status === 'retry_ready') && (
                         <button className="btn btn-primary" onClick={handleCreate} disabled={creating || (preview.matches_allegro === false && !ackMismatch)}>
                             {creating
                                 ? <><Icon name="loader" size={13} className="spin" /> Tworzenie…</>
-                                : <><Icon name="invoice" size={13} /> Utwórz i załącz do Allegro</>
+                                : <><Icon name="invoice" size={13} /> {preview.status === 'retry_ready' ? 'Ponów automatyzację' : 'Utwórz i załącz do Allegro'}</>
                             }
                         </button>
                     )}
@@ -491,6 +496,9 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
         setSelectedApaczkaService(draft.apaczka_service_id || '')
         setEditingApaczkaService(draft.shipping_service_match_status !== 'auto_matched')
     }, [draft.apaczka_service_id, draft.id, draft.shipping_service_match_status])
+    useEffect(() => {
+        setLocalInvoiceId(draft.fakturownia_invoice_id || null)
+    }, [draft.fakturownia_invoice_id, draft.id])
     const [pickupModal, setPickupModal] = useState(null) // 'execute' | 'pickup' | null
     const isBusy = busy.has(draft.id)
     const matchedApaczkaService = apaczkaServices.find(
@@ -724,23 +732,37 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                     {draft.source === 'allegro' && (
                         <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
                             <div className="detail-label">Faktura Fakturownia</div>
-                            {localInvoiceId ? (
+                            {localInvoiceId && localInvoiceId !== 'pending' && !draft.fakturownia_invoice_error ? (
                                 <div style={{ marginTop: 4, color: 'var(--ok, #16a34a)', display: 'flex', alignItems: 'center', gap: 6 }}>
                                     <Icon name="check" size={14} />
                                     <span>Faktura #{localInvoiceId}</span>
                                 </div>
                             ) : (
-                                <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 10 }}>
-                                    <span className="dim" style={{ fontSize: '0.88em' }}>Brak faktury</span>
-                                    {canManage && (
-                            <button
-                                className="btn btn-secondary"
-                                data-testid={`shipping-invoice-${draft.id}`}
-                                style={{ fontSize: '0.82em', padding: '3px 10px' }}
-                                onClick={() => setShowInvoicePanel(true)}
-                            >
-                                            <Icon name="invoice" size={12} /> Podgląd i załącz
-                                        </button>
+                                <div style={{ marginTop: 4 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                        <span
+                                            className={draft.fakturownia_invoice_error ? undefined : 'dim'}
+                                            style={{ fontSize: '0.88em', color: draft.fakturownia_invoice_error ? 'var(--error)' : undefined }}
+                                        >
+                                            {draft.fakturownia_invoice_error
+                                                ? `Automatyzacja wymaga uwagi${localInvoiceId ? ` (faktura #${localInvoiceId})` : ''}`
+                                                : 'Oczekiwanie na automatyczną fakturę'}
+                                        </span>
+                                        {canManage && (
+                                            <button
+                                                className="btn btn-secondary"
+                                                data-testid={`shipping-invoice-${draft.id}`}
+                                                style={{ fontSize: '0.82em', padding: '3px 10px' }}
+                                                onClick={() => setShowInvoicePanel(true)}
+                                            >
+                                                <Icon name="invoice" size={12} /> {draft.fakturownia_invoice_error ? 'Sprawdź i ponów' : 'Sprawdź'}
+                                            </button>
+                                        )}
+                                    </div>
+                                    {draft.fakturownia_invoice_error && (
+                                        <div className="dim" style={{ fontSize: '0.78em', marginTop: 4 }}>
+                                            {draft.fakturownia_invoice_error}
+                                        </div>
                                     )}
                                 </div>
                             )}

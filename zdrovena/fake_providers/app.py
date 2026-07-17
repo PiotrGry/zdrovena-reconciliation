@@ -688,6 +688,20 @@ async def fakturownia_update(
     return deepcopy(invoice)
 
 
+@app.post("/fakturownia/invoices/{invoice_id}/change_status.json")
+def fakturownia_change_status(
+    invoice_id: int,
+    status: str,
+    api_token: str | None = None,
+) -> dict[str, Any]:
+    _require_fakturownia_token(api_token)
+    invoice = STATE.fakturownia_invoices.get(str(invoice_id))
+    if not invoice:
+        raise HTTPException(status_code=404, detail="invoice not found")
+    invoice["status"] = status
+    return deepcopy(invoice)
+
+
 @app.get("/fakturownia/invoices/{invoice_id}.pdf")
 def fakturownia_pdf(invoice_id: int, api_token: str | None = None) -> Response:
     _require_fakturownia_token(api_token)

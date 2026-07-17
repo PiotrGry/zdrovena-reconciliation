@@ -270,6 +270,9 @@ def test_fakturownia_client_stateful_success_and_existing_invoice(
     )
     assert invoice["id"] == 1
     assert client.list_invoices(oid="order-1")[0]["number"] == "FV/1/2026"
+    paid_invoice = client.change_invoice_status(invoice["id"], "paid")
+    assert paid_invoice["status"] == "paid"
+    assert client.get_invoice(invoice["id"])["status"] == "paid"
     assert client.get_invoice_pdf(invoice["id"]).startswith(b"%PDF")
 
     with pytest.raises(FakturowniaBusinessError):

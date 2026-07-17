@@ -122,15 +122,18 @@ class TestSuccessPath:
             description="Kaucja za opakowania zwrotne",
         )
 
-    def test_settlement_position_added_before_pdf_is_fetched(self):
-        """The PDF pushed to Allegro must already include the kaucja line —
-        order of operations matters, not just that both calls happen."""
+    def test_settlement_and_full_payment_are_applied_before_pdf_is_fetched(self):
+        """The PDF pushed to Allegro must include the kaucja and show the
+        complete post-settlement total as paid."""
         call_order: list[str] = []
         fakturownia = MagicMock()
         fakturownia.list_invoices.return_value = []
         fakturownia.create_invoice.return_value = {"id": 999, "number": "FV/2026/999"}
         fakturownia.add_settlement_position.side_effect = lambda **kw: call_order.append(
             "add_settlement_position"
+        )
+        fakturownia.change_invoice_status.side_effect = lambda *a: call_order.append(
+            "change_invoice_status"
         )
         fakturownia.get_invoice_pdf.side_effect = lambda *a: (
             call_order.append("get_invoice_pdf") or b"%PDF-1.4 fake"
@@ -140,7 +143,12 @@ class TestSuccessPath:
 
         create_invoice_for_order(_order(), fakturownia_client=fakturownia, allegro_client=allegro)
 
-        assert call_order == ["add_settlement_position", "get_invoice_pdf"]
+        assert call_order == [
+            "add_settlement_position",
+            "change_invoice_status",
+            "get_invoice_pdf",
+        ]
+        fakturownia.change_invoice_status.assert_called_once_with(999, "paid")
 
     def test_no_settlement_call_when_order_has_no_deposit(self):
         fakturownia = MagicMock()
@@ -158,6 +166,7 @@ class TestSuccessPath:
 
         assert result["status"] == "created"
         fakturownia.add_settlement_position.assert_not_called()
+        fakturownia.change_invoice_status.assert_called_once_with(999, "paid")
 
     def test_settlement_position_failure_logs_and_alerts_invoice_already_created(self):
         fakturownia = MagicMock()
@@ -174,6 +183,27 @@ class TestSuccessPath:
         assert result["status"] == "error"
         assert result["fakturownia_invoice_id"] == 999
         assert "Fakturownia 422" in result["error"]
+        mock_alert.assert_called_once()
+        fakturownia.get_invoice_pdf.assert_not_called()
+        allegro.create_invoice_declaration.assert_not_called()
+
+    def test_paid_status_failure_preserves_invoice_and_does_not_push_unpaid_pdf(self):
+        fakturownia = MagicMock()
+        fakturownia.list_invoices.return_value = []
+        fakturownia.create_invoice.return_value = {"id": 999, "number": "FV/2026/999"}
+        fakturownia.change_invoice_status.side_effect = RuntimeError("Fakturownia status 500")
+        allegro = MagicMock()
+
+        with patch("zdrovena.api.routers.allegro_invoicer._alert_invoice_failure") as mock_alert:
+            result = create_invoice_for_order(
+                _order(), fakturownia_client=fakturownia, allegro_client=allegro
+            )
+
+        assert result == {
+            "status": "error",
+            "error": "Fakturownia status 500",
+            "fakturownia_invoice_id": 999,
+        }
         mock_alert.assert_called_once()
         fakturownia.get_invoice_pdf.assert_not_called()
         allegro.create_invoice_declaration.assert_not_called()
@@ -388,6 +418,9 @@ class TestRecoveryResume:
         assert second["fakturownia_invoice_id"] == 999
         # No second Fakturownia invoice.
         fakturownia2.create_invoice.assert_not_called()
+        # Retry reapplies the final paid status idempotently after confirming
+        # the settlement row, so a previously partial invoice is repaired too.
+        fakturownia2.change_invoice_status.assert_called_once_with(999, "paid")
         # The push was resumed.
         allegro2.create_invoice_declaration.assert_called_once_with(
             order_id="af1", invoice_number="FV/2026/999"

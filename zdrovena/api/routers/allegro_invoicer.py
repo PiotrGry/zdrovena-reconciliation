@@ -17,14 +17,10 @@ Idempotency: before creating anything, checks Fakturownia for an existing
 invoice with oid=<allegro_order_id> (Fakturownia is the source of truth —
 no separate local state to keep in sync).
 
-IMPORTANT — do not turn this into a retry loop: if invoice creation fails,
-this does NOT mark anything as "already attempted" locally. The caller
-(allegro_poller.py) only invokes this once per order, at the same point it
-creates the shipping draft, and relies on the existing
-_existing_active_allegro_draft() check to avoid re-processing an order that
-already has an active draft. If you call this function from a new call site
-without an equivalent guard, a persistently-failing order will alert on
-every call.
+The scheduled caller retries unfinished invoices at most three times and stores
+the attempt count on the shipping draft. This function remains idempotent: it
+finds the Fakturownia document by the unique Allegro order ``oid``, avoids a
+duplicate kaucja row, and reuses an existing Allegro invoice declaration.
 
 Logging & alerting: every failure logs at ERROR (auto-forwarded to Azure
 Application Insights via the OpenTelemetry wiring in api/main.py) AND sends
@@ -135,9 +131,10 @@ def _finish_invoice(
 ) -> dict[str, Any]:
     """Idempotently complete the post-create steps for an invoice.
 
-    Steps, in order: attach any settlement positions (kaucja), fetch the PDF,
-    and push it to Allegro. Safe to call on a freshly created invoice OR when
-    recovering an existing one (the 502-loop fix — R4.1):
+    Steps, in order: attach any settlement positions (kaucja), mark the final
+    payable amount as paid, fetch the PDF, and push it to Allegro. Safe to call
+    on a freshly created invoice OR when recovering an existing one (the
+    502-loop fix — R4.1):
 
       * ``add_settlement_position`` is a no-op when the row already exists
         (it re-reads the invoice and matches on ``reason``), so re-running it
@@ -165,6 +162,21 @@ def _finish_invoice(
     except Exception as exc:
         logger.exception(
             "Adding settlement position to Fakturownia invoice %s failed for order %s",
+            invoice_id,
+            allegro_order_id,
+        )
+        _alert_invoice_failure(allegro_order_id=allegro_order_id, reason=str(exc))
+        return {"status": "error", "error": str(exc), "fakturownia_invoice_id": invoice_id}
+
+    try:
+        # Allegro orders reach this flow only after payment.  Kaucja is added
+        # after invoice creation, so the paid status must be applied AFTER all
+        # settlement positions; otherwise Fakturownia keeps only the base
+        # positions paid and reports the deposit as outstanding.
+        fakturownia_client.change_invoice_status(invoice_id, "paid")
+    except Exception as exc:
+        logger.exception(
+            "Marking Fakturownia invoice %s fully paid failed for Allegro order %s",
             invoice_id,
             allegro_order_id,
         )
