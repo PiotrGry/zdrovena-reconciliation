@@ -69,7 +69,11 @@ function AppShell() {
     return (
         <LangCtx.Provider value={{ lang, t: I18N, setLang: changeLang }}>
             <div className="app" data-density="roomy" data-sidebar="cream">
-                <Header damageCount={damageCount} onDamageClick={() => navigate('damage')} />
+                <Header
+                    damageCount={damageCount}
+                    damageActive={page === 'damage'}
+                    onDamageClick={() => navigate('damage')}
+                />
                 <Sidebar page={page} onNavigate={navigate} damageCount={damageCount} />
                 <main className="main">
                     <ErrorBoundary resetKey={page}>

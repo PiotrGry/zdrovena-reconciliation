@@ -8,6 +8,7 @@ import responses as rsps
 
 from zdrovena.common.allegro import AllegroClient
 from zdrovena.common.apaczka import ApaczkaClient
+from zdrovena.common.inpost import InPostClient
 from zdrovena.month_closing.zoho_mail import ZohoMailClient
 
 
@@ -99,3 +100,27 @@ def test_zoho_reads_configured_sender_aliases():
         },
     )
     assert "info@wodahumio.pl" in client.sender_addresses()
+
+
+def test_inpost_finds_organisation_shipment_by_exact_tracking():
+    client = InPostClient("token", "org-1")
+    response = MagicMock(spec=requests.Response)
+    response.json.return_value = {
+        "items": [
+            {
+                "id": 123,
+                "tracking_number": "630015608680156036357414",
+                "reference": "1641",
+            }
+        ]
+    }
+    with patch.object(client, "_request", return_value=response) as request:
+        shipment = client.find_shipment_by_tracking("630015608680156036357414")
+
+    assert shipment["reference"] == "1641"
+    request.assert_called_once_with(
+        "GET",
+        "https://api-shipx-pl.easypack24.net/v1/organizations/org-1/shipments",
+        action="find_shipment_by_tracking",
+        params={"tracking_number": "630015608680156036357414", "per_page": 2},
+    )
