@@ -49,7 +49,10 @@ pythonVersion = "3.10"
 typeCheckingMode = "basic"
 reportMissingImports = true
 reportMissingTypeStubs = false
+include = ["zdrovena", "scripts"]
 exclude = ["tests/"]
+venvPath = "."
+venv = ".venv"
 
 # ─── Linting & formatting (Ruff) ─────────────────────────────────────────────
 

@@ -2599,6 +2599,7 @@ class TestSyncOrdersEndpoint:
         }
 
         mock_allegro_client = MagicMock()
+        mock_fakturownia_client = MagicMock()
 
         def fake_get_secret(name, required=True):
             if name == "shopify_admin_token":
@@ -2608,11 +2609,14 @@ class TestSyncOrdersEndpoint:
         with patch(
             "zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client
         ):
-            with patch("zdrovena.api.routers.webhooks._get_fakturownia_client", return_value=None):
+            with patch(
+                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                return_value=mock_fakturownia_client,
+            ):
                 with patch(
                     "zdrovena.api.routers.allegro_poller.poll_orders_once",
                     return_value=allegro_stats,
-                ):
+                ) as mock_poll:
                     with patch(
                         "zdrovena.api.routers.webhooks._sync_shopify_orders_from_api",
                         return_value=shopify_stats,
@@ -2630,6 +2634,8 @@ class TestSyncOrdersEndpoint:
         body = resp.json()
         assert body["allegro"] == allegro_stats
         assert body["shopify"] == shopify_stats
+        assert mock_poll.call_args.kwargs["fakturownia_client"] is mock_fakturownia_client
+        assert mock_poll.call_args.kwargs["retry_existing_invoices"] is False
 
     def test_allegro_credentials_missing_returns_error_key(self, client):
         def fake_get_secret(name, required=True):
@@ -2659,7 +2665,10 @@ class TestSyncOrdersEndpoint:
         with patch(
             "zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client
         ):
-            with patch("zdrovena.api.routers.webhooks._get_fakturownia_client", return_value=None):
+            with patch(
+                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                return_value=None,
+            ):
                 with patch(
                     "zdrovena.api.routers.allegro_poller.poll_orders_once",
                     side_effect=RuntimeError("allegro API down"),
@@ -2691,7 +2700,10 @@ class TestSyncOrdersEndpoint:
         with patch(
             "zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client
         ):
-            with patch("zdrovena.api.routers.webhooks._get_fakturownia_client", return_value=None):
+            with patch(
+                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                return_value=None,
+            ):
                 with patch(
                     "zdrovena.api.routers.allegro_poller.poll_orders_once",
                     return_value=allegro_stats,
@@ -2727,7 +2739,10 @@ class TestSyncOrdersEndpoint:
         with patch(
             "zdrovena.api.routers.webhooks._get_allegro_client", return_value=mock_allegro_client
         ):
-            with patch("zdrovena.api.routers.webhooks._get_fakturownia_client", return_value=None):
+            with patch(
+                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                return_value=None,
+            ):
                 with patch(
                     "zdrovena.api.routers.allegro_poller.poll_orders_once",
                     return_value=allegro_stats,

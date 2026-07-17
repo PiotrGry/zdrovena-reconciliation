@@ -1373,6 +1373,9 @@ _SYNC_PRESERVED_FIELDS = {
     "pickup_ordered",
     "fakturownia_invoice_id",
     "fakturownia_invoice_number",
+    "fakturownia_invoice_error",
+    "fakturownia_invoice_attempts",
+    "fakturownia_invoice_attempted_at",
     "allegro_fulfillment_status",
 }
 
@@ -1606,6 +1609,11 @@ def _build_draft_record(
         "shopify_fulfillment_id": fulfillment_details.get("shopify_fulfillment_id"),
         "cancelled_at": order.get("cancelled_at"),
         "source_updated_at": order.get("updated_at"),
+        "fakturownia_invoice_id": None,
+        "fakturownia_invoice_number": None,
+        "fakturownia_invoice_error": None,
+        "fakturownia_invoice_attempts": 0,
+        "fakturownia_invoice_attempted_at": None,
     }
 
     # Wysyłam z Allegro — dodatkowe pola potrzebne dla /shipment-management/*
@@ -1669,14 +1677,14 @@ def _meaningful_draft_diff(before: dict[str, Any], after: dict[str, Any]) -> boo
     return any(before.get(key) != after.get(key) for key in keys)
 
 
-def _sync_draft_from_order(
+def _persist_draft_from_order(
     order: dict[str, Any],
     shipping_store: ShippingStore,
     storage: Any,
     *,
     source: str = "shopify",
     existing: dict[str, Any] | None = None,
-) -> bool:
+) -> tuple[bool, dict[str, Any]]:
     record = _build_draft_record(
         order,
         source=source,
@@ -1708,6 +1716,24 @@ def _sync_draft_from_order(
             status=record["status"],
             fulfillment_status=record.get("fulfillment_status"),
         )
+    return changed, record
+
+
+def _sync_draft_from_order(
+    order: dict[str, Any],
+    shipping_store: ShippingStore,
+    storage: Any,
+    *,
+    source: str = "shopify",
+    existing: dict[str, Any] | None = None,
+) -> bool:
+    changed, _ = _persist_draft_from_order(
+        order,
+        shipping_store,
+        storage,
+        source=source,
+        existing=existing,
+    )
     return changed
 
 
@@ -1717,8 +1743,9 @@ def _create_draft(
     storage: Any,
     *,
     source: str = "shopify",
-) -> None:
-    _sync_draft_from_order(order, shipping_store, storage, source=source)
+) -> dict[str, Any]:
+    _, record = _persist_draft_from_order(order, shipping_store, storage, source=source)
+    return record
 
 
 # ── Webhook endpoint ──────────────────────────────────────────────────────────
@@ -2950,8 +2977,15 @@ def get_invoice_preview(
         )
 
     existing = draft.get("fakturownia_invoice_id")
-    if existing:
+    invoice_error = draft.get("fakturownia_invoice_error")
+    if existing and not invoice_error:
         return {"status": "already_created", "fakturownia_invoice_id": existing}
+    if existing and invoice_error:
+        return {
+            "status": "retry_ready",
+            "fakturownia_invoice_id": existing,
+            "error": invoice_error,
+        }
 
     allegro_client = _get_allegro_client()
     if allegro_client is None:
@@ -3053,7 +3087,8 @@ def create_draft_invoice(
         )
 
     existing = draft.get("fakturownia_invoice_id")
-    if existing and existing != "pending":
+    invoice_error = draft.get("fakturownia_invoice_error")
+    if existing and existing != "pending" and not invoice_error:
         return {"status": "already_created", "fakturownia_invoice_id": existing}
     if existing == "pending":
         raise HTTPException(
@@ -3062,18 +3097,33 @@ def create_draft_invoice(
         )
 
     # Claim the slot optimistically so concurrent requests see "pending" and bail out.
-    shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": "pending"})
+    shipping_store.update_draft(
+        draft_id,
+        {"fakturownia_invoice_id": "pending", "fakturownia_invoice_error": None},
+    )
 
     allegro_client = _get_allegro_client()
     fakturownia_client = _get_fakturownia_invoice_client()
     if allegro_client is None:
-        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": None})
+        shipping_store.update_draft(
+            draft_id,
+            {
+                "fakturownia_invoice_id": existing,
+                "fakturownia_invoice_error": invoice_error,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Allegro credentials not configured",
         )
     if fakturownia_client is None:
-        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": None})
+        shipping_store.update_draft(
+            draft_id,
+            {
+                "fakturownia_invoice_id": existing,
+                "fakturownia_invoice_error": invoice_error,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Fakturownia credentials not configured",
@@ -3083,7 +3133,10 @@ def create_draft_invoice(
     try:
         order = allegro_client.get_order(order_id)
     except Exception as exc:
-        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": None})
+        shipping_store.update_draft(
+            draft_id,
+            {"fakturownia_invoice_id": existing, "fakturownia_invoice_error": str(exc)},
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to fetch Allegro order: {exc}",
@@ -3103,7 +3156,14 @@ def create_draft_invoice(
     # the loop bug: clearing the slot re-armed the poller to try forever).
     if result_status == "already_exists":
         recovered_id = result.get("fakturownia_invoice_id")
-        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": recovered_id})
+        shipping_store.update_draft(
+            draft_id,
+            {
+                "fakturownia_invoice_id": recovered_id,
+                "fakturownia_invoice_number": result.get("fakturownia_invoice_number"),
+                "fakturownia_invoice_error": None,
+            },
+        )
         return {
             "status": "already_created",
             "fakturownia_invoice_id": recovered_id,
@@ -3115,14 +3175,27 @@ def create_draft_invoice(
         # invoice was created but the Allegro push failed) so a retry attaches to
         # the same document instead of orphaning it. Only clear the slot when we
         # truly have nothing to keep.
-        recovered_id = result.get("fakturownia_invoice_id")
-        shipping_store.update_draft(draft_id, {"fakturownia_invoice_id": recovered_id})
+        recovered_id = result.get("fakturownia_invoice_id") or existing
+        shipping_store.update_draft(
+            draft_id,
+            {
+                "fakturownia_invoice_id": recovered_id,
+                "fakturownia_invoice_number": result.get("fakturownia_invoice_number")
+                or draft.get("fakturownia_invoice_number"),
+                "fakturownia_invoice_error": result.get("error", "Invoice creation failed"),
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=result.get("error", "Invoice creation failed"),
         )
     shipping_store.update_draft(
-        draft_id, {"fakturownia_invoice_id": result["fakturownia_invoice_id"]}
+        draft_id,
+        {
+            "fakturownia_invoice_id": result["fakturownia_invoice_id"],
+            "fakturownia_invoice_number": result.get("fakturownia_invoice_number"),
+            "fakturownia_invoice_error": None,
+        },
     )
     return result
 
@@ -3144,12 +3217,14 @@ def sync_orders(
         try:
             from zdrovena.api.routers.allegro_poller import poll_orders_once
 
+            fakturownia_client = _get_fakturownia_invoice_client()
             result["allegro"] = poll_orders_once(
                 client=allegro_client,
                 shipping_store=shipping_store,
                 storage=storage,
+                fakturownia_client=fakturownia_client,
                 fulfillment_status=None,
-                # fakturownia_client omitted — invoicing is manual via the shipping UI
+                retry_existing_invoices=False,
             )
         except Exception as exc:
             logger.exception("Allegro sync failed: %s", exc)

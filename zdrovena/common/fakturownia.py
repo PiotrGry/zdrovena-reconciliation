@@ -190,6 +190,22 @@ class FakturowniaClient:
         body = {"api_token": self.api_token, "invoice": patch}
         return self._request("PUT", f"/invoices/{invoice_id}.json", json=body)
 
+    def change_invoice_status(self, invoice_id: int, status: str) -> dict[str, Any]:
+        """Set an invoice status through Fakturownia's dedicated endpoint.
+
+        ``status="paid"`` marks the document as paid in full using its current
+        payable amount.  This matters when settlement positions have changed
+        the total after the invoice was created.
+        """
+        normalized_status = status.strip()
+        if not normalized_status:
+            raise ValueError("status must be non-empty")
+        return self._request(
+            "POST",
+            f"/invoices/{invoice_id}/change_status.json",
+            params={"status": normalized_status},
+        )
+
     def create_invoice(self, invoice: dict[str, Any]) -> dict[str, Any]:
         """Create a new Fakturownia document (VAT invoice, nota księgowa, etc.).
 
