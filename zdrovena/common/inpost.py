@@ -468,6 +468,31 @@ class InPostClient:
         resp = self._request("GET", url, action="get_shipment")
         return resp.json()
 
+    def find_shipment_by_tracking(self, tracking_number: str) -> dict[str, Any] | None:
+        """Find an organisation shipment by its logistic tracking number.
+
+        ShipX's single-shipment endpoint accepts an internal shipment ID, not a
+        tracking number. The organisation collection exposes an exact
+        ``tracking_number`` filter and returns the receiver and reference used
+        when the parcel was created.
+        """
+        tracking = tracking_number.strip()
+        if not tracking:
+            raise ValueError("InPost tracking number must not be empty")
+        url = f"{_BASE}/v1/organizations/{self._org_id}/shipments"
+        resp = self._request(
+            "GET",
+            url,
+            action="find_shipment_by_tracking",
+            params={"tracking_number": tracking, "per_page": 2},
+        )
+        payload = resp.json() or {}
+        items = payload.get("items") or []
+        exact = [
+            item for item in items if str(item.get("tracking_number") or "").strip() == tracking
+        ]
+        return exact[0] if len(exact) == 1 else None
+
     def cancel_shipment(self, shipment_id: str) -> None:
         """Cancel a shipment.
 

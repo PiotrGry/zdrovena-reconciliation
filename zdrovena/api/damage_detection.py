@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,7 @@ from zdrovena.common.config import (
     KEYCHAIN_SERVICE_ZOHO_REFRESH_TOKEN,
 )
 from zdrovena.common.damage_store import DamageStore
+from zdrovena.common.inpost import InPostClient
 from zdrovena.common.secrets import get_secret
 from zdrovena.month_closing.zoho_mail import ZohoMailClient
 
@@ -60,6 +62,148 @@ def extract_inpost_tracking(subject: str, content: str) -> str | None:
         if match:
             return match.group(1)
     return None
+
+
+def _normalized_identity(value: Any) -> str:
+    ascii_value = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore")
+    return re.sub(r"[^a-z0-9]", "", ascii_value.decode().lower())
+
+
+def _normalized_phone(value: Any) -> str:
+    digits = re.sub(r"\D", "", str(value or ""))
+    return digits[-9:] if len(digits) >= 9 else digits
+
+
+def _draft_order_time(draft: dict[str, Any]) -> datetime | None:
+    raw = draft.get("order_date") or draft.get("created_at")
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _provider_receiver_values(provider_record: dict[str, Any]) -> dict[str, str]:
+    receiver = provider_record.get("receiver") or {}
+    if not isinstance(receiver, dict):
+        receiver = {}
+    address = receiver.get("address") or {}
+    if not isinstance(address, dict):
+        address = {}
+    name = (
+        receiver.get("name")
+        or receiver.get("contact_person")
+        or " ".join(filter(None, [receiver.get("first_name"), receiver.get("last_name")]))
+    )
+    street = receiver.get("line1") or " ".join(
+        filter(
+            None,
+            [
+                address.get("street"),
+                address.get("building_number"),
+                address.get("line1"),
+            ],
+        )
+    )
+    return {
+        "email": str(receiver.get("email") or "").strip().casefold(),
+        "phone": _normalized_phone(receiver.get("phone")),
+        "name": _normalized_identity(name),
+        "postal_code": _normalized_identity(
+            receiver.get("postal_code") or address.get("post_code")
+        ),
+        "city": _normalized_identity(receiver.get("city") or address.get("city")),
+        "street": _normalized_identity(street),
+    }
+
+
+def _match_provider_to_draft(
+    provider_record: dict[str, Any],
+    drafts: list[dict[str, Any]],
+    *,
+    detected_at: str,
+) -> tuple[dict[str, Any], list[str]] | None:
+    """Match provider-owned parcel data with a local draft without guessing."""
+    reference = str(
+        provider_record.get("reference") or provider_record.get("externalId") or ""
+    ).strip()
+    if reference:
+        normalized_reference = reference.lstrip("#")
+        referenced = [
+            draft
+            for draft in drafts
+            if str(draft.get("shopify_order_number") or "").lstrip("#") == normalized_reference
+            or str(draft.get("external_order_id") or "") == reference
+        ]
+        if len(referenced) == 1:
+            return referenced[0], ["reference"]
+
+    try:
+        event_time = datetime.fromisoformat(detected_at.replace("Z", "+00:00"))
+    except ValueError:
+        event_time = datetime.now(timezone.utc)
+
+    provider_values = _provider_receiver_values(provider_record)
+    weights = {"email": 8, "phone": 7, "name": 4, "postal_code": 2, "city": 1, "street": 2}
+    candidates: list[tuple[int, float, dict[str, Any], list[str]]] = []
+    for draft in drafts:
+        receiver = draft.get("receiver") or {}
+        address = draft.get("shipping_address") or {}
+        if not isinstance(receiver, dict) or not isinstance(address, dict):
+            continue
+        order_time = _draft_order_time(draft)
+        if order_time:
+            age = event_time - order_time.astimezone(event_time.tzinfo or timezone.utc)
+            if age < timedelta(days=-2) or age > timedelta(days=90):
+                continue
+            age_seconds = abs(age.total_seconds())
+        else:
+            age_seconds = float("inf")
+        draft_name = draft.get("customer_name") or " ".join(
+            filter(None, [receiver.get("first_name"), receiver.get("last_name")])
+        )
+        draft_street = " ".join(
+            filter(
+                None,
+                [
+                    address.get("street"),
+                    address.get("building_number"),
+                    address.get("flat_number"),
+                ],
+            )
+        )
+        values = {
+            "email": str(receiver.get("email") or "").strip().casefold(),
+            "phone": _normalized_phone(receiver.get("phone")),
+            "name": _normalized_identity(draft_name),
+            "postal_code": _normalized_identity(address.get("post_code")),
+            "city": _normalized_identity(address.get("city")),
+            "street": _normalized_identity(draft_street),
+        }
+        matched = [
+            field
+            for field, provider_value in provider_values.items()
+            if provider_value and values[field] and provider_value == values[field]
+        ]
+        # Provider email/phone is the anchor; a second identity attribute
+        # prevents a stale or shared address from selecting the wrong order.
+        if not ({"email", "phone"} & set(matched)) or len(matched) < 2:
+            continue
+        score = sum(weights[field] for field in matched)
+        if score >= 10:
+            candidates.append((score, age_seconds, draft, matched))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    best = candidates[0]
+    if len(candidates) > 1:
+        second = candidates[1]
+        # Same identity may have several orders. Prefer a materially newer one,
+        # but require at least a full day of separation to avoid guessing.
+        if best[0] == second[0] and second[1] - best[1] < 86_400:
+            return None
+    return best[2], best[3]
 
 
 def _case_id(tracking_number: str) -> str:
@@ -276,7 +420,7 @@ def scan_allegro_damage_cases(
                     code = str(event.get("code") or "").upper()
                     description = str(event.get("description") or "")
                     damaged = is_damage_description(description)
-                    if code != "ISSUE" and not damaged:
+                    if not damaged:
                         continue
                     stats["issues"] += 1
                     occurred_at = str(event.get("occurredAt") or details.get("updatedAt") or _now())
@@ -285,7 +429,7 @@ def scan_allegro_damage_cases(
                         damage_store,
                         tracking_number=tracking,
                         source="allegro_tracking",
-                        classification="damage" if damaged else "carrier_issue",
+                        classification="damage",
                         detected_at=occurred_at,
                         fingerprint=fingerprint,
                         evidence={
@@ -306,12 +450,14 @@ def scan_zoho_damage_cases(
     client: ZohoMailClient,
     shipping_store: Any,
     damage_store: DamageStore,
+    inpost_client: Any | None = None,
     apaczka_client: Any | None = None,
 ) -> dict[str, int]:
     """Read-only Zoho scan for trusted InPost damage notifications."""
     stats = {
         "messages": 0,
         "matched": 0,
+        "inpost_matches": 0,
         "provider_matches": 0,
         "created": 0,
         "errors": 0,
@@ -351,18 +497,71 @@ def scan_zoho_damage_cases(
         fingerprint = f"zoho:{message_id}"
         draft = _draft_for_tracking(drafts, tracking)
         existing_case = damage_store.get_case(_case_id(tracking))
-        provider_lookup_completed = bool(
-            existing_case and existing_case.get("provider_lookup_completed_at")
-        )
+        if draft is None and existing_case and existing_case.get("shipping_draft_id"):
+            draft = next(
+                (
+                    item
+                    for item in drafts
+                    if str(item.get("id")) == str(existing_case["shipping_draft_id"])
+                ),
+                None,
+            )
         provider_context: dict[str, Any] | None = None
+        inpost_shipment: dict[str, Any] | None = None
         apaczka_order: dict[str, Any] | None = None
+        correlation_method: str | None = None
+        correlation_matched_fields: list[str] = []
         provider_lookup_attempted = False
-        if draft is None and apaczka_client is not None and not provider_lookup_completed:
+        provider_lookup_succeeded = False
+
+        if draft is None and inpost_client is not None:
+            provider_lookup_attempted = True
+            try:
+                inpost_shipment = inpost_client.find_shipment_by_tracking(tracking)
+                provider_lookup_succeeded = True
+            except Exception:
+                logger.exception("Could not read InPost shipment %s", tracking)
+                stats["errors"] += 1
+            if inpost_shipment:
+                provider_match = _match_provider_to_draft(
+                    inpost_shipment, drafts, detected_at=detected_at
+                )
+                if provider_match:
+                    draft, correlation_matched_fields = provider_match
+                receiver = inpost_shipment.get("receiver") or {}
+                reference = str(inpost_shipment.get("reference") or "").strip()
+                draft_context = _case_context(draft)
+                provider_context = {
+                    **draft_context,
+                    "order_number": draft_context["order_number"] or reference or None,
+                    "external_order_id": draft_context["external_order_id"] or reference or None,
+                    "customer_name": draft_context["customer_name"]
+                    or receiver.get("name")
+                    or " ".join(
+                        filter(
+                            None,
+                            [receiver.get("first_name"), receiver.get("last_name")],
+                        )
+                    ),
+                    "customer_email": draft_context["customer_email"] or receiver.get("email"),
+                    "courier": draft_context["courier"] or "inpost",
+                    "inpost_shipment_id": inpost_shipment.get("id"),
+                    "inpost_service": inpost_shipment.get("service"),
+                    "provider_lookup_method": "inpost_tracking_lookup",
+                    "correlation_method": "inpost_tracking_lookup" if draft else None,
+                    "correlation_confidence": "high" if draft else None,
+                    "correlation_matched_fields": correlation_matched_fields,
+                }
+                correlation_method = "inpost_tracking_lookup" if draft else None
+                stats["inpost_matches"] += 1
+                stats["provider_matches"] += 1
+
+        if draft is None and inpost_shipment is None and apaczka_client is not None:
             provider_lookup_attempted = True
             if apaczka_by_tracking is None:
                 apaczka_by_tracking = {}
                 try:
-                    for page in range(1, 11):
+                    for page in range(1, 41):
                         orders = apaczka_client.list_orders(page=page, limit=25)
                         for order in orders:
                             waybill = str(order.get("waybill_number") or "").strip().upper()
@@ -375,23 +574,18 @@ def scan_zoho_damage_cases(
                         if len(orders) < 25:
                             break
                     apaczka_loaded_successfully = True
+                    provider_lookup_succeeded = True
                 except Exception:
                     logger.exception("Could not list Apaczka orders for damage correlation")
                     stats["errors"] += 1
             apaczka_order = apaczka_by_tracking.get(tracking.upper())
             if apaczka_order:
+                provider_match = _match_provider_to_draft(
+                    apaczka_order, drafts, detected_at=detected_at
+                )
+                if provider_match:
+                    draft, correlation_matched_fields = provider_match
                 reference = str(apaczka_order.get("externalId") or "").strip()
-                if reference:
-                    draft = next(
-                        (
-                            item
-                            for item in drafts
-                            if str(item.get("shopify_order_number") or "").lstrip("#")
-                            == reference.lstrip("#")
-                            or str(item.get("external_order_id") or "") == reference
-                        ),
-                        None,
-                    )
                 receiver = apaczka_order.get("receiver") or {}
                 draft_context = _case_context(draft)
                 provider_context = {
@@ -403,8 +597,24 @@ def scan_zoho_damage_cases(
                     "customer_email": draft_context["customer_email"] or receiver.get("email"),
                     "courier": draft_context["courier"] or "apaczka",
                     "apaczka_order_id": apaczka_order.get("id"),
+                    "apaczka_service": apaczka_order.get("service_name"),
+                    "provider_lookup_method": "apaczka_tracking_lookup",
+                    "correlation_method": "apaczka_tracking_lookup" if draft else None,
+                    "correlation_confidence": "high" if draft else None,
+                    "correlation_matched_fields": correlation_matched_fields,
                 }
+                correlation_method = "apaczka_tracking_lookup" if draft else None
                 stats["provider_matches"] += 1
+
+        if draft is not None and correlation_method:
+            current_tracking = str(draft.get("tracking_number") or "").strip()
+            if not current_tracking:
+                try:
+                    shipping_store.update_draft(str(draft["id"]), {"tracking_number": tracking})
+                    draft["tracking_number"] = tracking
+                except Exception:
+                    logger.exception("Could not persist provider tracking %s", tracking)
+                    stats["errors"] += 1
         case, created = _upsert_detected_case(
             damage_store,
             tracking_number=tracking,
@@ -418,14 +628,17 @@ def scan_zoho_damage_cases(
                 "sender": sender,
                 "subject": subject,
                 "received_at": detected_at,
+                "inpost_shipment_id": (inpost_shipment.get("id") if inpost_shipment else None),
+                "inpost_service": (inpost_shipment.get("service") if inpost_shipment else None),
                 "apaczka_order_id": apaczka_order.get("id") if apaczka_order else None,
                 "apaczka_service": (apaczka_order.get("service_name") if apaczka_order else None),
-                "has_attachment": str(message.get("hasAttachment", "0")).lower() in {"1", "true"},
+                "correlation_method": correlation_method,
+                "correlation_matched_fields": correlation_matched_fields or None,
             },
             draft=draft,
             provider_context=provider_context,
         )
-        if provider_lookup_attempted and apaczka_loaded_successfully:
+        if provider_lookup_attempted and (provider_lookup_succeeded or apaczka_loaded_successfully):
             damage_store.update_case(
                 str(case["id"]),
                 {"provider_lookup_completed_at": _now()},
@@ -434,7 +647,9 @@ def scan_zoho_damage_cases(
         stats["created"] += int(created)
 
     # Never advance to the current instant: Zoho documents a short indexing delay.
-    damage_store.set_state("zoho_received_cursor_ms", max(max_received, now_ms - 120_000))
+    # Azure Table Storage infers Python integers as Edm.Int32. A millisecond
+    # timestamp exceeds that range, so persist it as text and parse on read.
+    damage_store.set_state("zoho_received_cursor_ms", str(max(max_received, now_ms - 120_000)))
     return stats
 
 
@@ -461,3 +676,12 @@ def build_apaczka_lookup_client(storage: Any) -> ApaczkaClient | None:
     if not (app_id and app_secret):
         return None
     return ApaczkaClient(app_id, app_secret, service_id="", storage=storage)
+
+
+def build_inpost_lookup_client() -> InPostClient | None:
+    """Build the organisation-scoped client used for tracking correlation."""
+    api_token = get_secret("inpost_api_token", required=False)
+    organization_id = get_secret("inpost_organization_id", required=False)
+    if not (api_token and organization_id):
+        return None
+    return InPostClient(api_token, organization_id)

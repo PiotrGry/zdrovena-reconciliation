@@ -93,6 +93,7 @@ def run(args: argparse.Namespace) -> None:
 
     from zdrovena.api.damage_detection import (
         build_apaczka_lookup_client,
+        build_inpost_lookup_client,
         build_zoho_client,
         scan_allegro_damage_cases,
         scan_zoho_damage_cases,
@@ -149,6 +150,7 @@ def run(args: argparse.Namespace) -> None:
                 client=zoho_client,
                 shipping_store=shipping_store,
                 damage_store=damage_store,
+                inpost_client=build_inpost_lookup_client(),
                 apaczka_client=build_apaczka_lookup_client(storage),
             )
             logger.info("Zoho damage scan complete: %s", zoho_damage)

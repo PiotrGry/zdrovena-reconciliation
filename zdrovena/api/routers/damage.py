@@ -19,6 +19,7 @@ from zdrovena.api.auth import (
 )
 from zdrovena.api.damage_detection import (
     build_apaczka_lookup_client,
+    build_inpost_lookup_client,
     build_zoho_client,
     scan_allegro_damage_cases,
     scan_zoho_damage_cases,
@@ -178,7 +179,11 @@ def list_damage_cases(
     principal: Annotated[Principal, Depends(require_viewer_or_above)],
 ) -> dict[str, Any]:
     del principal
-    cases = damage_store.list_cases(limit=500)
+    cases = [
+        case
+        for case in damage_store.list_cases(limit=500)
+        if case.get("classification") == "damage"
+    ]
     return {
         "cases": cases,
         "needs_review": sum(case.get("status") == "needs_review" for case in cases),
@@ -236,6 +241,7 @@ def refresh_damage_cases(
                 client=zoho,
                 shipping_store=shipping_store,
                 damage_store=damage_store,
+                inpost_client=build_inpost_lookup_client(),
                 apaczka_client=build_apaczka_lookup_client(storage),
             )
     except Exception as exc:

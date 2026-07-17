@@ -205,7 +205,10 @@ class DamageStore:
         return records[:limit]
 
     def count_needs_review(self) -> int:
-        return sum(case.get("status") == "needs_review" for case in self.list_cases(limit=500))
+        return sum(
+            case.get("status") == "needs_review" and case.get("classification") == "damage"
+            for case in self.list_cases(limit=500)
+        )
 
     def try_claim_email(self, case_id: str) -> bool:
         """Atomically claim a customer email send and prevent double clicks.

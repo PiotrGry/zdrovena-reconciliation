@@ -38,6 +38,11 @@ describe('DamageView', () => {
         expect(within(row).getByText('do sprawdzenia')).toBeInTheDocument()
         expect(within(row).getByRole('button', { name: 'Potwierdź uszkodzenie' })).toBeInTheDocument()
 
+        await userEvent.click(within(row).getByRole('button', { name: 'Szczegóły' }))
+        expect(screen.getByText('Parcel has been damaged')).toBeInTheDocument()
+        expect(screen.getByText('Kod zdarzenia')).toBeInTheDocument()
+        expect(screen.queryByText(/"description"/)).not.toBeInTheDocument()
+
         await userEvent.click(within(row).getByRole('button', { name: 'Potwierdź uszkodzenie' }))
 
         expect(await screen.findByText('potwierdzone')).toBeInTheDocument()

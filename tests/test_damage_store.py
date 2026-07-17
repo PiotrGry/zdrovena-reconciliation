@@ -9,6 +9,7 @@ def test_damage_store_persists_cases_and_cursor(tmp_path):
         {
             "id": "case-1",
             "status": "needs_review",
+            "classification": "damage",
             "detected_at": "2026-07-15T13:40:42Z",
             "evidence": [{"code": "ISSUE"}],
         }
@@ -23,6 +24,14 @@ def test_damage_store_persists_cases_and_cursor(tmp_path):
     reloaded = DamageStore(local_root=tmp_path)
     assert reloaded.get_state("cursor") == 123
     assert reloaded.get_case("case-1")["status"] == "approved"
+
+
+def test_damage_store_count_ignores_non_damage_carrier_issues(tmp_path):
+    store = DamageStore(local_root=tmp_path)
+    store.upsert_case({"id": "damage", "status": "needs_review", "classification": "damage"})
+    store.upsert_case({"id": "delay", "status": "needs_review", "classification": "carrier_issue"})
+
+    assert store.count_needs_review() == 1
 
 
 def test_damage_store_update_missing_case_returns_false(tmp_path):
