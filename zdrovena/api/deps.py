@@ -9,6 +9,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from zdrovena.common.damage_store import DamageStore, get_damage_store
 from zdrovena.common.shipping_store import ShippingStore, get_shipping_store
 from zdrovena.common.shopify_dedup_store import ShopifyDedupStore, get_shopify_dedup_store
 from zdrovena.common.storage import StorageService, get_storage_service
@@ -51,3 +52,16 @@ def get_shopify_dedup() -> ShopifyDedupStore:
 
 
 ShopifyDedupStoreDep = Annotated[ShopifyDedupStore, Depends(get_shopify_dedup)]
+
+
+@lru_cache(maxsize=1)
+def _damage_store_singleton() -> DamageStore:
+    return get_damage_store()
+
+
+def get_damage_cases() -> DamageStore:
+    """Return the application-wide damaged-shipment store instance."""
+    return _damage_store_singleton()
+
+
+DamageStoreDep = Annotated[DamageStore, Depends(get_damage_cases)]

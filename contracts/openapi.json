@@ -641,6 +641,46 @@
         "title": "CloseWorkflowStep",
         "type": "object"
       },
+      "ConfirmDamageRequest": {
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "title": "ConfirmDamageRequest",
+        "type": "object"
+      },
+      "EmailDraftUpdate": {
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "body"
+        ],
+        "title": "EmailDraftUpdate",
+        "type": "object"
+      },
       "EnvironmentHealth": {
         "properties": {
           "app_env": {
@@ -1524,6 +1564,600 @@
         "summary": "Start a fresh month-close run for the selected period",
         "tags": [
           "close"
+        ]
+      }
+    },
+    "/api/damage-cases": {
+      "get": {
+        "operationId": "list_damage_cases_api_damage_cases_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Damage Cases Api Damage Cases Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List damaged-shipment cases",
+        "tags": [
+          "damaged shipments"
+        ]
+      }
+    },
+    "/api/damage-cases/refresh": {
+      "post": {
+        "operationId": "refresh_damage_cases_api_damage_cases_refresh_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Refresh Damage Cases Api Damage Cases Refresh Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Fetch Allegro and Zoho damage signals",
+        "tags": [
+          "damaged shipments"
+        ]
+      }
+    },
+    "/api/damage-cases/summary": {
+      "get": {
+        "operationId": "damage_case_summary_api_damage_cases_summary_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "title": "Response Damage Case Summary Api Damage Cases Summary Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Count damage cases requiring attention",
+        "tags": [
+          "damaged shipments"
+        ]
+      }
+    },
+    "/api/damage-cases/{case_id}": {
+      "get": {
+        "operationId": "get_damage_case_api_damage_cases__case_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Damage Case Api Damage Cases  Case Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get a damaged-shipment case",
+        "tags": [
+          "damaged shipments"
+        ]
+      }
+    },
+    "/api/damage-cases/{case_id}/close": {
+      "post": {
+        "operationId": "close_damage_case_api_damage_cases__case_id__close_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Close Damage Case Api Damage Cases  Case Id  Close Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Close a damage case",
+        "tags": [
+          "damaged shipments"
+        ]
+      }
+    },
+    "/api/damage-cases/{case_id}/confirm": {
+      "post": {
+        "operationId": "confirm_damage_case_api_damage_cases__case_id__confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmDamageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Confirm Damage Case Api Damage Cases  Case Id  Confirm Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Confirm parcel damage",
+        "tags": [
+          "damaged shipments"
+        ]
+      }
+    },
+    "/api/damage-cases/{case_id}/confirm-replacement": {
+      "post": {
+        "operationId": "confirm_replacement_api_damage_cases__case_id__confirm_replacement_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Confirm Replacement Api Damage Cases  Case Id  Confirm Replacement Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Poll a pending Allegro replacement shipment",
+        "tags": [
+          "damaged shipments"
+        ]
+      }
+    },
+    "/api/damage-cases/{case_id}/create-replacement": {
+      "post": {
+        "operationId": "create_replacement_api_damage_cases__case_id__create_replacement_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Replacement Api Damage Cases  Case Id  Create Replacement Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create the previously prepared courier shipment",
+        "tags": [
+          "damaged shipments"
+        ]
+      }
+    },
+    "/api/damage-cases/{case_id}/email-draft": {
+      "patch": {
+        "operationId": "update_email_draft_api_damage_cases__case_id__email_draft_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailDraftUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Email Draft Api Damage Cases  Case Id  Email Draft Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Edit customer email draft",
+        "tags": [
+          "damaged shipments"
+        ]
+      },
+      "post": {
+        "operationId": "prepare_email_draft_api_damage_cases__case_id__email_draft_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Prepare Email Draft Api Damage Cases  Case Id  Email Draft Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Prepare customer email",
+        "tags": [
+          "damaged shipments"
+        ]
+      }
+    },
+    "/api/damage-cases/{case_id}/ignore": {
+      "post": {
+        "operationId": "ignore_damage_case_api_damage_cases__case_id__ignore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ignore Damage Case Api Damage Cases  Case Id  Ignore Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ignore a false-positive case",
+        "tags": [
+          "damaged shipments"
+        ]
+      }
+    },
+    "/api/damage-cases/{case_id}/prepare-replacement": {
+      "post": {
+        "operationId": "prepare_replacement_api_damage_cases__case_id__prepare_replacement_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Prepare Replacement Api Damage Cases  Case Id  Prepare Replacement Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Prepare a replacement draft without creating a courier shipment",
+        "tags": [
+          "damaged shipments"
+        ]
+      }
+    },
+    "/api/damage-cases/{case_id}/send-email": {
+      "post": {
+        "operationId": "send_customer_email_api_damage_cases__case_id__send_email_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Send Customer Email Api Damage Cases  Case Id  Send Email Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Send approved customer email",
+        "tags": [
+          "damaged shipments"
         ]
       }
     },

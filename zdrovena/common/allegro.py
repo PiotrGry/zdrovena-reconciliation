@@ -455,6 +455,21 @@ class AllegroClient:
         data = self._get(f"/order/checkout-forms/{order_id}/shipments")
         return list(data.get("shipments") or [])
 
+    def get_tracking_history(self, carrier_id: str, waybills: str | list[str]) -> dict[str, Any]:
+        """Return the complete carrier status history for up to 20 parcels.
+
+        Allegro may append a later ``RETURNED`` status after an earlier
+        ``ISSUE`` event. Callers must therefore inspect every item in
+        ``trackingDetails.statuses`` instead of looking only at the latest one.
+        """
+        requested = [waybills] if isinstance(waybills, str) else list(waybills)
+        if not requested or len(requested) > 20:
+            raise ValueError("Allegro tracking accepts between 1 and 20 waybills")
+        return self._get(
+            f"/order/carriers/{carrier_id}/tracking",
+            params={"waybill": requested},
+        )
+
     # ── Invoices ───────────────────────────────────────────────────────────
 
     def list_order_invoices(self, order_id: str) -> list[dict[str, Any]]:

@@ -118,6 +118,27 @@ class TestPollOrdersOnce:
         poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
         assert store.upsert_draft.call_count == 1
 
+    def test_replacement_draft_does_not_shadow_original_order_import(self):
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af1")]
+        store = MagicMock()
+        store.list_drafts.return_value = [
+            {
+                "id": "replacement-af1",
+                "source": "allegro",
+                "external_order_id": "af1",
+                "status": "created",
+                "is_replacement": True,
+            }
+        ]
+
+        stats = poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
+
+        assert stats["created"] == 1
+        assert stats["skipped_duplicate"] == 0
+        saved = store.upsert_draft.call_args.args[0]
+        assert saved.get("is_replacement") is not True
+
     def test_shopify_draft_with_same_id_does_not_shadow(self):
         # A Shopify draft with the same numeric id must NOT prevent Allegro create
         client = MagicMock()

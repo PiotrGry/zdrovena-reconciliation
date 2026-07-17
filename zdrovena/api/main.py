@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from zdrovena.api.errors import install_exception_handlers
 from zdrovena.api.observability import CorrelationIdFilter, correlation_id_middleware
-from zdrovena.api.routers import close, files, integrations, invoices, webhooks
+from zdrovena.api.routers import close, damage, files, integrations, invoices, webhooks
 from zdrovena.common.appenv import UNKNOWN_ENV, is_production_env, resolve_app_env
 from zdrovena.common.provider_safety import ProviderSafetyError, assert_provider_write_safety
 
@@ -181,6 +181,7 @@ app.include_router(files.router, prefix="/api")
 app.include_router(integrations.router, prefix="/api")
 app.include_router(invoices.router, prefix="/api")
 app.include_router(webhooks.router, prefix="/api")
+app.include_router(damage.router, prefix="/api")
 
 # Jednolita koperta błędu: mapuje wyjątki przesyłkowe na polskie komunikaty
 # i przechwytuje nieobsłużone wyjątki zamiast wyciekać surowy str(exc).

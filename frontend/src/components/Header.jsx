@@ -7,7 +7,7 @@ import { MONTHS_PL } from '../data'
 const NOW = new Date()
 const PERIOD = `${MONTHS_PL[NOW.getMonth()]} ${NOW.getFullYear()}`
 
-export function Header() {
+export function Header({ damageCount = 0, onDamageClick }) {
     const { account, roles, logout } = useAuth()
     const { t, lang, setLang } = useT()
     const [open, setOpen] = useState(false)
@@ -61,8 +61,13 @@ export function Header() {
                     ))}
                 </div>
 
-                <button className="btn-ghost icon-btn" aria-label="Powiadomienia">
+                <button
+                    className="btn-ghost icon-btn notification-button"
+                    aria-label={damageCount > 0 ? `Uszkodzone przesyłki: ${damageCount}` : 'Brak nowych powiadomień'}
+                    onClick={onDamageClick}
+                >
                     <Icon name="bell" size={18} />
+                    {damageCount > 0 && <span className="notification-count">{damageCount}</span>}
                 </button>
 
                 <div className="user" ref={userRef}>

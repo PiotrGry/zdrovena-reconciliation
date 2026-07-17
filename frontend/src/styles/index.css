@@ -386,6 +386,76 @@ button[aria-disabled="true"] {
     text-align: center;
 }
 
+.notification-button {
+    position: relative;
+}
+
+.notification-count {
+    position: absolute;
+    top: -5px;
+    right: -7px;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    border: 2px solid var(--surface);
+    border-radius: 999px;
+    background: var(--error);
+    color: #fff;
+    font: 700 10px/13px var(--font-mono);
+    text-align: center;
+}
+
+.damage-details {
+    display: grid;
+    grid-template-columns: minmax(260px, .8fr) minmax(340px, 1.2fr);
+    gap: 18px;
+    padding: 18px;
+    background: var(--surface-2);
+}
+
+.damage-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.damage-panel h3 {
+    margin: 0;
+    font-size: 13px;
+}
+
+.damage-evidence {
+    margin: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 11px;
+}
+
+.damage-email-field {
+    width: 100%;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: 9px 11px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+}
+
+textarea.damage-email-field {
+    min-height: 230px;
+    resize: vertical;
+}
+
+@media (max-width: 980px) {
+    .damage-details {
+        grid-template-columns: 1fr;
+    }
+}
+
 .sidebar-footer {
     margin-top: auto;
     padding: 14px 12px;
