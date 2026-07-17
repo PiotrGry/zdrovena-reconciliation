@@ -25,7 +25,7 @@ export function NavItem({ iconName, label, page, current, onNavigate, badge }) {
     )
 }
 
-export default function Sidebar({ page, onNavigate }) {
+export default function Sidebar({ page, onNavigate, damageCount = 0 }) {
     const { roles } = useAuth()
     const { t, lang } = useT()
     const T = t[lang]
@@ -44,6 +44,16 @@ export default function Sidebar({ page, onNavigate }) {
                 )}
                 {FEATURES.shipping && (
                     <NavItem iconName="truck" label={T.nav_shipping} page="shipping" current={page} onNavigate={onNavigate} />
+                )}
+                {FEATURES.damage && (
+                    <NavItem
+                        iconName="alertTriangle"
+                        label={T.nav_damage}
+                        page="damage"
+                        current={page}
+                        onNavigate={onNavigate}
+                        badge={damageCount > 0 ? damageCount : null}
+                    />
                 )}
                 {FEATURES.dlq && (
                     <NavItem iconName="alertTriangle" label={T.nav_dlq} page="dlq" current={page} onNavigate={onNavigate} />

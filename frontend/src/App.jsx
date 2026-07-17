@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from './auth'
 import { FEATURES } from './features'
-import { useT, LangCtx, I18N } from './lang'
+import { LangCtx, I18N } from './lang'
 import { Header } from './components/Header'
 import Sidebar from './components/Sidebar'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -15,7 +15,10 @@ import UsersView from './views/UsersView'
 import SettingsView from './views/SettingsView'
 import ShippingView from './views/ShippingView'
 import DlqView from './views/DlqView'
+import DamageView from './views/DamageView'
 import LoginScreen from './views/LoginScreen'
+import { getDamageSummary } from './api/endpoints'
+import { usePolling } from './hooks/usePolling'
 
 const VIEWS = {
     files: FilesView,
@@ -27,13 +30,15 @@ const VIEWS = {
     ...(FEATURES.users && { users: UsersView }),
     ...(FEATURES.shipping && { shipping: ShippingView }),
     ...(FEATURES.dlq && { dlq: DlqView }),
+    ...(FEATURES.damage && { damage: DamageView }),
     settings: SettingsView,
 }
 
 function AppShell() {
     const [page, setPage] = useState(() => localStorage.getItem('zdrovena_page') || 'files')
     const [lang, setLang] = useState(() => localStorage.getItem('zdrovena_lang') || 'pl')
-    const { t: _t } = useT()
+    const { getToken } = useAuth()
+    const [damageCount, setDamageCount] = useState(0)
 
     const navigate = p => {
         setPage(p)
@@ -47,14 +52,28 @@ function AppShell() {
 
     const View = VIEWS[page] ?? FilesView
 
+    const loadDamageCount = useCallback(async () => {
+        if (!FEATURES.damage) return
+        try {
+            const token = await getToken()
+            const summary = await getDamageSummary({ token })
+            setDamageCount(summary.needs_review ?? 0)
+        } catch {
+            // A badge must never make the rest of the application unavailable.
+        }
+    }, [getToken])
+
+    useEffect(() => { loadDamageCount() }, [loadDamageCount])
+    usePolling(loadDamageCount, 30_000, { enabled: FEATURES.damage })
+
     return (
         <LangCtx.Provider value={{ lang, t: I18N, setLang: changeLang }}>
             <div className="app" data-density="roomy" data-sidebar="cream">
-                <Header />
-                <Sidebar page={page} onNavigate={navigate} />
+                <Header damageCount={damageCount} onDamageClick={() => navigate('damage')} />
+                <Sidebar page={page} onNavigate={navigate} damageCount={damageCount} />
                 <main className="main">
                     <ErrorBoundary resetKey={page}>
-                        <View />
+                        <View onNavigate={navigate} onDamageChanged={loadDamageCount} />
                     </ErrorBoundary>
                 </main>
             </div>

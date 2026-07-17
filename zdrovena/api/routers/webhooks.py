@@ -346,7 +346,9 @@ def _sync_shopify_orders_from_api(
     existing_by_order_id = {
         str(d.get("external_order_id", "")): d
         for d in existing_drafts
-        if d.get("source") == "shopify" and d.get("external_order_id")
+        if d.get("source") == "shopify"
+        and d.get("external_order_id")
+        and not d.get("is_replacement")
     }
 
     for order in orders:

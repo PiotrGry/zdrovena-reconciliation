@@ -26,10 +26,14 @@ class EmailService:
         self,
         smtp_password: str,
         sender_email: str = ZOHO_EMAIL,
+        from_email: str | None = None,
         smtp_host: str = ZOHO_SMTP_HOST,
         smtp_port: int = ZOHO_SMTP_PORT,
     ) -> None:
+        # sender_email is the authenticated SMTP mailbox. from_email may be a
+        # validated alias belonging to that mailbox (for example info@...).
         self.sender_email = sender_email
+        self.from_email = from_email or sender_email
         self.smtp_password = smtp_password
         self.smtp_host = smtp_host
         self.smtp_port = smtp_port
@@ -42,7 +46,7 @@ class EmailService:
         attachments: list[Path] | None = None,
     ) -> None:
         msg = MIMEMultipart()
-        msg["From"] = self.sender_email
+        msg["From"] = self.from_email
         msg["To"] = to_email
         msg["Subject"] = subject
         msg.attach(MIMEText(body, "plain", "utf-8"))
