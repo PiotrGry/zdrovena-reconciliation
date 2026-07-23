@@ -108,6 +108,18 @@ class TestPaczkomatShipment:
         # Default parcel template
         assert sent["parcels"] == [{"template": "small"}]
 
+    def test_explicit_parcels_replace_template_fallback(self):
+        client = InPostClient(_TOKEN, _ORG)
+        parcels = [{"template": "medium"}, {"template": "large"}]
+        with patch.object(
+            client._session,
+            "post",
+            return_value=_ok_response({"id": "p-multi"}),
+        ) as mock_post:
+            client.create_paczkomat_shipment(**self._kwargs(), parcels=parcels)
+
+        assert mock_post.call_args.kwargs["json"]["parcels"] == parcels
+
     def test_4xx_raises_inpost_error(self):
         client = InPostClient(_TOKEN, _ORG)
         with patch.object(client._session, "post", return_value=_err_response(400, "bad-target")):
@@ -195,6 +207,37 @@ class TestKurierShipment:
         sent = mock_post.call_args.kwargs["json"]
         assert sent["parcels"][0]["dimensions"]["length"] == 400
         assert sent["parcels"][0]["weight"]["amount"] == 2.5
+
+    def test_explicit_parcels_replace_single_parcel_fallback(self):
+        client = InPostClient(_TOKEN, _ORG)
+        parcels = [
+            {
+                "dimensions": {
+                    "unit": "mm",
+                    "length": 300,
+                    "width": 200,
+                    "height": 200,
+                },
+                "weight": {"unit": "kg", "amount": 6.0},
+            },
+            {
+                "dimensions": {
+                    "unit": "mm",
+                    "length": 200,
+                    "width": 150,
+                    "height": 200,
+                },
+                "weight": {"unit": "kg", "amount": 3.0},
+            },
+        ]
+        with patch.object(
+            client._session,
+            "post",
+            return_value=_ok_response({"id": "ship-multi"}),
+        ) as mock_post:
+            client.create_kurier_shipment(**self._kwargs(), parcels=parcels)
+
+        assert mock_post.call_args.kwargs["json"]["parcels"] == parcels
 
     def test_receiver_address_assembled(self):
         client = InPostClient(_TOKEN, _ORG)

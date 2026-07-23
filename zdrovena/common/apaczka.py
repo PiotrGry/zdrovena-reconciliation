@@ -228,6 +228,7 @@ class ApaczkaClient:
         width_cm: float = 20.0,
         height_cm: float = 15.0,
         depth_cm: float = 30.0,
+        shipments: list[dict[str, Any]] | None = None,
         pickup_date: str | None = None,
         pickup_from: str | None = None,
         pickup_to: str | None = None,
@@ -279,7 +280,8 @@ class ApaczkaClient:
                 },
                 "receiver": receiver_data,
             },
-            "shipment": [
+            "shipment": shipments
+            or [
                 {
                     "weight": weight_kg,
                     "dimension1": depth_cm,

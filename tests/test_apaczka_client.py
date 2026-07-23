@@ -359,6 +359,38 @@ class TestCreateShipment:
         assert order["address"]["receiver"]["country_code"] == "PL"
         assert order["shipment"][0]["shipment_type_code"] == "PACZKA"
 
+    def test_explicit_shipments_replace_single_parcel_fallback(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        shipments = [
+            {
+                "weight": 6.0,
+                "dimension1": 30.0,
+                "dimension2": 20.0,
+                "dimension3": 20.0,
+                "is_nstd": 0,
+                "shipment_type_code": "PACZKA",
+            },
+            {
+                "weight": 3.0,
+                "dimension1": 20.0,
+                "dimension2": 15.0,
+                "dimension3": 20.0,
+                "is_nstd": 0,
+                "shipment_type_code": "PACZKA",
+            },
+        ]
+        api_response = _ok_response({"status": 200, "response": {"id": "ap-multi"}})
+        with patch.object(
+            client._session,
+            "post",
+            return_value=api_response,
+        ) as mock_post:
+            client.create_shipment(**self._kwargs(), shipments=shipments)
+
+        sent_form = mock_post.call_args.kwargs["data"]
+        data = json.loads(sent_form["request"])
+        assert data["order"]["shipment"] == shipments
+
     def test_pickup_point_id_sent_as_foreign_address_id(self):
         client = ApaczkaClient(_APP_ID, _SECRET, "23", storage=MagicMock())
         api_response = _ok_response({"status": 200, "response": {"id": "ap-point"}})

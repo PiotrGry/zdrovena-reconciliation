@@ -183,6 +183,36 @@ class TestCreateShipmentCommand:
         assert "pickupPointId" not in body["input"]
         assert "credentialsId" not in body["input"] or body["input"]["credentialsId"] is None
 
+    def test_preserves_order_dependent_suggested_input_fields(self):
+        c = _mock_client()
+        suggested_input = {
+            "sender": {"name": "stale sender"},
+            "receiver": {"name": "stale receiver"},
+            "cashOnDelivery": {"amount": "125.00", "currency": "PLN"},
+            "insurance": {"amount": "500.00", "currency": "PLN"},
+        }
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(201, {"commandId": "x", "status": "IN_PROGRESS"}),
+        ) as mock_request:
+            c.create_ship_with_allegro_shipment(
+                command_id="x",
+                order_id="O1",
+                credentials_id=None,
+                sender=_SENDER,
+                receiver=_RECEIVER,
+                packages=[_PACKAGE],
+                suggested_input=suggested_input,
+            )
+
+        input_body = mock_request.call_args.kwargs["json"]["input"]
+        assert input_body["cashOnDelivery"] == suggested_input["cashOnDelivery"]
+        assert input_body["insurance"] == suggested_input["insurance"]
+        assert input_body["sender"] == _SENDER
+        assert input_body["receiver"] == _RECEIVER
+        assert suggested_input["sender"] == {"name": "stale sender"}
+
     def test_omits_delivery_method_id_when_none(self):
         """Since 2026-07-01 deliveryMethodId is optional — Allegro derives it.
 
@@ -548,10 +578,18 @@ class TestPickupProposals:
                 },
             ),
         ) as m:
-            proposals = c.get_ship_with_allegro_pickup_proposals(["ship-99"])
+            proposals = c.get_ship_with_allegro_pickup_proposals(
+                ["ship-99"],
+                ready_date="2026-07-05",
+                address=_SENDER,
+            )
         assert proposals[0]["id"] == "prop-1"
         body = m.call_args[1]["json"]
-        assert body["input"]["shipmentIds"] == ["ship-99"]
+        assert body == {
+            "shipmentIds": ["ship-99"],
+            "readyDate": "2026-07-05",
+            "address": _SENDER,
+        }
 
     def test_parses_new_nested_pickup_times(self):
         """Post-2026-07-01 shape: nested proposals[].pickupTimes[]."""
@@ -583,7 +621,11 @@ class TestPickupProposals:
             "request",
             return_value=_mock_response(200, payload),
         ):
-            proposals = c.get_ship_with_allegro_pickup_proposals(["ship-99"])
+            proposals = c.get_ship_with_allegro_pickup_proposals(
+                ["ship-99"],
+                ready_date="2026-07-05",
+                address=_SENDER,
+            )
         assert len(proposals) == 2
         assert proposals[0]["date"] == "2026-07-05"
         assert proposals[0]["minTime"] == "08:00"
@@ -611,7 +653,11 @@ class TestPickupProposals:
             }
         ]
         with patch.object(c._session, "request", return_value=_mock_response(200, payload)):
-            proposals = c.get_ship_with_allegro_pickup_proposals(["ship-99"])
+            proposals = c.get_ship_with_allegro_pickup_proposals(
+                ["ship-99"],
+                ready_date="2026-07-05",
+                address=_SENDER,
+            )
         assert len(proposals) == 1
         assert proposals[0]["id"] == "2023071210001300"
 
@@ -658,6 +704,7 @@ class TestCreatePickupCommand:
             result = c.create_ship_with_allegro_pickup(
                 command_id="pu-cmd-1",
                 shipment_ids=["ship-99"],
+                address=_SENDER,
                 pickup_time={
                     "date": "2026-07-05",
                     "minTime": "08:00",
@@ -673,6 +720,7 @@ class TestCreatePickupCommand:
             "maxTime": "12:00",
         }
         assert body["input"]["shipmentIds"] == ["ship-99"]
+        assert body["input"]["address"] == _SENDER
         # New-format must NOT include legacy field.
         assert "pickupDateProposalId" not in body["input"]
         assert "proposalItemId" not in body["input"]
@@ -695,12 +743,14 @@ class TestCreatePickupCommand:
                 command_id="pu-cmd-1",
                 proposal_item_id="prop-1",
                 shipment_ids=["ship-99"],
+                address=_SENDER,
             )
         assert result["commandId"] == "pu-cmd-1"
         body = m.call_args[1]["json"]
         assert body["commandId"] == "pu-cmd-1"
         assert body["input"]["pickupDateProposalId"] == "prop-1"
         assert body["input"]["shipmentIds"] == ["ship-99"]
+        assert body["input"]["address"] == _SENDER
 
     def test_rejects_missing_pickup_selector(self):
         c = _mock_client()
@@ -708,6 +758,7 @@ class TestCreatePickupCommand:
             c.create_ship_with_allegro_pickup(
                 command_id="pu-cmd-1",
                 shipment_ids=["ship-99"],
+                address=_SENDER,
             )
 
     def test_pickup_time_wins_over_proposal_id_when_both(self):
@@ -720,6 +771,7 @@ class TestCreatePickupCommand:
             c.create_ship_with_allegro_pickup(
                 command_id="x",
                 shipment_ids=["s"],
+                address=_SENDER,
                 pickup_time={"date": "2026-07-05", "minTime": "08:00", "maxTime": "12:00"},
                 proposal_item_id="legacy-should-be-ignored",
             )

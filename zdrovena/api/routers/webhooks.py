@@ -852,6 +852,72 @@ def _parcel_weight_and_dims(draft: dict[str, Any]) -> tuple[float, dict[str, flo
     return (total_weight if total_weight > 0 else 6.0), largest_dims
 
 
+def _parcel_items(draft: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return one physical parcel per package sent to a courier.
+
+    ``packages_breakdown`` is authoritative when its quantity matches the
+    operator-visible ``packages_count``. If the operator overrides that count,
+    keep the total gross weight and use the largest box dimensions for every
+    resulting parcel. This is conservative for dimension validation and avoids
+    silently losing product weight.
+    """
+    from zdrovena.common.inpost import _DEFAULT_DIMS, PARCEL_SPECS, pick_paczkomat_template
+
+    items: list[dict[str, Any]] = []
+    for box in draft.get("packages_breakdown") or []:
+        spec = PARCEL_SPECS.get(str(box.get("type") or ""))
+        if not spec:
+            continue
+        try:
+            quantity = max(0, int(box.get("qty", 1)))
+        except (TypeError, ValueError):
+            quantity = 1
+        for _ in range(quantity):
+            items.append(
+                {
+                    "length": float(spec["length"]),
+                    "width": float(spec["width"]),
+                    "height": float(spec["height"]),
+                    "weight_kg": float(spec["weight_kg"]),
+                    "paczkomat_template": spec.get("paczkomat_template"),
+                }
+            )
+
+    try:
+        requested_count = max(1, int(draft.get("packages_count") or len(items) or 1))
+    except (TypeError, ValueError):
+        requested_count = len(items) or 1
+
+    if items and requested_count == len(items):
+        return items
+
+    total_weight = sum(item["weight_kg"] for item in items) if items else 6.0
+    largest = max(
+        items or [_DEFAULT_DIMS],
+        key=lambda item: float(item["length"]) * float(item["width"]) * float(item["height"]),
+    )
+    weight_each = total_weight / requested_count
+    normalized: list[dict[str, Any]] = []
+    for index in range(requested_count):
+        # Put the rounding remainder into the last parcel so weight is preserved.
+        weight = round(weight_each, 2)
+        if index == requested_count - 1:
+            weight = round(total_weight - (round(weight_each, 2) * (requested_count - 1)), 2)
+        dimensions = {
+            "length": float(largest["length"]),
+            "width": float(largest["width"]),
+            "height": float(largest["height"]),
+        }
+        normalized.append(
+            {
+                **dimensions,
+                "weight_kg": weight,
+                "paczkomat_template": pick_paczkomat_template(dimensions, weight) or "large",
+            }
+        )
+    return normalized
+
+
 def _run_inpost(
     draft: dict[str, Any],
     sender: dict[str, str],
@@ -886,9 +952,10 @@ def _run_inpost(
     phone = receiver.get("phone", "")
     reference = str(draft.get("shopify_order_number", ""))
     inpost_service = "paczkomat" if draft.get("service") == "inpost_locker_standard" else "kurier"
+    parcel_items = _parcel_items(draft)
 
     if inpost_service == "paczkomat":
-        template = _parcel_template(draft)  # fix #4: correct locker size
+        template = _parcel_template(draft)  # backwards-compatible fallback
         result = client.create_paczkomat_shipment(
             receiver_first_name=first_name,
             receiver_last_name=last_name,
@@ -897,10 +964,11 @@ def _run_inpost(
             target_point=receiver.get("locker_id", ""),
             reference=reference,
             template=template,
+            parcels=[{"template": item["paczkomat_template"] or "large"} for item in parcel_items],
         )
     else:
         addr = draft.get("shipping_address") or {}
-        weight_kg, dims = _parcel_weight_and_dims(draft)  # fix #5: real dims from spec
+        weight_kg, dims = _parcel_weight_and_dims(draft)  # backwards-compatible fallback
         result = client.create_kurier_shipment(
             receiver_first_name=first_name,
             receiver_last_name=last_name,
@@ -916,6 +984,18 @@ def _run_inpost(
             reference=reference,
             weight_kg=weight_kg,
             dimensions=dims,
+            parcels=[
+                {
+                    "dimensions": {
+                        "unit": "mm",
+                        "length": int(item["length"] * 10),
+                        "width": int(item["width"] * 10),
+                        "height": int(item["height"] * 10),
+                    },
+                    "weight": {"unit": "kg", "amount": item["weight_kg"]},
+                }
+                for item in parcel_items
+            ],
         )
 
     return {
@@ -1003,6 +1083,17 @@ def _run_apaczka(
         receiver_point_id=receiver_point_id or None,
         sender=sender,
         reference=str(draft.get("shopify_order_number", "")),
+        shipments=[
+            {
+                "weight": item["weight_kg"],
+                "dimension1": item["length"],
+                "dimension2": item["width"],
+                "dimension3": item["height"],
+                "is_nstd": 0,
+                "shipment_type_code": "PACZKA",
+            }
+            for item in _parcel_items(draft)
+        ],
         pickup_date=pickup_date,
         pickup_from=pickup_from,
         pickup_to=pickup_to,
@@ -1086,42 +1177,43 @@ def _run_allegro_delivery(
 
     # Build packages per Allegro create-commands contract: FLAT dimensions, each a
     # {"value", "unit"} object; weight unit is the plural "KILOGRAMS"; type is required.
-    weight_kg, dims = _parcel_weight_and_dims(draft)
+    parcel_items = _parcel_items(draft)
     packages = [
         {
             "type": "PACKAGE",
-            "length": {"value": dims["length"], "unit": "CENTIMETER"},
-            "width": {"value": dims["width"], "unit": "CENTIMETER"},
-            "height": {"value": dims["height"], "unit": "CENTIMETER"},
-            "weight": {"value": round(weight_kg, 2), "unit": "KILOGRAMS"},
+            "length": {"value": item["length"], "unit": "CENTIMETER"},
+            "width": {"value": item["width"], "unit": "CENTIMETER"},
+            "height": {"value": item["height"], "unit": "CENTIMETER"},
+            "weight": {"value": item["weight_kg"], "unit": "KILOGRAMS"},
         }
+        for item in parcel_items
     ]
 
     # sender/receiver blocks are required by the API. Pull them from the order's
     # delivery proposal (prefilled with the buyer's address by Allegro).
     proposal = client.get_delivery_proposal(order_id)
-    sender = proposal.get("senderData") or {}
-    receiver = dict(proposal.get("receiverData") or {})
+    suggested_input = proposal.get("suggestedInput") or {}
+    sender = dict(suggested_input.get("sender") or {})
+    receiver = dict(suggested_input.get("receiver") or {})
+    if not sender or not receiver:
+        raise AllegroBusinessError(
+            detail="delivery proposal is missing suggestedInput.sender or receiver",
+            action="get_delivery_proposal",
+        )
 
     # Pickup-point / locker code lives inside the receiver block as `point`.
     pickup_point_id = (draft.get("receiver") or {}).get("locker_id") or None
     if pickup_point_id:
         receiver["point"] = pickup_point_id
 
-    # Map InPost sending mode to Allegro additionalProperties.inpost#sendingMethod.
-    # Contract per Allegro issue #9915 (https://github.com/allegro/allegro-api/issues/9915):
-    # valid enum values are parcel_locker | dispatch_order | pop | any_point.
-    # Only sent for InPost draft s; other carriers derive the field from the order.
-    _ALLEGRO_INPOST_SENDING_METHODS = {
-        "parcel_locker",
-        "dispatch_order",
-        "pop",
-        "any_point",
-    }
-    additional_properties: dict[str, Any] | None = None
+    additional_services = list(suggested_input.get("additionalServices") or [])
+    additional_properties = dict(suggested_input.get("additionalProperties") or {})
     sending_method = draft.get("allegro_sending_method")
-    if sending_method and sending_method in _ALLEGRO_INPOST_SENDING_METHODS:
-        additional_properties = {"inpost#sendingMethod": sending_method}
+    if sending_method in {"parcel_locker", "pop", "any_point"}:
+        if "sendingAtPoint" not in additional_services:
+            additional_services.append("sendingAtPoint")
+        # The current API models at-point sending as an additional service.
+        additional_properties.pop("inpost#sendingMethod", None)
 
     command_id = str(_uuid.uuid4())
 
@@ -1133,7 +1225,9 @@ def _run_allegro_delivery(
         packages=packages,
         sender=sender,
         receiver=receiver,
-        additional_properties=additional_properties,
+        suggested_input=suggested_input,
+        additional_services=additional_services,
+        additional_properties=additional_properties or None,
     )
 
     # Non-blocking: krótki polling ~3s. Jeśli create-command jeszcze IN_PROGRESS — zwracamy
@@ -1165,7 +1259,9 @@ def _run_allegro_delivery(
     pickup_ordered = False
     if pickup_date:
         try:
-            proposals = client.get_ship_with_allegro_pickup_proposals([shipment_id])
+            proposals = client.get_ship_with_allegro_pickup_proposals(
+                [shipment_id], ready_date=pickup_date, address=sender
+            )
             # Prefer new-format entries (with `date`); fall back to legacy `id`
             # (deprecated but still accepted by servers pre-2026-07-01).
             new_format = next((p for p in proposals if p.get("date")), None)
@@ -1185,6 +1281,7 @@ def _run_allegro_delivery(
                     client.create_ship_with_allegro_pickup(
                         command_id=pu_cmd,
                         shipment_ids=[shipment_id],
+                        address=sender,
                         pickup_time=pickup_time,
                     )
                 else:
@@ -1193,6 +1290,7 @@ def _run_allegro_delivery(
                     client.create_ship_with_allegro_pickup(
                         command_id=pu_cmd,
                         shipment_ids=[shipment_id],
+                        address=sender,
                         proposal_item_id=selected["id"],
                     )
                 pickup_ordered = True

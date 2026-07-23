@@ -19,23 +19,26 @@ from zdrovena.api.routers.webhooks import (
 from zdrovena.common.shipping_exceptions import CourierServerError
 
 _PROPOSAL = {
-    "senderData": {
-        "name": "Nadawca",
-        "street": "Główna 30",
-        "postalCode": "10-200",
-        "city": "Warszawa",
-        "countryCode": "PL",
-        "email": "sender@mail.com",
-        "phone": "500600700",
-    },
-    "receiverData": {
-        "name": "Jan Kowalski",
-        "street": "Testowa 1",
-        "postalCode": "00-001",
-        "city": "Warszawa",
-        "countryCode": "PL",
-        "email": "j@k.pl",
-        "phone": "600000000",
+    "suggestedInput": {
+        "sender": {
+            "name": "Nadawca",
+            "street": "Główna 30",
+            "postalCode": "10-200",
+            "city": "Warszawa",
+            "countryCode": "PL",
+            "email": "sender@mail.com",
+            "phone": "500600700",
+        },
+        "receiver": {
+            "name": "Jan Kowalski",
+            "street": "Testowa 1",
+            "postalCode": "00-001",
+            "city": "Warszawa",
+            "countryCode": "PL",
+            "email": "j@k.pl",
+            "phone": "600000000",
+        },
+        "cashOnDelivery": {"amount": "125.00", "currency": "PLN"},
     },
 }
 
@@ -134,13 +137,15 @@ class TestRunAllegroDelivery:
         assert call.kwargs["credentials_id"] == "own-agreement-42"
         assert call.kwargs["order_id"] == "ORD-1"
         # sender/receiver blocks come from the delivery proposal.
-        assert call.kwargs["sender"] == _PROPOSAL["senderData"]
-        assert call.kwargs["receiver"]["name"] == _PROPOSAL["receiverData"]["name"]
+        suggested = _PROPOSAL["suggestedInput"]
+        assert call.kwargs["sender"] == suggested["sender"]
+        assert call.kwargs["receiver"]["name"] == suggested["receiver"]["name"]
+        assert call.kwargs["suggested_input"] == suggested
         # sending_method is now mapped to additionalProperties; when None it's omitted.
         assert call.kwargs.get("additional_properties") is None
 
-    def test_maps_sending_method_to_additional_properties(self):
-        """P1-2: draft.allegro_sending_method -> additionalProperties.inpost#sendingMethod."""
+    def test_maps_at_point_sending_to_additional_service(self):
+        """At-point sending is represented by the current sendingAtPoint service."""
         client = MagicMock()
         client.get_delivery_proposal.return_value = _PROPOSAL
         client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-1"}
@@ -158,7 +163,8 @@ class TestRunAllegroDelivery:
             _run_allegro_delivery(self._draft(), MagicMock())
 
         call = client.create_ship_with_allegro_shipment.call_args
-        assert call.kwargs["additional_properties"] == {"inpost#sendingMethod": "parcel_locker"}
+        assert call.kwargs["additional_services"] == ["sendingAtPoint"]
+        assert call.kwargs["additional_properties"] is None
 
     def test_ignores_unknown_sending_method(self):
         """P1-2: unknown allegro_sending_method values are silently dropped."""
@@ -204,6 +210,32 @@ class TestRunAllegroDelivery:
         assert call.kwargs["receiver"]["point"] == "WAW01A"
         assert "pickup_point_id" not in call.kwargs
 
+    def test_passes_each_physical_package(self):
+        client = MagicMock()
+        client.get_delivery_proposal.return_value = _PROPOSAL
+        client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-1"}
+        client.wait_for_ship_with_allegro_shipment.return_value = "ship-1"
+        client.get_ship_with_allegro_shipment.return_value = {
+            "packages": [{"transportingInfo": [{"carrierId": "INPOST", "carrierWaybill": "W1"}]}]
+        }
+        client.extract_shipment_waybill.return_value = ("INPOST", "W1")
+
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client",
+            return_value=client,
+        ):
+            _run_allegro_delivery(
+                self._draft(
+                    packages_count=2,
+                    packages_breakdown=[{"type": "1-pak", "qty": 2}],
+                ),
+                MagicMock(),
+            )
+
+        packages = client.create_ship_with_allegro_shipment.call_args.kwargs["packages"]
+        assert len(packages) == 2
+        assert all(package["weight"] == {"value": 6.0, "unit": "KILOGRAMS"} for package in packages)
+
     def test_creates_pickup_new_format(self):
         """pickup_date + new-format pickupTimes -> passes pickup_time to client."""
         client = MagicMock()
@@ -233,7 +265,12 @@ class TestRunAllegroDelivery:
                 pickup_date="2026-07-05",
             )
 
-        client.get_ship_with_allegro_pickup_proposals.assert_called_once_with(["ship-42"])
+        sender = _PROPOSAL["suggestedInput"]["sender"]
+        client.get_ship_with_allegro_pickup_proposals.assert_called_once_with(
+            ["ship-42"],
+            ready_date="2026-07-05",
+            address=sender,
+        )
         client.create_ship_with_allegro_pickup.assert_called_once()
         pickup_call = client.create_ship_with_allegro_pickup.call_args
         assert pickup_call.kwargs["pickup_time"] == {
@@ -242,6 +279,7 @@ class TestRunAllegroDelivery:
             "maxTime": "12:00",
         }
         assert pickup_call.kwargs["shipment_ids"] == ["ship-42"]
+        assert pickup_call.kwargs["address"] == sender
         # Legacy field must not be passed.
         assert "proposal_item_id" not in pickup_call.kwargs
         assert result["pickup_ordered"] is True
@@ -272,6 +310,7 @@ class TestRunAllegroDelivery:
 
         pickup_call = client.create_ship_with_allegro_pickup.call_args
         assert pickup_call.kwargs["proposal_item_id"] == "prop-1"
+        assert pickup_call.kwargs["address"] == _PROPOSAL["suggestedInput"]["sender"]
         assert "pickup_time" not in pickup_call.kwargs
         assert result["pickup_ordered"] is True
 

@@ -336,6 +336,7 @@ class InPostClient:
         target_point: str,
         reference: str,
         template: str = "small",
+        parcels: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         payload = {
             "service": "inpost_locker_standard",
@@ -346,7 +347,7 @@ class InPostClient:
                 "email": receiver_email,
                 "phone": receiver_phone,
             },
-            "parcels": [{"template": template}],
+            "parcels": parcels or [{"template": template}],
             "custom_attributes": {
                 "target_point": target_point,
                 "sending_method": "dispatch_order",
@@ -369,6 +370,7 @@ class InPostClient:
         reference: str,
         weight_kg: float = 1.0,
         dimensions: dict[str, float] | None = None,
+        parcels: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         dims = dimensions or _DEFAULT_DIMS
         payload = {
@@ -388,7 +390,8 @@ class InPostClient:
                 },
             },
             "sender": sender,
-            "parcels": [
+            "parcels": parcels
+            or [
                 {
                     "dimensions": {
                         "unit": "mm",

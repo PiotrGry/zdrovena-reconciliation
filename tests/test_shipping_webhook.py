@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 
 from zdrovena.api.main import app
-from zdrovena.api.routers.webhooks import _pick_courier, _verify_shopify_hmac
+from zdrovena.api.routers.webhooks import _parcel_items, _pick_courier, _verify_shopify_hmac
 from zdrovena.common.shipping_store import ShippingStore
 from zdrovena.common.shopify_dedup_store import ShopifyDedupStore
 
@@ -102,6 +102,38 @@ class TestPickCourier:
     def test_case_insensitive(self):
         order = {"shipping_lines": [{"title": "INPOST PACZKOMAT"}]}
         assert _pick_courier(order) == "inpost"
+
+
+class TestParcelItems:
+    def test_expands_each_physical_package_from_breakdown(self):
+        items = _parcel_items(
+            {
+                "packages_count": 3,
+                "packages_breakdown": [
+                    {"type": "1-pak", "qty": 2},
+                    {"type": "pół-pak", "qty": 1},
+                ],
+            }
+        )
+
+        assert len(items) == 3
+        assert [item["weight_kg"] for item in items] == [6.0, 6.0, 3.0]
+        assert items[0]["length"] == 30.0
+        assert items[2]["length"] == 20.0
+
+    def test_operator_count_override_preserves_total_weight(self):
+        items = _parcel_items(
+            {
+                "packages_count": 3,
+                "packages_breakdown": [{"type": "2-pak", "qty": 1}],
+            }
+        )
+
+        assert len(items) == 3
+        assert sum(item["weight_kg"] for item in items) == 12.0
+        assert all(
+            (item["length"], item["width"], item["height"]) == (40.0, 30.0, 20.0) for item in items
+        )
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -1190,6 +1222,24 @@ class TestRunInpost:
         assert result["pickup_ordered"] is False
         mock_disp.assert_not_called()
 
+    def test_kurier_passes_each_physical_parcel(self):
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        draft = {
+            **_KURIER_DRAFT,
+            "packages_count": 2,
+            "packages_breakdown": [{"type": "1-pak", "qty": 2}],
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_ship:
+                mock_ship.return_value = {"id": "ship-2", "tracking_number": "TRK2"}
+                _run_inpost(draft, _SENDER)
+
+        parcels = mock_ship.call_args.kwargs["parcels"]
+        assert len(parcels) == 2
+        assert parcels[0]["weight"] == {"unit": "kg", "amount": 6.0}
+        assert parcels[0]["dimensions"]["length"] == 300
+
     def test_paczkomat_creates_shipment(self):
         from zdrovena.api.routers.webhooks import _run_inpost
 
@@ -1253,6 +1303,46 @@ class TestRunApaczka:
         assert result["courier_draft_id"] == "ap-1"
         assert result["tracking_number"] == "WAY001"
         assert result["status"] == "created"
+
+    def test_passes_each_physical_parcel(self):
+        from zdrovena.api.routers.webhooks import _run_apaczka
+
+        draft = {
+            "id": "d-ap-multi",
+            "shopify_order_number": "1060",
+            "courier": "apaczka",
+            "service": "apaczka",
+            "apaczka_service_id": "53",
+            "packages_count": 2,
+            "packages_breakdown": [{"type": "1-pak", "qty": 2}],
+            "receiver": {
+                "first_name": "Piotr",
+                "last_name": "W",
+                "email": "p@w.pl",
+                "phone": "800300400",
+                "locker_id": "",
+            },
+            "shipping_address": {
+                "street": "Krakowska 24",
+                "city": "Kraków",
+                "post_code": "30-001",
+            },
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship:
+                mock_ship.return_value = {"id": "ap-multi", "waybill_number": "WAY-MULTI"}
+                _run_apaczka(draft, _SENDER, object())
+
+        shipments = mock_ship.call_args.kwargs["shipments"]
+        assert len(shipments) == 2
+        assert shipments[0] == {
+            "weight": 6.0,
+            "dimension1": 30.0,
+            "dimension2": 20.0,
+            "dimension3": 20.0,
+            "is_nstd": 0,
+            "shipment_type_code": "PACZKA",
+        }
 
     def test_passes_pickup_point_to_apaczka(self):
         from zdrovena.api.routers.webhooks import _run_apaczka

@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from copy import deepcopy
 from http import HTTPStatus
 from typing import Any, Protocol
 
@@ -331,6 +332,10 @@ class AllegroClient:
             "Authorization": f"Bearer {token}",
             "Accept": _ACCEPT_HEADER,
         }
+        if json_body is not None:
+            # Allegro validates the vendor media type on write endpoints as well
+            # as on responses. ``requests`` would otherwise use application/json.
+            headers["Content-Type"] = _ACCEPT_HEADER
         if extra_headers:
             headers.update(extra_headers)
 
@@ -547,6 +552,7 @@ class AllegroClient:
         additional_services: list[str] | None = None,
         additional_properties: dict[str, Any] | None = None,
         delivery_method_id: str | None = None,
+        suggested_input: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """POST /shipment-management/shipments/create-commands.
 
@@ -574,12 +580,18 @@ class AllegroClient:
             services. Kept accepting an explicit value for callers that still
             manage their own agreements manually.
         """
-        input_body: dict[str, Any] = {
-            "sender": sender,
-            "receiver": receiver,
-            "referenceNumber": order_id,
-            "packages": packages,
-        }
+        # Start from Allegro's live proposal. Besides the address it contains
+        # order-dependent fields such as cashOnDelivery and insurance which must
+        # not disappear when the operator creates a shipment.
+        input_body: dict[str, Any] = deepcopy(suggested_input or {})
+        input_body.update(
+            {
+                "sender": sender,
+                "receiver": receiver,
+                "referenceNumber": order_id,
+                "packages": packages,
+            }
+        )
         if delivery_method_id:
             # Kept for callers using own agreements; Allegro Standard should
             # simply omit this and let the server pick.
@@ -660,7 +672,11 @@ class AllegroClient:
         return (carrier, waybill)
 
     def get_ship_with_allegro_pickup_proposals(
-        self, shipment_ids: list[str]
+        self,
+        shipment_ids: list[str],
+        *,
+        ready_date: str,
+        address: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """POST /shipment-management/pickup-proposals — available pickup slots.
 
@@ -691,7 +707,11 @@ class AllegroClient:
         """
         data = self._post(
             "/shipment-management/pickup-proposals",
-            {"input": {"shipmentIds": list(shipment_ids)}},
+            {
+                "shipmentIds": list(shipment_ids),
+                "readyDate": ready_date,
+                "address": address,
+            },
         )
         return _normalize_pickup_proposals(data)
 
@@ -700,6 +720,7 @@ class AllegroClient:
         *,
         command_id: str,
         shipment_ids: list[str],
+        address: dict[str, Any],
         pickup_time: dict[str, str] | None = None,
         proposal_item_id: str | None = None,
     ) -> dict[str, Any]:
@@ -719,7 +740,10 @@ class AllegroClient:
                 "create_ship_with_allegro_pickup requires either pickup_time "
                 "(new format) or proposal_item_id (legacy)."
             )
-        input_body: dict[str, Any] = {"shipmentIds": list(shipment_ids)}
+        input_body: dict[str, Any] = {
+            "shipmentIds": list(shipment_ids),
+            "address": address,
+        }
         if pickup_time:
             input_body["pickupTime"] = dict(pickup_time)
         else:
