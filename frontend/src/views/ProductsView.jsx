@@ -31,7 +31,10 @@ export default function ProductsView() {
         }
     }, [getToken, activeOnly])
 
-    useEffect(() => { loadProducts() }, [loadProducts])
+    useEffect(() => {
+        const timer = window.setTimeout(() => { void loadProducts() }, 0)
+        return () => window.clearTimeout(timer)
+    }, [loadProducts])
 
     const filtered = items.filter(p =>
         !search ||

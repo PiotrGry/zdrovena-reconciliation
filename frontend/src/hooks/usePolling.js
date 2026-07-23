@@ -9,7 +9,10 @@ import { useEffect, useRef } from 'react'
 //  - callback trzymany w ref, żeby zmiana referencji funkcji nie restartowała interwału.
 export function usePolling(callback, intervalMs, { enabled = true } = {}) {
     const cbRef = useRef(callback)
-    cbRef.current = callback
+
+    useEffect(() => {
+        cbRef.current = callback
+    }, [callback])
 
     useEffect(() => {
         if (!enabled) return

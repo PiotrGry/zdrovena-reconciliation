@@ -53,7 +53,10 @@ export default function SalesView() {
         }
     }, [getToken, year, month])
 
-    useEffect(() => { loadInvoices() }, [loadInvoices])
+    useEffect(() => {
+        const timer = window.setTimeout(() => { void loadInvoices() }, 0)
+        return () => window.clearTimeout(timer)
+    }, [loadInvoices])
     usePolling(() => loadInvoices({ silent: true }), 20_000)
 
     const STATUS_LABEL = {

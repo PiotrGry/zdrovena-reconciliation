@@ -186,24 +186,34 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
     const [ackMismatch, setAckMismatch] = useState(false)
 
     useEffect(() => {
-        // R4.3/#135: a fresh preview load (draft change OR reload) must clear any
-        // prior mismatch acknowledgement — consent must never carry across drafts
-        // or across preview versions of the same draft.
-        setAckMismatch(false)
-        setLoading(true)
-        setError(null)
         const ctrl = new AbortController()
-        getToken().then(token =>
-            fetchJson(`/api/shipping/drafts/${draft.id}/invoice-preview`, {
-                token,
-                signal: ctrl.signal,
+        const timer = window.setTimeout(() => {
+            if (ctrl.signal.aborted) return
+
+            // R4.3/#135: a fresh preview load (draft change OR reload) must clear
+            // prior mismatch acknowledgement — consent must never carry across
+            // drafts or across preview versions of the same draft.
+            setAckMismatch(false)
+            setLoading(true)
+            setError(null)
+            void getToken().then(token =>
+                fetchJson(`/api/shipping/drafts/${draft.id}/invoice-preview`, {
+                    token,
+                    signal: ctrl.signal,
+                })
+            ).then(data => {
+                if (!ctrl.signal.aborted) { setPreview(data); setLoading(false) }
+            }).catch(e => {
+                if (e.name !== 'AbortError' && !ctrl.signal.aborted) {
+                    setError(e.message)
+                    setLoading(false)
+                }
             })
-        ).then(data => {
-            if (!ctrl.signal.aborted) { setPreview(data); setLoading(false) }
-        }).catch(e => {
-            if (e.name !== 'AbortError' && !ctrl.signal.aborted) { setError(e.message); setLoading(false) }
-        })
-        return () => ctrl.abort()
+        }, 0)
+        return () => {
+            window.clearTimeout(timer)
+            ctrl.abort()
+        }
     }, [draft.id, getToken])
 
     async function handleCreate() {
@@ -481,24 +491,29 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
 function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, onReviewDraft, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen, getToken, onDraftUpdate, columnGridTemplate, tableMinWidth }) {
     const { t, lang } = useT()
     const T = t[lang]
-    const [open, setOpen] = useState(false)
-    const [selectedApaczkaService, setSelectedApaczkaService] = useState(draft.apaczka_service_id || '')
-    const [editingApaczkaService, setEditingApaczkaService] = useState(
-        draft.shipping_service_match_status !== 'auto_matched'
+    const [open, setOpen] = useState(forceOpen ?? false)
+    const apaczkaServiceBaseline = draft.apaczka_service_id || ''
+    const [apaczkaServiceEdit, setApaczkaServiceEdit] = useState(null)
+    const selectedApaczkaService = (
+        apaczkaServiceEdit?.baseline === apaczkaServiceBaseline
+            ? apaczkaServiceEdit.value
+            : apaczkaServiceBaseline
+    )
+    const matchStatusBaseline = draft.shipping_service_match_status || ''
+    const [editingOverride, setEditingOverride] = useState(null)
+    const editingApaczkaService = (
+        editingOverride?.baseline === matchStatusBaseline
+            ? editingOverride.value
+            : matchStatusBaseline !== 'auto_matched'
     )
     const [showInvoicePanel, setShowInvoicePanel] = useState(false)
-    const [localInvoiceId, setLocalInvoiceId] = useState(draft.fakturownia_invoice_id || null)
-
-    useEffect(() => {
-        if (forceOpen !== undefined && forceOpen !== null) setOpen(forceOpen)
-    }, [forceOpen])
-    useEffect(() => {
-        setSelectedApaczkaService(draft.apaczka_service_id || '')
-        setEditingApaczkaService(draft.shipping_service_match_status !== 'auto_matched')
-    }, [draft.apaczka_service_id, draft.id, draft.shipping_service_match_status])
-    useEffect(() => {
-        setLocalInvoiceId(draft.fakturownia_invoice_id || null)
-    }, [draft.fakturownia_invoice_id, draft.id])
+    const invoiceIdBaseline = draft.fakturownia_invoice_id || null
+    const [invoiceIdOverride, setInvoiceIdOverride] = useState(null)
+    const localInvoiceId = (
+        invoiceIdOverride?.baseline === invoiceIdBaseline
+            ? invoiceIdOverride.value
+            : invoiceIdBaseline
+    )
     const [pickupModal, setPickupModal] = useState(null) // 'execute' | 'pickup' | null
     const isBusy = busy.has(draft.id)
     const matchedApaczkaService = apaczkaServices.find(
@@ -690,7 +705,10 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
                                     <select
                                         value={selectedApaczkaService}
-                                        onChange={e => setSelectedApaczkaService(e.target.value)}
+                                        onChange={e => setApaczkaServiceEdit({
+                                            baseline: apaczkaServiceBaseline,
+                                            value: e.target.value,
+                                        })}
                                         disabled={isBusy}
                                     >
                                         <option value="">{T.sh_apaczka_service_placeholder ?? '— wybierz serwis —'}</option>
@@ -718,7 +736,10 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                     {canManage && (
                                         <button
                                             className="btn btn-ghost"
-                                            onClick={() => setEditingApaczkaService(true)}
+                                            onClick={() => setEditingOverride({
+                                                baseline: matchStatusBaseline,
+                                                value: true,
+                                            })}
                                             disabled={isBusy}
                                         >
                                             Zmień
@@ -776,7 +797,10 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                             onClose={() => setShowInvoicePanel(false)}
                             onCreated={result => {
                                 if (result.fakturownia_invoice_id) {
-                                    setLocalInvoiceId(result.fakturownia_invoice_id)
+                                    setInvoiceIdOverride({
+                                        baseline: invoiceIdBaseline,
+                                        value: result.fakturownia_invoice_id,
+                                    })
                                     if (onDraftUpdate) onDraftUpdate()
                                 }
                                 setShowInvoicePanel(false)
@@ -1024,7 +1048,10 @@ export default function ShippingView() {
         }
     }, [getToken, load, pushToast])
 
-    useEffect(() => { load() }, [load])
+    useEffect(() => {
+        const timer = window.setTimeout(() => { void load() }, 0)
+        return () => window.clearTimeout(timer)
+    }, [load])
 
     // Reaktywność: nowe drafty z webhooków Shopify / pollera Allegro pojawiają się
     // w ≤20 s bez F5. Visibility-aware — nie odpytuje, gdy karta jest w tle.
@@ -1466,7 +1493,7 @@ export default function ShippingView() {
                 )}
                 {!loading && visibleDrafts.map(draft => (
                     <DraftRow
-                        key={draft.id}
+                        key={`${draft.id}:${expandAll ?? 'individual'}`}
                         draft={draft}
                         busy={busy}
                         canManage={canManage}

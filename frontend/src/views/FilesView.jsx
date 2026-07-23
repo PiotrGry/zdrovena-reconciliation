@@ -29,6 +29,11 @@ function matchesFilter(name, filter) {
   return true;
 }
 
+function SortIndicator({ active, ascending }) {
+  if (!active) return null;
+  return <span className="sort-ind">{ascending ? "↑" : "↓"}</span>;
+}
+
 export default function FilesView() {
   const { getToken } = useAuth();
   const { t, lang } = useT();
@@ -45,7 +50,7 @@ export default function FilesView() {
   const [toast, setToast] = useState(null);
   const [pipelineSteps, setPipelineSteps] = useState([]);
   const fileInput = useRef(null);
-  const loadedRef = useRef(false);
+  const initialLoadRef = useRef(null);
 
 
   const showToast = (msg) => {
@@ -74,6 +79,17 @@ export default function FilesView() {
   );
 
   useEffect(() => {
+    initialLoadRef.current = loadFiles;
+  }, [loadFiles]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void initialLoadRef.current?.("");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
     if (!FEATURES.kpi_pipeline) return;
     const fetchPipelineState = async () => {
       try {
@@ -93,13 +109,6 @@ export default function FilesView() {
     };
     fetchPipelineState();
   }, [getToken]);
-
-  
-  // Load on mount
-  if (!loadedRef.current) {
-    loadedRef.current = true;
-    loadFiles("");
-  }
 
   const deleteFile = async (key) => {
     const name = key.split("/").pop();
@@ -229,11 +238,6 @@ export default function FilesView() {
       if (va > vb) return sortAsc ? 1 : -1;
       return 0;
     });
-
-  const SortInd = ({ k }) =>
-    sortKey === k ? (
-      <span className="sort-ind">{sortAsc ? "↑" : "↓"}</span>
-    ) : null;
 
   return (
     <div
@@ -421,21 +425,24 @@ export default function FilesView() {
             <thead>
               <tr>
                 <th className="sortable" onClick={() => toggleSort("name")}>
-                  {T.col_name} <SortInd k="name" />
+                  {T.col_name}{" "}
+                  <SortIndicator active={sortKey === "name"} ascending={sortAsc} />
                 </th>
                 <th
                   className="sortable"
                   onClick={() => toggleSort("size")}
                   style={{ width: 110 }}
                 >
-                  {T.col_size} <SortInd k="size" />
+                  {T.col_size}{" "}
+                  <SortIndicator active={sortKey === "size"} ascending={sortAsc} />
                 </th>
                 <th
                   className="sortable"
                   onClick={() => toggleSort("modified")}
                   style={{ width: 160 }}
                 >
-                  {T.col_modified} <SortInd k="modified" />
+                  {T.col_modified}{" "}
+                  <SortIndicator active={sortKey === "modified"} ascending={sortAsc} />
                 </th>
                 <th style={{ width: 90 }} />
               </tr>
