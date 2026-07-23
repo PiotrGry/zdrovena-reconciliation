@@ -277,13 +277,23 @@ jobs:
   resolve-urls:
     name: Resolve staging URLs
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
+    # The fallback for backend-only PRs queries the stable SWA production
+    # hostname. Reuse the staging OIDC subject configured for the CI identity.
+    environment: staging
     needs: [detect-changes, deploy-backend, deploy-frontend]
     if: always() && !failure() && !cancelled()
     outputs:
       swa-url: ${{ steps.urls.outputs.swa_url }}
       fake-provider-url: ${{ steps.urls.outputs.fake_provider_url }}
     steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       - name: Resolve URLs
         id: urls
         run: |
@@ -300,7 +310,15 @@ jobs:
           if [[ "${{ needs.deploy-frontend.result }}" == "success" ]]; then
             SWA_URL="${{ needs.deploy-frontend.outputs.swa-url }}"
           else
-            SWA_URL="https://icy-water-0e2b04d03-${{ github.event.pull_request.number }}.westeurope.7.azurestaticapps.net"
+            SWA_HOST=$(az staticwebapp show \
+              --name "${{ secrets.AZURE_SWA_NAME }}" \
+              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              --query defaultHostname -o tsv)
+            if [[ -z "$SWA_HOST" ]]; then
+              echo "::error::Could not resolve the stable SWA hostname for a backend-only release."
+              exit 1
+            fi
+            SWA_URL="https://$SWA_HOST"
           fi
           echo "swa_url=$SWA_URL" >> $GITHUB_OUTPUT
           echo "fake_provider_url=$FAKE_PROVIDER_URL" >> $GITHUB_OUTPUT
