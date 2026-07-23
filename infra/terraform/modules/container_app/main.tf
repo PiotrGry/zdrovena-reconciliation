@@ -97,7 +97,11 @@ resource "azurerm_container_app" "this" {
       }
 
       dynamic "env" {
-        for_each = var.applicationinsights_connection_string != null ? [1] : []
+        # Only the connection-string value is sensitive. Its presence is not.
+        # Without nonsensitive(), Terraform taints the whole dynamic block,
+        # including the constant env name, and plans a no-op Container App
+        # revision on every apply.
+        for_each = nonsensitive(var.applicationinsights_connection_string != null) ? [1] : []
         content {
           name  = "APPLICATIONINSIGHTS_CONNECTION_STRING"
           value = var.applicationinsights_connection_string
@@ -105,7 +109,7 @@ resource "azurerm_container_app" "this" {
       }
 
       dynamic "env" {
-        for_each = var.applicationinsights_connection_string != null ? [1] : []
+        for_each = nonsensitive(var.applicationinsights_connection_string != null) ? [1] : []
         content {
           # OpenTelemetry service.name → Application Insights AppRoleName.
           name  = "OTEL_SERVICE_NAME"

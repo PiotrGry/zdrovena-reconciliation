@@ -937,7 +937,7 @@ class MonthCloseOrchestrator:
                 + "\n".join(f"  • {i}" for i in issues)
             )
         if self.dry_run:
-            self.out.info(f"[DRY-RUN] Would send email to {ACCOUNTANT_EMAIL}")
+            self.out.info("[DRY-RUN] Would send email to accountant")
             self._mark_step_done("Email (dry-run)")
             return
         smtp_pass = self._get_secret(KEYCHAIN_SERVICE_ZOHO_SMTP)

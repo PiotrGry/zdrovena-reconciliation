@@ -124,6 +124,13 @@ jobs:
             .
           echo "image=$IMAGE:staging-${{ github.sha }}" >> $GITHUB_OUTPUT
 
+      - name: Verify packaged CLI entrypoint
+        env:
+          IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:staging-${{ github.sha }}
+        run: |
+          docker pull "$IMAGE"
+          docker run --rm --entrypoint zdrovena "$IMAGE" --version
+
   # ── 2. Deploy backend to staging ──────────────────────────────────────────
   deploy-backend:
     name: Deploy backend to staging

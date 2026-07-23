@@ -354,6 +354,7 @@ class TestStep7Email:
         orch._step_7_email()
         assert orch.report.email_sent is False
         assert any("Email" in s for s in orch.report.steps_completed)
+        orch.out.info.assert_called_once_with("[DRY-RUN] Would send email to accountant")
 
     def test_errors_block_email(self):
         orch = _make_orchestrator()

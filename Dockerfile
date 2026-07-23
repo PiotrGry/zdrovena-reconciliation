@@ -8,6 +8,12 @@ RUN pip install --no-cache-dir ".[api,cloud,ksef]"
 
 # Copy source last — changes here don't invalidate the pip layer
 COPY zdrovena/ zdrovena/
+# The dependency layer above is built before the package sources exist, so it
+# installs the console-script metadata but cannot install the `zdrovena`
+# package itself. Uvicorn happens to import from WORKDIR, while the
+# `/usr/local/bin/zdrovena` entrypoint used by Container App Jobs does not.
+# Install the already-resolved local project without touching dependencies.
+RUN pip install --no-cache-dir --no-deps .
 
 ENV APP_ENV=prod
 EXPOSE 8000

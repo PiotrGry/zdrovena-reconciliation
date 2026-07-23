@@ -48,6 +48,7 @@ class TestPiiMasking:
             log_event(
                 "draft.created",
                 order_number="1001",
+                actor="operator@example.com",
                 email="jan@example.com",
                 phone="600100200",
                 first_name="Jan",
@@ -57,6 +58,7 @@ class TestPiiMasking:
         # operational, non-identifying → kept
         assert e["order_number"] == "1001"
         # high-risk PII → masked
+        assert e["actor"] == "***"
         assert e["email"] == "***"
         assert e["phone"] == "***"
         assert e["first_name"] == "***"
