@@ -2,10 +2,20 @@ name: Deploy Production (reusable)
 
 on:
   workflow_call:
+    inputs:
+      backend_changed:
+        description: "Deploy the backend API and poller"
+        type: boolean
+        default: true
+      frontend_changed:
+        description: "Deploy the frontend Static Web App"
+        type: boolean
+        default: true
 
 jobs:
   promote:
     name: Promote image to production
+    if: inputs.backend_changed
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -45,6 +55,7 @@ jobs:
 
   deploy-prod:
     name: Deploy to production
+    if: inputs.backend_changed
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: promote
@@ -90,17 +101,6 @@ jobs:
           RG: zdrovena-rg
         run: bash scripts/ci/wait-containerapp.sh "$PROD_APP" "$RG" 36 10
 
-      - name: Production health check
-        env:
-          CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
-          PROD_APP: zdrovena-api-prod
-          RG: zdrovena-rg
-        run: |
-          FQDN=$(az containerapp show \
-            --name "$PROD_APP" --resource-group "$RG" \
-            --query properties.configuration.ingress.fqdn -o tsv)
-          bash scripts/ci/smoke-test.sh "https://$FQDN" "$CLIENT_ID"
-
       - name: Link SWA backend
         env:
           PROD_APP: zdrovena-api-prod
@@ -112,21 +112,10 @@ jobs:
             "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             "${{ secrets.AZURE_LOCATION }}"
 
-      - name: SWA end-to-end smoke test
-        env:
-          CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
-          SWA_NAME: ${{ secrets.AZURE_SWA_NAME }}
-          SWA_RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
-        run: |
-          SWA_URL=$(az staticwebapp show \
-            --name "$SWA_NAME" --resource-group "$SWA_RG" \
-            --query defaultHostname -o tsv)
-          bash scripts/ci/smoke-test.sh "https://$SWA_URL" "$CLIENT_ID"
-
   # Frontend deploy (SWA production) runs in parallel to backend promote+deploy.
-  # Both must succeed before semantic release tags the version.
   deploy-frontend:
     name: Deploy frontend to SWA (production)
+    if: inputs.frontend_changed
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
@@ -182,7 +171,7 @@ jobs:
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             --query properties.apiKey -o tsv)
           echo "::add-mask::$TOKEN"
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to SWA production
         # NOTE: skip_app_build:true + app_location:frontend/dist is intentional —
@@ -198,8 +187,57 @@ jobs:
           output_location: ""
           skip_app_build: true
 
+  # Wait for both independently deployable areas before testing the public SWA
+  # route. Linking the backend and SWA propagation are eventually consistent.
+  swa-smoke:
+    name: SWA end-to-end smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [deploy-prod, deploy-frontend]
+    if: >-
+      always() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled') &&
+      (inputs.backend_changed || inputs.frontend_changed)
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Azure login (OIDC)
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Smoke public SWA route with propagation retry
+        env:
+          CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
+          SWA_NAME: ${{ secrets.AZURE_SWA_NAME }}
+          SWA_RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        run: |
+          SWA_URL=$(az staticwebapp show \
+            --name "$SWA_NAME" --resource-group "$SWA_RG" \
+            --query defaultHostname -o tsv)
+          for attempt in 1 2 3 4 5 6; do
+            echo "SWA smoke attempt $attempt/6"
+            if bash scripts/ci/smoke-test.sh "https://$SWA_URL" "$CLIENT_ID"; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 6 ]]; then
+              echo "SWA/backend link may still be propagating; retrying in 10s."
+              sleep 10
+            fi
+          done
+          echo "::error::SWA smoke failed after propagation retries."
+          exit 1
+
   post-deploy-verify:
     name: Post-deploy verify + auto-rollback
+    if: inputs.backend_changed
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [deploy-prod]
@@ -274,7 +312,12 @@ jobs:
     name: Create GitHub release
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [post-deploy-verify, deploy-frontend]
+    needs: [post-deploy-verify, deploy-frontend, swa-smoke]
+    if: >-
+      always() &&
+      needs.swa-smoke.result == 'success' &&
+      (needs.post-deploy-verify.result == 'success' || needs.post-deploy-verify.result == 'skipped') &&
+      (needs.deploy-frontend.result == 'success' || needs.deploy-frontend.result == 'skipped')
     permissions:
       contents: write
     steps:
