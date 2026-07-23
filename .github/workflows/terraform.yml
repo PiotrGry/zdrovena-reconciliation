@@ -44,10 +44,9 @@ jobs:
     name: Plan
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Dependabot-triggered workflows cannot access the Azure secrets needed by
-    # azure/login. Skipping the cloud plan avoids a guaranteed auth failure for
-    # GitHub Actions dependency bumps that only edit workflow files.
-    if: (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]') || github.event_name == 'workflow_dispatch'
+    # Dependabot-triggered workflows cannot access Azure secrets. They still run
+    # fmt and validate with an offline init; authenticated login and plan steps
+    # are skipped individually below.
     # OIDC subject claim must match an existing federated credential on the
     # gha SP. The `staging` env's federated cred (subject :environment:staging)
     # exists; the default `:pull_request` subject does not. Reuse staging.
@@ -63,6 +62,7 @@ jobs:
           terraform_wrapper: false
 
       - uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        if: github.actor != 'dependabot[bot]'
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -74,6 +74,7 @@ jobs:
       # invalid control character in URL). Trim once and export to GITHUB_ENV
       # so all later terraform steps see clean values.
       - name: Sanitize ARM credentials
+        if: github.actor != 'dependabot[bot]'
         env:
           RAW_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           RAW_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -100,15 +101,25 @@ jobs:
       - name: Terraform fmt check
         run: terraform fmt -check -recursive
 
+      - name: Terraform init (offline for Dependabot)
+        if: github.actor == 'dependabot[bot]'
+        run: terraform init -backend=false -input=false
+
       - name: Terraform init
+        if: github.actor != 'dependabot[bot]'
         # ARM_* env vars are set by Sanitize step via $GITHUB_ENV (trimmed).
         run: terraform init -backend-config=backend.hcl -input=false
 
       - name: Terraform validate
         run: terraform validate -no-color
 
+      - name: Skip authenticated plan for Dependabot
+        if: github.actor == 'dependabot[bot]'
+        run: echo "Dependabot pull requests do not receive Azure secrets, so this workflow runs offline terraform validation only."
+
       - name: Terraform plan
         id: plan
+        if: github.actor != 'dependabot[bot]'
         # exit 2 = changes pending (not a failure here — CI gate decides)
         # exit 1 = real error
         # ARM_* and most TF_VAR_* are inherited from $GITHUB_ENV (sanitized).
@@ -126,7 +137,7 @@ jobs:
           [ $exitcode -eq 1 ] && exit 1 || exit 0
 
       - name: Upload plan artifact
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: tfplan-${{ github.run_id }}
@@ -134,7 +145,7 @@ jobs:
           retention-days: 5
 
       - name: Comment plan on PR
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
