@@ -7,13 +7,18 @@ Resources in scope (all in `monitoring.tf`):
 
 | Resource | Fires when | Signal |
 |---|---|---|
-| `azurerm_monitor_metric_alert.high_error_rate` | > 5 failed requests / 5 min | App Insights metric `requests/failed` |
-| `azurerm_monitor_metric_alert.high_latency` | avg response > 3000 ms / 5 min | App Insights metric `requests/duration` |
-| `azurerm_monitor_scheduled_query_rules_alert_v2.dlq_backlog` | any persisted `dlq.enqueued` / 15 min | KQL over App Insights `traces` |
+| `azurerm_monitor_metric_alert.high_error_rate` | > 5 failed production requests / 5 min | App Insights metric `requests/failed`, role `zdrovena-api-prod` |
+| `azurerm_monitor_metric_alert.high_latency` | production avg response > 3000 ms / 5 min | App Insights metric `requests/duration`, role `zdrovena-api-prod` |
+| `azurerm_monitor_scheduled_query_rules_alert_v2.dlq_backlog` | any production `dlq.enqueued` / 15 min | KQL over App Insights `traces`, role `zdrovena-api-prod` |
 
 All three send to **one** action group — `azurerm_monitor_action_group.ops`
 (`email_receiver` → `var.ops_alert_email`). If that variable is empty or
 malformed, `terraform plan` fails (validation in `variables.tf`).
+
+Staging deliberately shares the Application Insights component so test
+telemetry remains queryable, but every alert is filtered by
+`cloud/roleName = zdrovena-api-prod`. Expected staging 401/403, controlled 5xx
+and latency probes must never send production alert e-mails.
 
 ---
 
@@ -75,9 +80,8 @@ terraform apply monitoring.tfplan
 
 Expected P0 plan changes:
 
-- update KQL in `azurerm_monitor_scheduled_query_rules_alert_v2.dlq_backlog`,
-- add `OTEL_SERVICE_NAME` to API prod, API staging and Allegro poller,
-- create new Container App revisions only where Azure requires them,
+- add production `cloud/roleName` dimensions to failed-request and latency alerts,
+- add the production role filter to the DLQ KQL rule,
 - no destructive replacement of monitoring, storage or identity resources.
 
 `ops_alert_email` must already be set in `terraform.tfvars`. Stop if the plan
@@ -98,7 +102,7 @@ PROBE_ID="e2e-monitoring-$(date -u +%Y%m%d%H%M%S)"
 CID="monitoring-${PROBE_ID}"
 ```
 
-### Request telemetry i alert failed requests
+### Request telemetry and controlled 5xx
 
 Najpierw potwierdź pojedynczy request:
 
@@ -109,16 +113,13 @@ curl -fsS \
   "$STAGING_API/__test__/monitoring/request?response_status=200"
 ```
 
-Następnie wygeneruj sześć kontrolowanych odpowiedzi 500 — próg alertu wynosi
-`Count > 5` w oknie 5 minut:
+Następnie wygeneruj jedną kontrolowaną odpowiedź 500:
 
 ```bash
-for i in 1 2 3 4 5 6; do
-  curl -sS -o /dev/null -w "%{http_code}\n" \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "X-Correlation-ID: $CID-5xx-$i" \
-    "$STAGING_API/__test__/monitoring/request?response_status=500"
-done
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Correlation-ID: $CID-5xx" \
+  "$STAGING_API/__test__/monitoring/request?response_status=500"
 ```
 
 Sprawdź requesty po czasie potrzebnym na eksport:
@@ -133,24 +134,24 @@ AppRequests
 | order by TimeGenerated desc
 ```
 
-### Alert latency
+Oba requesty muszą mieć `AppRoleName == "zdrovena-api-staging"`. Żaden z nich
+nie może uruchomić produkcyjnego alertu.
 
-Wykonaj kilka requestów z kontrolowanym opóźnieniem. Użyj osobnego, spokojnego
-okna testowego, ponieważ reguła mierzy średnią wszystkich requestów:
+### Telemetria latency
+
+Wykonaj pojedynczy request z kontrolowanym opóźnieniem:
 
 ```bash
-for i in 1 2 3 4 5 6; do
-  curl -fsS -o /dev/null \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "X-Correlation-ID: $CID-latency-$i" \
-    "$STAGING_API/__test__/monitoring/request?delay_ms=3500"
-done
+curl -fsS -o /dev/null \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Correlation-ID: $CID-latency" \
+  "$STAGING_API/__test__/monitoring/request?delay_ms=3500"
 ```
 
-### Alert DLQ
+Potwierdź `DurationMs >= 3500` w `AppRequests`. Stagingowa latencja jest
+wykluczona z produkcyjnego alertu.
 
-Goal: prove the DLQ alert fires and the e-mail arrives, without corrupting real
-data.
+### Staging DLQ telemetry
 
 1. Użyj wyłącznie **staging**.
 2. Dodaj kontrolowany wpis przez chroniony endpoint testowy. Endpoint zapisuje
@@ -171,10 +172,10 @@ data.
      }"
    ```
 
-3. Within ~5–15 min (evaluation freq 5 min, window 15 min) the
-   `zdrovena-alert-dlq-backlog` rule should transition to *Fired*.
-4. Confirm the e-mail lands at `var.ops_alert_email`.
-5. Clean up the controlled record:
+3. Potwierdź zdarzenie `dlq.enqueued` w `AppTraces` z rolą
+   `zdrovena-api-staging`.
+4. Potwierdź, że produkcyjny alert DLQ nie przeszedł do *Fired*.
+5. Usuń kontrolowany rekord:
 
    ```bash
    curl -fsS -X DELETE \
@@ -215,20 +216,57 @@ unset RECEIVER_NAME RECEIVER_EMAIL
 
 ---
 
-## 4. Evidence checklist
+## 4. Sensitive-data audit
+
+Eksporter nie powinien zapisywać nagłówków autoryzacyjnych, tokenów ani danych
+osobowych. Uruchom oba zapytania dla okna obejmującego testy:
+
+```kql
+union isfuzzy=true AppRequests, AppTraces, AppExceptions
+| where TimeGenerated > ago(2h)
+| extend AuditText = strcat(
+    tostring(column_ifexists("Url", "")), " ",
+    tostring(column_ifexists("Message", "")), " ",
+    tostring(column_ifexists("OuterMessage", "")), " ",
+    tostring(column_ifexists("Properties", dynamic({}))))
+| where AuditText matches regex
+    @"(?i)(authorization|bearer\s+[a-z0-9._-]{10,}|client[_-]?secret|access[_-]?token|refresh[_-]?token|api[_-]?key)"
+| project TimeGenerated, Type, AppRoleName
+```
+
+```kql
+union isfuzzy=true AppRequests, AppTraces, AppExceptions
+| where TimeGenerated > ago(2h)
+| extend AuditText = strcat(
+    tostring(column_ifexists("Url", "")), " ",
+    tostring(column_ifexists("Message", "")), " ",
+    tostring(column_ifexists("OuterMessage", "")), " ",
+    tostring(column_ifexists("Properties", dynamic({}))))
+| where AuditText matches regex @"(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}"
+| project TimeGenerated, Type, AppRoleName
+```
+
+Oba zapytania powinny zwrócić zero wierszy. Nie wyświetlaj `AuditText` w
+artefaktach CI ani komentarzach PR — w razie trafienia przejrzyj rekord
+bezpośrednio w ograniczonym dostępowo workspace.
+
+---
+
+## 5. Evidence checklist
 
 Record this in the deploy log / PR comment after the controlled test:
 
-- [ ] KQL query text used (paste exact query from the fired alert).
-- [ ] Time window of the firing (UTC start–end).
+- [ ] KQL query text and UTC window used for evidence.
 - [ ] `X-Correlation-ID` każdego kontrolowanego probe.
 - [ ] Requesty są widoczne w `AppRequests` z poprawnym `AppRoleName`.
-- [ ] Alert failed requests przeszedł do *Fired*.
-- [ ] Alert latency przeszedł do *Fired*.
-- [ ] Alert DLQ przeszedł do *Fired*.
-- [ ] E-mail received at the configured recipient (timestamp + subject).
+- [ ] Poller emituje `AppTraces` z `AppRoleName=zdrovena-allegro-poller`.
+- [ ] Stagingowe 401/5xx/latency/DLQ nie uruchamiają produkcyjnych alertów.
+- [ ] Alert rules w Azure mają filtr `cloud/roleName=zdrovena-api-prod`.
+- [ ] Test transportu action group zakończył się sukcesem.
+- [ ] Audyt tokenów, sekretów i PII zwrócił zero dopasowań.
 - [ ] Test DLQ entry cleaned up (retried or discarded).
 - [ ] `terraform plan` after apply shows no drift.
 
-Only when every box is ticked is the DLQ alert considered *operational*, not just
-*declared*.
+Nie generuj kontrolowanych błędów na produkcji. Produkcyjny sygnał jest
+weryfikowany przez konfigurację wymiarów, bieżącą telemetrię i osobny test
+transportu action group.

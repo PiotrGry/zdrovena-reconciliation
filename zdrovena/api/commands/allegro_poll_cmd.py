@@ -85,9 +85,7 @@ def _build_fakturownia_client():
     return FakturowniaClient(base_url=base_url, api_token=api_token)
 
 
-def run(args: argparse.Namespace) -> None:
-    _setup_logging()
-
+def _run_cycle(args: argparse.Namespace) -> None:
     from zdrovena.api.damage_detection import (
         build_apaczka_lookup_client,
         build_inpost_lookup_client,
@@ -153,6 +151,18 @@ def run(args: argparse.Namespace) -> None:
             logger.info("Zoho damage scan complete: %s", zoho_damage)
     except Exception:
         logger.exception("Zoho damage scan failed")
+
+
+def run(args: argparse.Namespace) -> None:
+    """Uruchom cykl i zawsze opróżnij telemetrykę krótkotrwałego joba."""
+
+    _setup_logging()
+    try:
+        _run_cycle(args)
+    finally:
+        from zdrovena.common.telemetry import force_flush_azure_telemetry
+
+        force_flush_azure_telemetry()
 
 
 def add_subparser(subparsers: argparse._SubParsersAction) -> None:
