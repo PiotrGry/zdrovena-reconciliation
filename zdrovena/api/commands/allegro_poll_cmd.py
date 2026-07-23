@@ -39,12 +39,9 @@ def _setup_logging() -> None:
         logging.getLogger(_name).setLevel(_azure_log_level)
 
     if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
-        try:
-            from azure.monitor.opentelemetry import configure_azure_monitor
+        from zdrovena.common.telemetry import configure_azure_telemetry
 
-            configure_azure_monitor()
-        except Exception as exc:
-            logger.warning("Azure Monitor configuration failed (non-fatal): %s", exc)
+        configure_azure_telemetry(default_service_name="zdrovena-allegro-poller")
 
 
 def _build_allegro_client():

@@ -35,15 +35,13 @@ export const AuthCtx = createContext(null)
 export const useAuth = () => useContext(AuthCtx)
 
 export function AuthProvider({ children }) {
-    const [account, setAccount] = useState(undefined)
-    const [roles, setRoles] = useState([])
+    const [account, setAccount] = useState(() => DEV_AUTH_DISABLED ? DEV_ACCOUNT : undefined)
+    const [roles, setRoles] = useState(() => (
+        DEV_AUTH_DISABLED ? DEV_ACCOUNT.idTokenClaims.roles : []
+    ))
 
     useEffect(() => {
-        if (DEV_AUTH_DISABLED) {
-            setAccount(DEV_ACCOUNT)
-            setRoles(DEV_ACCOUNT.idTokenClaims.roles)
-            return
-        }
+        if (DEV_AUTH_DISABLED) return
         msalInstance.initialize().then(() => {
             msalInstance.handleRedirectPromise()
                 .then(resp => {

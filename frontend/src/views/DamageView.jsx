@@ -129,7 +129,10 @@ export default function DamageView({ onNavigate, onDamageChanged }) {
         }
     }, [getToken, onDamageChanged])
 
-    useEffect(() => { load() }, [load])
+    useEffect(() => {
+        const timer = window.setTimeout(() => { void load() }, 0)
+        return () => window.clearTimeout(timer)
+    }, [load])
     usePolling(() => load({ silent: true }), 30_000)
 
     const replaceCase = updated => {

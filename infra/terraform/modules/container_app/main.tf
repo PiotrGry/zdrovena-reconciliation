@@ -105,6 +105,15 @@ resource "azurerm_container_app" "this" {
       }
 
       dynamic "env" {
+        for_each = var.applicationinsights_connection_string != null ? [1] : []
+        content {
+          # OpenTelemetry service.name → Application Insights AppRoleName.
+          name  = "OTEL_SERVICE_NAME"
+          value = var.name
+        }
+      }
+
+      dynamic "env" {
         for_each = var.shopify_allowed_domains != "" ? [1] : []
         content {
           name  = "SHOPIFY_ALLOWED_DOMAINS"
