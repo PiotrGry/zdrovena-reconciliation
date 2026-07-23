@@ -35,22 +35,13 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Checkout
-        if: github.event.inputs.action == 'warmup'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Shut down staging (scale to 0)
         if: github.event_name == 'schedule' || github.event.inputs.action == 'shutdown'
         run: |
-          az containerapp update \
-            --name zdrovena-api-staging \
-            --resource-group zdrovena-rg \
-            --min-replicas 0 \
-            --max-replicas 0
-          az containerapp update \
-            --name zdrovena-fake-providers-staging \
-            --resource-group zdrovena-rg \
-            --min-replicas 0 \
-            --max-replicas 0
+          bash scripts/ci/teardown-staging.sh zdrovena-api-staging zdrovena-rg
+          bash scripts/ci/teardown-staging.sh zdrovena-fake-providers-staging zdrovena-rg
 
       - name: Warm up staging (scale to 1)
         if: github.event.inputs.action == 'warmup'
@@ -59,7 +50,7 @@ jobs:
             "${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:staging-latest" \
             1 \
             1
-          az containerapp update \
+          bash scripts/ci/azure-cli-retry.sh az containerapp update \
             --name zdrovena-api-staging \
             --resource-group zdrovena-rg \
             --min-replicas 1 \

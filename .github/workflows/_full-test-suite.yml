@@ -16,7 +16,7 @@ on:
   workflow_call:
     inputs:
       backend_changed:
-        description: "True if backend code changed (from quality-gate detect-changes)"
+        description: "True if deployable backend runtime changed"
         type: string
         default: ""
       frontend_changed:
@@ -37,7 +37,7 @@ jobs:
     name: Detect changed areas
     runs-on: ubuntu-latest
     outputs:
-      backend: ${{ inputs.backend_changed != '' && inputs.backend_changed || steps.filter.outputs.backend }}
+      backend: ${{ inputs.backend_changed != '' && inputs.backend_changed || steps.filter.outputs.backend_runtime }}
       frontend: ${{ inputs.frontend_changed != '' && inputs.frontend_changed || steps.filter.outputs.frontend }}
       infra: ${{ steps.filter.outputs.infra }}
     steps:
@@ -112,12 +112,13 @@ jobs:
         id: meta
         env:
           IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api
+          GIT_HEAD_REF: ${{ github.head_ref }}
         run: |
           docker buildx build \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
             --label "git.sha=${{ github.sha }}" \
-            --label "git.ref=${{ github.head_ref }}" \
+            --label "git.ref=$GIT_HEAD_REF" \
             -t "$IMAGE:staging-${{ github.sha }}" \
             -t "$IMAGE:staging-latest" \
             --push \
