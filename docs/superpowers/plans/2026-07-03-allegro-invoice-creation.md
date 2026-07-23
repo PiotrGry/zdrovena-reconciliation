@@ -63,11 +63,11 @@ class TestCreateInvoice:
         payload = {
             "kind": "vat",
             "buyer_name": "Anna Nowak",
-            "positions": [{"name": "HUMIO 6 PET", "tax": 8, "total_price_gross": 73.00, "quantity": 1}],
+            "positions": [
+                {"name": "HUMIO 6 PET", "tax": 8, "total_price_gross": 73.00, "quantity": 1}
+            ],
         }
-        with patch(
-            "requests.Session.request", return_value=_resp({"id": 777, **payload})
-        ) as mock:
+        with patch("requests.Session.request", return_value=_resp({"id": 777, **payload})) as mock:
             out = client.create_invoice(payload)
             _, kwargs = mock.call_args
             assert kwargs["method"] == "POST"
@@ -179,59 +179,58 @@ Expected: FAIL with `AttributeError: 'FakturowniaClient' object has no attribute
 In `zdrovena/common/fakturownia.py`, replace the `_request` and `_parse_response` methods:
 
 ```python
-    def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        params: dict[str, Any] | None = None,
-        json: dict[str, Any] | None = None,
-        raw: bool = False,
-    ) -> Any:
-        url = f"{self.base_url}{path}"
-        # api_token in query for GET; both places acceptable per Fakturownia docs.
-        merged_params = {"api_token": self.api_token, **(params or {})}
-        try:
-            resp = self._session.request(
-                method=method,
-                url=url,
-                params=merged_params,
-                json=json,
-                timeout=self.timeout,
-            )
-        except requests.Timeout as e:
-            raise CourierTimeoutError(courier="fakturownia", action=method.lower()) from e
-        except requests.ConnectionError as e:
-            raise CourierConnectionError(courier="fakturownia", detail=str(e)) from e
+def _request(
+    self,
+    method: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    json: dict[str, Any] | None = None,
+    raw: bool = False,
+) -> Any:
+    url = f"{self.base_url}{path}"
+    # api_token in query for GET; both places acceptable per Fakturownia docs.
+    merged_params = {"api_token": self.api_token, **(params or {})}
+    try:
+        resp = self._session.request(
+            method=method,
+            url=url,
+            params=merged_params,
+            json=json,
+            timeout=self.timeout,
+        )
+    except requests.Timeout as e:
+        raise CourierTimeoutError(courier="fakturownia", action=method.lower()) from e
+    except requests.ConnectionError as e:
+        raise CourierConnectionError(courier="fakturownia", detail=str(e)) from e
 
-        return self._parse_response(resp, method=method, path=path, raw=raw)
+    return self._parse_response(resp, method=method, path=path, raw=raw)
 
-    @staticmethod
-    def _parse_response(
-        resp: requests.Response, *, method: str, path: str, raw: bool = False
-    ) -> Any:
-        status = resp.status_code
-        if HTTPStatus.OK <= status < HTTPStatus.MULTIPLE_CHOICES:
-            if raw:
-                return resp.content
-            if status == HTTPStatus.NO_CONTENT:
-                return None
-            try:
-                return resp.json()
-            except ValueError:
-                return None
-        # error mapping
+
+@staticmethod
+def _parse_response(resp: requests.Response, *, method: str, path: str, raw: bool = False) -> Any:
+    status = resp.status_code
+    if HTTPStatus.OK <= status < HTTPStatus.MULTIPLE_CHOICES:
+        if raw:
+            return resp.content
+        if status == HTTPStatus.NO_CONTENT:
+            return None
         try:
-            body = resp.json()
+            return resp.json()
         except ValueError:
-            body = {"text": (resp.text or "")[:200]}
-        detail = f"{method} {path} → {status}: {body}"
-        if status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
-            raise FakturowniaAuthError(detail=detail)
-        if status >= HTTPStatus.INTERNAL_SERVER_ERROR:
-            raise FakturowniaServerError(status=status)
-        # everything else (400, 404, 422, ...) is business error
-        raise FakturowniaBusinessError(detail=detail, action=f"{method.lower()} {path}")
+            return None
+    # error mapping
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {"text": (resp.text or "")[:200]}
+    detail = f"{method} {path} → {status}: {body}"
+    if status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
+        raise FakturowniaAuthError(detail=detail)
+    if status >= HTTPStatus.INTERNAL_SERVER_ERROR:
+        raise FakturowniaServerError(status=status)
+    # everything else (400, 404, 422, ...) is business error
+    raise FakturowniaBusinessError(detail=detail, action=f"{method.lower()} {path}")
 ```
 
 Then add `get_invoice_pdf`, after `get_invoice`:
@@ -344,9 +343,7 @@ class TestCompanyBuyer:
         order = _order(
             invoice={
                 "required": True,
-                "address": {
-                    "company": {"name": "Nazwa Firmy Sp. z o.o.", "taxId": "5252674798"}
-                },
+                "address": {"company": {"name": "Nazwa Firmy Sp. z o.o.", "taxId": "5252674798"}},
             }
         )
         invoice = allegro_order_to_fakturownia_invoice(order)
@@ -706,9 +703,7 @@ class TestFailureAlerts:
         fakturownia.create_invoice.side_effect = RuntimeError("Fakturownia 500")
         allegro = MagicMock()
 
-        with patch(
-            "zdrovena.api.routers.allegro_invoicer._alert_invoice_failure"
-        ) as mock_alert:
+        with patch("zdrovena.api.routers.allegro_invoicer._alert_invoice_failure") as mock_alert:
             result = create_invoice_for_order(
                 _order(), fakturownia_client=fakturownia, allegro_client=allegro
             )
@@ -731,9 +726,7 @@ class TestFailureAlerts:
         allegro = MagicMock()
         allegro.create_invoice_declaration.side_effect = RuntimeError("Allegro 502")
 
-        with patch(
-            "zdrovena.api.routers.allegro_invoicer._alert_invoice_failure"
-        ) as mock_alert:
+        with patch("zdrovena.api.routers.allegro_invoicer._alert_invoice_failure") as mock_alert:
             result = create_invoice_for_order(
                 _order(), fakturownia_client=fakturownia, allegro_client=allegro
             )
@@ -961,9 +954,7 @@ class TestInvoiceCreationWiring:
         store.upsert_draft.side_effect = RuntimeError("store down")
         fakturownia = MagicMock()
 
-        with patch(
-            "zdrovena.api.routers.allegro_poller.create_invoice_for_order"
-        ) as mock_invoicer:
+        with patch("zdrovena.api.routers.allegro_poller.create_invoice_for_order") as mock_invoicer:
             poll_orders_once(
                 client=client,
                 shipping_store=store,
@@ -983,9 +974,7 @@ class TestInvoiceCreationWiring:
         ]
         fakturownia = MagicMock()
 
-        with patch(
-            "zdrovena.api.routers.allegro_poller.create_invoice_for_order"
-        ) as mock_invoicer:
+        with patch("zdrovena.api.routers.allegro_poller.create_invoice_for_order") as mock_invoicer:
             poll_orders_once(
                 client=client,
                 shipping_store=store,
@@ -1028,9 +1017,7 @@ class TestInvoiceCreationWiring:
         store = MagicMock()
         store.list_drafts.return_value = []
 
-        with patch(
-            "zdrovena.api.routers.allegro_poller.create_invoice_for_order"
-        ) as mock_invoicer:
+        with patch("zdrovena.api.routers.allegro_poller.create_invoice_for_order") as mock_invoicer:
             stats = poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
 
         mock_invoicer.assert_not_called()
@@ -1116,22 +1103,20 @@ Then in the loop body, right after the existing:
 add the invoicer call right after `stats["created"] += 1`, still inside the loop, before the existing `ALLEGRO_MARK_ON_DRAFT` block:
 
 ```python
-        if fakturownia_client is not None:
-            try:
-                invoice_result = create_invoice_for_order(
-                    form, fakturownia_client=fakturownia_client, allegro_client=client
-                )
-                if invoice_result["status"] == "created":
-                    stats["invoices_created"] += 1
-            except Exception:
-                # Resilience boundary: an invoicing failure must not block the
-                # next order's draft — create_invoice_for_order already logs
-                # and alerts internally, this only guards against a bug in
-                # the orchestrator itself raising instead of returning "error".
-                logger.exception(
-                    "create_invoice_for_order raised for Allegro order %s", allegro_id
-                )
-                stats["invoice_errors"] += 1
+if fakturownia_client is not None:
+    try:
+        invoice_result = create_invoice_for_order(
+            form, fakturownia_client=fakturownia_client, allegro_client=client
+        )
+        if invoice_result["status"] == "created":
+            stats["invoices_created"] += 1
+    except Exception:
+        # Resilience boundary: an invoicing failure must not block the
+        # next order's draft — create_invoice_for_order already logs
+        # and alerts internally, this only guards against a bug in
+        # the orchestrator itself raising instead of returning "error".
+        logger.exception("create_invoice_for_order raised for Allegro order %s", allegro_id)
+        stats["invoice_errors"] += 1
 ```
 
 - [ ] **Step 4: Run the full poller test file to verify everything passes**

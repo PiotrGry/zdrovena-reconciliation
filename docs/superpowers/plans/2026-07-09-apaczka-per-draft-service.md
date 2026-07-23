@@ -145,9 +145,7 @@ class TestPickApaczkaService:
     def test_no_env_configured_returns_none(self) -> None:
         assert _pick_apaczka_service("Apaczka DPD") is None
 
-    def test_env_mapping_match_returns_service_id(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_mapping_match_returns_service_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21;orlen paczka=53")
         _reset_courier_maps_cache()
         assert _pick_apaczka_service("Apaczka DPD") == "21"
@@ -157,9 +155,7 @@ class TestPickApaczkaService:
         _reset_courier_maps_cache()
         assert _pick_apaczka_service("ORLEN PACZKA - punkt odbioru") == "53"
 
-    def test_no_match_in_configured_map_returns_none(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_match_in_configured_map_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21")
         _reset_courier_maps_cache()
         assert _pick_apaczka_service("UPS Express") is None
@@ -245,67 +241,70 @@ git commit -m "feat(shipping): add _pick_apaczka_service title-mapping helper"
 Add to `tests/test_shipping_webhook.py`, inside `class TestCreateDraftApaczka:` (after the existing `test_apaczka_draft_stored` method):
 
 ```python
-    def test_apaczka_service_id_set_from_title_map(self, store, monkeypatch):
-        from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache
+def test_apaczka_service_id_set_from_title_map(self, store, monkeypatch):
+    from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache
 
-        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21")
-        _reset_courier_maps_cache()
-        try:
-            storage = object()
-            order = _load_fixture("shopify_order_apaczka.json")
-            _create_draft(order, store, storage)
-            drafts = store.list_drafts()
-            assert drafts[0]["apaczka_service_id"] == "21"
-        finally:
-            monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
-            _reset_courier_maps_cache()
-
-    def test_apaczka_service_id_none_forces_needs_review(self, store, monkeypatch):
-        """Fixture's shipping_lines[0].title is 'Apaczka DPD' — with no env
-        mapping configured, apaczka_service_id stays unset and the draft must
-        be needs_review even if phone/packages_count would otherwise pass."""
-        from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache
-
+    monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21")
+    _reset_courier_maps_cache()
+    try:
+        storage = object()
+        order = _load_fixture("shopify_order_apaczka.json")
+        _create_draft(order, store, storage)
+        drafts = store.list_drafts()
+        assert drafts[0]["apaczka_service_id"] == "21"
+    finally:
         monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
         _reset_courier_maps_cache()
+
+
+def test_apaczka_service_id_none_forces_needs_review(self, store, monkeypatch):
+    """Fixture's shipping_lines[0].title is 'Apaczka DPD' — with no env
+    mapping configured, apaczka_service_id stays unset and the draft must
+    be needs_review even if phone/packages_count would otherwise pass."""
+    from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache
+
+    monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
+    _reset_courier_maps_cache()
+    order = _load_fixture("shopify_order_apaczka.json")
+    order["shipping_address"]["phone"] = "500600700"
+    order["customer"]["phone"] = "500600700"
+    storage = object()
+    _create_draft(order, store, storage)
+    drafts = store.list_drafts()
+    assert drafts[0]["apaczka_service_id"] is None
+    assert drafts[0]["status"] == "needs_review"
+
+
+def test_apaczka_service_id_matched_allows_pending(self, store, monkeypatch):
+    """Same phone fix as above, but WITH a matching title map — status
+    should be 'pending', proving apaczka_service_id was the only blocker."""
+    from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache
+
+    monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21")
+    _reset_courier_maps_cache()
+    try:
         order = _load_fixture("shopify_order_apaczka.json")
         order["shipping_address"]["phone"] = "500600700"
         order["customer"]["phone"] = "500600700"
         storage = object()
         _create_draft(order, store, storage)
         drafts = store.list_drafts()
-        assert drafts[0]["apaczka_service_id"] is None
-        assert drafts[0]["status"] == "needs_review"
-
-    def test_apaczka_service_id_matched_allows_pending(self, store, monkeypatch):
-        """Same phone fix as above, but WITH a matching title map — status
-        should be 'pending', proving apaczka_service_id was the only blocker."""
-        from zdrovena.api.routers.webhooks import _create_draft, _reset_courier_maps_cache
-
-        monkeypatch.setenv("APACZKA_SERVICE_TITLE_MAP", "dpd=21")
+        assert drafts[0]["apaczka_service_id"] == "21"
+        assert drafts[0]["status"] == "pending"
+    finally:
+        monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
         _reset_courier_maps_cache()
-        try:
-            order = _load_fixture("shopify_order_apaczka.json")
-            order["shipping_address"]["phone"] = "500600700"
-            order["customer"]["phone"] = "500600700"
-            storage = object()
-            _create_draft(order, store, storage)
-            drafts = store.list_drafts()
-            assert drafts[0]["apaczka_service_id"] == "21"
-            assert drafts[0]["status"] == "pending"
-        finally:
-            monkeypatch.delenv("APACZKA_SERVICE_TITLE_MAP", raising=False)
-            _reset_courier_maps_cache()
 
-    def test_non_apaczka_draft_has_none_apaczka_service_id(self, store):
-        """InPost/Allegro drafts get apaczka_service_id=None, never validated."""
-        from zdrovena.api.routers.webhooks import _create_draft
 
-        storage = object()
-        order = _load_fixture("shopify_order_inpost_kurier.json")
-        _create_draft(order, store, storage)
-        drafts = store.list_drafts()
-        assert drafts[0]["apaczka_service_id"] is None
+def test_non_apaczka_draft_has_none_apaczka_service_id(self, store):
+    """InPost/Allegro drafts get apaczka_service_id=None, never validated."""
+    from zdrovena.api.routers.webhooks import _create_draft
+
+    storage = object()
+    order = _load_fixture("shopify_order_inpost_kurier.json")
+    _create_draft(order, store, storage)
+    drafts = store.list_drafts()
+    assert drafts[0]["apaczka_service_id"] is None
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -537,49 +536,46 @@ git commit -m "fix(shipping): read apaczka_service_id from draft, not Key Vault"
 Add to `tests/test_shipping_webhook.py`, inside `class TestUpdateDraft:` (after `test_needs_review_draft_still_blocks_execute`):
 
 ```python
-    def test_sets_apaczka_service_id(self, client, store):
-        draft = self._seed_draft(store)
-        resp = client.patch(
-            f"/api/shipping/drafts/{draft['id']}", json={"apaczka_service_id": "21"}
-        )
-        assert resp.status_code == 200
-        assert resp.json()["apaczka_service_id"] == "21"
-        updated = store.get_draft(draft["id"])
-        assert updated["apaczka_service_id"] == "21"
+def test_sets_apaczka_service_id(self, client, store):
+    draft = self._seed_draft(store)
+    resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"apaczka_service_id": "21"})
+    assert resp.status_code == 200
+    assert resp.json()["apaczka_service_id"] == "21"
+    updated = store.get_draft(draft["id"])
+    assert updated["apaczka_service_id"] == "21"
 
-    def test_rejects_unknown_apaczka_service_id(self, client, store):
-        draft = self._seed_draft(store)
-        resp = client.patch(
-            f"/api/shipping/drafts/{draft['id']}", json={"apaczka_service_id": "999999"}
-        )
-        assert resp.status_code == 400
-        assert "apaczka_service_id" in resp.json()["detail"].lower()
 
-    def test_apaczka_service_id_does_not_auto_clear_needs_review(self, client, store):
-        """Matches existing service/locker_id behavior: setting the field
-        alone does not flip status — the operator still confirms separately
-        via reviewed=True (see design spec's Backward-compatibility-of-behavior
-        note)."""
-        draft = self._seed_draft(store)
-        store.update_draft(draft["id"], {"status": "needs_review"})
-        resp = client.patch(
-            f"/api/shipping/drafts/{draft['id']}", json={"apaczka_service_id": "21"}
-        )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "needs_review"
+def test_rejects_unknown_apaczka_service_id(self, client, store):
+    draft = self._seed_draft(store)
+    resp = client.patch(
+        f"/api/shipping/drafts/{draft['id']}", json={"apaczka_service_id": "999999"}
+    )
+    assert resp.status_code == 400
+    assert "apaczka_service_id" in resp.json()["detail"].lower()
 
-    def test_apaczka_service_id_and_reviewed_together_clears_needs_review(
-        self, client, store
-    ):
-        draft = self._seed_draft(store)
-        store.update_draft(draft["id"], {"status": "needs_review"})
-        resp = client.patch(
-            f"/api/shipping/drafts/{draft['id']}",
-            json={"apaczka_service_id": "21", "reviewed": True},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["apaczka_service_id"] == "21"
-        assert resp.json()["status"] == "pending"
+
+def test_apaczka_service_id_does_not_auto_clear_needs_review(self, client, store):
+    """Matches existing service/locker_id behavior: setting the field
+    alone does not flip status — the operator still confirms separately
+    via reviewed=True (see design spec's Backward-compatibility-of-behavior
+    note)."""
+    draft = self._seed_draft(store)
+    store.update_draft(draft["id"], {"status": "needs_review"})
+    resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"apaczka_service_id": "21"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "needs_review"
+
+
+def test_apaczka_service_id_and_reviewed_together_clears_needs_review(self, client, store):
+    draft = self._seed_draft(store)
+    store.update_draft(draft["id"], {"status": "needs_review"})
+    resp = client.patch(
+        f"/api/shipping/drafts/{draft['id']}",
+        json={"apaczka_service_id": "21", "reviewed": True},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["apaczka_service_id"] == "21"
+    assert resp.json()["status"] == "pending"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -712,7 +708,7 @@ git commit -m "feat(shipping): add GET /shipping/apaczka-services endpoint"
 
 In `scripts/secrets_manifest.py`, delete the line:
 ```python
-    "apaczka-service-id",
+("apaczka-service-id",)
 ```
 from the `ENV_LOCAL_SECRETS` list (it sits between `"apaczka-app-secret",` and `"apaczka-app-id",`'s sibling — remove only the `apaczka-service-id` line, keep `apaczka-app-id`/`apaczka-app-secret`).
 
