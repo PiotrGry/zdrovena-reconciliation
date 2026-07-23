@@ -1,0 +1,263 @@
+name: Back-sync main to develop
+
+# A GitHub merge of develop -> main creates a main-only merge commit. Without
+# feeding that commit back into develop, the next release PR is always BEHIND
+# even when both branches have identical trees.
+#
+# This workflow preserves all branch protections:
+#   1. create a bot-owned PR from an automation branch to develop,
+#   2. explicitly dispatch the required develop fast gate on that exact SHA,
+#   3. merge only after workflow_run reports success and the merge commit is
+#      proven to be the unmodified merge of develop + main.
+#
+# GITHUB_TOKEN-created PRs do not trigger pull_request workflows recursively,
+# hence the explicit workflow_dispatch. No ruleset bypass or force-push is used.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Develop — Fast Gate"]
+    types: [completed]
+
+concurrency:
+  group: main-to-develop-back-sync
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare back-sync PR
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    outputs:
+      needed: ${{ steps.sync.outputs.needed }}
+      branch: ${{ steps.sync.outputs.branch }}
+      pr_url: ${{ steps.sync.outputs.pr_url }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Create or reuse back-sync PR
+        id: sync
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags origin main develop
+          MAIN_SHA=$(git rev-parse origin/main)
+
+          if git merge-base --is-ancestor "$MAIN_SHA" origin/develop; then
+            echo "main is already contained in develop — nothing to sync."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          BRANCH="automation/back-sync-main-$MAIN_SHA"
+          EXISTING_PR_JSON=$(gh pr list \
+            --repo "$REPOSITORY" \
+            --state open \
+            --base develop \
+            --head "$BRANCH" \
+            --json url,body,author,headRefOid \
+            --jq '.[0] // empty')
+
+          if [[ -n "$EXISTING_PR_JSON" ]]; then
+            PR_URL=$(jq -r '.url' <<< "$EXISTING_PR_JSON")
+            PR_BODY=$(jq -r '.body' <<< "$EXISTING_PR_JSON")
+            PR_AUTHOR=$(jq -r '.author.login' <<< "$EXISTING_PR_JSON")
+            if [[ "$PR_AUTHOR" != "app/github-actions" \
+              && "$PR_AUTHOR" != "github-actions[bot]" ]]; then
+              echo "::error::Existing back-sync PR was not created by GitHub Actions."
+              exit 1
+            fi
+            if [[ "$PR_BODY" != *"<!-- automated-main-develop-back-sync -->"* ]]; then
+              echo "::error::Existing back-sync PR provenance marker is missing."
+              exit 1
+            fi
+
+            git fetch --no-tags origin "$BRANCH"
+            HEAD_SHA=$(git rev-parse "origin/$BRANCH")
+            read -r FIRST_PARENT SECOND_PARENT EXTRA_PARENT \
+              <<< "$(git show -s --format=%P "$HEAD_SHA")"
+            if [[ -n "${EXTRA_PARENT:-}" || "$SECOND_PARENT" != "$MAIN_SHA" ]]; then
+              echo "::error::Existing back-sync head has unexpected ancestry."
+              exit 1
+            fi
+
+            CURRENT_DEVELOP_SHA=$(git rev-parse origin/develop)
+            if [[ "$FIRST_PARENT" == "$CURRENT_DEVELOP_SHA" ]]; then
+              echo "Reusing existing back-sync PR: $PR_URL"
+            else
+              echo "develop moved; replacing stale bot-owned back-sync PR."
+              gh pr close "$PR_URL" \
+                --repo "$REPOSITORY" \
+                --delete-branch \
+                --comment "Superseded because develop moved while the fast gate was running."
+              EXISTING_PR_JSON=""
+            fi
+          fi
+
+          if [[ -z "$EXISTING_PR_JSON" ]]; then
+            if git ls-remote --exit-code --heads origin "refs/heads/$BRANCH" >/dev/null; then
+              echo "::error::Back-sync branch exists without an open bot-owned PR."
+              exit 1
+            fi
+
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git switch --create "$BRANCH" origin/develop
+            git merge --no-ff origin/main \
+              -m "chore: sync main back into develop"
+            HEAD_SHA=$(git rev-parse HEAD)
+            git push --set-upstream origin "$BRANCH"
+
+            # Keep Markdown backticks literal; printf fills only the %s placeholder.
+            # shellcheck disable=SC2016
+            printf -v PR_BODY \
+              'Automated ancestry sync after a release to `main`.\n\nSource main commit: `%s`\n\nThis PR contains only the clean merge of `develop` and `main`. It is merged automatically only after the required `Fast gate / Quality Gate` succeeds.\n\n<!-- automated-main-develop-back-sync -->' \
+              "$MAIN_SHA"
+
+            PR_URL=$(gh pr create \
+              --repo "$REPOSITORY" \
+              --base develop \
+              --head "$BRANCH" \
+              --title "chore: sync main back into develop" \
+              --body "$PR_BODY")
+            echo "Created back-sync PR: $PR_URL"
+          else
+            echo "Using existing back-sync head: $HEAD_SHA"
+          fi
+
+          {
+            echo "needed=true"
+            echo "branch=$BRANCH"
+            echo "head_sha=$HEAD_SHA"
+            echo "pr_url=$PR_URL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch required develop fast gate
+        if: steps.sync.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          BRANCH: ${{ steps.sync.outputs.branch }}
+        run: |
+          gh workflow run develop-gate.yml \
+            --repo "$REPOSITORY" \
+            --ref "$BRANCH"
+          echo "Dispatched Develop — Fast Gate for $BRANCH."
+
+  complete:
+    name: Verify and merge back-sync PR
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'automation/back-sync-main-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Verify provenance and merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          PR_COUNT=$(gh pr list \
+            --repo "$REPOSITORY" \
+            --state open \
+            --base develop \
+            --head "$BRANCH" \
+            --json number \
+            --jq 'length')
+          if [[ "$PR_COUNT" != "1" ]]; then
+            echo "::error::Expected exactly one open back-sync PR, found $PR_COUNT."
+            exit 1
+          fi
+
+          PR_JSON=$(gh pr list \
+            --repo "$REPOSITORY" \
+            --state open \
+            --base develop \
+            --head "$BRANCH" \
+            --json number,url,title,body,author,headRefOid,baseRefName,headRefName \
+            --jq '.[0]')
+          PR_URL=$(jq -r '.url' <<< "$PR_JSON")
+          PR_TITLE=$(jq -r '.title' <<< "$PR_JSON")
+          PR_BODY=$(jq -r '.body' <<< "$PR_JSON")
+          PR_AUTHOR=$(jq -r '.author.login' <<< "$PR_JSON")
+          PR_HEAD_SHA=$(jq -r '.headRefOid' <<< "$PR_JSON")
+
+          if [[ "$PR_TITLE" != "chore: sync main back into develop" ]]; then
+            echo "::error::Unexpected back-sync PR title."
+            exit 1
+          fi
+          if [[ "$PR_AUTHOR" != "app/github-actions" \
+            && "$PR_AUTHOR" != "github-actions[bot]" ]]; then
+            echo "::error::Back-sync PR was not created by GitHub Actions."
+            exit 1
+          fi
+          if [[ "$PR_BODY" != *"<!-- automated-main-develop-back-sync -->"* ]]; then
+            echo "::error::Back-sync PR provenance marker is missing."
+            exit 1
+          fi
+          if [[ "$PR_HEAD_SHA" != "$RUN_HEAD_SHA" ]]; then
+            echo "::error::Fast gate ran for $RUN_HEAD_SHA, but PR head is $PR_HEAD_SHA."
+            exit 1
+          fi
+
+          MAIN_SHA=${BRANCH#automation/back-sync-main-}
+          if [[ ! "$MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Branch does not contain a full main commit SHA."
+            exit 1
+          fi
+
+          git fetch --no-tags origin main develop "$BRANCH"
+          REMOTE_HEAD_SHA=$(git rev-parse "origin/$BRANCH")
+          CURRENT_DEVELOP_SHA=$(git rev-parse origin/develop)
+          if [[ "$REMOTE_HEAD_SHA" != "$PR_HEAD_SHA" ]]; then
+            echo "::error::Remote branch moved after PR metadata was read."
+            exit 1
+          fi
+
+          read -r FIRST_PARENT SECOND_PARENT EXTRA_PARENT \
+            <<< "$(git show -s --format=%P "$REMOTE_HEAD_SHA")"
+          if [[ -n "${EXTRA_PARENT:-}" || "$SECOND_PARENT" != "$MAIN_SHA" ]]; then
+            echo "::error::Back-sync head is not the expected two-parent merge commit."
+            exit 1
+          fi
+          if [[ "$FIRST_PARENT" != "$CURRENT_DEVELOP_SHA" ]]; then
+            echo "::error::develop moved while the fast gate was running; refresh the back-sync PR."
+            exit 1
+          fi
+
+          EXPECTED_TREE=$(git merge-tree --write-tree "$FIRST_PARENT" "$SECOND_PARENT")
+          ACTUAL_TREE=$(git rev-parse "$REMOTE_HEAD_SHA^{tree}")
+          if [[ "$ACTUAL_TREE" != "$EXPECTED_TREE" ]]; then
+            echo "::error::Back-sync merge tree contains changes beyond develop + main."
+            exit 1
+          fi
+
+          gh pr merge "$PR_URL" \
+            --repo "$REPOSITORY" \
+            --merge \
+            --delete-branch
