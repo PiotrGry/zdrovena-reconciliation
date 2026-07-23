@@ -57,12 +57,14 @@ def _get_credentials() -> tuple[str, str]:
     if not login:
         try:
             import keyring
+
             login = keyring.get_password(KEYCHAIN_SERVICE_FAKTUROWNIA_LOGIN, KEYCHAIN_ACCOUNT)
         except Exception:
             pass
     if not password:
         try:
             import keyring
+
             password = keyring.get_password(KEYCHAIN_SERVICE_FAKTUROWNIA_PASSWORD, KEYCHAIN_ACCOUNT)
         except Exception:
             pass
@@ -176,7 +178,9 @@ def _download_one_report(
     dest_name = rpt["dest_name"]
     selector = rpt.get("download_selector", DL_LINK_SEL)
 
-    params = f"?date_from={date_from}&date_to={date_to}&submitted=true&currency_convert_to_main=false"
+    params = (
+        f"?date_from={date_from}&date_to={date_to}&submitted=true&currency_convert_to_main=false"
+    )
     logger.info("Loading report page: %s %s", name, url)
     page.goto(url + params, wait_until="domcontentloaded")
     page.wait_for_timeout(2000)
@@ -385,6 +389,7 @@ class TestGetCredentials:
         monkeypatch.setenv("FAKTUROWNIA_LOGIN", "user@test.com")
         monkeypatch.setenv("FAKTUROWNIA_PASSWORD", "secret")
         from zdrovena.month_closing.fakturownia_reports import _get_credentials
+
         login, pw = _get_credentials()
         assert login == "user@test.com"
         assert pw == "secret"
@@ -394,6 +399,7 @@ class TestGetCredentials:
         monkeypatch.delenv("FAKTUROWNIA_PASSWORD", raising=False)
         with patch("keyring.get_password", return_value=None):
             from zdrovena.month_closing.fakturownia_reports import _get_credentials
+
             with pytest.raises(RuntimeError, match="credentials not found"):
                 _get_credentials()
 
@@ -405,10 +411,13 @@ class TestDownloadFakturowniaReports:
             # Force reimport
             import importlib
             from zdrovena.month_closing import fakturownia_reports
+
             importlib.reload(fakturownia_reports)
             result = fakturownia_reports.download_fakturownia_reports(
                 [{"name": "JPK_FA", "url": "http://x", "dest_name": "JPK_FA.xml"}],
-                "2026-03-01", "2026-04-01", tmp_path,
+                "2026-03-01",
+                "2026-04-01",
+                tmp_path,
             )
             assert result == []
 
@@ -435,16 +444,23 @@ class TestDownloadFakturowniaReports:
         mock_stealth_ctx.__enter__ = MagicMock(return_value=mock_pw)
         mock_stealth_ctx.__exit__ = MagicMock(return_value=False)
 
-        with patch("zdrovena.month_closing.fakturownia_reports.Stealth", create=True) as mock_stealth_cls, \
-             patch("zdrovena.month_closing.fakturownia_reports.sync_playwright", create=True):
+        with (
+            patch(
+                "zdrovena.month_closing.fakturownia_reports.Stealth", create=True
+            ) as mock_stealth_cls,
+            patch("zdrovena.month_closing.fakturownia_reports.sync_playwright", create=True),
+        ):
             mock_stealth_cls.return_value.use_sync.return_value = mock_stealth_ctx
 
             import importlib
             from zdrovena.month_closing import fakturownia_reports
+
             importlib.reload(fakturownia_reports)
             result = fakturownia_reports.download_fakturownia_reports(
                 [{"name": "JPK_FA", "url": "http://x", "dest_name": "JPK_FA.xml"}],
-                "2026-03-01", "2026-04-01", tmp_path,
+                "2026-03-01",
+                "2026-04-01",
+                tmp_path,
             )
             assert result == []
 
@@ -455,7 +471,8 @@ class TestPreflightNoBrowserFlag:
         from zdrovena.month_closing.preflight import PreflightChecker
 
         checker = PreflightChecker(
-            year=2026, month=3,
+            year=2026,
+            month=3,
             month_dir=tmp_path / "month",
             date_from="2026-03-01",
             date_to="2026-04-01",

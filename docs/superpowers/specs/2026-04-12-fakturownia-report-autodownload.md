@@ -70,8 +70,12 @@ In `_check_reports()`, after identifying missing reports:
 if missing_reports:
     try:
         from zdrovena.month_closing.fakturownia_reports import download_fakturownia_reports
+
         downloaded = download_fakturownia_reports(
-            missing_reports, date_from, date_to, watch_dir,
+            missing_reports,
+            date_from,
+            date_to,
+            watch_dir,
             headless=not self.visible,  # controlled by --visible flag
         )
         # Re-check: remove successfully downloaded reports from missing list

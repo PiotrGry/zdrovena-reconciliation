@@ -75,6 +75,7 @@ import base64
 import hashlib
 import hmac
 
+
 def verify_shopify_hmac(raw_body: bytes, signature_header: str, secret: str) -> bool:
     computed = base64.b64encode(
         hmac.new(secret.encode(), raw_body, hashlib.sha256).digest()
@@ -151,6 +152,7 @@ Log the `id` field — it is always present and sufficient for the audit trail.
 
 ```python
 import hmac, hashlib, json, time
+
 
 def _sign(app_id: str, secret: str, endpoint: str, data: dict) -> dict:
     request_json = json.dumps(data, separators=(",", ":"))
