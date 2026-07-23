@@ -29,7 +29,11 @@ resource "azurerm_monitor_action_group" "ops" {
   tags = local.tags
 }
 
-# ── Alert: high error rate (5xx > 1% over 5 minutes) ─────────────────────────
+# ── Alert: failed request count (> 5 over 5 minutes) ──────────────────────────
+#
+# Terraform address zachowuje historyczną nazwę ``high_error_rate``, aby nie
+# wymuszać destroy/create istniejącej reguły. Sygnał jest licznikiem błędnych
+# requestów, a nie procentowym error rate.
 
 resource "azurerm_monitor_metric_alert" "high_error_rate" {
   name                = "${var.prefix}-alert-error-rate"
@@ -55,7 +59,7 @@ resource "azurerm_monitor_metric_alert" "high_error_rate" {
   tags = local.tags
 }
 
-# ── Alert: high latency (p95 > 3s over 5 minutes) ────────────────────────────
+# ── Alert: average request latency (> 3s over 5 minutes) ──────────────────────
 
 resource "azurerm_monitor_metric_alert" "high_latency" {
   name                = "${var.prefix}-alert-latency"
@@ -83,18 +87,17 @@ resource "azurerm_monitor_metric_alert" "high_latency" {
 
 # ── Alert: DLQ backlog (dowolna nowa porażka trafiająca do DLQ) ──────────────
 # DLQ to Azure Table Storage (shippingdraftsdlq), nie kolejka — brak natywnej
-# metryki "liczba wiadomości". Reguła oparta na logach: liczy rekordy emitowane
-# przy enqueue do DLQ przez ``logger.exception(... "enqueueing to DLQ")`` w
-# zdrovena/api/routers/webhooks.py::_create_draft_safely. Próg > 0 w oknie 15 min
-# ⇒ każde nowe niepowodzenie utworzenia draftu powiadamia właściciela
+# metryki "liczba wiadomości". Reguła oparta na ustrukturyzowanym zdarzeniu
+# ``dlq.enqueued``, emitowanym dopiero po udanym zapisie wpisu do DLQ. Dzięki
+# temu nie alarmuje o samym zamiarze zapisu ani o awarii DLQ storage. Próg > 0
+# w oknie 15 min ⇒ każde nowe niepowodzenie powiadamia właściciela
 # ([LOG] H3, [EVT] R2/H3, [API] M3).
 #
 # WAŻNE — schemat: scope tej reguły to zasób Application Insights
 # (azurerm_application_insights.ai), więc KQL działa na schemacie App Insights
 # (tabele ``traces`` / ``exceptions`` mapowane do workspace'u Log Analytics przez
 # ``workspace_id``), a NIE na surowej tabeli ContainerAppConsoleLogs_CL. Log
-# ``logger.exception`` trafia do ``traces`` z ``severityLevel >= 3`` (Error);
-# filtr severity eliminuje ewentualne dopasowania spoza ścieżki błędu.
+# ``log_event`` trafia do ``traces`` jako JSON z ``severityLevel = 3`` (Error).
 #
 # Procedurę weryfikacji nazw tabel, `terraform plan/apply`, kontrolowany
 # test-alert i checklistę dowodową opisuje infra/terraform/MONITORING_RUNBOOK.md.
@@ -113,8 +116,9 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dlq_backlog" {
   criteria {
     query                   = <<-KQL
       traces
+      | extend payload = parse_json(message)
       | where severityLevel >= 3
-      | where message has "enqueueing to DLQ"
+      | where tostring(payload.event) == "dlq.enqueued"
     KQL
     time_aggregation_method = "Count"
     threshold               = 0

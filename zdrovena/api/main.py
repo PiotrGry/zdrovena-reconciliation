@@ -14,9 +14,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from zdrovena.api.errors import install_exception_handlers
 from zdrovena.api.observability import CorrelationIdFilter, correlation_id_middleware
-from zdrovena.api.routers import close, damage, files, integrations, invoices, webhooks
+from zdrovena.api.routers import (
+    close,
+    damage,
+    files,
+    integrations,
+    invoices,
+    monitoring_probe,
+    webhooks,
+)
 from zdrovena.common.appenv import UNKNOWN_ENV, is_production_env, resolve_app_env
 from zdrovena.common.provider_safety import ProviderSafetyError, assert_provider_write_safety
+from zdrovena.common.telemetry import configure_azure_telemetry, instrument_fastapi_app
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -45,18 +54,13 @@ for _name in (
 
 logger = logging.getLogger("zdrovena.api.main")
 
-# Configure Azure Monitor before app = FastAPI() so the FastAPI instrumentor
-# patches FastAPI.__init__ before our app instance is created.
-# Per official sample: https://github.com/Azure/azure-sdk-for-python/blob/main/
-#   sdk/monitor/azure-monitor-opentelemetry/samples/tracing/http_fastapi.py
-if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
-    try:
-        from azure.monitor.opentelemetry import configure_azure_monitor
-
-        configure_azure_monitor()
-        logger.info("Azure Monitor OpenTelemetry configured.")
-    except Exception as exc:
-        logger.warning("Azure Monitor configuration failed (non-fatal): %s", exc)
+_telemetry_environment = resolve_app_env()
+_default_service_name = {
+    "production": "zdrovena-api-prod",
+    "staging": "zdrovena-api-staging",
+    "development": "zdrovena-api-development",
+}.get(_telemetry_environment or "", "zdrovena-api")
+_azure_telemetry_enabled = configure_azure_telemetry(default_service_name=_default_service_name)
 
 
 def _is_production_env() -> bool:
@@ -182,10 +186,18 @@ app.include_router(integrations.router, prefix="/api")
 app.include_router(invoices.router, prefix="/api")
 app.include_router(webhooks.router, prefix="/api")
 app.include_router(damage.router, prefix="/api")
+app.include_router(monitoring_probe.router, prefix="/api")
 
 # Jednolita koperta błędu: mapuje wyjątki przesyłkowe na polskie komunikaty
 # i przechwytuje nieobsłużone wyjątki zamiast wyciekać surowy str(exc).
 install_exception_handlers(app)
+
+# Azure Monitor distro podmienia ``fastapi.FastAPI`` w ramach auto-instrumentacji.
+# Ta aplikacja importuje klasę przed konfiguracją telemetryki, dlatego jawnie
+# instrumentujemy gotową instancję. Bez tego traces/dependencies działają, ale
+# request spans nie trafiają do AppRequests.
+if _azure_telemetry_enabled:
+    instrument_fastapi_app(app)
 
 
 @app.get("/health", tags=["health"])

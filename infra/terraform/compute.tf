@@ -154,6 +154,10 @@ resource "azurerm_container_app_job" "allegro_poller" {
         value = azurerm_application_insights.ai.connection_string
       }
       env {
+        name  = "OTEL_SERVICE_NAME"
+        value = "${var.prefix}-allegro-poller"
+      }
+      env {
         name  = "ALLEGRO_ENV"
         value = "prod"
       }

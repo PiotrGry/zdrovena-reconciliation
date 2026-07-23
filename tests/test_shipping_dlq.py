@@ -109,13 +109,23 @@ class TestCreateDraftSafely:
             "customer": {"first_name": "A", "last_name": "B", "email": "a@b.pl"},
             "line_items": [{"name": "Test", "quantity": 1}],
         }
-        _create_draft_safely(order, broken_store, storage=MagicMock(), source="shopify")
+        with patch("zdrovena.api.routers.webhooks.log_event") as event:
+            _create_draft_safely(order, broken_store, storage=MagicMock(), source="shopify")
 
         entries = store.list_dlq()
         assert len(entries) == 1
         assert "table down" in entries[0]["last_error"]
         assert entries[0]["payload"]["id"] == 999
         assert entries[0]["source"] == "shopify"
+        event.assert_called_once_with(
+            "dlq.enqueued",
+            level=40,
+            entry_id=entries[0]["id"],
+            order_number=7,
+            source="shopify",
+            error_type="RuntimeError",
+            test_probe=False,
+        )
 
     def test_failure_is_never_reraised(self, store):
         broken_store = MagicMock(wraps=store)
@@ -205,3 +215,27 @@ class TestDlqEndpoints:
     def test_delete_dlq_entry_not_found(self, client):
         resp = client.delete("/api/shipping/drafts/dlq/no-such-id")
         assert resp.status_code == 404
+
+    def test_e2e_seed_emits_structured_dlq_event(self, client, monkeypatch):
+        monkeypatch.setenv("PROVIDER_MODE", "fake")
+        monkeypatch.setenv("APP_ENV", "staging")
+        body = {
+            "id": "e2e-monitoring-dlq",
+            "payload": {"id": 990001, "order_number": 990001},
+            "error": "Controlled monitoring probe",
+            "source": "shopify",
+        }
+
+        with patch("zdrovena.api.routers.webhooks.log_event") as event:
+            resp = client.post("/api/__test__/shipping/dlq", json=body)
+
+        assert resp.status_code == 200
+        event.assert_called_once_with(
+            "dlq.enqueued",
+            level=40,
+            entry_id="e2e-monitoring-dlq",
+            order_number=990001,
+            source="shopify",
+            error_type="E2ESeededFailure",
+            test_probe=True,
+        )
