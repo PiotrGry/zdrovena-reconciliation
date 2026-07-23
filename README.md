@@ -687,11 +687,13 @@ issue → branch z develop → PR do develop → PR develop do main → produkcj
 | `pr-validate.yml` | PR do `main` (`opened`, `synchronize`, `reopened`, zmiany etykiet, `ready_for_review`), ręcznie | kontrola źródła releasu, quality gate, `_full-test-suite.yml` ze staging smoke/E2E, zbiorczy `CI Gate` |
 | `prod-deploy.yml` | `push` do `main` dla zmian backendu, frontendu, skryptów lub workflowu deploy; ręcznie | promocja/budowa obrazu, deploy prod i pollera, smoke, link SWA, frontend, auto-rollback, GitHub Release |
 | `terraform.yml` | PR do `develop`/`main` dotykający Terraform, `push` do `main` dotykający Terraform, ręcznie | fmt/validate/plan; na `main` osobny apply po ręcznej akceptacji |
+| `back-sync-main.yml` | każdy `push` do `main`, ręcznie; zakończenie `Develop — Fast Gate` | tworzy PR z merge commitem `main → develop`, uruchamia wymagany fast gate i scala po weryfikacji pochodzenia |
 
 **Zabezpieczenia bramki:**
 - PR do `develop` musi przejść lint, typy, testy z pokryciem ≥80% oraz skany bezpieczeństwa odpowiednie dla zmienionych obszarów
 - PR `develop → main` ponownie uruchamia quality gate oraz pełny staging smoke/E2E; to celowe dwie bramki na dwóch poziomach ryzyka
 - Force-push i usuwanie `develop`/`main` blokują aktywne rulesety; wymagane statusy nie mają bypass actorów
+- Po każdym merge do `main` automatyczny back-sync przenosi main-only merge commit do `develop`, dzięki czemu następny release PR nie wymaga ręcznego `Update branch`
 - Deploy aplikacji po merge do `main` jest automatyczny i nie ma manual approval
 - Post-deploy smoke (3× retry) z auto-rollbackiem do poprzedniej rewizji Container App
 - `prod-health.yml` — cron co 5 min sprawdza `/health`; powiadomienie webhook przy błędzie
