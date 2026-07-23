@@ -10,6 +10,7 @@ REUSABLE_DEPLOY = (REPO_ROOT / ".github" / "workflows" / "_deploy.yml").read_tex
 STAGING_SCHEDULE = (REPO_ROOT / ".github" / "workflows" / "staging-schedule.yml").read_text(
     encoding="utf-8"
 )
+BACK_SYNC_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "back-sync-main.yml"
 
 
 def test_full_staging_is_conditional_on_runtime_or_staging_changes() -> None:
@@ -63,3 +64,7 @@ def test_public_swa_smoke_waits_for_both_deploy_areas() -> None:
 def test_staging_shutdown_uses_valid_bounded_teardown() -> None:
     assert "--max-replicas 0" not in STAGING_SCHEDULE
     assert STAGING_SCHEDULE.count("scripts/ci/teardown-staging.sh") == 2
+
+
+def test_release_flow_does_not_use_automatic_back_sync() -> None:
+    assert not BACK_SYNC_WORKFLOW.exists()

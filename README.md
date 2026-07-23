@@ -663,9 +663,9 @@ Obowiązujący workflow zmian:
 1. Utwórz lub wybierz issue z zakresem i kryteriami akceptacji.
 2. Utwórz krótko żyjący branch z aktualnego `develop`, np.
    `feature/123-opis`, `fix/123-opis` albo `codex/123-opis`.
-3. Otwórz PR z brancha do `develop`. Aktywny ruleset wymaga PR, aktualnej bazy
-   oraz statusu `Fast gate / Quality Gate`; nie wymaga obecnie akceptacji drugiej
-   osoby.
+3. Otwórz PR z brancha do `develop`. Aktywny ruleset wymaga PR oraz statusu
+   `Fast gate / Quality Gate`; nie wymaga aktualizowania brancha tylko dlatego,
+   że baza dostała nowszy commit, ani akceptacji drugiej osoby.
 4. Po zebraniu releasu otwórz osobny PR `develop → main`. Ruleset `main`
    wymaga PR i statusu `CI Gate`. `pr-validate.yml` dodatkowo odrzuca inne źródło
    niż `develop`, poza `hotfix/*` z etykietą `hotfix-approved`.
@@ -687,15 +687,13 @@ issue → branch z develop → PR do develop → PR develop do main → produkcj
 | `pr-validate.yml` | PR do `main` (`opened`, `synchronize`, `reopened`, zmiany etykiet, `ready_for_review`), ręcznie | kontrola źródła releasu, quality gate, warunkowy staging smoke/E2E dla zmian runtime lub mechanizmu staging, zbiorczy `CI Gate` |
 | `prod-deploy.yml` | `push` do `main` zmieniający backend lub frontend, ręcznie | deploy tylko zmienionego obszaru; dokumentacja, testy i helpery CI nie dotykają produkcji |
 | `terraform.yml` | PR do `develop`/`main` dotykający Terraform, `push` do `main` dotykający Terraform, ręcznie | fmt/validate/plan; na `main` osobny apply po ręcznej akceptacji |
-| `back-sync-main.yml` | każdy `push` do `main`, ręcznie; zakończenie `Develop — Fast Gate` | tworzy PR z merge commitem `main → develop`, uruchamia wymagany fast gate i scala po weryfikacji pochodzenia |
 
 **Zabezpieczenia bramki:**
 - PR do `develop` musi przejść lint, typy, testy z pokryciem ≥80% oraz skany bezpieczeństwa odpowiednie dla zmienionych obszarów
 - PR `develop → main` zawsze uruchamia quality gate. Pełny staging smoke/E2E uruchamia się tylko dla zmian backendu/frontendu albo samego mechanizmu staging/smoke/E2E; PR-y wyłącznie dokumentacyjne nie logują się do Azure i nie zmieniają stagingu
 - Po merge do `main` produkcyjny workflow uruchamia się tylko dla plików runtime i wdraża osobno backend lub frontend. Zmiana README, testów lub skryptów CI nie powoduje produkcyjnego deploymentu
-- Force-push i usuwanie `develop`/`main` blokują aktywne rulesety; wymagane statusy nie mają bypass actorów
-- Po każdym merge do `main` automatyczny back-sync przenosi main-only merge commit do `develop`, dzięki czemu następny release PR nie wymaga ręcznego `Update branch`
-- Domyślne uprawnienia `GITHUB_TOKEN` pozostają `read`; repo pozwala workflowom z jawnym `pull-requests: write` tworzyć back-sync PR, ale nie daje im bypassu rulesetów
+- Force-push i usuwanie `develop`/`main` blokują aktywne rulesety; wymagane statusy nie mają bypass actorów. Statusy muszą być zielone, ale `strict_required_status_checks_policy=false`, więc GitHub nie blokuje merge wyłącznie z powodu nowszego commita w bazie
+- Nie ma automatycznego back-sync `main → develop`; merge commit z releasu może pozostać tylko na `main`, a kolejne PR-y zawierają różnicę od wspólnego przodka i nadal przechodzą wymagane bramki
 - Deploy aplikacji po merge do `main` jest automatyczny i nie ma manual approval
 - Post-deploy smoke backendu (3×) z auto-rollbackiem oraz publiczny smoke SWA po zakończeniu obu obszarów deployu (6× retry na propagację linku)
 - `prod-health.yml` — cron co 5 min sprawdza `/health`; powiadomienie webhook przy błędzie
