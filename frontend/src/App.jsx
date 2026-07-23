@@ -63,7 +63,10 @@ function AppShell() {
         }
     }, [getToken])
 
-    useEffect(() => { loadDamageCount() }, [loadDamageCount])
+    useEffect(() => {
+        const timer = window.setTimeout(() => { void loadDamageCount() }, 0)
+        return () => window.clearTimeout(timer)
+    }, [loadDamageCount])
     usePolling(loadDamageCount, 30_000, { enabled: FEATURES.damage })
 
     return (

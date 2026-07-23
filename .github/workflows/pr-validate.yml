@@ -4,28 +4,14 @@ name: PR Validate — develop → main
 # suite. The full suite is intentionally kept here, not on every develop PR,
 # because it deploys staging resources and runs browser workflows.
 #
-# Path filtering: Skip for infra-only changes (terraform.yml handles those).
+# This workflow always runs for main PRs so the required "CI Gate" status can
+# never disappear because of path filters. Area-specific jobs still skip
+# internally, while the full staging suite remains a release-level check.
 
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "zdrovena/**"
-      - "tests/**"
-      - "scripts/**"
-      - "contracts/**"
-      - "pyproject.toml"
-      - "Dockerfile"
-      - "e2e/**"
-      - "frontend/**"
-      - ".sops.yaml"
-      - ".sops.yaml.example"
-      - ".env.local.sops"
-      - "docs/devops/**"
-      - ".github/workflows/pr-validate.yml"
-      - ".github/workflows/_quality-gate.yml"
-      - ".github/workflows/_full-test-suite.yml"
-      # infra/** intentionally omitted — terraform.yml runs plan for those
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -39,6 +25,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-source:
+    name: Release source
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require develop or an explicitly approved hotfix
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
+          HOTFIX_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'hotfix-approved') }}
+        run: |
+          if [[ "$HEAD_BRANCH" == "develop" ]]; then
+            echo "Release source is develop."
+            exit 0
+          fi
+          if [[ "$HEAD_BRANCH" == hotfix/* && "$HOTFIX_APPROVED" == "true" ]]; then
+            echo "Explicitly approved hotfix source: $HEAD_BRANCH"
+            exit 0
+          fi
+          echo "::error::PRs to main must come from develop. Emergency exception: hotfix/* with the hotfix-approved label."
+          exit 1
+
   quality-gate:
     name: Quality gate
     uses: ./.github/workflows/_quality-gate.yml
@@ -58,7 +66,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [quality-gate, full-test-suite]
+    needs: [release-source, quality-gate, full-test-suite]
     steps:
       - name: Check all jobs passed
         run: |

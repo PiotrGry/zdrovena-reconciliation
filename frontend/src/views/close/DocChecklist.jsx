@@ -57,7 +57,10 @@ export function DocChecklist({ onStatusChange }) {
         }
     }, [getToken, pushToast])
 
-    useEffect(() => { load() }, [load])
+    useEffect(() => {
+        const timer = window.setTimeout(() => { void load() }, 0)
+        return () => window.clearTimeout(timer)
+    }, [load])
 
     const getKey = i => i.key || i.name || ''
     const getName = i => i.name || getKey(i).split('/').pop() || ''

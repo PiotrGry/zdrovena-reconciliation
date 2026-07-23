@@ -38,7 +38,10 @@ export function CloseHistoryTable({ refreshKey = 0 }) {
         }
     }, [getToken, pushToast])
 
-    useEffect(() => { load() }, [load, refreshKey])
+    useEffect(() => {
+        const timer = window.setTimeout(() => { void load() }, 0)
+        return () => window.clearTimeout(timer)
+    }, [load, refreshKey])
     usePolling(() => load({ silent: true }), 20_000)
 
     const deleteEntry = async (ts) => {

@@ -1353,10 +1353,19 @@ def _create_draft_safely(
                 source,
             )
             try:
-                shipping_store.enqueue_dlq(
+                entry = shipping_store.enqueue_dlq(
                     payload=order,
                     error=f"{type(exc).__name__}: {exc}",
                     source=source,
+                )
+                log_event(
+                    "dlq.enqueued",
+                    level=logging.ERROR,
+                    entry_id=entry["id"],
+                    order_number=order.get("order_number") or order.get("id"),
+                    source=source,
+                    error_type=type(exc).__name__,
+                    test_probe=False,
                 )
             except Exception:
                 logger.exception(
@@ -2042,12 +2051,22 @@ def seed_e2e_dlq_entry(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="E2E DLQ id must start with e2e- or payload order number with 990",
         )
-    return shipping_store.enqueue_dlq(
+    entry = shipping_store.enqueue_dlq(
         payload=payload,
         error=str(body.get("error") or "E2E seeded failure"),
         source=str(body.get("source") or "shopify"),
         entry_id=entry_id or None,
     )
+    log_event(
+        "dlq.enqueued",
+        level=logging.ERROR,
+        entry_id=entry["id"],
+        order_number=payload.get("order_number") or payload.get("id"),
+        source=entry["source"],
+        error_type="E2ESeededFailure",
+        test_probe=True,
+    )
+    return entry
 
 
 # ── Execute draft ─────────────────────────────────────────────────────────────

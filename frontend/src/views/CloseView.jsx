@@ -38,7 +38,10 @@ export default function CloseView() {
         }
     }, [getToken, month, pushToast, year])
 
-    useEffect(() => { loadRun() }, [loadRun])
+    useEffect(() => {
+        const timer = window.setTimeout(() => { void loadRun() }, 0)
+        return () => window.clearTimeout(timer)
+    }, [loadRun])
 
     useEffect(() => {
         if (!run?.active_action) return undefined

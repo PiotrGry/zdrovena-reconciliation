@@ -56,7 +56,10 @@ export default function DlqView() {
         }
     }, [getToken])
 
-    useEffect(() => { load() }, [load])
+    useEffect(() => {
+        const timer = window.setTimeout(() => { void load() }, 0)
+        return () => window.clearTimeout(timer)
+    }, [load])
     usePolling(() => load({ silent: true }), 20_000)
 
     const withBusy = (id, fn) => async () => {

@@ -189,3 +189,27 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - working-directory: frontend
         run: npm ci && npm run lint && npm test && npm run build
+
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: always()
+    needs:
+      - detect-changes
+      - sops-guard
+      - typecheck
+      - security
+      - api-contracts
+      - infra
+      - frontend-check
+    steps:
+      - name: Require every applicable quality job to pass
+        run: |
+          results='${{ toJSON(needs.*.result) }}'
+          echo "Quality job results: $results"
+          if echo "$results" | grep -qE '"failure"|"cancelled"'; then
+            echo "::error::One or more quality jobs failed or were cancelled."
+            exit 1
+          fi
+          echo "All applicable quality jobs passed; skipped areas are allowed."
