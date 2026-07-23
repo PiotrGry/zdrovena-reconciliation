@@ -7,8 +7,9 @@ set -euo pipefail
 
 APP="${1:?Podaj nazwę Container App}"
 RG="${2:?Podaj resource group}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-az containerapp update \
+"$SCRIPT_DIR/azure-cli-retry.sh" az containerapp update \
     --name           "$APP" \
     --resource-group "$RG" \
     --min-replicas   0 \
