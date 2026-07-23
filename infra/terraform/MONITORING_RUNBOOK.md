@@ -270,3 +270,56 @@ Record this in the deploy log / PR comment after the controlled test:
 Nie generuj kontrolowanych błędów na produkcji. Produkcyjny sygnał jest
 weryfikowany przez konfigurację wymiarów, bieżącą telemetrię i osobny test
 transportu action group.
+
+---
+
+## 6. Evidence log
+
+### 2026-07-23 — controlled DLQ delivery test
+
+Test wykonano na stagingu, bez generowania błędu produkcyjnego. Tymczasowa
+reguła alertu była ograniczona jednocześnie do roli
+`zdrovena-api-staging` i jednego correlation ID. Po osiągnięciu stanu `Fired`
+regułę usunięto.
+
+| Pole | Wartość |
+|---|---|
+| Okno dowodowe UTC | `2026-07-23T23:09:58Z`–`2026-07-23T23:15:00Z` |
+| Probe ID | `e2e-monitoring-20260723230958` |
+| Correlation ID | `monitoring-e2e-monitoring-20260723230958` |
+| App Insights trace | `2026-07-23T23:10:49.855208Z` |
+| Operation ID | `788d471677d6b68404c50d38985f7796` |
+| Service role | `zdrovena-api-staging` |
+| Event | `dlq.enqueued`, severity `3`, `test_probe=true` |
+| Tymczasowa reguła | `zdrovena-alert-dlq-e2e-20260723230958` |
+| Alert `Fired` | `2026-07-23T23:14:29.1338006Z`, Sev4 |
+| Cleanup | wpis DLQ: HTTP 204; reguła: usunięta; staging: `min=0, max=1` |
+
+Zapytanie użyte do powiązania śladu z probe:
+
+```kql
+traces
+| where timestamp between (
+    datetime(2026-07-23T23:09:58Z) ..
+    datetime(2026-07-23T23:15:00Z)
+  )
+| extend payload = parse_json(message)
+| where severityLevel >= 3
+| where cloud_RoleName == "zdrovena-api-staging"
+| where tostring(payload.event) == "dlq.enqueued"
+| where tostring(payload.correlation_id)
+    == "monitoring-e2e-monitoring-20260723230958"
+| project timestamp, cloud_RoleName, operation_Id, severityLevel,
+          event=tostring(payload.event),
+          correlation_id=tostring(payload.correlation_id),
+          test_probe=tobool(payload.test_probe)
+```
+
+Produkcyjna reguła `zdrovena-alert-dlq-backlog` nie przeszła do `Fired` od
+stagingowego probe, co potwierdza działanie filtra
+`cloud_RoleName == "zdrovena-api-prod"`. Kontrolny plan po apply:
+[GitHub Actions run 30052062271](https://github.com/PiotrGry/zdrovena-reconciliation/actions/runs/30052062271)
+zakończył się wynikiem `No changes`; job `Apply` został pominięty.
+
+Do zamknięcia dowodu pozostaje potwierdzenie przez właściciela, że wiadomość
+wysłana przez `zdrovena-ag-ops` faktycznie dotarła do skonfigurowanej skrzynki.
