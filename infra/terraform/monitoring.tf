@@ -50,6 +50,14 @@ resource "azurerm_monitor_metric_alert" "high_error_rate" {
     aggregation      = "Count"
     operator         = "GreaterThan"
     threshold        = 5
+
+    # Staging smoke tests celowo generują 401/403 i kontrolowane 5xx.
+    # Powiadomienia operacyjne dotyczą wyłącznie produkcyjnego API.
+    dimension {
+      name     = "cloud/roleName"
+      operator = "Include"
+      values   = ["${var.prefix}-api-prod"]
+    }
   }
 
   action {
@@ -76,6 +84,12 @@ resource "azurerm_monitor_metric_alert" "high_latency" {
     aggregation      = "Average"
     operator         = "GreaterThan"
     threshold        = 3000
+
+    dimension {
+      name     = "cloud/roleName"
+      operator = "Include"
+      values   = ["${var.prefix}-api-prod"]
+    }
   }
 
   action {
@@ -118,6 +132,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dlq_backlog" {
       traces
       | extend payload = parse_json(message)
       | where severityLevel >= 3
+      | where cloud_RoleName == "${var.prefix}-api-prod"
       | where tostring(payload.event) == "dlq.enqueued"
     KQL
     time_aggregation_method = "Count"

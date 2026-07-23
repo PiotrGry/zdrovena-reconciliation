@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from zdrovena.api.commands import allegro_poll_cmd
 
 
@@ -78,3 +80,15 @@ def test_run_still_polls_orders_without_fakturownia_credentials():
         storage=storage,
         fakturownia_client=None,
     )
+
+
+def test_run_flushes_telemetry_when_cycle_exits_with_error():
+    with (
+        patch.object(allegro_poll_cmd, "_setup_logging"),
+        patch.object(allegro_poll_cmd, "_run_cycle", side_effect=SystemExit(1)),
+        patch("zdrovena.common.telemetry.force_flush_azure_telemetry") as flush,
+        pytest.raises(SystemExit, match="1"),
+    ):
+        allegro_poll_cmd.run(argparse.Namespace())
+
+    flush.assert_called_once_with()

@@ -3274,7 +3274,7 @@ def sync_orders(
 
     log_event(
         "sync.completed",
-        actor=getattr(principal, "email", None),
+        actor_id=principal.sub,
         allegro=result["allegro"],
         shopify=result["shopify"],
     )

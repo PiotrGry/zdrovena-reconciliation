@@ -7,7 +7,11 @@ from unittest.mock import Mock
 from fastapi import FastAPI
 from opentelemetry.sdk.resources import SERVICE_NAME
 
-from zdrovena.common.telemetry import configure_azure_telemetry, instrument_fastapi_app
+from zdrovena.common.telemetry import (
+    configure_azure_telemetry,
+    force_flush_azure_telemetry,
+    instrument_fastapi_app,
+)
 
 
 def test_telemetry_disabled_without_connection_string(monkeypatch):
@@ -54,3 +58,44 @@ def test_fastapi_app_is_instrumented_explicitly(monkeypatch):
     instrument_fastapi_app(app)
 
     instrument.assert_called_once_with(app)
+
+
+def test_force_flush_flushes_all_configured_signal_providers(monkeypatch):
+    trace_provider = Mock()
+    metric_provider = Mock()
+    log_provider = Mock()
+    trace_provider.force_flush.return_value = True
+    metric_provider.force_flush.return_value = True
+    log_provider.force_flush.return_value = True
+
+    monkeypatch.setattr(
+        "opentelemetry.trace.get_tracer_provider",
+        lambda: trace_provider,
+    )
+    monkeypatch.setattr(
+        "opentelemetry.metrics.get_meter_provider",
+        lambda: metric_provider,
+    )
+    monkeypatch.setattr(
+        "opentelemetry._logs.get_logger_provider",
+        lambda: log_provider,
+    )
+
+    assert force_flush_azure_telemetry(timeout_millis=1234) is True
+    trace_provider.force_flush.assert_called_once_with(timeout_millis=1234)
+    metric_provider.force_flush.assert_called_once_with(timeout_millis=1234)
+    log_provider.force_flush.assert_called_once_with(timeout_millis=1234)
+
+
+def test_force_flush_is_non_fatal_when_one_exporter_fails(monkeypatch):
+    trace_provider = Mock()
+    trace_provider.force_flush.side_effect = RuntimeError("export unavailable")
+
+    monkeypatch.setattr(
+        "opentelemetry.trace.get_tracer_provider",
+        lambda: trace_provider,
+    )
+    monkeypatch.setattr("opentelemetry.metrics.get_meter_provider", lambda: object())
+    monkeypatch.setattr("opentelemetry._logs.get_logger_provider", lambda: object())
+
+    assert force_flush_azure_telemetry() is False

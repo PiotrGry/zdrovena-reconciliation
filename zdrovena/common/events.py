@@ -50,6 +50,9 @@ _PII_KEYS = frozenset(
         "nip",
         "pesel",
         "tax_id",
+        # Operator identity may currently be an e-mail address. Prefer a
+        # separate opaque `actor_id` for correlation; never export `actor`.
+        "actor",
     }
 )
 
