@@ -1,12 +1,11 @@
 name: PR Validate — develop → main
 
-# Every PR targeting main runs the fast quality gate plus the staging smoke/E2E
-# suite. The full suite is intentionally kept here, not on every develop PR,
-# because it deploys staging resources and runs browser workflows.
+# Every PR targeting main runs the fast quality gate. Staging smoke/E2E runs
+# only when deployable runtime or the staging test machinery changed.
 #
 # This workflow always runs for main PRs so the required "CI Gate" status can
-# never disappear because of path filters. Area-specific jobs still skip
-# internally, while the full staging suite remains a release-level check.
+# never disappear because of path filters. Documentation-only and unrelated
+# workflow changes do not log in to Azure or mutate staging resources.
 
 on:
   pull_request:
@@ -55,9 +54,14 @@ jobs:
   full-test-suite:
     name: Full staging smoke + E2E
     needs: [quality-gate]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.quality-gate.outputs.backend_runtime == 'true' ||
+      needs.quality-gate.outputs.frontend == 'true' ||
+      needs.quality-gate.outputs.staging == 'true'
     uses: ./.github/workflows/_full-test-suite.yml
     with:
-      backend_changed: ${{ needs.quality-gate.outputs.backend }}
+      backend_changed: ${{ needs.quality-gate.outputs.backend_runtime }}
       frontend_changed: ${{ needs.quality-gate.outputs.frontend }}
     secrets: inherit
 
@@ -76,4 +80,4 @@ jobs:
             echo "One or more CI jobs failed."
             exit 1
           fi
-          echo "All CI jobs passed — ready to merge."
+          echo "All required CI jobs passed; staging may be skipped for non-runtime changes."

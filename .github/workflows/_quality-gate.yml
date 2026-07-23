@@ -12,14 +12,20 @@ on:
   workflow_call:
     outputs:
       backend:
-        description: "True if backend Python code changed"
+        description: "True if backend code, tests, or scripts changed"
         value: ${{ jobs.detect-changes.outputs.backend }}
+      backend_runtime:
+        description: "True if deployable backend runtime changed"
+        value: ${{ jobs.detect-changes.outputs.backend_runtime }}
       frontend:
         description: "True if frontend code changed"
         value: ${{ jobs.detect-changes.outputs.frontend }}
       infra:
         description: "True if Terraform code changed"
         value: ${{ jobs.detect-changes.outputs.infra }}
+      staging:
+        description: "True if staging workflow, smoke, E2E, or CI scripts changed"
+        value: ${{ jobs.detect-changes.outputs.staging }}
 
 permissions:
   contents: read
@@ -33,8 +39,10 @@ jobs:
     timeout-minutes: 2
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
+      backend_runtime: ${{ steps.filter.outputs.backend_runtime }}
       frontend: ${{ steps.filter.outputs.frontend }}
       infra: ${{ steps.filter.outputs.infra }}
+      staging: ${{ steps.filter.outputs.staging }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - id: filter

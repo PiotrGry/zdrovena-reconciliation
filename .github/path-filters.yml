@@ -5,8 +5,19 @@ backend:
   - 'contracts/**'
   - 'pyproject.toml'
   - 'Dockerfile'
+backend_runtime:
+  - 'zdrovena/**'
+  - 'pyproject.toml'
+  - 'Dockerfile'
 frontend:
   - 'frontend/**'
   - 'contracts/**'
 infra:
   - 'infra/terraform/**'
+staging:
+  - '.github/workflows/_full-test-suite.yml'
+  - '.github/workflows/pr-validate.yml'
+  - 'scripts/ci/**'
+  - 'scripts/smoke/**'
+  - 'scripts/validate-staging-ci.sh'
+  - 'e2e/**'
