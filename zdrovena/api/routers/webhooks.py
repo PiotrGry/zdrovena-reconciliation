@@ -879,6 +879,13 @@ def _physical_parcels(draft: dict[str, Any]) -> list[tuple[str, int, int]]:
     return parcels or [("1-pak", 1, 1)]
 
 
+def _shipment_reference(
+    order_number: str, package_type: str, package_number: int, package_count: int
+) -> str:
+    material = "szkło" if package_type in {"szkło", "szkło-2pak"} else "plastik"
+    return f"{order_number} | {material} | {package_type} {package_number}/{package_count}"
+
+
 def _shipment_patch(shipments: list[dict[str, str]]) -> dict[str, Any]:
     first = shipments[0] if shipments else {}
     return {
@@ -938,7 +945,7 @@ def _run_inpost(
         if (package_type, package_number) in existing_keys:
             continue
         spec = PARCEL_SPECS.get(package_type, PARCEL_SPECS["1-pak"])
-        reference = f"{order_number} | {package_type} {package_number}/{package_count}"
+        reference = _shipment_reference(order_number, package_type, package_number, package_count)
         if inpost_service == "paczkomat":
             result = client.create_paczkomat_shipment(
                 receiver_first_name=first_name,
@@ -1066,7 +1073,12 @@ def _run_apaczka(
             receiver_zip=addr.get("post_code", ""),
             receiver_point_id=receiver_point_id or None,
             sender=pickup_address,
-            reference=f"{draft.get('shopify_order_number', '')} | {package_type} {package_number}/{package_count}",
+            reference=_shipment_reference(
+                str(draft.get("shopify_order_number", "")),
+                package_type,
+                package_number,
+                package_count,
+            ),
             weight_kg=spec["weight_kg"],
             width_cm=spec["width"],
             height_cm=spec["height"],
