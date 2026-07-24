@@ -31,11 +31,13 @@ function fmtDate(iso) {
     }
 }
 
-function printPdf(blob, title) {
+export function printPdf(blob, title) {
     const url = URL.createObjectURL(blob)
     const frame = document.createElement('iframe')
     frame.title = title
-    frame.style.cssText = 'position:fixed;width:0;height:0;border:0;visibility:hidden'
+    // Safari can print a blank PDF when its iframe is visibility:hidden. Keep
+    // it renderable while placing it outside the visible viewport.
+    frame.style.cssText = 'position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;border:0'
     frame.src = url
     frame.onload = () => {
         frame.contentWindow?.focus()
