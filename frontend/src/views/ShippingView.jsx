@@ -31,6 +31,23 @@ function fmtDate(iso) {
     }
 }
 
+function printPdf(blob, title) {
+    const url = URL.createObjectURL(blob)
+    const frame = document.createElement('iframe')
+    frame.title = title
+    frame.style.cssText = 'position:fixed;width:0;height:0;border:0;visibility:hidden'
+    frame.src = url
+    frame.onload = () => {
+        frame.contentWindow?.focus()
+        frame.contentWindow?.print()
+    }
+    document.body.appendChild(frame)
+    window.setTimeout(() => {
+        URL.revokeObjectURL(url)
+        frame.remove()
+    }, 60_000)
+}
+
 function courierLabel(draft, apaczkaServices = []) {
     if (draft.courier === 'allegro_delivery') {
         if (draft.allegro_sending_method === 'parcel_locker') return 'Wysyłam z Allegro (Paczkomat)'
@@ -543,7 +560,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
         draft.status === 'pending' ||
         draft.status === 'needs_review' ||
         draft.status === 'error' ||
-        (draft.courier === 'inpost' && draft.status === 'created' && !draft.pickup_ordered)
+        draft.status === 'created'
     )
 
     return (
@@ -558,6 +575,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                         type="checkbox"
                         checked={selected || false}
                         onChange={() => onToggleSelect(draft.id)}
+                        aria-label={`Wybierz przesyłkę ${draft.shopify_order_number || draft.id}`}
                         style={{ cursor: 'pointer', accentColor: 'var(--primary, #3b82f6)' }}
                     />
                 ) : <span style={{ width: 16 }} />}
@@ -861,9 +879,12 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                     className="btn btn-secondary"
                                     onClick={() => onPrintLabel(draft)}
                                     disabled={isBusy}
+                                    title={draft.courier === 'inpost'
+                                        ? 'InPost pobiera etykietę PDF A6'
+                                        : 'Otwiera systemowe okno drukowania'}
                                 >
                                     <Icon name="printer" size={13} />
-                                    Drukuj etykietę
+                                    {draft.courier === 'inpost' ? 'Drukuj A6' : 'Drukuj etykietę'}
                                 </button>
                             )}
 
@@ -1117,9 +1138,7 @@ export default function ShippingView() {
             }
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
             const blob = await res.blob()
-            const objUrl = URL.createObjectURL(blob)
-            window.open(objUrl, '_blank')
-            setTimeout(() => URL.revokeObjectURL(objUrl), 30_000)
+            printPdf(blob, `Etykieta ${draft.shopify_order_number || draft.id}`)
         } catch (e) {
             pushToast({ kind: 'error', msg: `Błąd pobierania etykiety: ${e.message}` })
         }
@@ -1288,6 +1307,37 @@ export default function ShippingView() {
         load()
     }
 
+    async function handleBulkPrint() {
+        const selected = [...selectedDraftIds]
+            .map(id => drafts.find(draft => draft.id === id))
+            .filter(draft => draft?.status === 'created' && draft.courier_draft_id)
+        if (!selected.length) return
+
+        setBulkProgress({ done: 0, total: selected.length })
+        try {
+            const token = await getToken()
+            const res = await fetch('/api/shipping/labels/batch', {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ draft_ids: selected.map(draft => draft.id) }),
+            })
+            if (res.status === 409) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(body.detail || 'Co najmniej jedna etykieta nie jest jeszcze gotowa.')
+            }
+            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+            printPdf(await res.blob(), `Etykiety A6 (${selected.length})`)
+            setSelectedDraftIds(new Set())
+        } catch (error) {
+            pushToast({ kind: 'error', msg: `Błąd drukowania etykiet: ${error.message}` })
+        } finally {
+            setBulkProgress(null)
+        }
+    }
+
     const filtered = drafts.filter(d => {
         if (filterStatus !== 'all' && d.status !== filterStatus) return false
         if (filterCourier !== 'all' && d.courier !== filterCourier) return false
@@ -1311,7 +1361,7 @@ export default function ShippingView() {
 
     const selectableIds = visibleDrafts
         .filter(d => d.status === 'pending' || d.status === 'needs_review' || d.status === 'error' ||
-            (d.courier === 'inpost' && d.status === 'created' && !d.pickup_ordered))
+            d.status === 'created')
         .map(d => d.id)
     const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedDraftIds.has(id))
     function handleSelectAll() {
@@ -1383,7 +1433,25 @@ export default function ShippingView() {
                                 const d = drafts.find(x => x.id === id)
                                 return d && d.courier === 'inpost' && d.status === 'created' && !d.pickup_ordered
                             })
+                            const printSelected = [...selectedDraftIds].filter(id => {
+                                const d = drafts.find(x => x.id === id)
+                                return d && d.status === 'created' && d.courier_draft_id
+                            })
                             return (<>
+                                {printSelected.length > 0 && (
+                                    <button
+                                        className="btn btn-secondary"
+                                        style={{ fontSize: '0.85em' }}
+                                        onClick={handleBulkPrint}
+                                        disabled={bulkProgress !== null}
+                                        title="Otwiera jedno okno drukowania dla wszystkich zaznaczonych etykiet; etykiety InPost są pobierane jako PDF A6"
+                                    >
+                                        <Icon name="printer" size={13} />
+                                        {bulkProgress !== null
+                                            ? `Przygotowuję ${bulkProgress.done}/${bulkProgress.total}…`
+                                            : `Drukuj etykiety (${printSelected.length})`}
+                                    </button>
+                                )}
                                 {pendingSelected.length > 0 && (
                                     <button
                                         className="btn btn-primary"
