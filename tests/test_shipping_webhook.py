@@ -1247,9 +1247,29 @@ class TestRunInpost:
         ]
         assert [shipment["id"] for shipment in persisted] == ["ship-3pak", "ship-1pak"]
         assert [call.kwargs["reference"] for call in mock_ship.call_args_list] == [
-            "1050 | 3-pak 1/1",
-            "1050 | 1-pak 1/1",
+            "1050 | plastik | 3-pak 1/1",
+            "1050 | plastik | 1-pak 1/1",
         ]
+
+    @pytest.mark.parametrize(
+        ("package_type", "material"),
+        [("pół-pak", "plastik"), ("szkło", "szkło"), ("szkło-2pak", "szkło")],
+    )
+    def test_reference_identifies_package_material(self, package_type, material):
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        draft = {
+            **_KURIER_DRAFT,
+            "packages_breakdown": [{"type": package_type, "qty": 1}],
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_ship:
+                mock_ship.return_value = {"id": "ship-1", "tracking_number": "TRK-1"}
+                _run_inpost(draft, _SENDER)
+
+        assert mock_ship.call_args.kwargs["reference"] == (
+            f"1050 | {material} | {package_type} 1/1"
+        )
 
 
 class TestRunApaczka:
@@ -1279,6 +1299,7 @@ class TestRunApaczka:
         assert result["courier_draft_id"] == "ap-1"
         assert result["tracking_number"] == "WAY001"
         assert result["status"] == "created"
+        assert mock_ship.call_args.kwargs["reference"] == "1060 | plastik | 1-pak 1/1"
 
     def test_passes_pickup_point_to_apaczka(self):
         from zdrovena.api.routers.webhooks import _run_apaczka

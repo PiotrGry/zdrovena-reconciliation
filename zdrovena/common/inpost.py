@@ -535,5 +535,10 @@ class InPostClient:
 
     def get_label(self, shipment_id: str) -> bytes:
         url = f"{_BASE}/v1/shipments/{shipment_id}/label"
-        resp = self._request("GET", url, action="get_label")
+        resp = self._request(
+            "GET",
+            url,
+            action="get_label",
+            params={"format": "Pdf", "type": "A6"},
+        )
         return resp.content

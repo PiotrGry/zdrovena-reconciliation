@@ -284,6 +284,7 @@ class TestGetLabel:
         # URL targets shipment-specific label endpoint
         called_url = mock_get.call_args.args[0]
         assert called_url.endswith("/v1/shipments/ship-1/label")
+        assert mock_get.call_args.kwargs["params"] == {"format": "Pdf", "type": "A6"}
 
     def test_4xx_raises_inpost_error(self):
         client = InPostClient(_TOKEN, _ORG)
