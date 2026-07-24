@@ -30,4 +30,11 @@ ENV_LOCAL_SECRETS: list[str] = [
     "sender-post-code",
     "sender-phone",
     "sender-email",
+    "pickup-name",
+    "pickup-street",
+    "pickup-building-number",
+    "pickup-city",
+    "pickup-post-code",
+    "pickup-phone",
+    "pickup-email",
 ]

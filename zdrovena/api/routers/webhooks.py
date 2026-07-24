@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from functools import lru_cache
 from math import ceil
@@ -202,6 +203,20 @@ def _get_sender() -> dict[str, str]:
 
 
 # ── Address / phone parsing helpers ───────────────────────────────────────────
+def _get_pickup_address() -> dict[str, str]:
+    """Return the physical courier collection address, distinct from the sender."""
+    name = get_secret("pickup_name")
+    return {
+        "name": name,
+        "firstname": "",
+        "lastname": name,
+        "street": get_secret("pickup_street"),
+        "building_number": get_secret("pickup_building_number"),
+        "city": get_secret("pickup_city"),
+        "post_code": get_secret("pickup_post_code"),
+        "phone": get_secret("pickup_phone"),
+        "email": get_secret("pickup_email"),
+    }
 
 
 # ── SMS notification ─────────────────────────────────────────────────────────
@@ -854,6 +869,29 @@ def _parcel_weight_and_dims(draft: dict[str, Any]) -> tuple[float, dict[str, flo
     return (total_weight if total_weight > 0 else 6.0), largest_dims
 
 
+def _physical_parcels(draft: dict[str, Any]) -> list[tuple[str, int, int]]:
+    """Expand a package breakdown into (type, position, count-for-type) tuples."""
+    parcels: list[tuple[str, int, int]] = []
+    for box in draft.get("packages_breakdown") or []:
+        package_type = str(box.get("type") or "1-pak")
+        quantity = int(box.get("qty") or 1)
+        parcels.extend((package_type, position, quantity) for position in range(1, quantity + 1))
+    return parcels or [("1-pak", 1, 1)]
+
+
+def _shipment_patch(shipments: list[dict[str, str]]) -> dict[str, Any]:
+    first = shipments[0] if shipments else {}
+    return {
+        "courier_draft_id": first.get("id"),
+        "courier_shipments": shipments,
+        "dispatch_order_id": None,
+        "tracking_number": first.get("tracking_number"),
+        "status": "created",
+        "pickup_ordered": False,
+        "error": None,
+    }
+
+
 def _run_inpost(
     draft: dict[str, Any],
     sender: dict[str, str],
@@ -861,6 +899,7 @@ def _run_inpost(
     pickup_date: str | None = None,
     pickup_from: str | None = None,
     pickup_to: str | None = None,
+    on_shipment_created: Callable[[dict[str, str]], None] | None = None,
 ) -> dict[str, Any]:
     """Create or recreate InPost shipment from stored draft fields. Returns patch dict."""
     if _MOCK_COURIER:
@@ -881,63 +920,75 @@ def _run_inpost(
     org_id = get_secret("inpost_organization_id")
     client = InPostClient(token, org_id)
 
+    from zdrovena.common.inpost import PARCEL_SPECS
+
     receiver = draft.get("receiver") or {}
     first_name = receiver.get("first_name", "")
     last_name = receiver.get("last_name", "")
     email = receiver.get("email", "")
     phone = receiver.get("phone", "")
-    reference = str(draft.get("shopify_order_number", ""))
+    order_number = str(draft.get("shopify_order_number", ""))
     inpost_service = "paczkomat" if draft.get("service") == "inpost_locker_standard" else "kurier"
-
-    if inpost_service == "paczkomat":
-        template = _parcel_template(draft)  # fix #4: correct locker size
-        result = client.create_paczkomat_shipment(
-            receiver_first_name=first_name,
-            receiver_last_name=last_name,
-            receiver_email=email,
-            receiver_phone=phone,
-            target_point=receiver.get("locker_id", ""),
-            reference=reference,
-            template=template,
-        )
-    else:
-        addr = draft.get("shipping_address") or {}
-        weight_kg, dims = _parcel_weight_and_dims(draft)  # fix #5: real dims from spec
-        result = client.create_kurier_shipment(
-            receiver_first_name=first_name,
-            receiver_last_name=last_name,
-            receiver_email=email,
-            receiver_phone=phone,
-            receiver_street=addr.get("street", ""),
-            receiver_building_number="/".join(
-                filter(None, [addr.get("building_number", "1"), addr.get("flat_number", "")])
-            ),
-            receiver_city=addr.get("city", ""),
-            receiver_post_code=addr.get("post_code", ""),
-            sender=sender,
-            reference=reference,
-            weight_kg=weight_kg,
-            dimensions=dims,
-        )
-
-    return {
-        "courier_draft_id": str(result.get("id", "")),
-        "dispatch_order_id": None,
-        "tracking_number": result.get("tracking_number"),
-        "status": "created",
-        "pickup_ordered": False,
-        "error": None,
+    existing = list(draft.get("courier_shipments") or [])
+    existing_keys = {
+        (str(item.get("package_type")), int(item.get("package_number") or 1)) for item in existing
     }
+
+    for package_type, package_number, package_count in _physical_parcels(draft):
+        if (package_type, package_number) in existing_keys:
+            continue
+        spec = PARCEL_SPECS.get(package_type, PARCEL_SPECS["1-pak"])
+        reference = f"{order_number} | {package_type} {package_number}/{package_count}"
+        if inpost_service == "paczkomat":
+            result = client.create_paczkomat_shipment(
+                receiver_first_name=first_name,
+                receiver_last_name=last_name,
+                receiver_email=email,
+                receiver_phone=phone,
+                target_point=receiver.get("locker_id", ""),
+                reference=reference,
+                template=spec.get("paczkomat_template") or "large",
+            )
+        else:
+            addr = draft.get("shipping_address") or {}
+            result = client.create_kurier_shipment(
+                receiver_first_name=first_name,
+                receiver_last_name=last_name,
+                receiver_email=email,
+                receiver_phone=phone,
+                receiver_street=addr.get("street", ""),
+                receiver_building_number="/".join(
+                    filter(None, [addr.get("building_number", "1"), addr.get("flat_number", "")])
+                ),
+                receiver_city=addr.get("city", ""),
+                receiver_post_code=addr.get("post_code", ""),
+                sender=sender,
+                reference=reference,
+                weight_kg=spec["weight_kg"],
+                dimensions=spec,
+            )
+        shipment = {
+            "id": str(result.get("id", "")),
+            "tracking_number": str(result.get("tracking_number") or ""),
+            "package_type": package_type,
+            "package_number": str(package_number),
+        }
+        existing.append(shipment)
+        if on_shipment_created:
+            on_shipment_created(shipment)
+
+    return _shipment_patch(existing)
 
 
 def _run_apaczka(
     draft: dict[str, Any],
-    sender: dict[str, str],
+    pickup_address: dict[str, str] | None,
     storage: Any,
     *,
     pickup_date: str | None = None,
     pickup_from: str | None = None,
     pickup_to: str | None = None,
+    on_shipment_created: Callable[[dict[str, str]], None] | None = None,
 ) -> dict[str, Any]:
     """Create or recreate Apaczka shipment from stored draft fields. Returns patch dict."""
     if _MOCK_COURIER:
@@ -982,39 +1033,58 @@ def _run_apaczka(
             action="create_shipment",
         )
     client = ApaczkaClient(app_id, app_secret, service_id, storage)
+    pickup_address = pickup_address or _get_pickup_address()
     addr = draft.get("shipping_address") or {}
     customer_name = f"{receiver.get('first_name', '')} {receiver.get('last_name', '')}".strip()
-    result = client.create_shipment(
-        receiver_name=customer_name,
-        receiver_firstname=receiver.get("first_name", ""),
-        receiver_lastname=receiver.get("last_name", ""),
-        receiver_email=receiver.get("email", ""),
-        receiver_phone=receiver.get("phone", ""),
-        receiver_address=" ".join(
-            filter(
-                None,
-                [
-                    addr.get("street", ""),
-                    addr.get("building_number", ""),
-                    addr.get("flat_number", ""),
-                ],
-            )
-        ),
-        receiver_city=addr.get("city", ""),
-        receiver_zip=addr.get("post_code", ""),
-        receiver_point_id=receiver_point_id or None,
-        sender=sender,
-        reference=str(draft.get("shopify_order_number", "")),
-        pickup_date=pickup_date,
-        pickup_from=pickup_from,
-        pickup_to=pickup_to,
-    )
-    return {
-        "courier_draft_id": str(result.get("id", "")),
-        "tracking_number": result.get("waybill_number"),
-        "status": "created",
-        "error": None,
+    from zdrovena.common.inpost import PARCEL_SPECS
+
+    existing = list(draft.get("courier_shipments") or [])
+    existing_keys = {
+        (str(item.get("package_type")), int(item.get("package_number") or 1)) for item in existing
     }
+    for package_type, package_number, package_count in _physical_parcels(draft):
+        if (package_type, package_number) in existing_keys:
+            continue
+        spec = PARCEL_SPECS.get(package_type, PARCEL_SPECS["1-pak"])
+        result = client.create_shipment(
+            receiver_name=customer_name,
+            receiver_firstname=receiver.get("first_name", ""),
+            receiver_lastname=receiver.get("last_name", ""),
+            receiver_email=receiver.get("email", ""),
+            receiver_phone=receiver.get("phone", ""),
+            receiver_address=" ".join(
+                filter(
+                    None,
+                    [
+                        addr.get("street", ""),
+                        addr.get("building_number", ""),
+                        addr.get("flat_number", ""),
+                    ],
+                )
+            ),
+            receiver_city=addr.get("city", ""),
+            receiver_zip=addr.get("post_code", ""),
+            receiver_point_id=receiver_point_id or None,
+            sender=pickup_address,
+            reference=f"{draft.get('shopify_order_number', '')} | {package_type} {package_number}/{package_count}",
+            weight_kg=spec["weight_kg"],
+            width_cm=spec["width"],
+            height_cm=spec["height"],
+            depth_cm=spec["length"],
+            pickup_date=pickup_date,
+            pickup_from=pickup_from,
+            pickup_to=pickup_to,
+        )
+        shipment = {
+            "id": str(result.get("id", "")),
+            "tracking_number": str(result.get("waybill_number") or ""),
+            "package_type": package_type,
+            "package_number": str(package_number),
+        }
+        existing.append(shipment)
+        if on_shipment_created:
+            on_shipment_created(shipment)
+    return _shipment_patch(existing)
 
 
 def _run_allegro_delivery(
@@ -1378,6 +1448,7 @@ _SYNC_PRESERVED_FIELDS = {
     "id",
     "created_at",
     "courier_draft_id",
+    "courier_shipments",
     "dispatch_order_id",
     "allegro_shipment_id",
     "allegro_dispatch_id",
@@ -1587,6 +1658,7 @@ def _build_draft_record(
         "tracking_number": fulfillment_details.get("tracking_number"),
         "tracking_company": fulfillment_details.get("tracking_company"),
         "courier_draft_id": None,
+        "courier_shipments": [],
         "dispatch_order_id": None,  # fix #6: field exists from creation
         "status": _status_from_source(order, base_status, source=source),
         "packages_count": packages_count,
@@ -2140,13 +2212,30 @@ def execute_draft(
             "pickup_to": pickup_to,
         }
         sender = _get_sender()
+        persisted_shipments = list(draft.get("courier_shipments") or [])
+
+        def persist_shipment(shipment: dict[str, str]) -> None:
+            persisted_shipments.append(shipment)
+            shipping_store.update_draft(draft_id, {"courier_shipments": persisted_shipments})
+
         courier = draft.get("courier", "apaczka")
         if courier == "allegro_delivery":
             patch = _run_allegro_delivery(draft, storage, **pickup_schedule)
         elif courier == "inpost":
-            patch = _run_inpost(draft, sender, **pickup_schedule)
+            patch = _run_inpost(
+                draft,
+                sender,
+                **pickup_schedule,
+                on_shipment_created=persist_shipment,
+            )
         else:
-            patch = _run_apaczka(draft, sender, storage, **pickup_schedule)
+            patch = _run_apaczka(
+                draft,
+                None,
+                storage,
+                **pickup_schedule,
+                on_shipment_created=persist_shipment,
+            )
 
         # Success write moves executing → created. If THIS fails, the draft is
         # still `executing`, and the except-block cleanup returns it to `error`.
@@ -2351,10 +2440,10 @@ def order_pickup(
             token = get_secret("inpost_api_token")
             org_id = get_secret("inpost_organization_id")
             client = InPostClient(token, org_id)
-            sender = _get_sender()
+            pickup_address = _get_pickup_address()
             client.create_dispatch_order(
                 courier_draft_id,
-                sender,
+                pickup_address,
                 pickup_date=pickup_date,
                 pickup_from=pickup_from,
                 pickup_to=pickup_to,
@@ -2777,10 +2866,13 @@ def _fetch_label_pdf(draft: dict[str, Any], courier: str, storage: Any) -> bytes
     courier failures surface as HTTP 502.
     """
     if courier == "allegro_delivery":
-        label_id = draft.get("allegro_shipment_id") or draft.get("courier_draft_id")
+        label_ids = [draft.get("allegro_shipment_id") or draft.get("courier_draft_id")]
     else:
-        label_id = draft.get("courier_draft_id")
-    if not label_id:
+        label_ids = [shipment.get("id") for shipment in draft.get("courier_shipments") or []]
+        if not label_ids:
+            label_ids = [draft.get("courier_draft_id")]
+    label_ids = [str(label_id) for label_id in label_ids if label_id]
+    if not label_ids:
         raise HTTPException(status_code=404, detail="No courier draft ID — draft may have failed")
 
     try:
@@ -2790,7 +2882,8 @@ def _fetch_label_pdf(draft: dict[str, Any], courier: str, storage: Any) -> bytes
             token = get_secret("inpost_api_token")
             org_id = get_secret("inpost_organization_id")
             try:
-                return InPostClient(token, org_id).get_label(label_id)
+                pdfs = [InPostClient(token, org_id).get_label(label_id) for label_id in label_ids]
+                return _merge_pdfs(pdfs) if len(pdfs) > 1 else pdfs[0]
             except InPostBusinessError as exc:
                 # A business rejection while fetching a label means the shipment
                 # is not confirmed/processed yet → not ready, not a hard failure.
@@ -2801,13 +2894,15 @@ def _fetch_label_pdf(draft: dict[str, Any], courier: str, storage: Any) -> bytes
             app_id = get_secret("apaczka_app_id")
             app_secret = get_secret("apaczka_app_secret")
             service_id = draft.get("apaczka_service_id") or ""
-            return ApaczkaClient(app_id, app_secret, service_id, storage).get_label(label_id)
+            client = ApaczkaClient(app_id, app_secret, service_id, storage)
+            pdfs = [client.get_label(label_id) for label_id in label_ids]
+            return _merge_pdfs(pdfs) if len(pdfs) > 1 else pdfs[0]
         else:  # allegro_delivery
             client = _get_allegro_client()
             if client is None:
                 raise HTTPException(status_code=502, detail="Allegro credentials missing")
             try:
-                return client.get_ship_with_allegro_label(str(label_id))
+                return client.get_ship_with_allegro_label(label_ids[0])
             except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
                 logger.exception("Allegro label fetch failed for draft %s", draft.get("id"))
                 raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc

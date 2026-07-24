@@ -34,12 +34,27 @@ fi
 # Validate bash in workflow inline — catch obvious syntax errors
 for f in .github/workflows/_full-test-suite.yml; do
   if bash -n <(python3 - "$f" << 'PYEOF'
-import sys, re
+import re
+import sys
+import textwrap
+
 with open(sys.argv[1]) as fh:
-    content = fh.read()
-# Extract run: blocks (multi-line)
-blocks = re.findall(r'run:\s*\|?\s*\n((?:[ \t]+.+\n?)+)', content)
-print('\n'.join(b for b in blocks))
+  lines = fh.readlines()
+
+blocks = []
+for index, line in enumerate(lines):
+  match = re.match(r'^(\s*)run:\s*\|\s*$', line)
+  if not match:
+    continue
+  run_indent = len(match.group(1).expandtabs(8))
+  block = []
+  for candidate in lines[index + 1 :]:
+    if candidate.strip() and len(candidate) - len(candidate.lstrip()) <= run_indent:
+      break
+    block.append(candidate)
+  blocks.append(textwrap.dedent(''.join(block)))
+
+print('\n'.join(blocks))
 PYEOF
 ) 2>&1; then
     ok "bash syntax: $f"
