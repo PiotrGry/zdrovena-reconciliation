@@ -102,6 +102,20 @@ describe('ShippingView', () => {
         expect(addressLabel.nextElementSibling).toHaveTextContent('00-001 Warszawa')
     })
 
+    it('shows material totals derived from physical package types', async () => {
+        installShippingFetch({
+            drafts: [draft({
+                order_items: [{ name: 'HUMIO PET', quantity: 1 }],
+                packages_count: 2,
+                packages_breakdown: [{ type: '3-pak', qty: 1 }, { type: '1-pak', qty: 1 }],
+            })],
+        })
+
+        renderWithProviders(<ShippingView />)
+
+        expect(await screen.findByText('plastik: 4 zgrzewki')).toBeInTheDocument()
+    })
+
     it('shows Apaczka shipping service match status and source', async () => {
         const { getUpdateDraftCalls } = installShippingFetch({
             apaczkaServices: [
