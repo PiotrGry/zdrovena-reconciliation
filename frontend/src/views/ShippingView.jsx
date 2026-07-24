@@ -359,20 +359,27 @@ const _BOX_STYLE = {
     glass:   { color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' },
 }
 
-function isGlassName(name) {
-    return /szk[lł][eo]/i.test(name || '')
+const _PACKAGE_UNITS = {
+    '3-pak': { material: 'plastik', amount: 3 },
+    '2-pak': { material: 'plastik', amount: 2 },
+    '1-pak': { material: 'plastik', amount: 1 },
+    'pół-pak': { material: 'plastik', amount: 0.5 },
+    'szkło-2pak': { material: 'szkło', amount: 2 },
+    'szkło': { material: 'szkło', amount: 1 },
 }
 
-function materialTags(items) {
+function materialTags(breakdown) {
     let plastic = 0, glass = 0
-    for (const it of items) {
-        const qty = it.quantity ?? 1
-        if (isGlassName(it.name)) glass += qty
-        else plastic += qty
+    for (const box of breakdown) {
+        const packageInfo = _PACKAGE_UNITS[box.type]
+        if (!packageInfo) continue
+        const amount = packageInfo.amount * (box.qty ?? 1)
+        if (packageInfo.material === 'szkło') glass += amount
+        else plastic += amount
     }
     const tags = []
-    if (plastic > 0) tags.push({ label: 'plastik', count: plastic, ..._BOX_STYLE.plastic })
-    if (glass > 0) tags.push({ label: 'szkło', count: glass, ..._BOX_STYLE.glass })
+    if (plastic > 0) tags.push({ label: `plastik: ${String(plastic).replace('.', ',')} zgrzewki`, ..._BOX_STYLE.plastic })
+    if (glass > 0) tags.push({ label: `szkło: ${String(glass).replace('.', ',')} zgrzewki`, ..._BOX_STYLE.glass })
     return tags
 }
 
@@ -388,12 +395,11 @@ function Chip({ label, style }) {
 
 
 function MaterialTags({ draft }) {
-    const items = draft.order_items ?? []
-    const tags = materialTags(items)
+    const tags = materialTags(draft.packages_breakdown ?? [])
     return (
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {tags.map(tag => (
-                <Chip key={tag.label} label={`${tag.label} ×${tag.count}`} style={tag} />
+                <Chip key={tag.label} label={tag.label} style={tag} />
             ))}
         </div>
     )

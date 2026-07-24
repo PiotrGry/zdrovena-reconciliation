@@ -1225,6 +1225,32 @@ class TestRunInpost:
         kw = mock_ship.call_args.kwargs
         assert kw["receiver_building_number"] == "24/5"
 
+    def test_each_physical_box_creates_a_typed_shipment(self):
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        draft = {
+            **_KURIER_DRAFT,
+            "packages_breakdown": [{"type": "3-pak", "qty": 1}, {"type": "1-pak", "qty": 1}],
+        }
+        persisted: list[dict[str, str]] = []
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_ship:
+                mock_ship.side_effect = [
+                    {"id": "ship-3pak", "tracking_number": "TRK-3"},
+                    {"id": "ship-1pak", "tracking_number": "TRK-1"},
+                ]
+                result = _run_inpost(draft, _SENDER, on_shipment_created=persisted.append)
+
+        assert [shipment["package_type"] for shipment in result["courier_shipments"]] == [
+            "3-pak",
+            "1-pak",
+        ]
+        assert [shipment["id"] for shipment in persisted] == ["ship-3pak", "ship-1pak"]
+        assert [call.kwargs["reference"] for call in mock_ship.call_args_list] == [
+            "1050 | 3-pak 1/1",
+            "1050 | 1-pak 1/1",
+        ]
+
 
 class TestRunApaczka:
     def test_creates_shipment_returns_patch(self):
@@ -1729,6 +1755,32 @@ class TestGetLabel:
                 resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/pdf"
+
+    def test_inpost_multiple_box_labels_are_merged(self, client, store):
+        draft = self._seed_created_draft(store, courier="inpost")
+        store.update_draft(
+            draft["id"],
+            {
+                "courier_shipments": [
+                    {"id": "ship-3pak", "package_type": "3-pak", "package_number": "1"},
+                    {"id": "ship-1pak", "package_type": "1-pak", "package_number": "1"},
+                ]
+            },
+        )
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                side_effect=[b"first", b"second"],
+            ) as mock_label:
+                with patch(
+                    "zdrovena.api.routers.webhooks._merge_pdfs", return_value=b"merged"
+                ) as merge:
+                    resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
+
+        assert resp.status_code == 200
+        assert resp.content == b"merged"
+        assert [call.args[0] for call in mock_label.call_args_list] == ["ship-3pak", "ship-1pak"]
+        merge.assert_called_once_with([b"first", b"second"])
 
     def test_label_502_on_courier_error(self, client, store):
         draft = self._seed_created_draft(store, courier="inpost")
