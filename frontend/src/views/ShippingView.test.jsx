@@ -1,6 +1,6 @@
 import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import ShippingView from './ShippingView'
 import { deferred, jsonResponse, mockFetch } from '../test/http'
@@ -79,6 +79,17 @@ function installShippingFetch({
     return { fetchMock, getConfirmCalls: () => confirmCalls, getUpdateDraftCalls: () => updateDraftCalls }
 }
 
+function installPrintSupport() {
+    vi.stubGlobal('URL', {
+        createObjectURL: vi.fn(() => 'blob:label'),
+        revokeObjectURL: vi.fn(),
+    })
+}
+
+afterEach(() => {
+    vi.unstubAllGlobals()
+})
+
 describe('ShippingView', () => {
     it('shows loading and then the empty state', async () => {
         installShippingFetch({ drafts: [] })
@@ -114,6 +125,49 @@ describe('ShippingView', () => {
         renderWithProviders(<ShippingView />)
 
         expect(await screen.findByText('plastik: 4 zgrzewki')).toBeInTheDocument()
+    })
+
+    it('prints a single created label through the browser print dialog', async () => {
+        installPrintSupport()
+        const printRequest = vi.fn()
+        mockFetch((url, init = {}) => {
+            if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
+            if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ status: 'created', courier_draft_id: 'ship-1' })] })
+            if (url === '/api/shipping/drafts/draft-1/label?courier=inpost') {
+                printRequest(url, init)
+                return new Response(new Blob(['%PDF-label'], { type: 'application/pdf' }))
+            }
+            throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
+        })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+        await userEvent.click(screen.getByRole('button', { name: 'Rozwiń' }))
+        await userEvent.click(screen.getByRole('button', { name: 'Drukuj A6' }))
+
+        await waitFor(() => expect(printRequest).toHaveBeenCalledOnce())
+    })
+
+    it('prints selected created labels as one batch PDF', async () => {
+        installPrintSupport()
+        const batchRequest = vi.fn()
+        mockFetch((url, init = {}) => {
+            if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
+            if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ status: 'created', courier_draft_id: 'ship-1' })] })
+            if (url === '/api/shipping/labels/batch') {
+                batchRequest(url, init)
+                return new Response(new Blob(['%PDF-batch'], { type: 'application/pdf' }))
+            }
+            throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
+        })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+        await userEvent.click(screen.getByRole('checkbox', { name: 'Wybierz przesyłkę 1001' }))
+        await userEvent.click(screen.getByRole('button', { name: 'Drukuj etykiety (1)' }))
+
+        await waitFor(() => expect(batchRequest).toHaveBeenCalledOnce())
+        expect(JSON.parse(batchRequest.mock.calls[0][1].body)).toEqual({ draft_ids: ['draft-1'] })
     })
 
     it('shows Apaczka shipping service match status and source', async () => {
