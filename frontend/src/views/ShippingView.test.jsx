@@ -2,7 +2,7 @@ import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import ShippingView from './ShippingView'
+import ShippingView, { printPdf } from './ShippingView'
 import { deferred, jsonResponse, mockFetch } from '../test/http'
 import { renderWithProviders } from '../test/render'
 
@@ -91,6 +91,18 @@ afterEach(() => {
 })
 
 describe('ShippingView', () => {
+    it('keeps the PDF print iframe renderable for Safari', () => {
+        installPrintSupport()
+
+        printPdf(new Blob(['%PDF-label'], { type: 'application/pdf' }), 'Etykieta testowa')
+
+        const frame = document.querySelector('iframe[title="Etykieta testowa"]')
+        expect(frame).toBeInTheDocument()
+        expect(frame).not.toHaveStyle({ visibility: 'hidden' })
+        expect(frame).toHaveStyle({ left: '-10000px' })
+        frame.remove()
+    })
+
     it('shows loading and then the empty state', async () => {
         installShippingFetch({ drafts: [] })
 
