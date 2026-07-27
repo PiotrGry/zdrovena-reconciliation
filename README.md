@@ -216,6 +216,102 @@ MOCK_COURIER=true AZURE_AUTH_DISABLED=true uvicorn zdrovena.api.main:app --reloa
 
 Swagger UI dostępne pod `http://localhost:8000/docs` (na roocie, nie pod `/api`).
 
+### Sekrety lokalne (SOPS + age)
+
+Lokalne sekrety żyją w zaszyfrowanym pliku `.env.local.sops`, który **jest
+commitowany** — bezpiecznie, bo szyfruje go SOPS kluczem age. Klucz prywatny
+nigdy nie trafia do Gita. Pełny opis: [docs/devops/sops-age.md](docs/devops/sops-age.md).
+
+Wymagane binarki:
+
+```bash
+# macOS
+brew install sops age
+
+# Ubuntu/Debian
+sudo apt-get install -y age
+SOPS_VER=3.9.4
+curl -Lo sops "https://github.com/getsops/sops/releases/download/v${SOPS_VER}/sops-v${SOPS_VER}.linux.amd64"
+sudo install -m 0755 sops /usr/local/bin/sops
+```
+
+#### Onboarding — dostajesz dostęp
+
+Wygeneruj **własny** klucz i wyślij właścicielowi repo tylko część publiczną:
+
+```bash
+mkdir -p ~/.config/sops/age
+age-keygen -o ~/.config/sops/age/keys.txt
+chmod 600 ~/.config/sops/age/keys.txt
+
+age-keygen -y ~/.config/sops/age/keys.txt    # <- to wyślij (age1...)
+```
+
+Klucz prywatny zostaje u Ciebie. Gdy Twój klucz publiczny zostanie dodany
+(patrz niżej) i zmiana wyląduje na `main`:
+
+```bash
+git pull
+uv run python scripts/secrets_sync.py decrypt   # .env.local.sops -> .env.local
+docker compose up --build
+```
+
+`decrypt` **nadpisuje** istniejący `.env.local`.
+
+#### Dodanie klucza — nowa osoba lub nowa maszyna
+
+SOPS szyfruje do wielu odbiorców naraz, więc nikt nie współdzieli klucza
+prywatnego. Dopisz nowy klucz publiczny po przecinku w
+[.sops.yaml](.sops.yaml):
+
+```yaml
+creation_rules:
+  - path_regex: \.env\.local\.sops$
+    age: age1pierwszy...,age1drugi...
+```
+
+i przeszyfruj plik dla nowego zestawu odbiorców:
+
+```bash
+sops updatekeys -y --input-type dotenv .env.local.sops
+git add .sops.yaml .env.local.sops && git commit -m "chore(secrets): add age key for <kto>"
+```
+
+`updatekeys` wymaga, żebyś miał u siebie klucz prywatny **któregoś z
+dotychczasowych** odbiorców — musi odwinąć istniejący data key, zanim
+zawinie go dla nowego. Flaga `--input-type dotenv` jest obowiązkowa: bez niej
+sops nie zgadnie formatu po nazwie `.env.local.sops` i przerwie z błędem.
+
+To samo dotyczy Twojej drugiej maszyny — wygeneruj tam osobny keypair i dodaj
+go jako kolejnego odbiorcę. Nie kopiuj klucza prywatnego między maszynami.
+
+#### Odebranie dostępu
+
+```bash
+# 1. usuń klucz publiczny z .sops.yaml
+sops updatekeys -y --input-type dotenv .env.local.sops
+```
+
+**To nie wystarczy.** Odwołana osoba nadal odszyfruje swoim kluczem każdą
+**wcześniejszą** wersję `.env.local.sops` z historii Gita. Po odebraniu
+dostępu zrotuj same sekrety (nowe tokeny u dostawców), inaczej odwołanie jest
+tylko kosmetyczne.
+
+#### Czego nie ma w `.env.local`
+
+`ALLEGRO_REFRESH_TOKEN` i `ALLEGRO_ACCESS_TOKEN` celowo istnieją **wyłącznie**
+w `.env.local.sops`. Allegro rotuje refresh token przy każdym użyciu, a
+`get_secret()` sprawdza zmienne środowiskowe **przed** warstwą SOPS — kopia w
+`.env.local` przypięłaby proces do tokenu już unieważnionego. `decrypt` i
+`pull` same je pomijają (`SOPS_ONLY_SECRETS` w
+[scripts/secrets_manifest.py](scripts/secrets_manifest.py)).
+
+Autoryzacja od zera: `zdrovena allegro-auth --sandbox` — device flow zapisze
+oba tokeny prosto do zaszyfrowanego pliku.
+
+Uwaga na `encrypt`: domyślnie **scala**, więc klucze istniejące tylko w
+snapshocie przeżyją. Do faktycznego usunięcia klucza służy `--replace`.
+
 ### Fake providerzy HTTP
 
 Do bezpiecznych testów integracji uruchom fake provider service:

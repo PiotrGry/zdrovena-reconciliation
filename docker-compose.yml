@@ -40,6 +40,22 @@ services:
       - ./zdrovena:/app/zdrovena
       - ./scripts:/app/scripts
       - faktury_data:/app/data/faktury
+      # SOPS+age secrets tier. The repo root is mounted as a DIRECTORY, not
+      # the single .env.local.sops file: write_local_fallback() finishes with
+      # os.replace(), and renaming over a single-file bind mount fails with
+      # EBUSY — the container could then read rotated secrets but never
+      # persist one. Trade-off: the container gets write access to the whole
+      # repo, which it already has for ./zdrovena and ./scripts.
+      - ./:/secrets
+      # Private age key, read-only. Never COPY it into the image — it would
+      # end up in a layer and in every registry push.
+      - ${HOME}/.config/sops/age/keys.txt:/run/secrets/age-keys.txt:ro
+      # sops resolves .sops.yaml relative to the process CWD (/app here), not
+      # relative to the file it is encrypting. Without this mount every
+      # ENCRYPT fails with "config file not found, or has no creation rules"
+      # — decrypt still works, so the failure only shows up when a rotated
+      # secret is being persisted. Read-only: nothing writes it.
+      - ./.sops.yaml:/app/.sops.yaml:ro
     env_file:
       - path: .env.local
         required: false
@@ -47,14 +63,24 @@ services:
       AZURE_AUTH_DISABLED: "true"
       PROVIDER_MODE: "${PROVIDER_MODE:-fake}"
       SHOPIFY_WEBHOOK_SECRET: "${SHOPIFY_WEBHOOK_SECRET:-e2e-webhook-secret}"
-      ALLEGRO_CLIENT_ID: "${ALLEGRO_CLIENT_ID:-fake}"
-      ALLEGRO_CLIENT_SECRET: "${ALLEGRO_CLIENT_SECRET:-fake}"
-      ALLEGRO_REFRESH_TOKEN: "${ALLEGRO_REFRESH_TOKEN:-fake}"
-      ALLEGRO_BASE_URL: "http://fake-providers:9009/allegro"
-      ALLEGRO_AUTH_URL: "http://fake-providers:9009/allegro/auth/oauth/token"
-      INPOST_API_TOKEN: "${INPOST_API_TOKEN:-fake}"
-      INPOST_ORGANIZATION_ID: "${INPOST_ORGANIZATION_ID:-fake}"
-      INPOST_BASE_URL: "${INPOST_BASE_URL:-http://fake-providers:9009/inpost}"
+      # Allegro + InPost run against the vendors' real SANDBOX environments.
+      # Credentials come from .env.local via env_file above — deliberately NOT
+      # repeated here, because an `environment:` entry overrides env_file and
+      # `${VAR:-fake}` interpolates from the host shell (not from .env.local),
+      # which would silently feed "fake" to a real sandbox endpoint.
+      #
+      # ALLEGRO_BASE_URL / ALLEGRO_AUTH_URL exist only to redirect the client at
+      # fake-providers. With them unset, ALLEGRO_ENV picks the vendor's own URLs
+      # (zdrovena/common/allegro.py) — sandbox is api.allegro.pl.allegrosandbox.pl.
+      ALLEGRO_ENV: "sandbox"
+      # The Allegro refresh/access tokens are deliberately absent from
+      # .env.local — they rotate on every use, and an env var here would be
+      # checked before the SOPS tier and pin the process to a token Allegro
+      # has already invalidated. They live only in .env.local.sops, which
+      # these two variables point the secrets tier at.
+      ZDROVENA_SOPS_FILE: "/secrets/.env.local.sops"
+      SOPS_AGE_KEY_FILE: "/run/secrets/age-keys.txt"
+      # INPOST_BASE_URL is supplied by .env.local (sandbox-api-shipx-pl.easypack24.net).
       APACZKA_APP_ID: "${APACZKA_APP_ID:-fake}"
       APACZKA_APP_SECRET: "${APACZKA_APP_SECRET:-fake}"
       APACZKA_BASE_URL: "http://fake-providers:9009/apaczka/api/v2"

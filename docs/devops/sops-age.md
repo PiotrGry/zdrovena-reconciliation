@@ -41,11 +41,13 @@ Both share the same encrypted file and the same age key, but you don't need
 to think about (A) at all day to day — it just prevents rotated secrets from
 being silently lost. (B) is the tool you reach for deliberately.
 
-**Key design point:** this is a single shared age key across a developer's
-own machines, not a multi-environment (dev/staging/prod) setup. One age
-keypair; the public key lives in the committed `.sops.yaml`; the private key
-is placed manually, out of band, at `~/.config/sops/age/keys.txt` on every
-machine you use. This is deliberately simpler than a per-environment key
+**Key design point:** this is one encrypted file for local development, not a
+multi-environment (dev/staging/prod) setup. Public keys live in the committed
+`.sops.yaml`; private keys never enter Git. sops encrypts to *every* listed
+recipient, so each machine and each developer can hold their own keypair and
+nobody has to copy a private key around — see
+[§2, adding a recipient](#adding-a-recipient-second-machine-or-another-developer).
+This is deliberately simpler than a per-environment key
 scheme: this is a solo-developer setup, not a team with per-environment
 blast-radius concerns, and Azure Key Vault — not `.env.local.sops` — is
 already the actual single source of truth in production. The local
@@ -121,25 +123,53 @@ creation_rules:
 `encrypted_regex` / `mac_only_encrypted` — those are partial-encryption knobs
 for Kubernetes Secret YAML and don't apply to whole-file dotenv encryption.
 
-### Get the private key onto a second/third machine
+### Adding a recipient (second machine, or another developer)
 
-On any machine after the first, `.sops.yaml` already exists — it comes from
-`git pull` along with the rest of the repo. Do **not** recreate it or
-generate a new keypair; the only thing you need to set up locally is the
-existing shared private key.
+sops encrypts the data key to every recipient listed in `.sops.yaml`, so the
+right move is a **separate keypair per machine and per person** — not copying
+one private key around. The private key never travels, and revoking one
+recipient doesn't disturb the others.
 
-The private key never travels through Git. Copy
-`~/.config/sops/age/keys.txt` (or the raw `AGE-SECRET-KEY-...` line) to the
-new machine out of band — a password manager entry or a direct secure copy —
-and place it at `~/.config/sops/age/keys.txt` there too:
+On the new machine / for the new developer:
 
 ```bash
 mkdir -p ~/.config/sops/age
-chmod 600 ~/.config/sops/age/keys.txt   # after copying the file into place
+age-keygen -o ~/.config/sops/age/keys.txt
+chmod 600 ~/.config/sops/age/keys.txt
+
+age-keygen -y ~/.config/sops/age/keys.txt   # public key — this is what you share
 ```
 
-Once that's done, decrypt the committed snapshot to get a working
-`.env.local` (see [§4](#4-the-secrets_syncpy-cli), `decrypt`).
+Then, from a machine that already holds one of the *existing* private keys,
+add it as a recipient and re-wrap the file:
+
+```yaml
+creation_rules:
+  - path_regex: \.env\.local\.sops$
+    age: age1existing...,age1new...
+```
+
+```bash
+sops updatekeys -y --input-type dotenv .env.local.sops
+git commit -am "chore(secrets): add age recipient for <who>"
+```
+
+`updatekeys` has to unwrap the existing data key before re-wrapping it, which
+is why it must run somewhere an existing private key is present.
+`--input-type dotenv` is required — without it sops can't infer the format
+from the `.env.local.sops` filename and fails.
+
+The new recipient then runs `git pull` followed by
+`uv run python scripts/secrets_sync.py decrypt` to get a working `.env.local`
+(see [§4](#4-the-secrets_syncpy-cli)).
+
+### Removing a recipient
+
+Delete their public key from `.sops.yaml` and run `sops updatekeys` again.
+
+**That alone is not revocation.** Their private key still decrypts every
+*earlier* version of `.env.local.sops` in Git history. Rotate the secrets
+themselves at each provider afterwards, or the removal is cosmetic.
 
 ## 3. Automatic fallback tier
 
@@ -189,6 +219,40 @@ restarts and even a fresh `git clone` on the same machine. Without this
 tier, the value would only have landed in `os.environ` and been lost the
 moment the process exited.
 
+### The tier inside the docker-compose dev container
+
+The `api` service shares one `.env.local.sops` with the host: it reads from it
+and persists rotations back into it, so a refresh token rotated inside the
+container survives `docker compose down`. Four things had to line up for that,
+each of which fails in its own quiet way:
+
+1. **`sops` must exist in the image.** `Dockerfile.dev` fetches and
+   checksum-verifies it. The production `Dockerfile` deliberately does not —
+   prod resolves secrets from Key Vault.
+2. **The file must be reachable through a bind-mounted *directory*, not a
+   bind-mounted file.** `write_local_fallback` finishes with `os.replace()`,
+   and renaming over a single-file bind mount fails with `EBUSY`. The repo
+   root is mounted at `/secrets` and `ZDROVENA_SOPS_FILE` points inside it.
+3. **`.sops.yaml` must be visible from the process's CWD.** sops resolves its
+   config relative to CWD (`/app` in the container), *not* relative to the
+   file being encrypted, so `.sops.yaml` is mounted at `/app/.sops.yaml`.
+   Without it every *encrypt* fails with `config file not found, or has no
+   creation rules` while *decrypt* keeps working — so the breakage only
+   surfaces when a rotated secret is being persisted.
+4. **The rewrite must not steal the file.** The container runs as root;
+   `os.replace()` swaps in a new inode, so a rotation there would leave
+   `.env.local.sops` owned by `root:root 0600` and lock the host developer
+   out. `_inherit_target_identity()` carries the previous mode and ownership
+   onto the replacement first.
+
+The remaining rule is about environment variables, not mounts: because
+`get_secret()` checks env vars *first* and compose loads `.env.local` via
+`env_file`, any secret left in `.env.local` shadows this tier. That is
+harmless for static credentials and fatal for rotating ones, which is why
+`SOPS_ONLY_SECRETS` (`scripts/secrets_manifest.py`) keeps the Allegro
+refresh/access tokens out of `.env.local` entirely — `pull` and `decrypt`
+both refuse to write them there.
+
 Internally, writes always go through a temp file whose name ends in
 `.env.local.sops` (matching `.sops.yaml`'s `path_regex` — sops selects
 recipients by matching the input file *path*, not by content or
@@ -209,13 +273,13 @@ uv run python scripts/secrets_sync.py decrypt   # .env.local.sops -> .env.local
 
 The set of secrets `pull`/`push` operate on is the canonical list in
 [`scripts/secrets_manifest.py`](../../scripts/secrets_manifest.py)'s
-`ENV_LOCAL_SECRETS` (20 names: Allegro, Shopify, InPost, Apaczka, SMS, and
-sender-address secrets).
+`ENV_LOCAL_SECRETS` (26 names: Allegro, Shopify, InPost, Apaczka, SMS, and
+sender/pickup-address secrets).
 
 | Subcommand | Needs Key Vault? | Use it when... |
 |---|---|---|
-| `decrypt` | No | Bootstrapping a brand-new machine — get a working `.env.local` from the git-committed `.env.local.sops` snapshot. **Overwrites** `.env.local` if it already exists. |
-| `encrypt` | No | You've changed `.env.local` and want to take a fresh snapshot for git (e.g. before going somewhere with no Key Vault access, like a flight or a sandboxed environment). |
+| `decrypt` | No | Bootstrapping a brand-new machine — get a working `.env.local` from the git-committed `.env.local.sops` snapshot. **Overwrites** `.env.local` if it already exists, and never writes `SOPS_ONLY_SECRETS` into it. |
+| `encrypt` | No | You've changed `.env.local` and want to take a fresh snapshot for git (e.g. before going somewhere with no Key Vault access, like a flight or a sandboxed environment). **Merges** by default — see below. |
 | `pull` | Yes (`AZURE_KEYVAULT_URL` + `az login`) | You have live Key Vault access again and want the freshest values written into your local `.env.local`. |
 | `push` | Yes (`AZURE_KEYVAULT_URL` + `az login`) | You want to persist local changes/rotations back to Key Vault, or backfill Key Vault for the first time. |
 
@@ -223,8 +287,45 @@ sender-address secrets).
 `AZURE_KEYVAULT_URL` — they only need `sops` on `PATH` and (for `decrypt`) a
 working local age private key.
 
+#### `encrypt` merges; it does not overwrite
+
+`.env.local.sops` is not only a snapshot of `.env.local` — it is also the
+store `set_secret()` writes rotated secrets into, and some keys
+(`SOPS_ONLY_SECRETS`) live there and nowhere else. A whole-file overwrite
+would silently delete them, so `encrypt` decrypts the existing snapshot first
+and carries over every key that `.env.local` doesn't have, reporting what it
+preserved:
+
+```
+encrypted /path/.env.local -> /path/.env.local.sops
+  preserved 2 key(s) that live only in the snapshot:
+    - ALLEGRO_ACCESS_TOKEN
+    - ALLEGRO_REFRESH_TOKEN
+```
+
+If the existing snapshot cannot be decrypted, `encrypt` refuses to run rather
+than overwrite secrets it can't read. `--replace` opts back into the
+destructive whole-file behaviour, and is the only way to actually *remove* a
+key from the snapshot.
+
+#### Secrets that never touch `.env.local`
+
+`SOPS_ONLY_SECRETS` in
+[`scripts/secrets_manifest.py`](../../scripts/secrets_manifest.py) lists the
+secrets that must stay out of the plaintext file: the Allegro refresh and
+access tokens. Allegro rotates the refresh token on every use, and since
+`get_secret()` checks env vars before this tier, a copy in `.env.local` would
+pin the process to a token Allegro has already invalidated. `pull` skips them
+and `decrypt` strips them, so neither command can reintroduce the problem.
+
+Bootstrap them with the device flow rather than by hand:
+
+```bash
+zdrovena allegro-auth --sandbox    # writes both straight into .env.local.sops
+```
+
 `push` doubles as the Key Vault backfill mechanism: as of this writing, none
-of the 20 `ENV_LOCAL_SECRETS` exist in Key Vault yet (see the "Sekret AKV"
+of the 26 `ENV_LOCAL_SECRETS` exist in Key Vault yet (see the "Sekret AKV"
 status table in [`TODOS.md`](../../TODOS.md)), so the first real `push` run
 performs that migration as a side effect — every secret with a value in
 `.env.local` gets uploaded, whether or not it existed in Key Vault before.

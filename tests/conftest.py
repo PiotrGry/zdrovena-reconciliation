@@ -5,6 +5,32 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_real_local_secrets(tmp_path_factory, monkeypatch, request):
+    """Keep the developer's real .env.local.sops out of the test run.
+
+    Once a machine has `sops` plus an age key configured, the local SOPS+age
+    tier goes live for every get_secret()/set_secret() call that isn't
+    mocked. Two things then go wrong at once: tests asserting "no
+    credentials configured" start finding real ones, and any unmocked
+    set_secret() would REWRITE the developer's actual encrypted secrets
+    file. Point the tier at a throwaway path instead — it stays functional
+    (so the tests that exercise it on purpose still work), it just can't
+    reach the real file.
+
+    tests/test_local_secret_fallback.py drives these constants itself, so it
+    is left alone.
+    """
+    if request.node.fspath.basename == "test_local_secret_fallback.py":
+        return
+
+    from zdrovena.common import _local_secret_fallback as fallback
+
+    sandbox = tmp_path_factory.mktemp("sops-isolation")
+    monkeypatch.setattr(fallback, "_SOPS_FILE", sandbox / ".env.local.sops")
+    monkeypatch.setattr(fallback, "_AGE_KEY_FILE", sandbox / "keys.txt")
+
+
 @pytest.fixture()
 def sample_invoice() -> dict:
     """A realistic sales invoice dict (as returned by Fakturownia API)."""

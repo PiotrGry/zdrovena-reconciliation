@@ -38,3 +38,20 @@ ENV_LOCAL_SECRETS: list[str] = [
     "pickup-phone",
     "pickup-email",
 ]
+
+# Secrets that must never be written back into plaintext .env.local.
+#
+# These rotate at runtime: Allegro hands out a new refresh token on every
+# use. zdrovena.common.secrets.get_secret() checks environment variables
+# FIRST, so a copy sitting in .env.local (which docker-compose loads via
+# env_file) would permanently shadow the SOPS+age tier that persists the
+# rotation — the process would keep reading a token that Allegro has
+# already invalidated. Their only home is .env.local.sops, written by
+# set_secret(). See docs/devops/sops-age.md §3.
+SOPS_ONLY_SECRETS: frozenset[str] = frozenset(
+    {
+        "allegro-refresh-token",
+        "allegro-access-token",
+        "allegro-access-token-expiry",
+    }
+)

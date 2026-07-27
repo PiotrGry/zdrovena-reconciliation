@@ -81,3 +81,23 @@ class TestSetSecretFallback:
                 result = secrets_mod.set_secret("allegro-refresh-token", "rt-fallback")
         assert result is False
         assert os.environ.get("ALLEGRO_REFRESH_TOKEN") == "rt-fallback"
+
+
+class TestRealSecretsAreIsolatedFromTheSuite:
+    """Guards the autouse fixture in tests/conftest.py.
+
+    On a machine with `sops` and an age key configured, the local SOPS+age
+    tier is live for any unmocked get_secret()/set_secret(). Without the
+    conftest isolation, tests would read the developer's real credentials
+    and an unmocked set_secret() would rewrite their actual .env.local.sops.
+    """
+
+    def test_local_tier_cannot_reach_the_real_file(self):
+        from zdrovena.common import _local_secret_fallback as fallback
+
+        assert fallback._SOPS_FILE != fallback._REPO_ROOT / ".env.local.sops"
+        assert not fallback._SOPS_FILE.exists()
+
+    def test_get_secret_finds_no_real_credentials(self):
+        for name in ("allegro-refresh-token", "allegro-client-id", "inpost-api-token"):
+            assert secrets_mod.get_secret(name, required=False) is None
