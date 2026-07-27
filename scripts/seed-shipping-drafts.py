@@ -135,6 +135,28 @@ _P12 = "HUMIO - woda alkaliczna, 12 butelek"
 _G12 = "HUMIO - woda alkaliczna, 12 butelek w szkle"
 
 
+def _inpost_courier_service(service: str) -> str:
+    """Resolve a seeded courier service slug for the current environment.
+
+    Reads INPOST_COURIER_SERVICE — the SAME variable zdrovena/common/inpost.py
+    resolves _COURIER_SERVICE from — on purpose. That constant is what ends up
+    in the ShipX payload; the draft's own `service` field is never sent. A
+    separate seed-only knob would therefore change nothing at the API while
+    letting the seeded data drift away from what the client actually requests.
+
+    Sandbox and prepaid accounts have no courier contract and no trucker, so
+    inpost_courier_standard fails there with trucker_id_not_set; they need
+    inpost_courier_c2c. Production leaves the variable unset.
+
+    Locker slugs are returned untouched: the override is courier-only, and
+    applying it to a paczkomat draft would silently convert it to a courier
+    one.
+    """
+    if not service.startswith("inpost_courier"):
+        return service
+    return os.getenv("INPOST_COURIER_SERVICE", service)
+
+
 # Breakdown helpers matching _calc_packages algorithm
 def _bd_p(n):
     """Plastic greedy breakdown for n zgrzewki."""
@@ -161,13 +183,27 @@ def _bd_g(n):
     return bd
 
 
+# Seed drafts are meant to be executable, not just renderable, so the data has
+# to satisfy the couriers' own validation:
+#
+#   * `street` holds the street only and the house number lives in
+#     `building_number`. The executor passes them as separate ShipX fields
+#     (webhooks.py falls back to "1" when building_number is absent), so
+#     leaving "ul. Wierzbowa 12" in `street` shipped a duplicated number.
+#   * `locker_id` must name a point that EXISTS in whichever InPost
+#     environment is configured. Sandbox carries its own, much smaller point
+#     set — it has no WAW* lockers at all. Verify one with:
+#         curl -H "Authorization: Bearer $INPOST_API_TOKEN" \
+#              https://sandbox-api-shipx-pl.easypack24.net/v1/points/KRK01M
+#     A missing point answers HTTP 200 with {"status": 404,
+#     "key": "point_not_found"} — easy to mistake for success.
 TEST_DRAFTS = [
     _draft(
         _SEED_IDS[0],
         "1110",
         "Marek Zielinski",
         "inpost",
-        "inpost_courier_standard",
+        _inpost_courier_service("inpost_courier_standard"),
         "pending",
         packages_count=1,
         total_qty=1,
@@ -180,14 +216,19 @@ TEST_DRAFTS = [
             "phone": "+48601234567",
             "locker_id": "",
         },
-        shipping_address={"street": "ul. Wierzbowa 12", "city": "Wroclaw", "post_code": "50-001"},
+        shipping_address={
+            "street": "ul. Wierzbowa",
+            "building_number": "12",
+            "city": "Wroclaw",
+            "post_code": "50-001",
+        },
     ),
     _draft(
         _SEED_IDS[1],
         "1111",
         "Piotr Kowalczyk",
         "inpost",
-        "inpost_courier_standard",
+        _inpost_courier_service("inpost_courier_standard"),
         "pending",
         packages_count=1,
         total_qty=3,
@@ -200,14 +241,19 @@ TEST_DRAFTS = [
             "phone": "+48602345678",
             "locker_id": "",
         },
-        shipping_address={"street": "ul. Lipowa 5", "city": "Gdansk", "post_code": "80-001"},
+        shipping_address={
+            "street": "ul. Lipowa",
+            "building_number": "5",
+            "city": "Gdansk",
+            "post_code": "80-001",
+        },
     ),
     _draft(
         _SEED_IDS[2],
         "1112",
         "Tomasz Wisniewski",
         "inpost",
-        "inpost_courier_standard",
+        _inpost_courier_service("inpost_courier_standard"),
         "pending",
         packages_count=2,
         total_qty=5,
@@ -220,14 +266,19 @@ TEST_DRAFTS = [
             "phone": "+48603456789",
             "locker_id": "",
         },
-        shipping_address={"street": "ul. Brzozowa 8", "city": "Krakow", "post_code": "31-100"},
+        shipping_address={
+            "street": "ul. Brzozowa",
+            "building_number": "8",
+            "city": "Krakow",
+            "post_code": "31-100",
+        },
     ),
     _draft(
         _SEED_IDS[3],
         "1113",
         "Anna Kowalska",
         "inpost",
-        "inpost_courier_standard",
+        _inpost_courier_service("inpost_courier_standard"),
         "pending",
         packages_count=1,
         total_qty=1,
@@ -240,14 +291,19 @@ TEST_DRAFTS = [
             "phone": "+48604567890",
             "locker_id": "",
         },
-        shipping_address={"street": "ul. Kwiatowa 3", "city": "Warszawa", "post_code": "00-001"},
+        shipping_address={
+            "street": "ul. Kwiatowa",
+            "building_number": "3",
+            "city": "Warszawa",
+            "post_code": "00-001",
+        },
     ),
     _draft(
         _SEED_IDS[4],
         "1114",
         "Beata Wojcik",
         "inpost",
-        "inpost_courier_standard",
+        _inpost_courier_service("inpost_courier_standard"),
         "pending",
         packages_count=2,
         total_qty=3,
@@ -260,7 +316,12 @@ TEST_DRAFTS = [
             "phone": "+48605678901",
             "locker_id": "",
         },
-        shipping_address={"street": "ul. Prusa 3", "city": "Lublin", "post_code": "20-001"},
+        shipping_address={
+            "street": "ul. Prusa",
+            "building_number": "3",
+            "city": "Lublin",
+            "post_code": "20-001",
+        },
     ),
     _draft(
         _SEED_IDS[5],
@@ -298,7 +359,7 @@ TEST_DRAFTS = [
             "last_name": "Dąbrowski",
             "email": "michal@example.com",
             "phone": "+48607890123",
-            "locker_id": "WAW88C",
+            "locker_id": "KRA06APP",
         },
         shipping_address={"street": "", "city": "Warszawa", "post_code": "02-001"},
     ),
@@ -340,7 +401,12 @@ TEST_DRAFTS = [
             "phone": "+48609012345",
             "locker_id": "",
         },
-        shipping_address={"street": "ul. Słoneczna 7", "city": "Poznan", "post_code": "60-001"},
+        shipping_address={
+            "street": "ul. Słoneczna",
+            "building_number": "7",
+            "city": "Poznan",
+            "post_code": "60-001",
+        },
     ),
     _draft(
         _SEED_IDS[9],
@@ -360,14 +426,19 @@ TEST_DRAFTS = [
             "phone": "+48610123456",
             "locker_id": "",
         },
-        shipping_address={"street": "ul. Różana 2", "city": "Wroclaw", "post_code": "51-001"},
+        shipping_address={
+            "street": "ul. Różana",
+            "building_number": "2",
+            "city": "Wroclaw",
+            "post_code": "51-001",
+        },
     ),
     _draft(
         _SEED_IDS[10],
         "1120",
         "Paweł Kaminski",
         "inpost",
-        "inpost_courier_standard",
+        _inpost_courier_service("inpost_courier_standard"),
         "created",
         packages_count=1,
         total_qty=3,
@@ -381,7 +452,8 @@ TEST_DRAFTS = [
             "locker_id": "",
         },
         shipping_address={
-            "street": "ul. Jagiellońska 4",
+            "street": "ul. Jagiellońska",
+            "building_number": "4",
             "city": "Warszawa",
             "post_code": "03-001",
         },
@@ -394,7 +466,7 @@ TEST_DRAFTS = [
         "1121",
         "Monika Szymanska",
         "inpost",
-        "inpost_courier_standard",
+        _inpost_courier_service("inpost_courier_standard"),
         "created",
         packages_count=1,
         total_qty=1,
@@ -407,7 +479,12 @@ TEST_DRAFTS = [
             "phone": "+48612345678",
             "locker_id": "",
         },
-        shipping_address={"street": "ul. Piękna 9", "city": "Krakow", "post_code": "31-200"},
+        shipping_address={
+            "street": "ul. Piękna",
+            "building_number": "9",
+            "city": "Krakow",
+            "post_code": "31-200",
+        },
         tracking_number="630001234567890301",
         courier_draft_id="mock-inpost-1121",
         pickup_ordered=True,
@@ -454,7 +531,8 @@ TEST_DRAFTS = [
             "locker_id": "",
         },
         shipping_address={
-            "street": "ul. Mickiewicza 11",
+            "street": "ul. Mickiewicza",
+            "building_number": "11",
             "city": "Szczecin",
             "post_code": "70-001",
         },
@@ -466,7 +544,7 @@ TEST_DRAFTS = [
         "1124",
         "Grzegorz Nowakowski",
         "inpost",
-        "inpost_courier_standard",
+        _inpost_courier_service("inpost_courier_standard"),
         "error",
         packages_count=1,
         total_qty=3,
@@ -479,7 +557,12 @@ TEST_DRAFTS = [
             "phone": "+48615678901",
             "locker_id": "",
         },
-        shipping_address={"street": "ul. Parkowa 6", "city": "Bydgoszcz", "post_code": "85-001"},
+        shipping_address={
+            "street": "ul. Parkowa",
+            "building_number": "6",
+            "city": "Bydgoszcz",
+            "post_code": "85-001",
+        },
         error="InPost API 401: invalid token — check inpost_api_token in Key Vault",
     ),
 ]
