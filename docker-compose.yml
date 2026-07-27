@@ -54,7 +54,7 @@ services:
       ALLEGRO_AUTH_URL: "http://fake-providers:9009/allegro/auth/oauth/token"
       INPOST_API_TOKEN: "${INPOST_API_TOKEN:-fake}"
       INPOST_ORGANIZATION_ID: "${INPOST_ORGANIZATION_ID:-fake}"
-      INPOST_BASE_URL: "http://fake-providers:9009/inpost"
+      INPOST_BASE_URL: "${INPOST_BASE_URL:-http://fake-providers:9009/inpost}"
       APACZKA_APP_ID: "${APACZKA_APP_ID:-fake}"
       APACZKA_APP_SECRET: "${APACZKA_APP_SECRET:-fake}"
       APACZKA_BASE_URL: "http://fake-providers:9009/apaczka/api/v2"
