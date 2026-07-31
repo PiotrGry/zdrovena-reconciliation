@@ -930,6 +930,89 @@ def _shipment_patch(shipments: list[dict[str, str]]) -> dict[str, Any]:
     }
 
 
+def _inpost_call_specs(
+    draft: dict[str, Any], sender: dict[str, str]
+) -> list[tuple[str, str, int, str, dict[str, Any]]]:
+    """Expand a draft into the exact builder arguments for each physical parcel.
+
+    Both the preview and the real send read this list, so there is one place
+    where draft fields become ShipX arguments and no second copy to keep in sync.
+    Returns (inpost_service, package_type, package_number, reference, kwargs).
+    """
+    from zdrovena.common.inpost import PARCEL_SPECS
+
+    receiver = draft.get("receiver") or {}
+    addr = draft.get("shipping_address") or {}
+    order_number = str(draft.get("shopify_order_number", ""))
+    inpost_service = "paczkomat" if draft.get("service") == "inpost_locker_standard" else "kurier"
+
+    specs: list[tuple[str, str, int, str, dict[str, Any]]] = []
+    for package_type, package_number, package_count in _physical_parcels(draft):
+        spec = PARCEL_SPECS.get(package_type, PARCEL_SPECS["1-pak"])
+        reference = _shipment_reference(order_number, package_type, package_number, package_count)
+        if inpost_service == "paczkomat":
+            kwargs: dict[str, Any] = {
+                "receiver_first_name": receiver.get("first_name", ""),
+                "receiver_last_name": receiver.get("last_name", ""),
+                "receiver_email": receiver.get("email", ""),
+                "receiver_phone": receiver.get("phone", ""),
+                "target_point": receiver.get("locker_id", ""),
+                "reference": reference,
+                "template": spec.get("paczkomat_template") or "large",
+            }
+        else:
+            kwargs = {
+                "receiver_first_name": receiver.get("first_name", ""),
+                "receiver_last_name": receiver.get("last_name", ""),
+                "receiver_email": receiver.get("email", ""),
+                "receiver_phone": receiver.get("phone", ""),
+                "receiver_street": addr.get("street", ""),
+                "receiver_building_number": "/".join(
+                    filter(None, [addr.get("building_number", "1"), addr.get("flat_number", "")])
+                ),
+                "receiver_city": addr.get("city", ""),
+                "receiver_post_code": addr.get("post_code", ""),
+                "sender": sender,
+                "reference": reference,
+                "weight_kg": spec["weight_kg"],
+                "dimensions": spec,
+            }
+        specs.append((inpost_service, package_type, package_number, reference, kwargs))
+    return specs
+
+
+def _inpost_payload_plan(draft: dict[str, Any], sender: dict[str, str]) -> list[dict[str, Any]]:
+    """Return the exact ShipX payloads this draft would produce, without sending.
+
+    _run_inpost feeds the same arguments to the same builders, so a preview
+    cannot drift from what the courier is actually asked to create.
+    """
+    from zdrovena.common.inpost import InPostClient
+
+    # The builders read nothing off the instance, so preview credentials are
+    # never used for anything — no request leaves this function.
+    client = InPostClient("preview", "preview")
+
+    plan: list[dict[str, Any]] = []
+    for inpost_service, package_type, package_number, reference, kwargs in _inpost_call_specs(
+        draft, sender
+    ):
+        if inpost_service == "paczkomat":
+            payload = client.build_paczkomat_payload(**kwargs)
+        else:
+            payload = client.build_kurier_payload(**kwargs)
+        plan.append(
+            {
+                "service": draft.get("service"),
+                "package_type": package_type,
+                "package_number": package_number,
+                "reference": reference,
+                "payload": payload,
+            }
+        )
+    return plan
+
+
 def _run_inpost(
     draft: dict[str, Any],
     sender: dict[str, str],
@@ -958,53 +1041,20 @@ def _run_inpost(
     org_id = get_secret("inpost_organization_id")
     client = InPostClient(token, org_id)
 
-    from zdrovena.common.inpost import PARCEL_SPECS
-
-    receiver = draft.get("receiver") or {}
-    first_name = receiver.get("first_name", "")
-    last_name = receiver.get("last_name", "")
-    email = receiver.get("email", "")
-    phone = receiver.get("phone", "")
-    order_number = str(draft.get("shopify_order_number", ""))
-    inpost_service = "paczkomat" if draft.get("service") == "inpost_locker_standard" else "kurier"
     existing = list(draft.get("courier_shipments") or [])
     existing_keys = {
         (str(item.get("package_type")), int(item.get("package_number") or 1)) for item in existing
     }
 
-    for package_type, package_number, package_count in _physical_parcels(draft):
+    for inpost_service, package_type, package_number, _reference, kwargs in _inpost_call_specs(
+        draft, sender
+    ):
         if (package_type, package_number) in existing_keys:
             continue
-        spec = PARCEL_SPECS.get(package_type, PARCEL_SPECS["1-pak"])
-        reference = _shipment_reference(order_number, package_type, package_number, package_count)
         if inpost_service == "paczkomat":
-            result = client.create_paczkomat_shipment(
-                receiver_first_name=first_name,
-                receiver_last_name=last_name,
-                receiver_email=email,
-                receiver_phone=phone,
-                target_point=receiver.get("locker_id", ""),
-                reference=reference,
-                template=spec.get("paczkomat_template") or "large",
-            )
+            result = client.create_paczkomat_shipment(**kwargs)
         else:
-            addr = draft.get("shipping_address") or {}
-            result = client.create_kurier_shipment(
-                receiver_first_name=first_name,
-                receiver_last_name=last_name,
-                receiver_email=email,
-                receiver_phone=phone,
-                receiver_street=addr.get("street", ""),
-                receiver_building_number="/".join(
-                    filter(None, [addr.get("building_number", "1"), addr.get("flat_number", "")])
-                ),
-                receiver_city=addr.get("city", ""),
-                receiver_post_code=addr.get("post_code", ""),
-                sender=sender,
-                reference=reference,
-                weight_kg=spec["weight_kg"],
-                dimensions=spec,
-            )
+            result = client.create_kurier_shipment(**kwargs)
         shipment = {
             "id": str(result.get("id", "")),
             "tracking_number": str(result.get("tracking_number") or ""),
@@ -2270,6 +2320,34 @@ def _release_execution_claim(shipping_store: ShippingStore, draft_id: str, error
             shipping_store.update_draft(draft_id, {"status": "error", "error": error})
     except Exception:
         logger.exception("Failed to release execution claim for draft %s (left as-is)", draft_id)
+
+
+@router.get(
+    "/shipping/drafts/{draft_id}/execute/preview",
+    summary="Show exactly what would be sent to the courier, without sending it",
+    responses={
+        403: {"description": "Insufficient role"},
+        404: {"description": "Draft not found"},
+    },
+)
+def preview_execute_draft(
+    draft_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    draft = shipping_store.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    sender = _get_sender()
+    courier = draft.get("courier", "apaczka")
+    if courier != "inpost":
+        return {
+            "courier": courier,
+            "sender": _get_pickup_address() if courier == "apaczka" else sender,
+            "parcels": [],
+            "note": "Preview is currently available for InPost only.",
+        }
+    return {"courier": courier, "sender": sender, "parcels": _inpost_payload_plan(draft, sender)}
 
 
 @router.post(
