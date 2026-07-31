@@ -99,7 +99,7 @@ module "api_staging" {
 }
 
 # ── Allegro Poller — Container App Job (scheduled cron) ───────────────────────
-# Allegro has no webhooks, so we poll every 5 minutes.
+# Allegro has no webhooks, so we poll on a schedule.
 # Uses the same Docker image as api_prod; CI updates the image via
 # `az containerapp job update --image <acr>/<img>:<sha>` after each deploy.
 
@@ -114,7 +114,16 @@ resource "azurerm_container_app_job" "allegro_poller" {
   replica_retry_limit        = 1
 
   schedule_trigger_config {
-    cron_expression          = "*/5 * * * *"
+    # Every 20 minutes, not every 5. At */5 the job ran 288 times a day —
+    # 8,640 runs over 30 days — and produced 8 drafts, one per 1,080 runs.
+    # Each run costs ~6.5 Key Vault reads, ~5.9 managed-identity token fetches
+    # and ~4.5 table operations. This is a Job, not an app: every cycle is a
+    # fresh process that dies seconds later, so the 30-minute in-memory Key
+    # Vault cache in zdrovena/common/_keyvault.py never survives to the next
+    # cycle. Frequency is the only lever that moves all of those numbers at
+    # once, and a four-fold cut costs at most 15 extra minutes of latency on
+    # an event that happens roughly once a week.
+    cron_expression          = "*/20 * * * *"
     parallelism              = 1
     replica_completion_count = 1
   }
