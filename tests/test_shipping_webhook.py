@@ -426,35 +426,39 @@ class TestListDrafts:
 # ── Execute draft ─────────────────────────────────────────────────────────────
 
 
+def _seed_error_draft(store, courier="inpost", service="inpost_courier_standard"):
+    draft = {
+        "id": "draft-exec-1",
+        "created_at": "2026-05-20T10:00:00+00:00",
+        "source": "shopify",
+        "shopify_order_id": "10",
+        "shopify_order_number": "1099",
+        "customer_name": "Test User",
+        "courier": courier,
+        "service": service,
+        "tracking_number": None,
+        "courier_draft_id": None,
+        "status": "error",
+        "packages_count": 1,
+        "pickup_ordered": False,
+        "receiver": {
+            "first_name": "Test",
+            "last_name": "User",
+            "email": "t@t.com",
+            "phone": "500000000",
+            "locker_id": "WAW01A",
+        },
+        "shipping_address": {"street": "Kwiatowa 1", "city": "Warszawa", "post_code": "00-001"},
+        "parcel": {"template": "small", "weight_kg": None},
+        "error": "no credentials",
+    }
+    store.upsert_draft(draft)
+    return draft
+
+
 class TestExecuteDraft:
     def _seed_error_draft(self, store, courier="inpost", service="inpost_courier_standard"):
-        draft = {
-            "id": "draft-exec-1",
-            "created_at": "2026-05-20T10:00:00+00:00",
-            "source": "shopify",
-            "shopify_order_id": "10",
-            "shopify_order_number": "1099",
-            "customer_name": "Test User",
-            "courier": courier,
-            "service": service,
-            "tracking_number": None,
-            "courier_draft_id": None,
-            "status": "error",
-            "packages_count": 1,
-            "pickup_ordered": False,
-            "receiver": {
-                "first_name": "Test",
-                "last_name": "User",
-                "email": "t@t.com",
-                "phone": "500000000",
-                "locker_id": "WAW01A",
-            },
-            "shipping_address": {"street": "Kwiatowa 1", "city": "Warszawa", "post_code": "00-001"},
-            "parcel": {"template": "small", "weight_kg": None},
-            "error": "no credentials",
-        }
-        store.upsert_draft(draft)
-        return draft
+        return _seed_error_draft(store, courier=courier, service=service)
 
     def test_404_for_missing_draft(self, client):
         resp = client.post("/api/shipping/drafts/nonexistent/execute")
@@ -1318,6 +1322,68 @@ class TestRunInpost:
         assert mock_ship.call_args.kwargs["reference"] == (
             f"1050 | {material} | {package_type} 1/1"
         )
+
+
+class TestInPostPayloadPlan:
+    def test_plan_lists_one_payload_per_parcel(self, store):
+        from zdrovena.api.routers import webhooks as wh
+
+        draft = {
+            "id": "d1",
+            "shopify_order_number": "1700",
+            "courier": "inpost",
+            "service": "inpost_courier_standard",
+            "receiver": {
+                "first_name": "Jan",
+                "last_name": "Kowalski",
+                "email": "j@example.com",
+                "phone": "600200300",
+            },
+            "shipping_address": {
+                "street": "Kwiatowa",
+                "building_number": "5",
+                "city": "Warszawa",
+                "post_code": "00-001",
+            },
+            "packages": [{"type": "1-pak", "count": 1}],
+        }
+        sender = {"name": "Zdrovena", "street": "Cieszynska"}
+        plan = wh._inpost_payload_plan(draft, sender)
+
+        assert len(plan) >= 1
+        assert plan[0]["service"] == "inpost_courier_standard"
+        assert "payload" in plan[0]
+
+    def test_plan_expands_a_multi_box_breakdown(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        draft = dict(_KURIER_DRAFT)
+        draft["packages_breakdown"] = [{"type": "3-pak", "qty": 2}, {"type": "szkło", "qty": 1}]
+        plan = wh._inpost_payload_plan(draft, _SENDER)
+
+        assert [entry["package_type"] for entry in plan] == ["3-pak", "3-pak", "szkło"]
+        assert [entry["package_number"] for entry in plan] == [1, 2, 1]
+
+    def test_preview_payload_is_what_the_execution_path_sends(self):
+        """The preview is worthless if it can differ from the real request.
+
+        Assert at the ShipX transport boundary, not at the client wrapper: the
+        outage that started this work was a payload whose shape the carrier
+        rejected, and every test that mocked the wrapper missed it.
+        """
+        from zdrovena.api.routers import webhooks as wh
+
+        for draft in (_KURIER_DRAFT, _PACZKOMAT_DRAFT):
+            plan = wh._inpost_payload_plan(draft, _SENDER)
+            with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+                with patch(
+                    "zdrovena.common.inpost.InPostClient._post_shipment",
+                    return_value={"id": "s-1", "tracking_number": "T1"},
+                ) as mock_post:
+                    wh._run_inpost(draft, _SENDER)
+
+            sent = [call.args[0] for call in mock_post.call_args_list]
+            assert sent == [entry["payload"] for entry in plan]
 
 
 class TestRunApaczka:
