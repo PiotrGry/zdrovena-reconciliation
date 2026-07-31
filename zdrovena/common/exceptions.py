@@ -20,14 +20,20 @@ class ZdrovenaError(Exception):
 
 
 class MissingSecretError(ZdrovenaError):
-    """Raised when a required secret is not found in the macOS Keychain."""
+    """Raised when a required secret cannot be resolved from any backing store."""
 
     def __init__(self, service: str, account: str = "") -> None:
         self.service = service
         self.account = account
         hint = f" (account={account!r})" if account else ""
+        # Name every place the value could come from. The message is read from
+        # container logs far more often than from a dev machine, where neither
+        # a Keychain nor `zdrovena setup` exists.
         super().__init__(
-            f"Missing secret in Keychain: service={service!r}{hint}. Run: zdrovena setup"
+            f"Missing secret: service={service!r}{hint}. "
+            f"Set env var {service.upper().replace('-', '_')}, "
+            f"or Key Vault secret {service.replace('_', '-')!r}, "
+            f"or run: zdrovena setup"
         )
 
 

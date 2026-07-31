@@ -214,7 +214,9 @@ def _get_pickup_address() -> dict[str, str]:
         "building_number": get_secret("pickup_building_number"),
         "city": get_secret("pickup_city"),
         "post_code": get_secret("pickup_post_code"),
-        "phone": get_secret("pickup_phone"),
+        # The courier only needs one reachable number at the collection point,
+        # so fall back to the sender rather than failing the whole dispatch.
+        "phone": get_secret("pickup_phone", required=False) or get_secret("sender_phone"),
         "email": get_secret("pickup_email"),
     }
 
@@ -2266,13 +2268,13 @@ def execute_draft(
             _maybe_push_tracking_to_allegro(updated)
         return updated or patch
     except ZdrovenaShippingError as exc:
-        logger.exception("execute_draft failed for %s", draft_id)
+        logger.exception("execute_draft failed for %s: %s", draft_id, exc)
         _release_execution_claim(shipping_store, draft_id, str(exc))
         # Wyjątek domenowy przesyłki → koperta błędu (zdrovena.api.errors)
         # mapuje go na właściwy status i polski komunikat dla operatora.
         raise
     except Exception as exc:
-        logger.exception("execute_draft failed for %s", draft_id)
+        logger.exception("execute_draft failed for %s: %s", draft_id, exc)
         _release_execution_claim(shipping_store, draft_id, str(exc))
         # Ogólny błąd komunikacji z przewoźnikiem → 502 z polskim komunikatem,
         # bez wyciekania surowego (angielskiego) str(exc) do operatora.
