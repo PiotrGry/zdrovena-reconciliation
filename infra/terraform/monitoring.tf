@@ -153,3 +153,77 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dlq_backlog" {
 
   tags = local.tags
 }
+
+# ── Wynik biznesowy: drafty powstają, ale nic nie wyjeżdża ───────────────────
+#
+# Awaria mapowania sendera InPost (lipiec 2026) zabiła 100% przesyłek
+# kurierskich na kilka tygodni i NIE wywołała żadnego alertu:
+#   - `alert-error-rate` liczy nieudane żądania HTTP z progiem >5/5min, a awaria
+#     dawała 1–2 dziennie (operator próbuje raz i rezygnuje),
+#   - `alert-latency` mierzy czas, a zepsuta przesyłka odpowiada szybko błędem,
+#   - `alert-dlq-backlog` obejmował wtedy wyłącznie nieudane *tworzenie* draftu.
+#
+# Ta reguła patrzy na wynik biznesowy zamiast na wskaźniki techniczne: jeśli
+# drafty powstają, a w całym oknie nie powstała ANI JEDNA przesyłka, to znaczy
+# że wysyłka stoi — niezależnie od tego, która warstwa się wywaliła.
+#
+# Podział odpowiedzialności z `dlq_backlog`: tamta reguła łapie każdą pojedynczą
+# porażkę (od tej zmiany także nieudane *wykonanie*, kind=draft_execution), więc
+# pokrywa awarie częściowe, np. kurier leży a paczkomat jeździ. Ta reguła łapie
+# przypadek, w którym nikt nawet nie próbuje wykonać draftu — wtedy nie ma
+# żadnego wpisu w DLQ i tylko brak przesyłek to widać.
+#
+# Drafty tworzy zarówno API, jak i poller Allegro; przesyłki powstają wyłącznie
+# w API — dlatego filtr ról obejmuje obie, a rozróżnienia dokonuje typ zdarzenia.
+#
+# UWAGA przy analizie historii: telemetria sprzed ~23.07.2026 ma
+# cloud_RoleName = "unknown_service" (service.name w OTel zostało naprawione
+# deployem z 24.07). Zapytania z filtrem po roli nie zobaczą tamtych rekordów,
+# co przy kalibracji progu potrafi mylnie pokazać shipments = 0.
+#
+# Kalibracja na realnych danych (kubełki 2-dniowe, lipiec 2026): wolumen to
+# ~1-2 drafty dziennie, więc próg 2 na okno 2-dniowe wykrywa awarię w ciągu
+# ~2 dni, a nie odpala przy pojedynczym zamówieniu. Severity 2, bo to sygnał
+# narastający — ostre, pojedyncze porażki łapie dlq_backlog (Sev1).
+
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "no_shipments_despite_drafts" {
+  name                = "${var.prefix}-alert-no-shipments"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  description         = "Powstały drafty, ale nie utworzono żadnej przesyłki — wysyłka stoi"
+  severity            = 2
+
+  evaluation_frequency = "PT1H"
+  window_duration      = "P2D"
+  scopes               = [azurerm_application_insights.ai.id]
+
+  criteria {
+    # Okno czasowe narzuca window_duration — bez ago() w zapytaniu.
+    query                   = <<-KQL
+      traces
+      | where cloud_RoleName in ("${var.prefix}-api-prod", "${var.prefix}-allegro-poller")
+      | extend payload = parse_json(message)
+      | extend evt = tostring(payload.event)
+      | where evt in ("draft.created", "shipment.created")
+      | summarize drafts = countif(evt == "draft.created"),
+                  shipments = countif(evt == "shipment.created")
+      | where drafts >= 2 and shipments == 0
+    KQL
+    time_aggregation_method = "Count"
+    threshold               = 0
+    operator                = "GreaterThan"
+
+    failing_periods {
+      minimum_failing_periods_to_trigger_alert = 1
+      number_of_evaluation_periods             = 1
+    }
+  }
+
+  auto_mitigation_enabled = true
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+
+  tags = local.tags
+}
