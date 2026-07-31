@@ -3428,3 +3428,70 @@ class TestShipmentOrigin:
         ]
         assert events, "the no-tracking alert depends on this event existing"
         assert "system" in events[0]
+
+
+class TestTrackingAssignedCoversEveryPath:
+    """Codex review, 2026-07-31: the alert joins draft.created against
+    draft.tracking_assigned, so any path that assigns a tracking number without
+    emitting the event makes that draft look unshipped and pages falsely.
+    The manual-portal path is the common one — 126 of 197 drafts."""
+
+    def test_sync_assigning_external_tracking_emits_the_event(self, caplog):
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {"id": "d1", "tracking_number": None, "courier_draft_id": None}
+        incoming = {"id": "d1", "tracking_number": "TRK-MANUAL", "status": "created"}
+        with caplog.at_level(logging.INFO, logger="zdrovena.events"):
+            wh._merge_synced_draft(existing, incoming)
+
+        events = [
+            r.getMessage() for r in caplog.records if "draft.tracking_assigned" in r.getMessage()
+        ]
+        assert events, "a manually shipped draft would otherwise page as untracked"
+        assert "external" in events[0]
+
+    def test_sync_does_not_re_emit_for_an_already_known_origin(self, caplog):
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {
+            "id": "d2",
+            "tracking_number": "TRK1",
+            "courier_draft_id": None,
+            "shipment_origin": "external",
+        }
+        incoming = {"id": "d2", "tracking_number": "TRK1", "status": "created"}
+        with caplog.at_level(logging.INFO, logger="zdrovena.events"):
+            wh._merge_synced_draft(existing, incoming)
+
+        events = [
+            r.getMessage() for r in caplog.records if "draft.tracking_assigned" in r.getMessage()
+        ]
+        assert not events, "the event marks assignment, not every subsequent sync"
+
+    def test_allegro_async_confirmation_is_marked_system(self, client, store, caplog):
+        """Ship-with-Allegro can return pending_confirmation; the waybill then
+        arrives through /confirm, which bypasses the execute path entirely."""
+        draft = _seed_origin_draft(store)
+        store.update_draft(
+            draft["id"], {"status": "pending_confirmation", "allegro_command_id": "cmd-1"}
+        )
+
+        allegro = MagicMock()
+        allegro.get_ship_with_allegro_command_status.return_value = {
+            "status": "SUCCESS",
+            "shipmentId": "allegro-ship-1",
+        }
+        allegro.get_ship_with_allegro_shipment.return_value = {"id": "allegro-ship-1"}
+        allegro.extract_shipment_waybill.return_value = ("carrier-1", "AWB-1")
+
+        with caplog.at_level(logging.INFO, logger="zdrovena.events"):
+            with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+                with patch("zdrovena.api.routers.webhooks._maybe_push_tracking_to_allegro"):
+                    resp = client.post(f"/api/shipping/drafts/{draft['id']}/confirm")
+
+        assert resp.status_code == 200, resp.text
+        assert store.get_draft(draft["id"])["shipment_origin"] == "system"
+        events = [
+            r.getMessage() for r in caplog.records if "draft.tracking_assigned" in r.getMessage()
+        ]
+        assert events, "an Allegro waybill is a tracking number like any other"

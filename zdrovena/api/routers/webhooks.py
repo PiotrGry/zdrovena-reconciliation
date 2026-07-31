@@ -83,6 +83,24 @@ SHIPMENT_ORIGIN_SYSTEM = "system"
 SHIPMENT_ORIGIN_EXTERNAL = "external"
 
 logger = logging.getLogger("zdrovena.api.routers.webhooks")
+
+
+def _emit_tracking_assigned(draft_id: Any, order_number: Any, origin: str) -> None:
+    """Announce that a draft now has a tracking number, whoever produced it.
+
+    The no-tracking alert joins draft.created against this event, so every path
+    that assigns a tracking number must emit it — including the manual portal
+    path, which is the common one. A path that stays silent makes its drafts
+    look unshipped and pages falsely.
+    """
+    log_event(
+        "draft.tracking_assigned",
+        draft_id=draft_id,
+        order_number=order_number,
+        shipment_origin=origin,
+    )
+
+
 _MOCK_COURIER = os.getenv("MOCK_COURIER", "").lower() in ("1", "true", "yes")
 
 router = APIRouter(tags=["shipping"])
@@ -1749,6 +1767,11 @@ def _merge_synced_draft(existing: dict[str, Any], incoming: dict[str, Any]) -> d
         merged["shipment_origin"] = (
             SHIPMENT_ORIGIN_SYSTEM if merged.get("courier_draft_id") else SHIPMENT_ORIGIN_EXTERNAL
         )
+        _emit_tracking_assigned(
+            merged.get("id"),
+            merged.get("shopify_order_number"),
+            merged["shipment_origin"],
+        )
 
     existing_status = existing.get("status")
     incoming_status = incoming.get("status")
@@ -2335,13 +2358,10 @@ def execute_draft(
             status=patch.get("status"),
         )
         if patch.get("tracking_number"):
-            # The no-tracking alert joins draft.created against this event, so
-            # it must fire for every parcel however it was dispatched.
-            log_event(
-                "draft.tracking_assigned",
-                draft_id=draft_id,
-                order_number=draft.get("shopify_order_number"),
-                shipment_origin=patch.get("shipment_origin") or SHIPMENT_ORIGIN_SYSTEM,
+            _emit_tracking_assigned(
+                draft_id,
+                draft.get("shopify_order_number"),
+                patch.get("shipment_origin") or SHIPMENT_ORIGIN_SYSTEM,
             )
         if updated:
             # Never re-raises (see its docstring) — safe inside the guarded block.
@@ -2478,8 +2498,13 @@ def confirm_pending_command(
         "allegro_shipment_id": str(shipment_id),
         "tracking_number": waybill,
         "error": None,
+        # Ship-with-Allegro can answer pending_confirmation, so the waybill
+        # lands here instead of in execute_draft. Same origin, same event.
+        "shipment_origin": SHIPMENT_ORIGIN_SYSTEM,
     }
     shipping_store.update_draft(draft_id, patch)
+    if waybill:
+        _emit_tracking_assigned(draft_id, draft.get("shopify_order_number"), SHIPMENT_ORIGIN_SYSTEM)
     updated = shipping_store.get_draft(draft_id)
     if updated:
         _maybe_push_tracking_to_allegro(updated)
