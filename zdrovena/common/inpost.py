@@ -326,7 +326,7 @@ class InPostClient:
         )
         return resp.json() or {}
 
-    def create_paczkomat_shipment(
+    def build_paczkomat_payload(
         self,
         *,
         receiver_first_name: str,
@@ -352,7 +352,7 @@ class InPostClient:
                 "sending_method": "dispatch_order",
             },
         }
-        return self._post_shipment(payload)
+        return payload
 
     @staticmethod
     def _shipx_sender(sender: dict[str, str]) -> dict[str, Any]:
@@ -378,7 +378,7 @@ class InPostClient:
             },
         }
 
-    def create_kurier_shipment(
+    def build_kurier_payload(
         self,
         *,
         receiver_first_name: str,
@@ -425,7 +425,20 @@ class InPostClient:
             ],
             "custom_attributes": {"sending_method": "dispatch_order"},
         }
-        return self._post_shipment(payload)
+        return payload
+
+    def create_paczkomat_shipment(self, **kwargs: Any) -> dict[str, Any]:
+        """Build and send. The builder is public so a preview can show the exact
+        payload without a network call — see build_kurier_payload."""
+        return self._post_shipment(self.build_paczkomat_payload(**kwargs))
+
+    def create_kurier_shipment(self, **kwargs: Any) -> dict[str, Any]:
+        """Build and send.
+
+        Split from the builder so a preview and the real request cannot drift:
+        they are the same function, not two functions kept in sync by hand.
+        """
+        return self._post_shipment(self.build_kurier_payload(**kwargs))
 
     def _post_shipment(self, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{_BASE}/v1/organizations/{self._org_id}/shipments"

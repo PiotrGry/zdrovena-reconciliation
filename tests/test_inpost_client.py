@@ -288,6 +288,72 @@ class TestKurierSenderContract:
         assert sender["company_name"] == "Zdrovena"
 
 
+class TestPayloadBuilders:
+    """The preview and the real send must be the same payload by construction.
+
+    A preview assembled by separate code would drift from what is actually sent
+    and would make the operator's trust problem worse, not better.
+    """
+
+    def _kwargs(self):
+        return {
+            "receiver_first_name": "Jan",
+            "receiver_last_name": "Kowalski",
+            "receiver_email": "jan@example.com",
+            "receiver_phone": "600200300",
+            "receiver_street": "Kwiatowa",
+            "receiver_building_number": "5",
+            "receiver_city": "Warszawa",
+            "receiver_post_code": "00-001",
+            "sender": _SENDER,
+            "reference": "order-1060",
+        }
+
+    def _locker_kwargs(self):
+        return {
+            "receiver_first_name": "Jan",
+            "receiver_last_name": "Kowalski",
+            "receiver_email": "jan@example.com",
+            "receiver_phone": "600200300",
+            "target_point": "KRA01M",
+            "reference": "order-1061",
+        }
+
+    def test_build_kurier_payload_matches_what_create_sends(self):
+        client = InPostClient(_TOKEN, _ORG)
+        built = client.build_kurier_payload(**self._kwargs())
+
+        resp = _ok_response({"id": "ship-1"})
+        with patch.object(client._session, "post", return_value=resp) as mock_post:
+            client.create_kurier_shipment(**self._kwargs())
+        sent = mock_post.call_args.kwargs["json"]
+
+        assert built == sent, "preview payload must equal the payload actually sent"
+
+    def test_build_kurier_payload_sends_nothing(self):
+        client = InPostClient(_TOKEN, _ORG)
+        with patch.object(client._session, "post") as mock_post:
+            client.build_kurier_payload(**self._kwargs())
+        mock_post.assert_not_called()
+
+    def test_build_paczkomat_payload_matches_what_create_sends(self):
+        client = InPostClient(_TOKEN, _ORG)
+        built = client.build_paczkomat_payload(**self._locker_kwargs())
+
+        resp = _ok_response({"id": "ship-2"})
+        with patch.object(client._session, "post", return_value=resp) as mock_post:
+            client.create_paczkomat_shipment(**self._locker_kwargs())
+        sent = mock_post.call_args.kwargs["json"]
+
+        assert built == sent
+
+    def test_build_paczkomat_payload_sends_nothing(self):
+        client = InPostClient(_TOKEN, _ORG)
+        with patch.object(client._session, "post") as mock_post:
+            client.build_paczkomat_payload(**self._locker_kwargs())
+        mock_post.assert_not_called()
+
+
 # ── create_dispatch_order ────────────────────────────────────────────────────
 
 
