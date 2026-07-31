@@ -3319,3 +3319,112 @@ class TestPickupAddressSecrets:
         with patch.object(wh, "get_secret", self._fake_get_secret({"pickup_street"})):
             with pytest.raises(MissingSecretError):
                 wh._get_pickup_address()
+
+
+def _seed_origin_draft(store):
+    """An executable draft, mirroring TestExecuteDraft._seed_error_draft."""
+    draft = {
+        "id": "draft-origin-1",
+        "created_at": "2026-05-20T10:00:00+00:00",
+        "source": "shopify",
+        "shopify_order_id": "77",
+        "shopify_order_number": "1177",
+        "customer_name": "Test User",
+        "courier": "inpost",
+        "service": "inpost_courier_standard",
+        "tracking_number": None,
+        "courier_draft_id": None,
+        "status": "error",
+        "packages_count": 1,
+        "pickup_ordered": False,
+        "receiver": {
+            "first_name": "Test",
+            "last_name": "User",
+            "email": "t@t.com",
+            "phone": "500000000",
+            "locker_id": "WAW01A",
+        },
+        "shipping_address": {"street": "Kwiatowa 1", "city": "Warszawa", "post_code": "00-001"},
+        "parcel": {"template": "small", "weight_kg": None},
+        "error": "no credentials",
+    }
+    store.upsert_draft(draft)
+    return draft
+
+
+class TestShipmentOrigin:
+    """126 drafts carry tracking numbers this system never created, because the
+    operator dispatches through carrier portals and the sync writes the number
+    back. Status 'created' therefore says nothing about who shipped it."""
+
+    def test_sync_marks_tracking_we_did_not_create_as_external(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {"id": "d1", "tracking_number": None, "courier_draft_id": None}
+        incoming = {"id": "d1", "tracking_number": "TRK-MANUAL", "status": "created"}
+        merged = wh._merge_synced_draft(existing, incoming)
+        assert merged["shipment_origin"] == "external"
+
+    def test_sync_marks_our_own_shipment_as_system(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {"id": "d2", "tracking_number": "TRK1", "courier_draft_id": "ship-1"}
+        incoming = {"id": "d2", "tracking_number": "TRK1", "status": "created"}
+        merged = wh._merge_synced_draft(existing, incoming)
+        assert merged["shipment_origin"] == "system"
+
+    def test_sync_does_not_invent_an_origin_without_tracking(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {"id": "d3", "tracking_number": None, "courier_draft_id": None}
+        incoming = {"id": "d3", "tracking_number": None, "status": "pending"}
+        merged = wh._merge_synced_draft(existing, incoming)
+        assert merged.get("shipment_origin") is None
+
+    def test_sync_never_downgrades_a_recorded_origin(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {
+            "id": "d4",
+            "tracking_number": "TRK1",
+            "courier_draft_id": None,
+            "shipment_origin": "system",
+        }
+        incoming = {"id": "d4", "tracking_number": "TRK1", "status": "created"}
+        merged = wh._merge_synced_draft(existing, incoming)
+        assert merged["shipment_origin"] == "system"
+
+    def test_execute_records_system_origin(self, client, store):
+        draft = _seed_origin_draft(store)
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "ship-1",
+                "tracking_number": "TRK1",
+                "status": "created",
+                "error": None,
+            },
+        ):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 200, resp.text
+        assert store.get_draft(draft["id"])["shipment_origin"] == "system"
+
+    def test_execute_emits_tracking_assigned_event(self, client, store, caplog):
+        draft = _seed_origin_draft(store)
+        with caplog.at_level(logging.INFO, logger="zdrovena.events"):
+            with patch(
+                "zdrovena.api.routers.webhooks._run_inpost",
+                return_value={
+                    "courier_draft_id": "ship-1",
+                    "tracking_number": "TRK1",
+                    "status": "created",
+                    "error": None,
+                },
+            ):
+                client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+
+        events = [
+            r.getMessage() for r in caplog.records if "draft.tracking_assigned" in r.getMessage()
+        ]
+        assert events, "the no-tracking alert depends on this event existing"
+        assert "system" in events[0]

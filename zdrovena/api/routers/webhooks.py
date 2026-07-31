@@ -75,6 +75,13 @@ from zdrovena.common.shipping_store import (
 )
 from zdrovena.common.shopify_dedup_store import DedupStoreError
 
+# Who actually dispatched the parcel. Shipping is largely done by hand in the
+# carrier portals, and the Shopify sync writes the resulting tracking number
+# back onto the draft — so `status == "created"` says nothing about the origin.
+# Reporting and the no-tracking alert both depend on telling these apart.
+SHIPMENT_ORIGIN_SYSTEM = "system"
+SHIPMENT_ORIGIN_EXTERNAL = "external"
+
 logger = logging.getLogger("zdrovena.api.routers.webhooks")
 _MOCK_COURIER = os.getenv("MOCK_COURIER", "").lower() in ("1", "true", "yes")
 
@@ -1465,6 +1472,7 @@ def _create_draft_safely(
 _SYNC_PRESERVED_FIELDS = {
     "id",
     "created_at",
+    "shipment_origin",
     "courier_draft_id",
     "courier_shipments",
     "dispatch_order_id",
@@ -1733,6 +1741,14 @@ def _merge_synced_draft(existing: dict[str, Any], incoming: dict[str, Any]) -> d
             merged[field] = existing[field]
     if existing.get("fulfilled_at") and not incoming.get("fulfilled_at"):
         merged["fulfilled_at"] = existing["fulfilled_at"]
+
+    # A tracking number we did not produce means the parcel was dispatched by
+    # hand in a carrier portal. Recorded once and then preserved above, so a
+    # later sync can never rewrite history.
+    if merged.get("tracking_number") and not merged.get("shipment_origin"):
+        merged["shipment_origin"] = (
+            SHIPMENT_ORIGIN_SYSTEM if merged.get("courier_draft_id") else SHIPMENT_ORIGIN_EXTERNAL
+        )
 
     existing_status = existing.get("status")
     incoming_status = incoming.get("status")
@@ -2301,6 +2317,11 @@ def execute_draft(
                 on_shipment_created=persist_shipment,
             )
 
+        # A shipment we created ourselves — record it before the write, so the
+        # sync cannot later mistake it for one dispatched by hand.
+        if patch.get("courier_draft_id"):
+            patch["shipment_origin"] = SHIPMENT_ORIGIN_SYSTEM
+
         # Success write moves executing → created. If THIS fails, the draft is
         # still `executing`, and the except-block cleanup returns it to `error`.
         shipping_store.update_draft(draft_id, patch)
@@ -2313,6 +2334,15 @@ def execute_draft(
             tracking_number=patch.get("tracking_number"),
             status=patch.get("status"),
         )
+        if patch.get("tracking_number"):
+            # The no-tracking alert joins draft.created against this event, so
+            # it must fire for every parcel however it was dispatched.
+            log_event(
+                "draft.tracking_assigned",
+                draft_id=draft_id,
+                order_number=draft.get("shopify_order_number"),
+                shipment_origin=patch.get("shipment_origin") or SHIPMENT_ORIGIN_SYSTEM,
+            )
         if updated:
             # Never re-raises (see its docstring) — safe inside the guarded block.
             _maybe_push_tracking_to_allegro(updated)
