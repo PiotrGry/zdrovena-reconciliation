@@ -154,7 +154,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dlq_backlog" {
   tags = local.tags
 }
 
-# ── Wynik biznesowy: drafty powstają, ale nic nie wyjeżdża ───────────────────
+# ── Wynik biznesowy: zamówienia bez numeru nadania po 48h ────────────────────
 #
 # Awaria mapowania sendera InPost (lipiec 2026) zabiła 100% przesyłek
 # kurierskich na kilka tygodni i NIE wywołała żadnego alertu:
@@ -163,34 +163,69 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dlq_backlog" {
 #   - `alert-latency` mierzy czas, a zepsuta przesyłka odpowiada szybko błędem,
 #   - `alert-dlq-backlog` obejmował wtedy wyłącznie nieudane *tworzenie* draftu.
 #
-# Ta reguła patrzy na wynik biznesowy zamiast na wskaźniki techniczne: jeśli
-# drafty powstają, a w całym oknie nie powstała ANI JEDNA przesyłka, to znaczy
-# że wysyłka stoi — niezależnie od tego, która warstwa się wywaliła.
+# DLACZEGO poprzednia wersja tej reguły (`no_shipments_despite_drafts`, ec28a2c)
+# była zła: porównywała `draft.created` z `shipment.created`, a `shipment.created`
+# emitujemy WYŁĄCZNIE wtedy, gdy przesyłkę tworzy nasza automatyzacja. Wysyłka
+# jest dziś nadawana RĘCZNIE przez panele przewoźników, więc `shipment.created`
+# jest trwale zerowe i reguła alarmowałaby bez końca — klasyczny alert, który
+# uczy operatora ignorować powiadomienia.
+#
+# Sygnał, którego naprawdę pilnujemy, to brak numeru nadania, a nie brak naszego
+# własnego sukcesu. `draft.tracking_assigned` pojawia się niezależnie od tego,
+# kto nadał paczkę (automat czy człowiek w panelu), więc reguła mierzy realny
+# stan wysyłki, a nie ścieżkę, którą przebiegła.
+#
+# Próg czasowy 48h: dość długo, by zamówienie z piątku spokojnie poczekało do
+# poniedziałku bez alarmu, i dość krótko, by systemowy zator wyszedł na jaw w
+# dwa dni, a nie po tygodniach — tyle przetrwała awaria sendera.
 #
 # Podział odpowiedzialności z `dlq_backlog`: tamta reguła łapie każdą pojedynczą
-# porażkę (od tej zmiany także nieudane *wykonanie*, kind=draft_execution), więc
-# pokrywa awarie częściowe, np. kurier leży a paczkomat jeździ. Ta reguła łapie
-# przypadek, w którym nikt nawet nie próbuje wykonać draftu — wtedy nie ma
-# żadnego wpisu w DLQ i tylko brak przesyłek to widać.
+# porażkę (także nieudane *wykonanie*, kind=draft_execution), więc pokrywa awarie
+# częściowe, np. kurier leży a paczkomat jeździ. Ta reguła łapie przypadek, w
+# którym nikt nawet nie próbuje wykonać draftu — wtedy nie ma żadnego wpisu w
+# DLQ i widać to tylko po braku trackingu.
 #
-# Drafty tworzy zarówno API, jak i poller Allegro; przesyłki powstają wyłącznie
-# w API — dlatego filtr ról obejmuje obie, a rozróżnienia dokonuje typ zdarzenia.
+# Drafty tworzy zarówno API, jak i poller Allegro — dlatego filtr ról obejmuje
+# obie. Zdarzenia `draft.tracking_assigned` nie filtrujemy po roli, bo tracking
+# może dopisać także backfill/import spoza tych dwóch ról.
 #
 # UWAGA przy analizie historii: telemetria sprzed ~23.07.2026 ma
 # cloud_RoleName = "unknown_service" (service.name w OTel zostało naprawione
 # deployem z 24.07). Zapytania z filtrem po roli nie zobaczą tamtych rekordów,
-# co przy kalibracji progu potrafi mylnie pokazać shipments = 0.
+# co przy kalibracji progu potrafi mylnie pokazać, że przesyłek było zero,
+# podczas gdy w rzeczywistości były.
 #
-# Kalibracja na realnych danych (kubełki 2-dniowe, lipiec 2026): wolumen to
-# ~1-2 drafty dziennie, więc próg 2 na okno 2-dniowe wykrywa awarię w ciągu
-# ~2 dni, a nie odpala przy pojedynczym zamówieniu. Severity 2, bo to sygnał
-# narastający — ostre, pojedyncze porażki łapie dlq_backlog (Sev1).
+# ZALEŻNOŚĆ WDROŻENIOWA: ta reguła nie może trafić na produkcję przed deployem
+# kodu emitującego `draft.tracking_assigned` — bez tych zdarzeń każdy draft
+# starszy niż 48h wygląda na nienadany.
+#
+# ODSTĘPSTWO OD PROJEKTU (okno P7D): Azure Monitor log search alerts twardo
+# ograniczają zakres czasowy zapytania do 2 dni — zarówno `window_duration`,
+# jak i `query_time_range_override` przyjmują maksymalnie "P2D" (provider
+# odrzuca "P7D" już na etapie `terraform validate`). Siedmiodniowy przegląd
+# wstecz jest więc niewykonalny w tym typie reguły.
+#
+# Zamiast przeglądu retrospektywnego reguła działa krawędziowo: przy oknie 2 dni
+# najstarszy widoczny draft ma dokładnie 48h, więc łapiemy drafty w paśmie
+# 46–48h życia. Przy `evaluation_frequency = PT1H` każdy draft przechodzi przez
+# to pasmo w 2 kolejnych ewaluacjach (zapas na spóźniony przebieg), a próg 48h —
+# jedyny parametr, który był świadomą decyzją biznesową — zostaje zachowany.
+#
+# Konsekwencja pasma: pojedynczy draft jest widoczny dla reguły tylko ~2h.
+# Dlatego `auto_mitigation_enabled = false` (jak w dlq_backlog) — alert raz
+# zapalony zostaje otwarty, aż ktoś go zamknie. Bez tego zapomniane zamówienie
+# gasłoby samo w środku nocy i nikt by się o nim nie dowiedział.
+#
+# Przy awarii systemowej reguła i tak odpala bez przerwy, bo kolejne drafty
+# wchodzą w pasmo. Gdyby mimo to okazała się za słaba, alternatywą jest
+# obniżenie progu do `ago(24h)` — ciągła widoczność przez dobę, kosztem
+# fałszywek w weekend. To decyzja właściciela, nie zmiana techniczna.
 
-resource "azurerm_monitor_scheduled_query_rules_alert_v2" "no_shipments_despite_drafts" {
-  name                = "${var.prefix}-alert-no-shipments"
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "orders_without_tracking" {
+  name                = "${var.prefix}-alert-no-tracking"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
-  description         = "Powstały drafty, ale nie utworzono żadnej przesyłki — wysyłka stoi"
+  description         = "Zamówienia bez numeru nadania po 48h — wysyłka stoi (niezależnie od tego, kto nadaje)"
   severity            = 2
 
   evaluation_frequency = "PT1H"
@@ -198,19 +233,85 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "no_shipments_despite_
   scopes               = [azurerm_application_insights.ai.id]
 
   criteria {
-    # Okno czasowe narzuca window_duration — bez ago() w zapytaniu.
+    # Okno zapytania to P2D (patrz komentarz wyżej), więc `ago(46h)` wycina
+    # drafty w wieku 46–48h — te, które właśnie przekraczają próg 48h.
     query                   = <<-KQL
-      traces
+      let created = traces
+      | where timestamp < ago(46h)
       | where cloud_RoleName in ("${var.prefix}-api-prod", "${var.prefix}-allegro-poller")
       | extend payload = parse_json(message)
-      | extend evt = tostring(payload.event)
-      | where evt in ("draft.created", "shipment.created")
-      | summarize drafts = countif(evt == "draft.created"),
-                  shipments = countif(evt == "shipment.created")
-      | where drafts >= 2 and shipments == 0
+      | where tostring(payload.event) == "draft.created"
+      | extend draft_id = tostring(payload.draft_id)
+      | distinct draft_id;
+      let tracked = traces
+      | extend payload = parse_json(message)
+      | where tostring(payload.event) == "draft.tracking_assigned"
+      | extend draft_id = tostring(payload.draft_id)
+      | distinct draft_id;
+      created
+      | join kind=leftanti tracked on draft_id
     KQL
     time_aggregation_method = "Count"
     threshold               = 0
+    operator                = "GreaterThan"
+
+    failing_periods {
+      minimum_failing_periods_to_trigger_alert = 1
+      number_of_evaluation_periods             = 1
+    }
+  }
+
+  # Nie gaś samoczynnie. Reguła jest krawędziowa (pasmo 46–48h), więc pojedyncze
+  # zapomniane zamówienie mieści się w oknie tylko ~2 godziny. Przy auto-mitygacji
+  # alert zgasłby sam, choć paczka wciąż nie została nadana — kto akurat nie
+  # patrzył, nie dowie się nigdy. Tak samo ustawiony jest dlq_backlog.
+  auto_mitigation_enabled = false
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+
+  tags = local.tags
+}
+
+# ── Alert: poller Allegro sypie błędami ──────────────────────────────────────
+#
+# Poller jest niewidoczny dla wszystkich pozostałych reguł w tym pliku:
+# `alert-error-rate` i `alert-latency` opierają się na metrykach żądań HTTP
+# (`requests/failed`, `requests/duration`), a Container App Job nie obsługuje
+# ŻADNEGO ruchu HTTP — to proces cron, który startuje, robi swoje i umiera.
+# W efekcie poller mógłby wywalać się w każdym cyklu, a nikt by się o tym nie
+# dowiedział. Ta reguła zamyka tę lukę, patrząc na `exceptions` filtrowane po
+# roli pollera.
+#
+# Próg 2/h (a nie 0): w analizowanym tygodniu Allegro zwróciło dwa przejściowe
+# `CourierServerError 503` (29 i 31.07). Pojedyncze 503 od dostawcy to szum, nie
+# awaria — poller ponawia w następnym cyklu. Próg > 2 na godzinę przepuszcza taki
+# szum, ale poller psujący się w każdym cyklu przekroczy go natychmiast.
+#
+# UWAGA przy kalibracji na historii: telemetria sprzed ~23.07.2026 ma
+# cloud_RoleName = "unknown_service" (service.name w OTel naprawione deployem
+# z 24.07), więc filtr po roli nie zobaczy tamtych wyjątków. Zliczanie błędów
+# pollera sprzed tej daty pokaże zero, co nie znaczy, że ich nie było.
+
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "allegro_poller_failing" {
+  name                = "${var.prefix}-alert-poller-failing"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  description         = "Poller Allegro zgłasza błędy — niewidoczny dla alert-error-rate, bo Joby nie obsługują HTTP"
+  severity            = 2
+
+  evaluation_frequency = "PT15M"
+  window_duration      = "PT1H"
+  scopes               = [azurerm_application_insights.ai.id]
+
+  criteria {
+    query                   = <<-KQL
+      exceptions
+      | where cloud_RoleName == "${var.prefix}-allegro-poller"
+    KQL
+    time_aggregation_method = "Count"
+    threshold               = 2
     operator                = "GreaterThan"
 
     failing_periods {
