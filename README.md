@@ -10,6 +10,123 @@ Integracje zewnętrzne: Shopify (webhooki), Allegro (Ship-with-Allegro), InPost 
 
 ---
 
+## Szybki start — środowisko developerskie od zera (dla początkujących)
+
+Instrukcja dla osoby, która nie ma zainstalowanych żadnych narzędzi developerskich.
+Kroki 1–3 wykonujesz tylko raz. Potem start to `./dev.sh`, a stop to `./stop.sh`.
+
+### 1. Instalacja narzędzi (jednorazowo)
+
+1. **Git** — <https://git-scm.com/downloads> (instaluj z domyślnymi opcjami). Na
+   Windows dostaniesz też „Git Bash" — terminal, w którym wpisujesz komendy.
+2. **Docker Desktop** — <https://www.docker.com/products/docker-desktop/>. Po
+   instalacji **uruchom go i poczekaj, aż wystartuje** (ikona wieloryba). Musi
+   działać za każdym razem, zanim odpalisz aplikację.
+3. **Node.js (LTS)** — <https://nodejs.org> (domyślne opcje). Potrzebny do
+   frontendu.
+
+Sprawdź w terminalu (Git Bash / Terminal), że wszystko działa — każda komenda
+powinna wypisać numer wersji, a nie błąd:
+
+```bash
+git --version
+docker --version
+node --version
+```
+
+### 2. Pobranie projektu
+
+```bash
+git clone https://github.com/PiotrGry/zdrovena-reconciliation.git
+cd zdrovena-reconciliation
+```
+
+### 3. Lokalne sekrety (jednorazowo)
+
+Hasła i klucze API („sekrety") **nigdy nie są w kodzie**. Trzymamy je w
+prywatnym, gitignorowanym pliku `.env.local` na Twoim komputerze. Utwórz go z
+szablonu i doinstaluj paczki frontendu:
+
+```bash
+cp .env.local.template .env.local
+cd frontend && npm ci && cd ..
+```
+
+Domyślne wartości z szablonu są bezpieczne od ręki:
+
+- logowanie Microsoft/Azure **wyłączone** (`AZURE_AUTH_DISABLED=true`) — nie
+  potrzebujesz żadnego konta,
+- storage działa w lokalnym emulatorze (Azurite) w Dockerze,
+- kurierzy są **zamokowani** (`dev.sh` ustawia domyślnie `MOCK_COURIER=1`) —
+  aplikacja nie łączy się z prawdziwym InPost/Allegro, więc nie da się
+  przypadkiem nadać prawdziwej paczki ani wystawić prawdziwej faktury.
+
+**Zasady:** nigdy nie udostępniaj, nie wysyłaj i nie commituj `.env.local`. Do
+lokalnego developmentu nie potrzebujesz żadnych prawdziwych sekretów; prawdziwy
+token (odkomentowanie odpowiedniej linii) dodajesz tylko wtedy, gdy dostaniesz
+go od właściciela repo — przekazany prywatnie.
+
+### 4. Start wszystkiego: jedna komenda
+
+Upewnij się, że Docker Desktop działa, a potem:
+
+```bash
+./dev.sh
+```
+
+Skrypt robi wszystko za Ciebie, po kolei:
+
+1. startuje Azurite (emulator storage) + API w Dockerze,
+2. czeka, aż API odpowie („Czekam aż API będzie gotowe..."),
+3. tworzy kontener storage i **seeduje testowe dane wysyłek**,
+4. startuje frontend (Vite) natywnie,
+5. wypisuje adresy:
+   - **API:** `http://localhost:8000`
+   - **Frontend:** `http://localhost:5173` ← to otwierasz w przeglądarce
+
+Normalne komunikaty, które możesz zignorować:
+
+- `⚠  MOCK_COURIER=1 — kurierzy zamokowany` — dobrze, kurierzy są bezpiecznie
+  udawani,
+- ERROR o „Key Vault" / „secrets sync" przy starcie — nieszkodliwy lokalnie
+  (sam skrypt pisze, że takie błędy można bezpiecznie zignorować).
+
+### 5. Stop wszystkiego: jedna komenda
+
+```bash
+./stop.sh
+```
+
+Zatrzymuje kontenery Dockera, frontend, ewentualny natywny backend i zwalnia
+wszystkie porty developerskie (8000, 5173, 10000–10002). Wypisuje ✓ przy każdym
+kroku i kończy komunikatem „Dev environment stopped."
+
+⚠️ Uwaga: **Ctrl+C** w terminalu z `dev.sh` zatrzymuje tylko frontend — **Docker
+dalej działa w tle**. Zawsze kończ przez `./stop.sh`.
+
+### Codzienna rutyna
+
+1. Uruchom Docker Desktop i poczekaj, aż będzie gotowy.
+2. Terminal → `cd zdrovena-reconciliation`.
+3. (Opcjonalnie) `git pull` po najnowszy kod.
+4. `./dev.sh` → otwórz `http://localhost:5173`.
+5. Po skończeniu: `./stop.sh`.
+
+### Gdy coś nie działa
+
+| Problem | Rozwiązanie |
+|---|---|
+| „Cannot connect to the Docker daemon" / `docker: command not found` | Docker Desktop nie działa — uruchom go i poczekaj. |
+| Skrypt wisi minutami na „Czekam aż API będzie gotowe..." | Coś padło w API — `./stop.sh`, potem `docker compose logs api` i wyślij wynik właścicielowi repo. |
+| Frontend nie startuje / błędy `npm` | Wykonaj raz `cd frontend && npm ci && cd ..`, potem znów `./dev.sh`. |
+| ERROR „Key Vault" / „secrets sync" przy starcie | Lokalnie nieszkodliwy — zignoruj. |
+| Cokolwiek innego się zawiesiło | `./stop.sh`, potem znów `./dev.sh`. Dalej nie działa? Zawołaj właściciela repo 🙂 |
+
+**Nigdy:** nie udostępniaj ani nie commituj `.env.local`, nie wpisuj do niego
+produkcyjnych haseł, nie testuj na produkcji.
+
+---
+
 ## REST API
 
 ### Endpoints
