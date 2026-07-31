@@ -10,8 +10,10 @@ script covers the bulk / bootstrapping operations on top of it:
            from Key Vault and write/update it in .env.local.
   push     Read .env.local and upload every secret it has a value for to
            Key Vault (also backfills secrets never uploaded before).
-  encrypt  Whole-file encrypt .env.local -> .env.local.sops (bootstrapping
-           a new machine from a git-committed encrypted snapshot).
+  encrypt  Encrypt .env.local -> .env.local.sops (bootstrapping a new
+           machine from a git-committed encrypted snapshot). Merges by
+           default: keys that exist only in the snapshot — rotated secrets
+           written there by set_secret() — survive. --replace overwrites.
   decrypt  Whole-file decrypt .env.local.sops -> .env.local (OVERWRITES
            .env.local if it exists).
 
@@ -39,7 +41,7 @@ from pathlib import Path
 # Allow importing zdrovena/scripts without installing the package
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.secrets_manifest import ENV_LOCAL_SECRETS
+from scripts.secrets_manifest import ENV_LOCAL_SECRETS, SOPS_ONLY_SECRETS
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV_LOCAL_PATH = ROOT / ".env.local"
@@ -55,6 +57,31 @@ def _to_env_key(name: str) -> str:
     a value pulled here and later read via get_secret() matches.
     """
     return name.upper().replace("-", "_")
+
+
+def _sops_only_env_keys() -> set[str]:
+    """SOPS_ONLY_SECRETS as .env.local variable names."""
+    return {_to_env_key(name) for name in SOPS_ONLY_SECRETS}
+
+
+def _strip_sops_only(lines: list[str]) -> tuple[list[str], list[str]]:
+    """Drop KEY=value lines for secrets that must stay out of .env.local.
+
+    Returns (kept_lines, dropped_keys). Comments and unrelated lines pass
+    through untouched.
+    """
+    blocked = _sops_only_env_keys()
+    kept: list[str] = []
+    dropped: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if "=" in stripped and not stripped.startswith("#"):
+            key = stripped.split("=", 1)[0].strip()
+            if key in blocked:
+                dropped.append(key)
+                continue
+        kept.append(line)
+    return kept, dropped
 
 
 def _read_lines(path: Path) -> list[str]:
@@ -148,13 +175,17 @@ def cmd_pull(_args: argparse.Namespace) -> int:
     found: dict[str, str] = {}
     missing: list[str] = []
     for name in ENV_LOCAL_SECRETS:
+        # Same reason as in cmd_decrypt: a rotating secret must never land in
+        # the plaintext file, or the env var would shadow the SOPS tier.
+        if name in SOPS_ONLY_SECRETS:
+            continue
         value = get_keyvault_secret(vault_url, name)
         if value:
             found[_to_env_key(name)] = value
         else:
             missing.append(name)
 
-    lines = _read_lines(ENV_LOCAL_PATH)
+    lines, _ = _strip_sops_only(_read_lines(ENV_LOCAL_PATH))
     _write_lines(ENV_LOCAL_PATH, _apply_updates(lines, found))
 
     print(f"pull: {len(found)} found in Key Vault, {len(missing)} missing")
@@ -198,7 +229,36 @@ def cmd_push(_args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_encrypt(_args: argparse.Namespace) -> int:
+def _decrypt_sops_file() -> str | None:
+    """Decrypt .env.local.sops, or None if it can't be read."""
+    try:
+        result = subprocess.run(
+            ["sops", "-d", "--input-type", "dotenv", "--output-type", "dotenv", str(SOPS_PATH)],
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROCESS_TIMEOUT,
+            check=True,
+        )
+    except Exception:
+        return None
+    return result.stdout
+
+
+def _keys_only_in_snapshot(plaintext: str) -> dict[str, str]:
+    """Keys the encrypted snapshot has that .env.local doesn't.
+
+    These are values written straight into .env.local.sops by
+    zdrovena.common.secrets.set_secret() as secrets rotated — most
+    importantly the Allegro refresh token, which rotates on every use and
+    deliberately no longer lives in .env.local (an env var there would
+    shadow the whole SOPS tier; see docs/devops/sops-age.md §3).
+    """
+    snapshot = _parse_env_map(plaintext.splitlines())
+    local = _parse_env_map(_read_lines(ENV_LOCAL_PATH))
+    return {k: v for k, v in snapshot.items() if k not in local}
+
+
+def cmd_encrypt(args: argparse.Namespace) -> int:
     if shutil.which("sops") is None:
         print("error: `sops` binary not found on PATH", file=sys.stderr)
         return 1
@@ -215,6 +275,33 @@ def cmd_encrypt(_args: argparse.Namespace) -> int:
     # zdrovena.common._local_secret_fallback.write_local_fallback already
     # uses for its encrypt step.
     plaintext = ENV_LOCAL_PATH.read_text(encoding="utf-8")
+
+    # Default is a MERGE, not a plain overwrite: .env.local.sops is not only a
+    # snapshot of .env.local, it is also the store set_secret() writes rotated
+    # secrets into. A whole-file overwrite would silently delete any key that
+    # lives only there. --replace opts back into the destructive behaviour,
+    # which is the only way to actually remove a key from the snapshot.
+    preserved: dict[str, str] = {}
+    if not getattr(args, "replace", False) and SOPS_PATH.exists():
+        snapshot_plaintext = _decrypt_sops_file()
+        if snapshot_plaintext is None:
+            print(
+                f"error: {SOPS_PATH.name} exists but could not be decrypted — refusing to\n"
+                "       overwrite it and lose secrets that live only there. Fix your age key,\n"
+                "       or pass --replace to overwrite it deliberately.",
+                file=sys.stderr,
+            )
+            return 1
+        preserved = _keys_only_in_snapshot(snapshot_plaintext)
+        if preserved:
+            if not plaintext.endswith("\n"):
+                plaintext += "\n"
+            plaintext += (
+                "\n# Preserved from .env.local.sops — written by set_secret() on rotation,\n"
+            )
+            plaintext += "# deliberately not present in .env.local (see docs/devops/sops-age.md).\n"
+            plaintext += "".join(f"{k}={v}\n" for k, v in sorted(preserved.items()))
+
     tmp_fd, tmp_path_str = tempfile.mkstemp(
         suffix=".env.local.sops", dir=str(ENV_LOCAL_PATH.parent)
     )
@@ -247,6 +334,10 @@ def cmd_encrypt(_args: argparse.Namespace) -> int:
 
     _atomic_write_text(SOPS_PATH, result.stdout)
     print(f"encrypted {ENV_LOCAL_PATH} -> {SOPS_PATH}")
+    if preserved:
+        print(f"  preserved {len(preserved)} key(s) that live only in the snapshot:")
+        for key in sorted(preserved):
+            print(f"    - {key}")
     return 0
 
 
@@ -278,8 +369,16 @@ def cmd_decrypt(_args: argparse.Namespace) -> int:
         print(f"error: sops decrypt failed: {exc}", file=sys.stderr)
         return 1
 
-    _atomic_write_text(ENV_LOCAL_PATH, result.stdout)
+    # Rotating secrets stay out of the plaintext file — writing them back
+    # would recreate the env-var shadowing this whole tier exists to avoid.
+    kept, dropped = _strip_sops_only(result.stdout.splitlines())
+    _write_lines(ENV_LOCAL_PATH, kept)
+
     print(f"decrypted {SOPS_PATH} -> {ENV_LOCAL_PATH}")
+    if dropped:
+        print(f"  kept {len(dropped)} rotating secret(s) out of the plaintext file:")
+        for key in sorted(set(dropped)):
+            print(f"    - {key}  (read directly from {SOPS_PATH.name})")
     return 0
 
 
@@ -290,7 +389,18 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("pull", help="Pull secrets from Key Vault into .env.local")
     sub.add_parser("push", help="Push .env.local secret values up to Key Vault")
-    sub.add_parser("encrypt", help="Whole-file encrypt .env.local -> .env.local.sops")
+    encrypt_parser = sub.add_parser(
+        "encrypt", help="Encrypt .env.local -> .env.local.sops (merges, see --replace)"
+    )
+    encrypt_parser.add_argument(
+        "--replace",
+        action="store_true",
+        help=(
+            "Overwrite .env.local.sops entirely instead of preserving keys that exist "
+            "only there (rotated secrets written by set_secret). This is how you REMOVE "
+            "a key from the snapshot."
+        ),
+    )
     sub.add_parser("decrypt", help="Whole-file decrypt .env.local.sops -> .env.local")
     args = parser.parse_args()
 

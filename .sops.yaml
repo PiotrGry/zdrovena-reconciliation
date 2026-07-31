@@ -1,0 +1,7 @@
+creation_rules:
+  # Local dev secrets fallback — see docs/devops/sops-age.md.
+  # Whole-file dotenv encryption (no encrypted_regex/mac_only_encrypted:
+  # those are Kubernetes-Secret-YAML-specific partial-encryption knobs that
+  # don't apply to dotenv-mode sops output).
+  - path_regex: \.env\.local\.sops$
+    age: age1rdg9cfj48m3j34x6w3wy7m0mpppn9azzns2v72k7mcpj4mw4ap3qj3gk2m

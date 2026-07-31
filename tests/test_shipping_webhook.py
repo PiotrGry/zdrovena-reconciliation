@@ -7,8 +7,10 @@ import hashlib
 import hmac
 import io
 import json
+import logging
 import os
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -488,6 +490,27 @@ class TestExecuteDraft:
         with patch("zdrovena.api.routers.webhooks._run_inpost", side_effect=Exception("API down")):
             resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
         assert resp.status_code == 502
+
+    def test_execute_failure_log_names_the_root_cause(self, client, store, caplog):
+        """The log line must carry WHY it failed, not just WHICH draft failed.
+
+        Observability regression: the handler logged only the draft id, so
+        AppExceptions.OuterMessage in Log Analytics read 'execute_draft failed
+        for <uuid>' and the real courier error was recoverable only by parsing
+        the raw stack text.
+        """
+        draft = self._seed_error_draft(store)
+        cause = "InPost 400: validation_failed sender.company_name required"
+        with caplog.at_level(logging.ERROR, logger="zdrovena.api.routers.webhooks"):
+            with patch("zdrovena.api.routers.webhooks._run_inpost", side_effect=Exception(cause)):
+                client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+
+        failures = [r for r in caplog.records if "execute_draft failed" in r.getMessage()]
+        assert failures, "expected an execute_draft failure log record"
+        assert any(cause in r.getMessage() for r in failures), (
+            "log message must include the underlying courier error, "
+            f"got: {[r.getMessage() for r in failures]}"
+        )
 
     def test_second_execute_after_success_is_409_and_does_not_recall_courier(self, client, store):
         # R5-A: once a draft is created, a repeat execute must be rejected and
@@ -3215,3 +3238,59 @@ class TestSingleLabelNotReady:
         # R5-B: pre-confirmation → 409 LABEL_NOT_READY, not a generic 502.
         assert resp.status_code == 409
         assert resp.json()["error_code"] == "LabelNotReadyError"
+
+
+class TestPickupAddressSecrets:
+    """`pickup_phone` was never provisioned in the prod Key Vault, so every
+    dispatch-order execute raised MissingSecretError and surfaced as a 502.
+    A missing pickup phone must degrade to the sender phone, not hard-fail."""
+
+    _PRESENT: ClassVar[dict[str, str]] = {
+        "pickup_name": "Zdrovena Magazyn",
+        "pickup_street": "Testowa",
+        "pickup_building_number": "1",
+        "pickup_city": "Warszawa",
+        "pickup_post_code": "00-001",
+        "pickup_email": "magazyn@zdrovena.pl",
+        "sender_phone": "500000000",
+    }
+
+    def _fake_get_secret(self, missing):
+        from zdrovena.common.exceptions import MissingSecretError
+
+        def _inner(service, required=True):
+            if service in missing:
+                if required:
+                    raise MissingSecretError(service, "humio")
+                return None
+            return self._PRESENT.get(service, "x")
+
+        return _inner
+
+    def test_missing_pickup_phone_falls_back_to_sender_phone(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        with patch.object(wh, "get_secret", self._fake_get_secret({"pickup_phone"})):
+            addr = wh._get_pickup_address()
+        assert addr["phone"] == "500000000"
+
+    def test_present_pickup_phone_wins_over_sender_phone(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        present = dict(self._PRESENT, pickup_phone="600111222")
+
+        def _get(service, required=True):
+            return present.get(service, "x")
+
+        with patch.object(wh, "get_secret", _get):
+            addr = wh._get_pickup_address()
+        assert addr["phone"] == "600111222"
+
+    def test_other_pickup_fields_still_required(self):
+        """Only the phone degrades; a missing street is still a hard error."""
+        from zdrovena.api.routers import webhooks as wh
+        from zdrovena.common.exceptions import MissingSecretError
+
+        with patch.object(wh, "get_secret", self._fake_get_secret({"pickup_street"})):
+            with pytest.raises(MissingSecretError):
+                wh._get_pickup_address()

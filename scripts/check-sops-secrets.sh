@@ -31,7 +31,13 @@ while IFS= read -r file; do
     printf '%s: missing encrypted ENC[...] values\n' "$file" >&2
     status=1
   fi
-done < <(printf '%s\n' "$tracked_files" | grep -E '\.sops\.(ya?ml|json)$' || true)
+# The leading [^/]+ requires a basename BEFORE ".sops.", so this matches
+# encrypted payloads like "secret.sops.yaml" but not the repo's own
+# ".sops.yaml" — that one is the sops CONFIG file, is plaintext by design
+# (it holds only age public keys) and is committed on purpose. Without the
+# guard, committing .sops.yaml fails the check for "missing top-level sops
+# metadata", which is exactly backwards.
+done < <(printf '%s\n' "$tracked_files" | grep -E '(^|/)[^/]+\.sops\.(ya?ml|json)$' || true)
 
 # .env.local.sops is dotenv-format sops output (see
 # zdrovena/common/_local_secret_fallback.py), not YAML — it has no

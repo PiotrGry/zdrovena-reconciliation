@@ -354,6 +354,30 @@ class InPostClient:
         }
         return self._post_shipment(payload)
 
+    @staticmethod
+    def _shipx_sender(sender: dict[str, str]) -> dict[str, Any]:
+        """Map our flat sender dict onto the ShipX `sender` contract.
+
+        ShipX requires company_name, first_name, last_name and a nested address;
+        a company seller has no personal name, so the company name stands in for
+        the required person fields rather than being sent empty.
+        """
+        name = sender.get("name", "")
+        return {
+            "company_name": sender.get("company_name") or name,
+            "first_name": sender.get("firstname") or name,
+            "last_name": sender.get("lastname") or name,
+            "email": sender.get("email", ""),
+            "phone": sender.get("phone", ""),
+            "address": {
+                "street": sender.get("street", ""),
+                "building_number": sender.get("building_number", "1"),
+                "city": sender.get("city", ""),
+                "post_code": sender.get("post_code", ""),
+                "country_code": "PL",
+            },
+        }
+
     def create_kurier_shipment(
         self,
         *,
@@ -387,7 +411,7 @@ class InPostClient:
                     "country_code": "PL",
                 },
             },
-            "sender": sender,
+            "sender": self._shipx_sender(sender),
             "parcels": [
                 {
                     "dimensions": {
