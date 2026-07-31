@@ -239,3 +239,55 @@ class TestDlqEndpoints:
             error_type="E2ESeededFailure",
             test_probe=True,
         )
+
+
+# ── Execution failures in the DLQ (kind dispatch) ────────────────────────────
+
+
+class TestDlqEntryKind:
+    """A failed *execution* must be recoverable too, but it must never be
+    retried as a *creation* — the draft already exists, so re-creating it
+    would duplicate or collide."""
+
+    def test_enqueue_defaults_to_draft_creation(self, store):
+        entry = _seed_dlq(store)
+        assert entry["kind"] == "draft_creation"
+
+    def test_enqueue_records_execution_kind_and_draft_id(self, store):
+        entry = store.enqueue_dlq(
+            payload={"order_number": 1234},
+            error="InPostBusinessError: 400",
+            source="shopify",
+            kind="draft_execution",
+            draft_id="draft-abc",
+        )
+        assert entry["kind"] == "draft_execution"
+        assert entry["draft_id"] == "draft-abc"
+
+    def test_retry_of_execution_entry_does_not_recreate_the_draft(self, client, store):
+        entry = store.enqueue_dlq(
+            payload={"order_number": 1234},
+            error="InPostBusinessError: 400",
+            source="shopify",
+            kind="draft_execution",
+            draft_id="draft-abc",
+        )
+        with patch("zdrovena.api.routers.webhooks._create_draft") as mock_create:
+            with patch("zdrovena.api.routers.webhooks.execute_draft") as mock_exec:
+                mock_exec.return_value = {"id": "draft-abc", "status": "created"}
+                resp = client.post(f"/api/shipping/drafts/dlq/{entry['id']}/retry")
+
+        assert resp.status_code == 200, resp.text
+        mock_create.assert_not_called()
+        mock_exec.assert_called_once()
+        assert mock_exec.call_args.args[0] == "draft-abc"
+
+    def test_retry_of_creation_entry_still_creates(self, client, store):
+        entry = _seed_dlq(store)
+        with patch("zdrovena.api.routers.webhooks._create_draft") as mock_create:
+            with patch("zdrovena.api.routers.webhooks.execute_draft") as mock_exec:
+                resp = client.post(f"/api/shipping/drafts/dlq/{entry['id']}/retry")
+
+        assert resp.status_code == 200, resp.text
+        mock_create.assert_called_once()
+        mock_exec.assert_not_called()

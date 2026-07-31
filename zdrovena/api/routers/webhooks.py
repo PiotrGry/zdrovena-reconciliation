@@ -68,7 +68,11 @@ from zdrovena.common.shipping_format import (
     parse_pl_address,
 )
 from zdrovena.common.shipping_state import EXECUTING
-from zdrovena.common.shipping_store import ShippingStore
+from zdrovena.common.shipping_store import (
+    DLQ_KIND_CREATION,
+    DLQ_KIND_EXECUTION,
+    ShippingStore,
+)
 from zdrovena.common.shopify_dedup_store import DedupStoreError
 
 logger = logging.getLogger("zdrovena.api.routers.webhooks")
@@ -2022,10 +2026,26 @@ def retry_dlq_entry(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="DLQ entry not found")
     payload = entry.get("payload") or {}
     source = entry.get("source") or "shopify"
+    # Entries written before `kind` existed were all creations.
+    kind = entry.get("kind") or DLQ_KIND_CREATION
     try:
-        _create_draft(payload, shipping_store, storage, source=source)
+        if kind == DLQ_KIND_EXECUTION:
+            # The draft already exists — re-run the courier call, never the
+            # ingestion, which would duplicate it. Same role guards both
+            # endpoints, so reusing the principal grants nothing extra.
+            target_draft_id = entry.get("draft_id")
+            if not target_draft_id:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="DLQ entry has kind=draft_execution but no draft_id",
+                )
+            execute_draft(target_draft_id, shipping_store, storage, principal)
+        else:
+            _create_draft(payload, shipping_store, storage, source=source)
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.exception("DLQ retry failed for entry %s", entry_id)
+        logger.exception("DLQ retry failed for entry %s: %s", entry_id, exc)
         # bump retries + last_error; keep the entry in DLQ
         try:
             shipping_store.enqueue_dlq(
@@ -2158,6 +2178,36 @@ def seed_e2e_dlq_entry(
 # ── Execute draft ─────────────────────────────────────────────────────────────
 
 
+def _dlq_failed_execution(shipping_store: ShippingStore, draft: dict[str, Any], error: str) -> None:
+    """Queue a failed execution so the shipment is recoverable, not lost.
+
+    Best-effort by design: this is bookkeeping around an exception that is
+    already on its way to the caller, so a storage failure here must never
+    replace the real courier error.
+    """
+    draft_id = str(draft.get("id") or "")
+    try:
+        entry = shipping_store.enqueue_dlq(
+            payload=draft,
+            error=error,
+            source=str(draft.get("source") or "shopify"),
+            kind=DLQ_KIND_EXECUTION,
+            draft_id=draft_id,
+        )
+        log_event(
+            "dlq.enqueued",
+            level=logging.ERROR,
+            entry_id=entry["id"],
+            order_number=draft.get("shopify_order_number") or draft.get("order_number"),
+            source=entry["source"],
+            error_type=error.split(":", 1)[0],
+            kind=DLQ_KIND_EXECUTION,
+            draft_id=draft_id,
+        )
+    except Exception:
+        logger.exception("Failed to enqueue execution failure for draft %s", draft_id)
+
+
 def _release_execution_claim(shipping_store: ShippingStore, draft_id: str, error: str) -> None:
     """Conditionally return a claimed draft to ``error`` (R5-A/#136).
 
@@ -2269,12 +2319,14 @@ def execute_draft(
         return updated or patch
     except ZdrovenaShippingError as exc:
         logger.exception("execute_draft failed for %s: %s", draft_id, exc)
+        _dlq_failed_execution(shipping_store, draft, f"{type(exc).__name__}: {exc}")
         _release_execution_claim(shipping_store, draft_id, str(exc))
         # Wyjątek domenowy przesyłki → koperta błędu (zdrovena.api.errors)
         # mapuje go na właściwy status i polski komunikat dla operatora.
         raise
     except Exception as exc:
         logger.exception("execute_draft failed for %s: %s", draft_id, exc)
+        _dlq_failed_execution(shipping_store, draft, f"{type(exc).__name__}: {exc}")
         _release_execution_claim(shipping_store, draft_id, str(exc))
         # Ogólny błąd komunikacji z przewoźnikiem → 502 z polskim komunikatem,
         # bez wyciekania surowego (angielskiego) str(exc) do operatora.
