@@ -491,6 +491,31 @@ class TestExecuteDraft:
             resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
         assert resp.status_code == 502
 
+    def test_execute_failure_lands_in_dlq_for_recovery(self, client, store):
+        """A shipment that never left must be recoverable, not silently lost.
+
+        Draft creation had a DLQ but execution did not, so a broken courier
+        integration produced zero DLQ entries and zero alerts while every
+        courier shipment failed.
+        """
+        draft = self._seed_error_draft(store)
+        with patch("zdrovena.api.routers.webhooks._run_inpost", side_effect=Exception("API down")):
+            client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+
+        entries = store.list_dlq()
+        assert len(entries) == 1, "the failed execution must be queued for retry"
+        assert entries[0]["kind"] == "draft_execution"
+        assert entries[0]["draft_id"] == draft["id"]
+        assert "API down" in entries[0]["last_error"]
+
+    def test_dlq_write_failure_does_not_mask_the_courier_error(self, client, store):
+        """Best-effort: bookkeeping must never swallow the real failure."""
+        draft = self._seed_error_draft(store)
+        with patch("zdrovena.api.routers.webhooks._run_inpost", side_effect=Exception("API down")):
+            with patch.object(store, "enqueue_dlq", side_effect=RuntimeError("table down")):
+                resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 502
+
     def test_execute_failure_log_names_the_root_cause(self, client, store, caplog):
         """The log line must carry WHY it failed, not just WHICH draft failed.
 
