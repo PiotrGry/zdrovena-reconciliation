@@ -211,13 +211,15 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dlq_backlog" {
 # to pasmo w 2 kolejnych ewaluacjach (zapas na spóźniony przebieg), a próg 48h —
 # jedyny parametr, który był świadomą decyzją biznesową — zostaje zachowany.
 #
-# Konsekwencja, o której trzeba wiedzieć: alert sam się zamyka, gdy draft
-# wypadnie z pasma, nawet jeśli tracking nadal nie powstał. Przy awarii
-# systemowej to nie szkodzi — kolejne drafty wchodzą w pasmo i alert odpala
-# ponownie. Przy pojedynczym zapomnianym zamówieniu dostajemy alert trwający
-# ~2h. Jeśli okaże się to za słabe, alternatywą jest obniżenie progu do
-# `ago(24h)` (ciągły alert przez dobę kosztem fałszywek weekendowych) — to
-# decyzja właściciela, nie zmiana techniczna.
+# Konsekwencja pasma: pojedynczy draft jest widoczny dla reguły tylko ~2h.
+# Dlatego `auto_mitigation_enabled = false` (jak w dlq_backlog) — alert raz
+# zapalony zostaje otwarty, aż ktoś go zamknie. Bez tego zapomniane zamówienie
+# gasłoby samo w środku nocy i nikt by się o nim nie dowiedział.
+#
+# Przy awarii systemowej reguła i tak odpala bez przerwy, bo kolejne drafty
+# wchodzą w pasmo. Gdyby mimo to okazała się za słaba, alternatywą jest
+# obniżenie progu do `ago(24h)` — ciągła widoczność przez dobę, kosztem
+# fałszywek w weekend. To decyzja właściciela, nie zmiana techniczna.
 
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "orders_without_tracking" {
   name                = "${var.prefix}-alert-no-tracking"
@@ -259,7 +261,11 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "orders_without_tracki
     }
   }
 
-  auto_mitigation_enabled = true
+  # Nie gaś samoczynnie. Reguła jest krawędziowa (pasmo 46–48h), więc pojedyncze
+  # zapomniane zamówienie mieści się w oknie tylko ~2 godziny. Przy auto-mitygacji
+  # alert zgasłby sam, choć paczka wciąż nie została nadana — kto akurat nie
+  # patrzył, nie dowie się nigdy. Tak samo ustawiony jest dlq_backlog.
+  auto_mitigation_enabled = false
 
   action {
     action_groups = [azurerm_monitor_action_group.ops.id]
