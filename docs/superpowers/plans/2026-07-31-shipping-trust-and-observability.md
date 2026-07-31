@@ -96,6 +96,7 @@ Expected: FAIL with `AttributeError: 'InPostClient' object has no attribute 'bui
 In `zdrovena/common/inpost.py`, rename the existing `create_kurier_shipment` body to `build_kurier_payload` by changing its final line, then add a thin `create_kurier_shipment`. The method currently ends with `return self._post_shipment(payload)` — change that to `return payload` and rename the method to `build_kurier_payload`. Then add immediately after it:
 
 ```python
+class InPostClient:  # existing class — add this method
     def create_kurier_shipment(
         self,
         **kwargs: Any,
@@ -133,6 +134,7 @@ than by discipline."
 Add to `class TestPayloadBuilders`:
 
 ```python
+class TestPayloadBuilders:  # existing class — add these methods
     def _locker_kwargs(self):
         return {
             "receiver_first_name": "Jan",
@@ -165,6 +167,7 @@ Expected: FAIL with `AttributeError: 'InPostClient' object has no attribute 'bui
 Rename `create_paczkomat_shipment` to `build_paczkomat_payload`, change its final `return self._post_shipment(payload)` to `return payload`, and add:
 
 ```python
+class InPostClient:  # existing class — add this method
     def create_paczkomat_shipment(
         self,
         **kwargs: Any,
@@ -196,7 +199,7 @@ Same split as the kurier path, for the same reason."
 
 Find `sender=pickup_address,` in `_run_apaczka` and replace with:
 
-```python
+```text
             # Deliberate: Apaczka prints the pickup address (Naściszowa) as the
             # sender, unlike InPost which prints the registered address (Kraków).
             # Confirmed against real Pocztex and DPD waybills. Do not "align"
@@ -594,8 +597,12 @@ class TestShipmentOrigin:
     def test_sync_does_not_downgrade_a_system_shipment(self, store):
         from zdrovena.api.routers import webhooks as wh
 
-        record = {"id": "d9", "tracking_number": "TRK1", "courier_draft_id": "ship-1",
-                  "shipment_origin": "system"}
+        record = {
+            "id": "d9",
+            "tracking_number": "TRK1",
+            "courier_draft_id": "ship-1",
+            "shipment_origin": "system",
+        }
         merged = wh._apply_tracking_from_sync(record, "TRK1")
         assert merged["shipment_origin"] == "system"
 ```
