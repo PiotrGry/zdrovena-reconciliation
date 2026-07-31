@@ -157,27 +157,41 @@ Calibration note for whoever tunes thresholds: telemetry before ~2026-07-23
 carries `cloud_RoleName = "unknown_service"` (OTel `service.name` was fixed by
 the 24 July deploy), so role-filtered history under-reports shipments.
 
-## 4. Controlled production test — runbook
+## 4. Verifying the courier path without shipping anything
 
-A runbook, not code. The InPost sandbox **cannot** validate this path: it only
-offers `inpost_courier_c2c`, which silently substitutes the organisation's own
-address for a malformed sender instead of rejecting it (verified — the pre-fix
-payload *succeeded* there), and forcing `inpost_courier_standard` fails earlier
-with `missing_trucker_id` because the sandbox organisation has no trucker.
+**Decision (owner, 2026-07-31): no test shipment on production.** An InPost
+shipment transitions to an uncancellable state almost immediately, so a test
+cannot be taken back. That rules the step out entirely — it is not deferred, it
+is not happening.
+
+This leaves a known unknown, recorded here so nobody mistakes silence for
+safety. The InPost sandbox **cannot** validate this path: it only offers
+`inpost_courier_c2c`, which silently substitutes the organisation's own address
+for a malformed sender instead of rejecting it (verified — the pre-fix payload
+*succeeded* there), and forcing `inpost_courier_standard` fails earlier with
+`missing_trucker_id` because the sandbox organisation has no trucker assigned.
 
 Production organisation 107266 ("MARIA GRYZŁO ZDROVENA") *does* list
 `inpost_courier_standard` in its services and `inpost_courier` in its carriers,
 but across all 27 shipments in its history **zero** used it — the 4 courier
 shipments were `inpost_courier_allegro`. So whether `trucker_id` is assigned for
-the standard service is unknown and unknowable without trying.
+the standard service remains unproven.
 
-Steps: open the preview, verify the sender block reads Kraków, execute one real
-shipment to an address chosen by the owner, inspect the returned label, confirm
-the service on the shipment, and record the outcome. If it fails with
-`missing_trucker_id`, that is an InPost account matter, not a code defect.
+What we do instead:
 
-Note that InPost shipments transition to an uncancellable state almost
-immediately, so the runbook must state plainly that this step cannot be undone.
+1. **Unit tests against the ShipX contract.** The payload builder from section 1
+   is asserted field by field at the `requests.Session` layer. This catches the
+   entire class of defect that caused the outage — a payload whose shape the
+   carrier rejects — without sending anything.
+2. **The preview.** The operator inspects the real payload before committing to
+   it, which is what the preview is for.
+3. **Ask InPost, do not probe them.** Whether organisation 107266 has a trucker
+   assigned for `inpost_courier_standard` is a question for the account manager.
+   One email carries no risk; a test parcel cannot be undone.
+
+The first genuine `inpost_courier_standard` shipment will therefore be a real
+customer order. The preview is what makes that acceptable: the operator sees the
+exact payload first, and unit tests have already proven its shape.
 
 ## 5. Allegro poller
 
@@ -230,12 +244,13 @@ Azure platform noise — the jobs succeed regardless.
 1. Apaczka comment, preview refactor and endpoint, preview UI
 2. `shipment_origin` plus backfill
 3. Alert replacement (must land before `ec28a2c` reaches `main`)
-4. Controlled production test, once the preview is available to look at
-5. Poller: cron, duplicate secret, monitoring
+4. Poller: cron, duplicate secret, monitoring
 
-Steps 1–2 are prerequisites for 3 and 4. Step 5 is independent and can move at
-any time.
+Step 2 is a prerequisite for 3. Steps 1 and 4 are independent of everything else
+and can move at any time.
 
 ## Open questions
 
-- Exact target address for the controlled test shipment.
+None blocking. The one unresolved fact — whether organisation 107266 has a
+trucker assigned for `inpost_courier_standard` — is answered by asking InPost,
+not by writing code.
