@@ -1078,6 +1078,11 @@ def _run_apaczka(
             receiver_city=addr.get("city", ""),
             receiver_zip=addr.get("post_code", ""),
             receiver_point_id=receiver_point_id or None,
+            # Deliberate: Apaczka prints the pickup address (Naściszowa) as the
+            # sender, while InPost prints the registered address (Kraków).
+            # Verified against real Pocztex and DPD waybills. The asymmetry reads
+            # like a bug but is not one — do not "align" the two couriers.
+            # See docs/superpowers/specs/2026-07-31-shipping-trust-and-observability-design.md
             sender=pickup_address,
             reference=_shipment_reference(
                 str(draft.get("shopify_order_number", "")),
