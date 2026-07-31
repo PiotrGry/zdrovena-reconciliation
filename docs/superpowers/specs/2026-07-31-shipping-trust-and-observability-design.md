@@ -86,13 +86,16 @@ Applied directly to the production Key Vault during design, against the labels:
 - `pickup-phone` created — it had never been provisioned, so every Apaczka
   dispatch raised `MissingSecretError` and returned 502
 
-Still open, deliberately untouched because they are owner data:
+Reviewed and **accepted as-is** (owner decision, 2026-07-31) — do not "fix"
+these; the differences from the labels are known and deliberate:
 
-- `sender-street` is `Cieszynska` and `sender-city` is `Krakow` — no Polish
-  diacritics, while labels show `Cieszyńska` and `Kraków`
-- `sender-email` / `pickup-email` are `info@wodahumio.pl`, while the newest
-  label and the Apaczka configuration use `biuro@wodahumio.pl`
-- `pickup-name` is still `Zdrovena`
+- `sender-street` stays `Cieszynska` and `sender-city` stays `Krakow`, without
+  Polish diacritics, even though labels render `Cieszyńska` and `Kraków`
+- `sender-email` / `pickup-email` stay `info@wodahumio.pl`, even though the
+  newest InPost label and the Apaczka configuration use `biuro@wodahumio.pl`.
+  Consequence to be aware of: shipments this system creates will carry `info@`
+  while manually created ones carry `biuro@`
+- `pickup-name` stays `Zdrovena`
 
 ## 1. Payload preview before execution
 
@@ -136,10 +139,14 @@ fire permanently**, because `shipment.created` only ever fires when *we* create
 the shipment. It is not deployed (`main` does not have it), so it must be
 replaced before it reaches production.
 
-Replace it with: **orders with no tracking number from any source after N days.**
-That signal is independent of who dispatched the parcel. Against current data it
-would flag the 61 drafts that have no tracking at all, and would ignore the 126
-shipped by hand.
+Replace it with: **orders with no tracking number from any source after 48
+hours.** That signal is independent of who dispatched the parcel. Against
+current data it would flag the 61 drafts that have no tracking at all, and would
+ignore the 126 shipped by hand.
+
+48 hours is long enough to absorb a weekend order sitting until Monday without
+alerting, and short enough that a systemic stoppage surfaces within two days
+rather than the weeks the sender outage went unnoticed.
 
 Keep the existing `dlq-backlog` rule as the acute signal. Since `6322875`,
 failed executions write a DLQ entry and emit `dlq.enqueued`, so that rule now
@@ -232,6 +239,3 @@ any time.
 ## Open questions
 
 - Exact target address for the controlled test shipment.
-- Threshold `N` for "no tracking after N days".
-- Whether the remaining secret discrepancies (diacritics, `info@` vs `biuro@`,
-  `pickup-name`) should be corrected.
