@@ -785,6 +785,51 @@ class TestExecuteDraft:
         allegro_client.create_shipment.assert_not_called()
 
 
+class TestExecutePreviewEndpoint:
+    def test_preview_returns_payload_and_sends_nothing(self, client, store):
+        draft = _seed_error_draft(store)
+        with patch("zdrovena.api.routers.webhooks._run_inpost") as mock_run:
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "sender" in body and "parcels" in body
+        mock_run.assert_not_called()
+
+    def test_preview_404_for_unknown_draft(self, client):
+        resp = client.get("/api/shipping/drafts/does-not-exist/execute/preview")
+        assert resp.status_code == 404
+
+    def test_preview_shows_one_parcel_per_box_with_its_payload(self, client, store):
+        draft = _seed_error_draft(store)
+        store.update_draft(draft["id"], {"packages_breakdown": [{"type": "2-pak", "qty": 2}]})
+        resp = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
+        assert resp.status_code == 200, resp.text
+        parcels = resp.json()["parcels"]
+        assert len(parcels) == 2
+        assert parcels[0]["package_type"] == "2-pak"
+        assert parcels[0]["payload"]["service"] == "inpost_courier_standard"
+        assert parcels[0]["payload"]["parcels"][0]["weight"]["amount"] == 12.0
+
+    def test_preview_does_not_claim_the_draft_for_execution(self, client, store):
+        """A preview that blocks the execute it precedes would be a trap."""
+        draft = _seed_error_draft(store)
+        client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
+        assert store.get_draft(draft["id"])["status"] == "error"
+
+    def test_preview_for_apaczka_says_so_instead_of_faking_a_payload(self, client, store):
+        draft = _seed_error_draft(store, courier="apaczka", service="apaczka_courier")
+        with patch(
+            "zdrovena.api.routers.webhooks._get_pickup_address",
+            return_value={"name": "Zdrovena"},
+        ):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["courier"] == "apaczka"
+        assert body["parcels"] == []
+        assert body["note"]
+
+
 # ── Order pickup ──────────────────────────────────────────────────────────────
 
 

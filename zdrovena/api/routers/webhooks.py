@@ -2283,6 +2283,34 @@ def _release_execution_claim(shipping_store: ShippingStore, draft_id: str, error
         logger.exception("Failed to release execution claim for draft %s (left as-is)", draft_id)
 
 
+@router.get(
+    "/shipping/drafts/{draft_id}/execute/preview",
+    summary="Show exactly what would be sent to the courier, without sending it",
+    responses={
+        403: {"description": "Insufficient role"},
+        404: {"description": "Draft not found"},
+    },
+)
+def preview_execute_draft(
+    draft_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    draft = shipping_store.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    sender = _get_sender()
+    courier = draft.get("courier", "apaczka")
+    if courier != "inpost":
+        return {
+            "courier": courier,
+            "sender": _get_pickup_address() if courier == "apaczka" else sender,
+            "parcels": [],
+            "note": "Preview is currently available for InPost only.",
+        }
+    return {"courier": courier, "sender": sender, "parcels": _inpost_payload_plan(draft, sender)}
+
+
 @router.post(
     "/shipping/drafts/{draft_id}/execute",
     summary="(Re)create courier shipment for a draft",
