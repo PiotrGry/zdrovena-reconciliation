@@ -10,6 +10,123 @@ Integracje zewnętrzne: Shopify (webhooki), Allegro (Ship-with-Allegro), InPost 
 
 ---
 
+## Szybki start — środowisko developerskie od zera (dla początkujących)
+
+Instrukcja dla osoby, która nie ma zainstalowanych żadnych narzędzi developerskich.
+Kroki 1–3 wykonujesz tylko raz. Potem start to `./dev.sh`, a stop to `./stop.sh`.
+
+### 1. Instalacja narzędzi (jednorazowo)
+
+1. **Git** — <https://git-scm.com/downloads> (instaluj z domyślnymi opcjami). Na
+   Windows dostaniesz też „Git Bash" — terminal, w którym wpisujesz komendy.
+2. **Docker Desktop** — <https://www.docker.com/products/docker-desktop/>. Po
+   instalacji **uruchom go i poczekaj, aż wystartuje** (ikona wieloryba). Musi
+   działać za każdym razem, zanim odpalisz aplikację.
+3. **Node.js (LTS)** — <https://nodejs.org> (domyślne opcje). Potrzebny do
+   frontendu.
+
+Sprawdź w terminalu (Git Bash / Terminal), że wszystko działa — każda komenda
+powinna wypisać numer wersji, a nie błąd:
+
+```bash
+git --version
+docker --version
+node --version
+```
+
+### 2. Pobranie projektu
+
+```bash
+git clone https://github.com/PiotrGry/zdrovena-reconciliation.git
+cd zdrovena-reconciliation
+```
+
+### 3. Lokalne sekrety (jednorazowo)
+
+Hasła i klucze API („sekrety") **nigdy nie są w kodzie**. Trzymamy je w
+prywatnym, gitignorowanym pliku `.env.local` na Twoim komputerze. Utwórz go z
+szablonu i doinstaluj paczki frontendu:
+
+```bash
+cp .env.local.template .env.local
+cd frontend && npm ci && cd ..
+```
+
+Domyślne wartości z szablonu są bezpieczne od ręki:
+
+- logowanie Microsoft/Azure **wyłączone** (`AZURE_AUTH_DISABLED=true`) — nie
+  potrzebujesz żadnego konta,
+- storage działa w lokalnym emulatorze (Azurite) w Dockerze,
+- kurierzy są **zamokowani** (`dev.sh` ustawia domyślnie `MOCK_COURIER=1`) —
+  aplikacja nie łączy się z prawdziwym InPost/Allegro, więc nie da się
+  przypadkiem nadać prawdziwej paczki ani wystawić prawdziwej faktury.
+
+**Zasady:** nigdy nie udostępniaj, nie wysyłaj i nie commituj `.env.local`. Do
+lokalnego developmentu nie potrzebujesz żadnych prawdziwych sekretów; prawdziwy
+token (odkomentowanie odpowiedniej linii) dodajesz tylko wtedy, gdy dostaniesz
+go od właściciela repo — przekazany prywatnie.
+
+### 4. Start wszystkiego: jedna komenda
+
+Upewnij się, że Docker Desktop działa, a potem:
+
+```bash
+./dev.sh
+```
+
+Skrypt robi wszystko za Ciebie, po kolei:
+
+1. startuje Azurite (emulator storage) + API w Dockerze,
+2. czeka, aż API odpowie („Czekam aż API będzie gotowe..."),
+3. tworzy kontener storage i **seeduje testowe dane wysyłek**,
+4. startuje frontend (Vite) natywnie,
+5. wypisuje adresy:
+   - **API:** `http://localhost:8000`
+   - **Frontend:** `http://localhost:5173` ← to otwierasz w przeglądarce
+
+Normalne komunikaty, które możesz zignorować:
+
+- `⚠  MOCK_COURIER=1 — kurierzy zamokowany` — dobrze, kurierzy są bezpiecznie
+  udawani,
+- ERROR o „Key Vault" / „secrets sync" przy starcie — nieszkodliwy lokalnie
+  (sam skrypt pisze, że takie błędy można bezpiecznie zignorować).
+
+### 5. Stop wszystkiego: jedna komenda
+
+```bash
+./stop.sh
+```
+
+Zatrzymuje kontenery Dockera, frontend, ewentualny natywny backend i zwalnia
+wszystkie porty developerskie (8000, 5173, 10000–10002). Wypisuje ✓ przy każdym
+kroku i kończy komunikatem „Dev environment stopped."
+
+⚠️ Uwaga: **Ctrl+C** w terminalu z `dev.sh` zatrzymuje tylko frontend — **Docker
+dalej działa w tle**. Zawsze kończ przez `./stop.sh`.
+
+### Codzienna rutyna
+
+1. Uruchom Docker Desktop i poczekaj, aż będzie gotowy.
+2. Terminal → `cd zdrovena-reconciliation`.
+3. (Opcjonalnie) `git pull` po najnowszy kod.
+4. `./dev.sh` → otwórz `http://localhost:5173`.
+5. Po skończeniu: `./stop.sh`.
+
+### Gdy coś nie działa
+
+| Problem | Rozwiązanie |
+|---|---|
+| „Cannot connect to the Docker daemon" / `docker: command not found` | Docker Desktop nie działa — uruchom go i poczekaj. |
+| Skrypt wisi minutami na „Czekam aż API będzie gotowe..." | Coś padło w API — `./stop.sh`, potem `docker compose logs api` i wyślij wynik właścicielowi repo. |
+| Frontend nie startuje / błędy `npm` | Wykonaj raz `cd frontend && npm ci && cd ..`, potem znów `./dev.sh`. |
+| ERROR „Key Vault" / „secrets sync" przy starcie | Lokalnie nieszkodliwy — zignoruj. |
+| Cokolwiek innego się zawiesiło | `./stop.sh`, potem znów `./dev.sh`. Dalej nie działa? Zawołaj właściciela repo 🙂 |
+
+**Nigdy:** nie udostępniaj ani nie commituj `.env.local`, nie wpisuj do niego
+produkcyjnych haseł, nie testuj na produkcji.
+
+---
+
 ## REST API
 
 ### Endpoints
@@ -215,6 +332,102 @@ MOCK_COURIER=true AZURE_AUTH_DISABLED=true uvicorn zdrovena.api.main:app --reloa
 ```
 
 Swagger UI dostępne pod `http://localhost:8000/docs` (na roocie, nie pod `/api`).
+
+### Sekrety lokalne (SOPS + age)
+
+Lokalne sekrety żyją w zaszyfrowanym pliku `.env.local.sops`, który **jest
+commitowany** — bezpiecznie, bo szyfruje go SOPS kluczem age. Klucz prywatny
+nigdy nie trafia do Gita. Pełny opis: [docs/devops/sops-age.md](docs/devops/sops-age.md).
+
+Wymagane binarki:
+
+```bash
+# macOS
+brew install sops age
+
+# Ubuntu/Debian
+sudo apt-get install -y age
+SOPS_VER=3.9.4
+curl -Lo sops "https://github.com/getsops/sops/releases/download/v${SOPS_VER}/sops-v${SOPS_VER}.linux.amd64"
+sudo install -m 0755 sops /usr/local/bin/sops
+```
+
+#### Onboarding — dostajesz dostęp
+
+Wygeneruj **własny** klucz i wyślij właścicielowi repo tylko część publiczną:
+
+```bash
+mkdir -p ~/.config/sops/age
+age-keygen -o ~/.config/sops/age/keys.txt
+chmod 600 ~/.config/sops/age/keys.txt
+
+age-keygen -y ~/.config/sops/age/keys.txt    # <- to wyślij (age1...)
+```
+
+Klucz prywatny zostaje u Ciebie. Gdy Twój klucz publiczny zostanie dodany
+(patrz niżej) i zmiana wyląduje na `main`:
+
+```bash
+git pull
+uv run python scripts/secrets_sync.py decrypt   # .env.local.sops -> .env.local
+docker compose up --build
+```
+
+`decrypt` **nadpisuje** istniejący `.env.local`.
+
+#### Dodanie klucza — nowa osoba lub nowa maszyna
+
+SOPS szyfruje do wielu odbiorców naraz, więc nikt nie współdzieli klucza
+prywatnego. Dopisz nowy klucz publiczny po przecinku w
+[.sops.yaml](.sops.yaml):
+
+```yaml
+creation_rules:
+  - path_regex: \.env\.local\.sops$
+    age: age1pierwszy...,age1drugi...
+```
+
+i przeszyfruj plik dla nowego zestawu odbiorców:
+
+```bash
+sops updatekeys -y --input-type dotenv .env.local.sops
+git add .sops.yaml .env.local.sops && git commit -m "chore(secrets): add age key for <kto>"
+```
+
+`updatekeys` wymaga, żebyś miał u siebie klucz prywatny **któregoś z
+dotychczasowych** odbiorców — musi odwinąć istniejący data key, zanim
+zawinie go dla nowego. Flaga `--input-type dotenv` jest obowiązkowa: bez niej
+sops nie zgadnie formatu po nazwie `.env.local.sops` i przerwie z błędem.
+
+To samo dotyczy Twojej drugiej maszyny — wygeneruj tam osobny keypair i dodaj
+go jako kolejnego odbiorcę. Nie kopiuj klucza prywatnego między maszynami.
+
+#### Odebranie dostępu
+
+```bash
+# 1. usuń klucz publiczny z .sops.yaml
+sops updatekeys -y --input-type dotenv .env.local.sops
+```
+
+**To nie wystarczy.** Odwołana osoba nadal odszyfruje swoim kluczem każdą
+**wcześniejszą** wersję `.env.local.sops` z historii Gita. Po odebraniu
+dostępu zrotuj same sekrety (nowe tokeny u dostawców), inaczej odwołanie jest
+tylko kosmetyczne.
+
+#### Czego nie ma w `.env.local`
+
+`ALLEGRO_REFRESH_TOKEN` i `ALLEGRO_ACCESS_TOKEN` celowo istnieją **wyłącznie**
+w `.env.local.sops`. Allegro rotuje refresh token przy każdym użyciu, a
+`get_secret()` sprawdza zmienne środowiskowe **przed** warstwą SOPS — kopia w
+`.env.local` przypięłaby proces do tokenu już unieważnionego. `decrypt` i
+`pull` same je pomijają (`SOPS_ONLY_SECRETS` w
+[scripts/secrets_manifest.py](scripts/secrets_manifest.py)).
+
+Autoryzacja od zera: `zdrovena allegro-auth --sandbox` — device flow zapisze
+oba tokeny prosto do zaszyfrowanego pliku.
+
+Uwaga na `encrypt`: domyślnie **scala**, więc klucze istniejące tylko w
+snapshocie przeżyją. Do faktycznego usunięcia klucza służy `--replace`.
 
 ### Fake providerzy HTTP
 

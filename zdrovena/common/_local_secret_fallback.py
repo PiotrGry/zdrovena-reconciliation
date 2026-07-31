@@ -15,6 +15,12 @@ returns None/False (a silent no-op), never raises. This tier is opt-in: an
 environment with neither `sops` installed nor an age key configured behaves
 exactly as if this module didn't exist.
 
+Both locations can be relocated via environment variables, which is how the
+docker-compose dev container reaches the same file the host uses:
+
+    ZDROVENA_SOPS_FILE   path to the encrypted dotenv file
+    SOPS_AGE_KEY_FILE    path to the age private key (sops' own variable)
+
 Encryption always goes through a temporary file whose name ends in
 ".env.local.sops" (matching the path_regex rule in .sops.yaml), then is
 moved atomically into place — the real target file is never left holding
@@ -26,6 +32,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -33,8 +40,21 @@ from pathlib import Path
 logger = logging.getLogger("zdrovena.common._local_secret_fallback")
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_SOPS_FILE = _REPO_ROOT / ".env.local.sops"
-_AGE_KEY_FILE = Path.home() / ".config" / "sops" / "age" / "keys.txt"
+
+# Both locations are overridable so this tier can work inside a container,
+# where the repo root is not where the encrypted file is reachable and the
+# age key is mounted in from the host.
+#
+# ZDROVENA_SOPS_FILE must point INTO a bind-mounted directory, not at a
+# bind-mounted file: write_local_fallback() finishes with os.replace(), and
+# renaming over a single-file bind mount fails with EBUSY.
+#
+# SOPS_AGE_KEY_FILE is sops' own variable — honouring it here keeps
+# _available() consistent with the key sops will actually use.
+_SOPS_FILE = Path(os.environ.get("ZDROVENA_SOPS_FILE") or _REPO_ROOT / ".env.local.sops")
+_AGE_KEY_FILE = Path(
+    os.environ.get("SOPS_AGE_KEY_FILE") or Path.home() / ".config" / "sops" / "age" / "keys.txt"
+)
 _SUBPROCESS_TIMEOUT = 15
 
 
@@ -59,6 +79,35 @@ def _decrypt(path: Path) -> str | None:
         logger.debug("Local SOPS fallback decrypt failed: %s", exc)
         return None
     return result.stdout
+
+
+def _inherit_target_identity(replacement: Path, target: Path) -> None:
+    """Carry the target's mode and ownership onto the file replacing it.
+
+    os.replace() swaps in a brand-new inode, so without this the file takes
+    the writer's uid/gid and umask instead of keeping its own. That bites
+    when the same file is written from two identities: the dev container
+    runs as root, so a rotation performed there would leave
+    .env.local.sops owned by root:root 0600 and lock the host developer out
+    of their own secrets until they chown it back.
+
+    Best-effort by design — a host process that cannot chown (it is not
+    root, and the file already belongs to someone else) still gets a
+    correct, atomically-written file.
+    """
+    try:
+        target_stat = target.stat()
+    except OSError:
+        # Brand-new file: mkstemp's 0600 is already the right default.
+        return
+    try:
+        os.chmod(replacement, stat.S_IMODE(target_stat.st_mode))
+    except OSError as exc:
+        logger.debug("Could not carry mode onto %s: %s", replacement, exc)
+    try:
+        os.chown(replacement, target_stat.st_uid, target_stat.st_gid)
+    except OSError as exc:
+        logger.debug("Could not carry ownership onto %s: %s", replacement, exc)
 
 
 def read_local_fallback(service: str) -> str | None:
@@ -119,8 +168,12 @@ def write_local_fallback(service: str, value: str) -> bool:
     # Encrypt via a temp file whose name ends in ".env.local.sops" so it
     # matches .sops.yaml's path_regex rule (sops selects recipients by
     # matching the file PATH, not by content).
+    # Temp files live alongside the target file, not at the repo root: os.replace
+    # is only atomic within one filesystem, and under ZDROVENA_SOPS_FILE the
+    # target may sit in a bind-mounted directory that is a different mount than
+    # the repo root.
     tmp_plain_fd, tmp_plain_path_str = tempfile.mkstemp(
-        suffix=".env.local.sops", dir=str(_REPO_ROOT)
+        suffix=".env.local.sops", dir=str(_SOPS_FILE.parent)
     )
     tmp_plain_path = Path(tmp_plain_path_str)
     try:
@@ -151,12 +204,13 @@ def write_local_fallback(service: str, value: str) -> bool:
         # matching suffix) then atomically replace the real target — the
         # real .env.local.sops is never left holding plaintext.
         tmp_enc_fd, tmp_enc_path_str = tempfile.mkstemp(
-            suffix=".env.local.sops", dir=str(_REPO_ROOT)
+            suffix=".env.local.sops", dir=str(_SOPS_FILE.parent)
         )
         tmp_enc_path = Path(tmp_enc_path_str)
         try:
             with os.fdopen(tmp_enc_fd, "w", encoding="utf-8") as f:
                 f.write(result.stdout)
+            _inherit_target_identity(tmp_enc_path, _SOPS_FILE)
             os.replace(tmp_enc_path, _SOPS_FILE)
         except Exception as exc:
             logger.debug("Local SOPS fallback atomic write failed for %s: %s", service, exc)

@@ -129,3 +129,140 @@ class TestWriteLocalFallback:
                 result = fallback.write_local_fallback("allegro-refresh-token", "v")
         assert result is False
         assert not fallback._SOPS_FILE.exists()
+
+
+class TestTempFileLocation:
+    """Temp files must land next to the target, not at the repo root.
+
+    write_local_fallback finishes with os.replace(), which is only atomic
+    within a single filesystem. Under ZDROVENA_SOPS_FILE the target lives in
+    a bind-mounted directory that is a different mount than the repo root, so
+    staging the temp file at the repo root would make the rename cross a
+    mount boundary and fail.
+    """
+
+    def test_temp_files_are_created_beside_the_target_file(self, tmp_path):
+        secrets_dir = tmp_path / "mounted-secrets"
+        secrets_dir.mkdir()
+        elsewhere = tmp_path / "repo-root"
+        elsewhere.mkdir()
+
+        with patch.object(fallback, "_SOPS_FILE", secrets_dir / ".env.local.sops"):
+            with patch.object(fallback, "_REPO_ROOT", elsewhere):
+                tmp_dirs: list[Path] = []
+
+                def _fake_run(args, **kwargs):
+                    tmp_dirs.append(Path(args[-1]).parent)
+                    return MagicMock(stdout="encrypted\n")
+
+                with patch.object(fallback, "_available", return_value=True):
+                    with patch("subprocess.run", side_effect=_fake_run):
+                        assert fallback.write_local_fallback("allegro-refresh-token", "v") is True
+
+                assert tmp_dirs == [secrets_dir]
+                assert list(elsewhere.iterdir()) == []
+                # And nothing was left behind next to the target either.
+                assert [p.name for p in secrets_dir.iterdir()] == [".env.local.sops"]
+
+
+class TestTargetIdentityIsPreserved:
+    """A rewrite must not change who owns the file or who can read it.
+
+    os.replace() swaps in a new inode. The dev container runs as root and
+    writes the same .env.local.sops the host developer does, so without
+    carrying the previous mode/ownership across, one rotation inside the
+    container leaves the host locked out of its own secrets.
+    """
+
+    def test_existing_mode_survives_a_rewrite(self, tmp_path):
+        fallback._SOPS_FILE.write_text("placeholder-encrypted-content")
+        fallback._SOPS_FILE.chmod(0o640)
+        decrypt_proc = MagicMock(stdout="OTHER_KEY=untouched\n")
+
+        def _fake_run(args, **kwargs):
+            if args[:2] == ["sops", "-d"]:
+                return decrypt_proc
+            return MagicMock(stdout="re-encrypted\n")
+
+        with patch.object(fallback, "_available", return_value=True):
+            with patch("subprocess.run", side_effect=_fake_run):
+                assert fallback.write_local_fallback("allegro-refresh-token", "v") is True
+
+        assert fallback._SOPS_FILE.stat().st_mode & 0o777 == 0o640
+
+    def test_new_file_stays_private(self, tmp_path):
+        encrypt_proc = MagicMock(stdout="ENC[...]\n")
+        with patch.object(fallback, "_available", return_value=True):
+            with patch("subprocess.run", return_value=encrypt_proc):
+                assert fallback.write_local_fallback("allegro-refresh-token", "v") is True
+
+        # No prior file to inherit from — mkstemp's owner-only default holds.
+        assert fallback._SOPS_FILE.stat().st_mode & 0o777 == 0o600
+
+    def test_write_still_succeeds_when_ownership_cannot_be_carried(self, tmp_path):
+        """Non-root host rewriting a file it does not own must not fail."""
+        fallback._SOPS_FILE.write_text("placeholder")
+        decrypt_proc = MagicMock(stdout="OTHER_KEY=x\n")
+
+        def _fake_run(args, **kwargs):
+            if args[:2] == ["sops", "-d"]:
+                return decrypt_proc
+            return MagicMock(stdout="re-encrypted\n")
+
+        with patch.object(fallback, "_available", return_value=True):
+            with patch("subprocess.run", side_effect=_fake_run):
+                with patch("os.chown", side_effect=PermissionError("not root")):
+                    result = fallback.write_local_fallback("allegro-refresh-token", "v")
+
+        assert result is True
+        assert fallback._SOPS_FILE.read_text() == "re-encrypted\n"
+
+
+class TestPathOverrides:
+    """ZDROVENA_SOPS_FILE / SOPS_AGE_KEY_FILE are read at import time."""
+
+    @staticmethod
+    def _reload_with(monkeypatch, **env):
+        import importlib
+
+        for key in ("ZDROVENA_SOPS_FILE", "SOPS_AGE_KEY_FILE"):
+            monkeypatch.delenv(key, raising=False)
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        return importlib.reload(fallback)
+
+    @pytest.fixture(autouse=True)
+    def _restore_module(self, monkeypatch):
+        yield
+        import importlib
+
+        for key in ("ZDROVENA_SOPS_FILE", "SOPS_AGE_KEY_FILE"):
+            monkeypatch.delenv(key, raising=False)
+        importlib.reload(fallback)
+
+    def test_sops_file_defaults_to_repo_root(self, monkeypatch):
+        mod = self._reload_with(monkeypatch)
+        resolved = mod._SOPS_FILE
+        assert resolved == mod._REPO_ROOT / ".env.local.sops"
+
+    def test_sops_file_honours_override(self, monkeypatch, tmp_path):
+        target = tmp_path / "secrets" / ".env.local.sops"
+        mod = self._reload_with(monkeypatch, ZDROVENA_SOPS_FILE=str(target))
+        resolved = mod._SOPS_FILE
+        assert resolved == target
+
+    def test_age_key_file_defaults_to_home(self, monkeypatch):
+        mod = self._reload_with(monkeypatch)
+        resolved = mod._AGE_KEY_FILE
+        assert resolved == Path.home() / ".config" / "sops" / "age" / "keys.txt"
+
+    def test_age_key_file_honours_sops_own_variable(self, monkeypatch, tmp_path):
+        key = tmp_path / "mounted" / "keys.txt"
+        mod = self._reload_with(monkeypatch, SOPS_AGE_KEY_FILE=str(key))
+        resolved = mod._AGE_KEY_FILE
+        assert resolved == key
+
+    def test_empty_override_falls_back_to_default(self, monkeypatch):
+        mod = self._reload_with(monkeypatch, ZDROVENA_SOPS_FILE="")
+        resolved = mod._SOPS_FILE
+        assert resolved == mod._REPO_ROOT / ".env.local.sops"

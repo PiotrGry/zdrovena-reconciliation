@@ -31,6 +31,10 @@ frontend/dist/
 .env.*.local
 *.agekey
 *.agekey.txt
+# Staging files from the SOPS tier's atomic writes. Deliberately NOT
+# ".env.local.sops" — that file IS committed (it is encrypted). These only
+# linger if a write is interrupted mid-flight.
+tmp*.env.local.sops
 age*.key
 keys.txt
 

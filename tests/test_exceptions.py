@@ -50,6 +50,16 @@ class TestMissingSecretError:
         assert exc.service == "svc"
         assert exc.account == "acct"
 
+    def test_message_names_the_env_var_to_set(self):
+        """In a container there is no Keychain — the operator needs the env var
+        name (or Key Vault secret name) to actually resolve this."""
+        exc = MissingSecretError("pickup_phone", "humio")
+        assert "PICKUP_PHONE" in str(exc)
+
+    def test_message_names_the_key_vault_secret(self):
+        exc = MissingSecretError("pickup_phone", "humio")
+        assert "pickup-phone" in str(exc)
+
 
 # ── APIError ──────────────────────────────────────────────────────────────────
 
