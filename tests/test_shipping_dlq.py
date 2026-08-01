@@ -273,7 +273,7 @@ class TestDlqEntryKind:
             draft_id="draft-abc",
         )
         with patch("zdrovena.api.routers.webhooks._create_draft") as mock_create:
-            with patch("zdrovena.api.routers.webhooks.execute_draft") as mock_exec:
+            with patch("zdrovena.api.routers.webhooks._execute_draft_impl") as mock_exec:
                 mock_exec.return_value = {"id": "draft-abc", "status": "created"}
                 resp = client.post(f"/api/shipping/drafts/dlq/{entry['id']}/retry")
 
@@ -285,9 +285,56 @@ class TestDlqEntryKind:
     def test_retry_of_creation_entry_still_creates(self, client, store):
         entry = _seed_dlq(store)
         with patch("zdrovena.api.routers.webhooks._create_draft") as mock_create:
-            with patch("zdrovena.api.routers.webhooks.execute_draft") as mock_exec:
+            with patch("zdrovena.api.routers.webhooks._execute_draft_impl") as mock_exec:
                 resp = client.post(f"/api/shipping/drafts/dlq/{entry['id']}/retry")
 
         assert resp.status_code == 200, resp.text
         mock_create.assert_called_once()
         mock_exec.assert_not_called()
+
+    def test_failed_execution_retry_updates_original_entry_without_duplicate(self, client, store):
+        draft = {
+            "id": "draft-retry-failure",
+            "created_at": "2026-07-30T10:00:00+00:00",
+            "source": "shopify",
+            "shopify_order_id": "retry-1",
+            "shopify_order_number": "1901",
+            "courier": "inpost",
+            "service": "inpost_courier_standard",
+            "status": "error",
+            "tracking_number": None,
+            "courier_shipments": [],
+            "receiver": {
+                "first_name": "Test",
+                "last_name": "Retry",
+                "email": "retry@example.test",
+                "phone": "500000000",
+            },
+            "shipping_address": {
+                "street": "Testowa",
+                "building_number": "1",
+                "city": "Warszawa",
+                "post_code": "00-001",
+            },
+            "packages_breakdown": [{"type": "1-pak", "qty": 1}],
+        }
+        store.upsert_draft(draft)
+        entry = store.enqueue_dlq(
+            payload=draft,
+            error="RuntimeError: first failure",
+            source="shopify",
+            kind="draft_execution",
+            draft_id=draft["id"],
+        )
+
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            side_effect=RuntimeError("courier still unavailable"),
+        ):
+            resp = client.post(f"/api/shipping/drafts/dlq/{entry['id']}/retry")
+
+        assert resp.status_code == 502
+        entries = store.list_dlq()
+        assert [item["id"] for item in entries] == [entry["id"]]
+        assert entries[0]["retries"] == 1
+        assert "courier still unavailable" in entries[0]["last_error"]

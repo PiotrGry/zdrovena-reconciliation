@@ -1085,8 +1085,9 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 withSchedule={needsPickupSchedule}
                                 onCancel={() => setExecutePreview(null)}
                                 onConfirm={schedule => {
+                                    const fingerprint = executePreview.data?.fingerprint
                                     setExecutePreview(null)
-                                    onExecute(draft, schedule)
+                                    onExecute(draft, schedule, fingerprint)
                                 }}
                             >
                                 <ExecutePreview state={executePreview} />
@@ -1278,13 +1279,16 @@ export default function ShippingView() {
         }
     }
 
-    function handleExecute(draft, schedule) {
+    function handleExecute(draft, schedule, previewFingerprint) {
         return withBusy(draft.id, async () => {
             const token = await getToken()
+            const requestBody = previewFingerprint
+                ? { ...(schedule || {}), preview_fingerprint: previewFingerprint }
+                : schedule
             const res = await fetch(`/api/shipping/drafts/${draft.id}/execute`, {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: schedule ? JSON.stringify(schedule) : null,
+                body: requestBody ? JSON.stringify(requestBody) : null,
             })
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))

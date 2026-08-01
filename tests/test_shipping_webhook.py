@@ -793,6 +793,7 @@ class TestExecutePreviewEndpoint:
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert "sender" in body and "parcels" in body
+        assert len(body["fingerprint"]) == 64
         mock_run.assert_not_called()
 
     def test_preview_404_for_unknown_draft(self, client):
@@ -815,6 +816,50 @@ class TestExecutePreviewEndpoint:
         draft = _seed_error_draft(store)
         client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
         assert store.get_draft(draft["id"])["status"] == "error"
+
+    def test_execute_rejects_a_draft_changed_after_preview(self, client, store):
+        draft = _seed_error_draft(store)
+        preview = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview").json()
+        store.update_draft(
+            draft["id"],
+            {
+                "shipping_address": {
+                    **draft["shipping_address"],
+                    "street": "Changed after review",
+                }
+            },
+        )
+
+        with patch("zdrovena.api.routers.webhooks._run_inpost") as mock_run:
+            resp = client.post(
+                f"/api/shipping/drafts/{draft['id']}/execute",
+                json={"preview_fingerprint": preview["fingerprint"]},
+            )
+
+        assert resp.status_code == 409
+        assert "changed after preview" in resp.json()["detail"]
+        mock_run.assert_not_called()
+        assert store.get_draft(draft["id"])["status"] == "error"
+
+    def test_execute_accepts_the_unchanged_preview_fingerprint(self, client, store):
+        draft = _seed_error_draft(store)
+        preview = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview").json()
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "ship-reviewed",
+                "tracking_number": "TRK-REVIEWED",
+                "status": "created",
+                "error": None,
+            },
+        ) as mock_run:
+            resp = client.post(
+                f"/api/shipping/drafts/{draft['id']}/execute",
+                json={"preview_fingerprint": preview["fingerprint"]},
+            )
+
+        assert resp.status_code == 200, resp.text
+        mock_run.assert_called_once()
 
     def test_preview_for_apaczka_says_so_instead_of_faking_a_payload(self, client, store):
         draft = _seed_error_draft(store, courier="apaczka", service="apaczka_courier")
@@ -1429,6 +1474,33 @@ class TestInPostPayloadPlan:
 
             sent = [call.args[0] for call in mock_post.call_args_list]
             assert sent == [entry["payload"] for entry in plan]
+
+    def test_partial_retry_previews_only_payloads_execution_will_send(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        draft = {
+            **_KURIER_DRAFT,
+            "packages_breakdown": [{"type": "1-pak", "qty": 2}],
+            "courier_shipments": [
+                {
+                    "id": "already-created",
+                    "tracking_number": "TRK-1",
+                    "package_type": "1-pak",
+                    "package_number": "1",
+                }
+            ],
+        }
+        plan = wh._inpost_payload_plan(draft, _SENDER)
+
+        assert [(item["package_type"], item["package_number"]) for item in plan] == [("1-pak", 2)]
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient._post_shipment",
+                return_value={"id": "new-shipment", "tracking_number": "TRK-2"},
+            ) as mock_post:
+                wh._run_inpost(draft, _SENDER)
+
+        assert [call.args[0] for call in mock_post.call_args_list] == [plan[0]["payload"]]
 
 
 class TestRunApaczka:

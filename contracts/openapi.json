@@ -51,6 +51,17 @@
               }
             ],
             "title": "Pickup To"
+          },
+          "preview_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Fingerprint"
           }
         },
         "title": "Body_execute_draft_api_shipping_drafts__draft_id__execute_post",

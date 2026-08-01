@@ -890,6 +890,8 @@ export interface components {
             pickup_from?: string | null;
             /** Pickup To */
             pickup_to?: string | null;
+            /** Preview Fingerprint */
+            preview_fingerprint?: string | null;
         };
         /** Body_order_pickup_api_shipping_drafts__draft_id__pickup_post */
         Body_order_pickup_api_shipping_drafts__draft_id__pickup_post: {

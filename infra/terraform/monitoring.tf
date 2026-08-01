@@ -163,21 +163,15 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dlq_backlog" {
 #   - `alert-latency` mierzy czas, a zepsuta przesyłka odpowiada szybko błędem,
 #   - `alert-dlq-backlog` obejmował wtedy wyłącznie nieudane *tworzenie* draftu.
 #
-# DLACZEGO poprzednia wersja tej reguły (`no_shipments_despite_drafts`, ec28a2c)
-# była zła: porównywała `draft.created` z `shipment.created`, a `shipment.created`
-# emitujemy WYŁĄCZNIE wtedy, gdy przesyłkę tworzy nasza automatyzacja. Wysyłka
-# jest dziś nadawana RĘCZNIE przez panele przewoźników, więc `shipment.created`
-# jest trwale zerowe i reguła alarmowałaby bez końca — klasyczny alert, który
-# uczy operatora ignorować powiadomienia.
+# Sygnał pochodzi z aktualnego stanu ShippingStore, nie z rekonstrukcji historii
+# `draft.created` / `draft.tracking_assigned`. Poller emituje co cykl zdarzenie
+# `shipping.orders_without_tracking_snapshot` po odfiltrowaniu draftów z
+# trackingiem, anulowanych i już zrealizowanych. Dzięki temu ręczne nadanie jest
+# traktowane tak samo jak automatyczne.
 #
-# Sygnał, którego naprawdę pilnujemy, to brak numeru nadania, a nie brak naszego
-# własnego sukcesu. `draft.tracking_assigned` pojawia się niezależnie od tego,
-# kto nadał paczkę (automat czy człowiek w panelu), więc reguła mierzy realny
-# stan wysyłki, a nie ścieżkę, którą przebiegła.
-#
-# Próg czasowy 48h: dość długo, by zamówienie z piątku spokojnie poczekało do
-# poniedziałku bez alarmu, i dość krótko, by systemowy zator wyszedł na jaw w
-# dwa dni, a nie po tygodniach — tyle przetrwała awaria sendera.
+# Próg czasowy 48h jest świadomą decyzją biznesową: systemowy zator ma wyjść na
+# jaw po dwóch dniach, a nie dopiero po tygodniach — tyle przetrwała awaria
+# sendera.
 #
 # Podział odpowiedzialności z `dlq_backlog`: tamta reguła łapie każdą pojedynczą
 # porażkę (także nieudane *wykonanie*, kind=draft_execution), więc pokrywa awarie
@@ -185,41 +179,11 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dlq_backlog" {
 # którym nikt nawet nie próbuje wykonać draftu — wtedy nie ma żadnego wpisu w
 # DLQ i widać to tylko po braku trackingu.
 #
-# Drafty tworzy zarówno API, jak i poller Allegro — dlatego filtr ról obejmuje
-# obie. Zdarzenia `draft.tracking_assigned` nie filtrujemy po roli, bo tracking
-# może dopisać także backfill/import spoza tych dwóch ról.
-#
-# UWAGA przy analizie historii: telemetria sprzed ~23.07.2026 ma
-# cloud_RoleName = "unknown_service" (service.name w OTel zostało naprawione
-# deployem z 24.07). Zapytania z filtrem po roli nie zobaczą tamtych rekordów,
-# co przy kalibracji progu potrafi mylnie pokazać, że przesyłek było zero,
-# podczas gdy w rzeczywistości były.
-#
-# ZALEŻNOŚĆ WDROŻENIOWA: ta reguła nie może trafić na produkcję przed deployem
-# kodu emitującego `draft.tracking_assigned` — bez tych zdarzeń każdy draft
-# starszy niż 48h wygląda na nienadany.
-#
-# ODSTĘPSTWO OD PROJEKTU (okno P7D): Azure Monitor log search alerts twardo
-# ograniczają zakres czasowy zapytania do 2 dni — zarówno `window_duration`,
-# jak i `query_time_range_override` przyjmują maksymalnie "P2D" (provider
-# odrzuca "P7D" już na etapie `terraform validate`). Siedmiodniowy przegląd
-# wstecz jest więc niewykonalny w tym typie reguły.
-#
-# Zamiast przeglądu retrospektywnego reguła działa krawędziowo: przy oknie 2 dni
-# najstarszy widoczny draft ma dokładnie 48h, więc łapiemy drafty w paśmie
-# 46–48h życia. Przy `evaluation_frequency = PT1H` każdy draft przechodzi przez
-# to pasmo w 2 kolejnych ewaluacjach (zapas na spóźniony przebieg), a próg 48h —
-# jedyny parametr, który był świadomą decyzją biznesową — zostaje zachowany.
-#
-# Konsekwencja pasma: pojedynczy draft jest widoczny dla reguły tylko ~2h.
-# Dlatego `auto_mitigation_enabled = false` (jak w dlq_backlog) — alert raz
-# zapalony zostaje otwarty, aż ktoś go zamknie. Bez tego zapomniane zamówienie
-# gasłoby samo w środku nocy i nikt by się o nim nie dowiedział.
-#
-# Przy awarii systemowej reguła i tak odpala bez przerwy, bo kolejne drafty
-# wchodzą w pasmo. Gdyby mimo to okazała się za słaba, alternatywą jest
-# obniżenie progu do `ago(24h)` — ciągła widoczność przez dobę, kosztem
-# fałszywek w weekend. To decyzja właściciela, nie zmiana techniczna.
+# Snapshot rozwiązuje limit maksymalnego 2-dniowego okna Azure Monitor: wiek
+# liczy kod względem `created_at`, więc próg wynosi naprawdę >=48h, a nie 46h.
+# Regułę można wdrożyć bez backfillu historycznej telemetrii — pierwsze zdarzenie
+# opisuje bieżący stan tabeli. Gdy backlog zniknie, kolejne snapshoty mają count=0
+# i stanowy alert automatycznie się zamknie.
 
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "orders_without_tracking" {
   name                = "${var.prefix}-alert-no-tracking"
@@ -228,28 +192,21 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "orders_without_tracki
   description         = "Zamówienia bez numeru nadania po 48h — wysyłka stoi (niezależnie od tego, kto nadaje)"
   severity            = 2
 
-  evaluation_frequency = "PT1H"
-  window_duration      = "P2D"
+  evaluation_frequency = "PT30M"
+  window_duration      = "PT1H"
   scopes               = [azurerm_application_insights.ai.id]
 
   criteria {
-    # Okno zapytania to P2D (patrz komentarz wyżej), więc `ago(46h)` wycina
-    # drafty w wieku 46–48h — te, które właśnie przekraczają próg 48h.
     query                   = <<-KQL
-      let created = traces
-      | where timestamp < ago(46h)
-      | where cloud_RoleName in ("${var.prefix}-api-prod", "${var.prefix}-allegro-poller")
+      traces
+      | where cloud_RoleName == "${var.prefix}-allegro-poller"
       | extend payload = parse_json(message)
-      | where tostring(payload.event) == "draft.created"
-      | extend draft_id = tostring(payload.draft_id)
-      | distinct draft_id;
-      let tracked = traces
-      | extend payload = parse_json(message)
-      | where tostring(payload.event) == "draft.tracking_assigned"
-      | extend draft_id = tostring(payload.draft_id)
-      | distinct draft_id;
-      created
-      | join kind=leftanti tracked on draft_id
+      | where tostring(payload.event) == "shipping.orders_without_tracking_snapshot"
+      | extend overdue_count = toint(payload.overdue_count)
+      | where overdue_count > 0
+      | project timestamp, overdue_count,
+                draft_ids = tostring(payload.draft_ids),
+                oldest_age_hours = todouble(payload.oldest_age_hours)
     KQL
     time_aggregation_method = "Count"
     threshold               = 0
@@ -261,11 +218,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "orders_without_tracki
     }
   }
 
-  # Nie gaś samoczynnie. Reguła jest krawędziowa (pasmo 46–48h), więc pojedyncze
-  # zapomniane zamówienie mieści się w oknie tylko ~2 godziny. Przy auto-mitygacji
-  # alert zgasłby sam, choć paczka wciąż nie została nadana — kto akurat nie
-  # patrzył, nie dowie się nigdy. Tak samo ustawiony jest dlq_backlog.
-  auto_mitigation_enabled = false
+  auto_mitigation_enabled = true
 
   action {
     action_groups = [azurerm_monitor_action_group.ops.id]
