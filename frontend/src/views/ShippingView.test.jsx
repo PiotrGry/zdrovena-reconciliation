@@ -388,6 +388,7 @@ describe('ShippingView', () => {
 
 describe('execute preview', () => {
     const previewBody = {
+        fingerprint: 'preview-snapshot-abc123',
         courier: 'inpost',
         sender: {
             name: 'Maria Gryzło ZDROVENA',
@@ -424,7 +425,7 @@ describe('execute preview', () => {
             if (url === '/api/shipping/drafts') return jsonResponse({ drafts })
             if (url.endsWith('/execute/preview')) return jsonResponse(previewBody)
             if (url.endsWith('/execute') && init.method === 'POST') {
-                executeCalls.push(url)
+                executeCalls.push({ url, init })
                 return jsonResponse({ id: 'draft-1', status: 'created' })
             }
             throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
@@ -463,6 +464,9 @@ describe('execute preview', () => {
         })
 
         expect(executeCalls).toHaveLength(1)
+        expect(JSON.parse(executeCalls[0].init.body)).toMatchObject({
+            preview_fingerprint: 'preview-snapshot-abc123',
+        })
     })
 
     it('shows the sender, service and parcel weight the courier will receive', async () => {
