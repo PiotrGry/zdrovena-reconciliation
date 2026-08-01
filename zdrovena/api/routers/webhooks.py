@@ -68,10 +68,37 @@ from zdrovena.common.shipping_format import (
     parse_pl_address,
 )
 from zdrovena.common.shipping_state import EXECUTING
-from zdrovena.common.shipping_store import ShippingStore
+from zdrovena.common.shipping_store import (
+    DLQ_KIND_CREATION,
+    DLQ_KIND_EXECUTION,
+    ShippingStore,
+)
 from zdrovena.common.shopify_dedup_store import DedupStoreError
 
+# Who actually dispatched the parcel. Shipping is largely done by hand in the
+# carrier portals, and the Shopify sync writes the resulting tracking number
+# back onto the draft — so `status == "created"` says nothing about the origin.
+# Reporting and operational audit depend on telling these apart.
+SHIPMENT_ORIGIN_SYSTEM = "system"
+SHIPMENT_ORIGIN_EXTERNAL = "external"
+
 logger = logging.getLogger("zdrovena.api.routers.webhooks")
+
+
+def _emit_tracking_assigned(draft_id: Any, order_number: Any, origin: str) -> None:
+    """Announce that a draft now has a tracking number, whoever produced it.
+
+    Every path that assigns a tracking number emits the same audit event —
+    including the manual portal path, which is the common one.
+    """
+    log_event(
+        "draft.tracking_assigned",
+        draft_id=draft_id,
+        order_number=order_number,
+        shipment_origin=origin,
+    )
+
+
 _MOCK_COURIER = os.getenv("MOCK_COURIER", "").lower() in ("1", "true", "yes")
 
 router = APIRouter(tags=["shipping"])
@@ -901,6 +928,113 @@ def _shipment_patch(shipments: list[dict[str, str]]) -> dict[str, Any]:
     }
 
 
+def _inpost_call_specs(
+    draft: dict[str, Any], sender: dict[str, str]
+) -> list[tuple[str, str, int, str, dict[str, Any]]]:
+    """Expand a draft into the exact builder arguments for each physical parcel.
+
+    Both the preview and the real send read this list, so there is one place
+    where draft fields become ShipX arguments and no second copy to keep in sync.
+    Returns (inpost_service, package_type, package_number, reference, kwargs).
+    """
+    from zdrovena.common.inpost import PARCEL_SPECS
+
+    receiver = draft.get("receiver") or {}
+    addr = draft.get("shipping_address") or {}
+    order_number = str(draft.get("shopify_order_number", ""))
+    inpost_service = "paczkomat" if draft.get("service") == "inpost_locker_standard" else "kurier"
+
+    specs: list[tuple[str, str, int, str, dict[str, Any]]] = []
+    for package_type, package_number, package_count in _physical_parcels(draft):
+        spec = PARCEL_SPECS.get(package_type, PARCEL_SPECS["1-pak"])
+        reference = _shipment_reference(order_number, package_type, package_number, package_count)
+        if inpost_service == "paczkomat":
+            kwargs: dict[str, Any] = {
+                "receiver_first_name": receiver.get("first_name", ""),
+                "receiver_last_name": receiver.get("last_name", ""),
+                "receiver_email": receiver.get("email", ""),
+                "receiver_phone": receiver.get("phone", ""),
+                "target_point": receiver.get("locker_id", ""),
+                "reference": reference,
+                "template": spec.get("paczkomat_template") or "large",
+            }
+        else:
+            kwargs = {
+                "receiver_first_name": receiver.get("first_name", ""),
+                "receiver_last_name": receiver.get("last_name", ""),
+                "receiver_email": receiver.get("email", ""),
+                "receiver_phone": receiver.get("phone", ""),
+                "receiver_street": addr.get("street", ""),
+                "receiver_building_number": "/".join(
+                    filter(None, [addr.get("building_number", "1"), addr.get("flat_number", "")])
+                ),
+                "receiver_city": addr.get("city", ""),
+                "receiver_post_code": addr.get("post_code", ""),
+                "sender": sender,
+                "reference": reference,
+                "weight_kg": spec["weight_kg"],
+                "dimensions": spec,
+            }
+        specs.append((inpost_service, package_type, package_number, reference, kwargs))
+    return specs
+
+
+def _pending_inpost_call_specs(
+    draft: dict[str, Any], sender: dict[str, str]
+) -> list[tuple[str, str, int, str, dict[str, Any]]]:
+    """Return only parcel calls that have not already been persisted.
+
+    A failed multi-parcel execution can leave a subset of shipments on the
+    draft. Preview and execution must filter that subset identically: showing a
+    parcel that the retry will skip would make the confirmation misleading.
+    """
+    existing_keys = {
+        (str(item.get("package_type")), int(item.get("package_number") or 1))
+        for item in draft.get("courier_shipments") or []
+    }
+    return [
+        spec
+        for spec in _inpost_call_specs(draft, sender)
+        if (spec[1], spec[2]) not in existing_keys
+    ]
+
+
+def _inpost_payload_plan(draft: dict[str, Any], sender: dict[str, str]) -> list[dict[str, Any]]:
+    """Return the exact ShipX payloads this draft would produce, without sending.
+
+    _run_inpost feeds the same arguments to the same builders, so a preview
+    cannot drift from what the courier is actually asked to create.
+    """
+    from zdrovena.common.inpost import InPostClient
+
+    # The builders read nothing off the instance, so preview credentials are
+    # never used for anything — no request leaves this function.
+    client = InPostClient("preview", "preview")
+
+    plan: list[dict[str, Any]] = []
+    for (
+        inpost_service,
+        package_type,
+        package_number,
+        reference,
+        kwargs,
+    ) in _pending_inpost_call_specs(draft, sender):
+        if inpost_service == "paczkomat":
+            payload = client.build_paczkomat_payload(**kwargs)
+        else:
+            payload = client.build_kurier_payload(**kwargs)
+        plan.append(
+            {
+                "service": draft.get("service"),
+                "package_type": package_type,
+                "package_number": package_number,
+                "reference": reference,
+                "payload": payload,
+            }
+        )
+    return plan
+
+
 def _run_inpost(
     draft: dict[str, Any],
     sender: dict[str, str],
@@ -929,53 +1063,18 @@ def _run_inpost(
     org_id = get_secret("inpost_organization_id")
     client = InPostClient(token, org_id)
 
-    from zdrovena.common.inpost import PARCEL_SPECS
-
-    receiver = draft.get("receiver") or {}
-    first_name = receiver.get("first_name", "")
-    last_name = receiver.get("last_name", "")
-    email = receiver.get("email", "")
-    phone = receiver.get("phone", "")
-    order_number = str(draft.get("shopify_order_number", ""))
-    inpost_service = "paczkomat" if draft.get("service") == "inpost_locker_standard" else "kurier"
     existing = list(draft.get("courier_shipments") or [])
-    existing_keys = {
-        (str(item.get("package_type")), int(item.get("package_number") or 1)) for item in existing
-    }
-
-    for package_type, package_number, package_count in _physical_parcels(draft):
-        if (package_type, package_number) in existing_keys:
-            continue
-        spec = PARCEL_SPECS.get(package_type, PARCEL_SPECS["1-pak"])
-        reference = _shipment_reference(order_number, package_type, package_number, package_count)
+    for (
+        inpost_service,
+        package_type,
+        package_number,
+        _reference,
+        kwargs,
+    ) in _pending_inpost_call_specs(draft, sender):
         if inpost_service == "paczkomat":
-            result = client.create_paczkomat_shipment(
-                receiver_first_name=first_name,
-                receiver_last_name=last_name,
-                receiver_email=email,
-                receiver_phone=phone,
-                target_point=receiver.get("locker_id", ""),
-                reference=reference,
-                template=spec.get("paczkomat_template") or "large",
-            )
+            result = client.create_paczkomat_shipment(**kwargs)
         else:
-            addr = draft.get("shipping_address") or {}
-            result = client.create_kurier_shipment(
-                receiver_first_name=first_name,
-                receiver_last_name=last_name,
-                receiver_email=email,
-                receiver_phone=phone,
-                receiver_street=addr.get("street", ""),
-                receiver_building_number="/".join(
-                    filter(None, [addr.get("building_number", "1"), addr.get("flat_number", "")])
-                ),
-                receiver_city=addr.get("city", ""),
-                receiver_post_code=addr.get("post_code", ""),
-                sender=sender,
-                reference=reference,
-                weight_kg=spec["weight_kg"],
-                dimensions=spec,
-            )
+            result = client.create_kurier_shipment(**kwargs)
         shipment = {
             "id": str(result.get("id", "")),
             "tracking_number": str(result.get("tracking_number") or ""),
@@ -1074,6 +1173,11 @@ def _run_apaczka(
             receiver_city=addr.get("city", ""),
             receiver_zip=addr.get("post_code", ""),
             receiver_point_id=receiver_point_id or None,
+            # Deliberate: Apaczka prints the pickup address (Naściszowa) as the
+            # sender, while InPost prints the registered address (Kraków).
+            # Verified against real Pocztex and DPD waybills. The asymmetry reads
+            # like a bug but is not one — do not "align" the two couriers.
+            # See docs/superpowers/specs/2026-07-31-shipping-trust-and-observability-design.md
             sender=pickup_address,
             reference=_shipment_reference(
                 str(draft.get("shopify_order_number", "")),
@@ -1461,6 +1565,7 @@ def _create_draft_safely(
 _SYNC_PRESERVED_FIELDS = {
     "id",
     "created_at",
+    "shipment_origin",
     "courier_draft_id",
     "courier_shipments",
     "dispatch_order_id",
@@ -1729,6 +1834,19 @@ def _merge_synced_draft(existing: dict[str, Any], incoming: dict[str, Any]) -> d
             merged[field] = existing[field]
     if existing.get("fulfilled_at") and not incoming.get("fulfilled_at"):
         merged["fulfilled_at"] = existing["fulfilled_at"]
+
+    # A tracking number we did not produce means the parcel was dispatched by
+    # hand in a carrier portal. Recorded once and then preserved above, so a
+    # later sync can never rewrite history.
+    if merged.get("tracking_number") and not merged.get("shipment_origin"):
+        merged["shipment_origin"] = (
+            SHIPMENT_ORIGIN_SYSTEM if merged.get("courier_draft_id") else SHIPMENT_ORIGIN_EXTERNAL
+        )
+        _emit_tracking_assigned(
+            merged.get("id"),
+            merged.get("shopify_order_number"),
+            merged["shipment_origin"],
+        )
 
     existing_status = existing.get("status")
     incoming_status = incoming.get("status")
@@ -2022,10 +2140,39 @@ def retry_dlq_entry(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="DLQ entry not found")
     payload = entry.get("payload") or {}
     source = entry.get("source") or "shopify"
+    # Entries written before `kind` existed were all creations.
+    kind = entry.get("kind") or DLQ_KIND_CREATION
     try:
-        _create_draft(payload, shipping_store, storage, source=source)
+        if kind == DLQ_KIND_EXECUTION:
+            # The draft already exists — re-run the courier call, never the
+            # ingestion, which would duplicate it. Same role guards both
+            # endpoints, so reusing the principal grants nothing extra.
+            target_draft_id = entry.get("draft_id")
+            if not target_draft_id:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="DLQ entry has kind=draft_execution but no draft_id",
+                )
+            _execute_draft_impl(
+                target_draft_id,
+                shipping_store,
+                storage,
+                failure_dlq_entry_id=entry_id,
+            )
+        else:
+            _create_draft(payload, shipping_store, storage, source=source)
+    except HTTPException:
+        raise
+    except ZdrovenaShippingError as exc:
+        # Execution retries update their original DLQ entry inside
+        # _execute_draft_impl before the domain exception is re-raised. Do not
+        # increment the same entry a second time here.
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Retry failed: {type(exc).__name__}: {exc}",
+        ) from exc
     except Exception as exc:
-        logger.exception("DLQ retry failed for entry %s", entry_id)
+        logger.exception("DLQ retry failed for entry %s: %s", entry_id, exc)
         # bump retries + last_error; keep the entry in DLQ
         try:
             shipping_store.enqueue_dlq(
@@ -2158,6 +2305,43 @@ def seed_e2e_dlq_entry(
 # ── Execute draft ─────────────────────────────────────────────────────────────
 
 
+def _dlq_failed_execution(
+    shipping_store: ShippingStore,
+    draft: dict[str, Any],
+    error: str,
+    *,
+    entry_id: str | None = None,
+) -> None:
+    """Queue a failed execution so the shipment is recoverable, not lost.
+
+    Best-effort by design: this is bookkeeping around an exception that is
+    already on its way to the caller, so a storage failure here must never
+    replace the real courier error.
+    """
+    draft_id = str(draft.get("id") or "")
+    try:
+        entry = shipping_store.enqueue_dlq(
+            payload=draft,
+            error=error,
+            source=str(draft.get("source") or "shopify"),
+            kind=DLQ_KIND_EXECUTION,
+            draft_id=draft_id,
+            entry_id=entry_id,
+        )
+        log_event(
+            "dlq.enqueued",
+            level=logging.ERROR,
+            entry_id=entry["id"],
+            order_number=draft.get("shopify_order_number") or draft.get("order_number"),
+            source=entry["source"],
+            error_type=error.split(":", 1)[0],
+            kind=DLQ_KIND_EXECUTION,
+            draft_id=draft_id,
+        )
+    except Exception:
+        logger.exception("Failed to enqueue execution failure for draft %s", draft_id)
+
+
 def _release_execution_claim(shipping_store: ShippingStore, draft_id: str, error: str) -> None:
     """Conditionally return a claimed draft to ``error`` (R5-A/#136).
 
@@ -2178,6 +2362,56 @@ def _release_execution_claim(shipping_store: ShippingStore, draft_id: str, error
         logger.exception("Failed to release execution claim for draft %s (left as-is)", draft_id)
 
 
+@router.get(
+    "/shipping/drafts/{draft_id}/execute/preview",
+    summary="Show exactly what would be sent to the courier, without sending it",
+    responses={
+        403: {"description": "Insufficient role"},
+        404: {"description": "Draft not found"},
+    },
+)
+def preview_execute_draft(
+    draft_id: str,
+    shipping_store: ShippingStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    draft = shipping_store.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return _execution_preview(draft)
+
+
+def _execution_preview(draft: dict[str, Any]) -> dict[str, Any]:
+    """Build a courier preview and a fingerprint of the reviewed snapshot."""
+    courier = draft.get("courier", "apaczka")
+    sender = _get_sender()
+    if courier == "inpost":
+        preview: dict[str, Any] = {
+            "courier": courier,
+            "sender": sender,
+            "parcels": _inpost_payload_plan(draft, sender),
+        }
+    else:
+        preview = {
+            "courier": courier,
+            "sender": _get_pickup_address() if courier == "apaczka" else sender,
+            "parcels": [],
+            "note": "Preview is currently available for InPost only.",
+        }
+
+    # Bind the confirmation to both what was displayed and the complete draft
+    # snapshot used to derive it. The latter also protects couriers whose exact
+    # payload preview is not implemented yet.
+    fingerprint_input = json.dumps(
+        {"draft": draft, "preview": preview},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    ).encode()
+    return {**preview, "fingerprint": hashlib.sha256(fingerprint_input).hexdigest()}
+
+
 @router.post(
     "/shipping/drafts/{draft_id}/execute",
     summary="(Re)create courier shipment for a draft",
@@ -2195,7 +2429,31 @@ def execute_draft(
     pickup_date: str | None = Body(None),
     pickup_from: str | None = Body(None),
     pickup_to: str | None = Body(None),
+    preview_fingerprint: str | None = Body(None),
 ) -> dict[str, Any]:
+    return _execute_draft_impl(
+        draft_id,
+        shipping_store,
+        storage,
+        pickup_date=pickup_date,
+        pickup_from=pickup_from,
+        pickup_to=pickup_to,
+        preview_fingerprint=preview_fingerprint,
+    )
+
+
+def _execute_draft_impl(
+    draft_id: str,
+    shipping_store: ShippingStore,
+    storage: Any,
+    *,
+    pickup_date: str | None = None,
+    pickup_from: str | None = None,
+    pickup_to: str | None = None,
+    preview_fingerprint: str | None = None,
+    failure_dlq_entry_id: str | None = None,
+) -> dict[str, Any]:
+    """Execute a draft, optionally requiring the exact reviewed snapshot."""
     draft = shipping_store.get_draft(draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
@@ -2204,6 +2462,14 @@ def execute_draft(
             status_code=409,
             detail="Draft requires review (multi-package) — use PATCH to override",
         )
+    reviewed_preview: dict[str, Any] | None = None
+    if preview_fingerprint is not None:
+        reviewed_preview = _execution_preview(draft)
+        if not hmac.compare_digest(reviewed_preview["fingerprint"], preview_fingerprint):
+            raise HTTPException(
+                status_code=409,
+                detail="Draft changed after preview — review the courier payload again.",
+            )
     # Atomic execution claim (R5-A): move the draft to `executing` under
     # optimistic concurrency. If the claim fails the draft is already
     # executing/created/cancelled or a concurrent request won the race — either
@@ -2225,7 +2491,11 @@ def execute_draft(
             "pickup_from": pickup_from,
             "pickup_to": pickup_to,
         }
-        sender = _get_sender()
+        sender = (
+            reviewed_preview["sender"]
+            if reviewed_preview is not None and draft.get("courier") == "inpost"
+            else _get_sender()
+        )
         persisted_shipments = list(draft.get("courier_shipments") or [])
 
         def persist_shipment(shipment: dict[str, str]) -> None:
@@ -2251,6 +2521,11 @@ def execute_draft(
                 on_shipment_created=persist_shipment,
             )
 
+        # A shipment we created ourselves — record it before the write, so the
+        # sync cannot later mistake it for one dispatched by hand.
+        if patch.get("courier_draft_id"):
+            patch["shipment_origin"] = SHIPMENT_ORIGIN_SYSTEM
+
         # Success write moves executing → created. If THIS fails, the draft is
         # still `executing`, and the except-block cleanup returns it to `error`.
         shipping_store.update_draft(draft_id, patch)
@@ -2263,18 +2538,36 @@ def execute_draft(
             tracking_number=patch.get("tracking_number"),
             status=patch.get("status"),
         )
+        if patch.get("tracking_number"):
+            _emit_tracking_assigned(
+                draft_id,
+                draft.get("shopify_order_number"),
+                patch.get("shipment_origin") or SHIPMENT_ORIGIN_SYSTEM,
+            )
         if updated:
             # Never re-raises (see its docstring) — safe inside the guarded block.
             _maybe_push_tracking_to_allegro(updated)
         return updated or patch
     except ZdrovenaShippingError as exc:
         logger.exception("execute_draft failed for %s: %s", draft_id, exc)
+        _dlq_failed_execution(
+            shipping_store,
+            draft,
+            f"{type(exc).__name__}: {exc}",
+            entry_id=failure_dlq_entry_id,
+        )
         _release_execution_claim(shipping_store, draft_id, str(exc))
         # Wyjątek domenowy przesyłki → koperta błędu (zdrovena.api.errors)
         # mapuje go na właściwy status i polski komunikat dla operatora.
         raise
     except Exception as exc:
         logger.exception("execute_draft failed for %s: %s", draft_id, exc)
+        _dlq_failed_execution(
+            shipping_store,
+            draft,
+            f"{type(exc).__name__}: {exc}",
+            entry_id=failure_dlq_entry_id,
+        )
         _release_execution_claim(shipping_store, draft_id, str(exc))
         # Ogólny błąd komunikacji z przewoźnikiem → 502 z polskim komunikatem,
         # bez wyciekania surowego (angielskiego) str(exc) do operatora.
@@ -2396,8 +2689,13 @@ def confirm_pending_command(
         "allegro_shipment_id": str(shipment_id),
         "tracking_number": waybill,
         "error": None,
+        # Ship-with-Allegro can answer pending_confirmation, so the waybill
+        # lands here instead of in execute_draft. Same origin, same event.
+        "shipment_origin": SHIPMENT_ORIGIN_SYSTEM,
     }
     shipping_store.update_draft(draft_id, patch)
+    if waybill:
+        _emit_tracking_assigned(draft_id, draft.get("shopify_order_number"), SHIPMENT_ORIGIN_SYSTEM)
     updated = shipping_store.get_draft(draft_id)
     if updated:
         _maybe_push_tracking_to_allegro(updated)

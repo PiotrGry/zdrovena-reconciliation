@@ -691,6 +691,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/shipping/drafts/{draft_id}/execute/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Show exactly what would be sent to the courier, without sending it */
+        get: operations["preview_execute_draft_api_shipping_drafts__draft_id__execute_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/shipping/drafts/{draft_id}/invoice-preview": {
         parameters: {
             query?: never;
@@ -873,6 +890,8 @@ export interface components {
             pickup_from?: string | null;
             /** Pickup To */
             pickup_to?: string | null;
+            /** Preview Fingerprint */
+            preview_fingerprint?: string | null;
         };
         /** Body_order_pickup_api_shipping_drafts__draft_id__pickup_post */
         Body_order_pickup_api_shipping_drafts__draft_id__pickup_post: {
@@ -2816,6 +2835,53 @@ export interface operations {
             };
             /** @description Draft already executed */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_execute_draft_api_shipping_drafts__draft_id__execute_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Draft not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

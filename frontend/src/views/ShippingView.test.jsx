@@ -385,3 +385,130 @@ describe('ShippingView', () => {
         expect(getConfirmCalls()).toBe(1)
     }, 7000)
 })
+
+describe('execute preview', () => {
+    const previewBody = {
+        fingerprint: 'preview-snapshot-abc123',
+        courier: 'inpost',
+        sender: {
+            name: 'Maria Gryzło ZDROVENA',
+            street: 'Cieszynska',
+            building_number: '6/12',
+            post_code: '30-015',
+            city: 'Krakow',
+        },
+        parcels: [{
+            service: 'inpost_courier_standard',
+            package_type: '1-pak',
+            package_number: 1,
+            reference: '1001 | plastik | 1-pak 1/1',
+            payload: {
+                service: 'inpost_courier_standard',
+                reference: '1001 | plastik | 1-pak 1/1',
+                receiver: {
+                    first_name: 'Anna',
+                    last_name: 'Nowak',
+                    address: { street: 'Prosta', building_number: '1', city: 'Warszawa', post_code: '00-001' },
+                },
+                parcels: [{
+                    dimensions: { unit: 'mm', length: 300, width: 200, height: 200 },
+                    weight: { unit: 'kg', amount: 6 },
+                }],
+            },
+        }],
+    }
+
+    function installPreviewFetch({ drafts = [draft()] } = {}) {
+        const executeCalls = []
+        const fetchMock = mockFetch((url, init = {}) => {
+            if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
+            if (url === '/api/shipping/drafts') return jsonResponse({ drafts })
+            if (url.endsWith('/execute/preview')) return jsonResponse(previewBody)
+            if (url.endsWith('/execute') && init.method === 'POST') {
+                executeCalls.push({ url, init })
+                return jsonResponse({ id: 'draft-1', status: 'created' })
+            }
+            throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
+        })
+        return { fetchMock, executeCalls }
+    }
+
+    async function openExecute() {
+        await screen.findByText('Anna Nowak')
+        await act(async () => {
+            await userEvent.click(screen.getByRole('button', { name: 'Rozwiń' }))
+        })
+        await act(async () => {
+            await userEvent.click(screen.getByTestId('shipping-execute-draft-1'))
+        })
+    }
+
+    it('shows the preview and does not execute on the first click', async () => {
+        const { executeCalls } = installPreviewFetch()
+        renderWithProviders(<ShippingView />)
+
+        await openExecute()
+
+        await waitFor(() => expect(screen.getByTestId('execute-preview')).toBeTruthy())
+        expect(executeCalls).toHaveLength(0)
+    })
+
+    it('executes once the preview is confirmed', async () => {
+        const { executeCalls } = installPreviewFetch()
+        renderWithProviders(<ShippingView />)
+
+        await openExecute()
+        await screen.findByTestId('execute-preview')
+        await act(async () => {
+            await userEvent.click(screen.getByTestId('execute-preview-confirm'))
+        })
+
+        expect(executeCalls).toHaveLength(1)
+        expect(JSON.parse(executeCalls[0].init.body)).toMatchObject({
+            preview_fingerprint: 'preview-snapshot-abc123',
+        })
+    })
+
+    it('shows the sender, service and parcel weight the courier will receive', async () => {
+        installPreviewFetch()
+        renderWithProviders(<ShippingView />)
+
+        await openExecute()
+        const panel = await screen.findByTestId('execute-preview')
+
+        expect(panel).toHaveTextContent('Maria Gryzło ZDROVENA')
+        expect(panel).toHaveTextContent('Cieszynska 6/12')
+        expect(panel).toHaveTextContent('inpost_courier_standard')
+        expect(panel).toHaveTextContent('30 × 20 × 20 cm')
+        expect(panel).toHaveTextContent('6 kg')
+    })
+
+    it('sends nothing when the preview is cancelled', async () => {
+        const { executeCalls } = installPreviewFetch()
+        renderWithProviders(<ShippingView />)
+
+        await openExecute()
+        await screen.findByTestId('execute-preview')
+        await act(async () => {
+            await userEvent.click(screen.getByRole('button', { name: 'Anuluj' }))
+        })
+
+        await waitFor(() => expect(screen.queryByTestId('execute-preview')).toBeNull())
+        expect(executeCalls).toHaveLength(0)
+    })
+
+    it('previews couriers that need no pickup schedule too', async () => {
+        const { executeCalls } = installPreviewFetch({
+            drafts: [draft({ courier: 'apaczka', service: 'apaczka_courier' })],
+        })
+        renderWithProviders(<ShippingView />)
+
+        await openExecute()
+        await screen.findByTestId('execute-preview')
+        await act(async () => {
+            await userEvent.click(screen.getByTestId('execute-preview-confirm'))
+        })
+
+        expect(executeCalls).toHaveLength(1)
+    })
+})

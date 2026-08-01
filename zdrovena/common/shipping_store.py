@@ -33,6 +33,12 @@ DLQ_TABLE_NAME = "shippingdraftsdlq"
 DLQ_PARTITION_KEY = "dlq"
 _DLQ_LOCAL_FILE_NAME = "shipping-drafts-dlq.json"
 
+# What failed, so the retry endpoint knows which operation to re-run. Entries
+# written before this field existed deserialize with kind=None and are treated
+# as creations, which is what they were.
+DLQ_KIND_CREATION = "draft_creation"
+DLQ_KIND_EXECUTION = "draft_execution"
+
 
 def _table_endpoint(url: str) -> str:
     return url.replace(".blob.core.windows.net", ".table.core.windows.net")
@@ -85,13 +91,18 @@ class ShippingStore:
         self._connection_string = connection_string
         self._local_root = local_root or _DEFAULT_ROOT
         self._use_table = bool(account_url or connection_string)
+        self._service: Any = None
+        self._table_clients: dict[str, Any] = {}
 
-    def _table_client(self) -> Any:
+    def _table_service(self) -> Any:
+        """Build the service client once — it holds the credential and HTTP pool."""
+        if self._service is not None:
+            return self._service
         from azure.data.tables import TableServiceClient
         from azure.identity import DefaultAzureCredential
 
         if self._account_url:
-            svc = TableServiceClient(
+            self._service = TableServiceClient(
                 endpoint=_table_endpoint(self._account_url),
                 credential=DefaultAzureCredential(),
             )
@@ -100,8 +111,23 @@ class ShippingStore:
                 raise RuntimeError(
                     "ShippingStore: neither account_url nor connection_string is set"
                 )
-            svc = TableServiceClient.from_connection_string(self._connection_string)
-        return svc.create_table_if_not_exists(TABLE_NAME)
+            self._service = TableServiceClient.from_connection_string(self._connection_string)
+        return self._service
+
+    def _cached_table(self, table_name: str) -> Any:
+        """Return the table client for ``table_name``, creating the table once.
+
+        create_table_if_not_exists is a network round-trip that answers 409 for
+        an existing table, so calling it per operation is pure overhead.
+        """
+        cached = self._table_clients.get(table_name)
+        if cached is None:
+            cached = self._table_service().create_table_if_not_exists(table_name)
+            self._table_clients[table_name] = cached
+        return cached
+
+    def _table_client(self) -> Any:
+        return self._cached_table(TABLE_NAME)
 
     # ── Local fallback ─────────────────────────────────────────────────────────
 
@@ -381,21 +407,7 @@ class ShippingStore:
             raise
 
     def _dlq_table_client(self) -> Any:
-        from azure.data.tables import TableServiceClient
-        from azure.identity import DefaultAzureCredential
-
-        if self._account_url:
-            svc = TableServiceClient(
-                endpoint=_table_endpoint(self._account_url),
-                credential=DefaultAzureCredential(),
-            )
-        else:
-            if not self._connection_string:
-                raise RuntimeError(
-                    "ShippingStore: neither account_url nor connection_string is set"
-                )
-            svc = TableServiceClient.from_connection_string(self._connection_string)
-        return svc.create_table_if_not_exists(DLQ_TABLE_NAME)
+        return self._cached_table(DLQ_TABLE_NAME)
 
     @staticmethod
     def _serialize_dlq_entry(entry: dict[str, Any]) -> dict[str, Any]:
@@ -440,8 +452,15 @@ class ShippingStore:
         error: str,
         source: str = "shopify",
         entry_id: str | None = None,
+        kind: str = DLQ_KIND_CREATION,
+        draft_id: str | None = None,
     ) -> dict[str, Any]:
-        """Record a failed draft-creation attempt for later retry.
+        """Record a failed shipping operation for later retry.
+
+        ``kind`` says what failed, because the two cases need different retries:
+        ``draft_creation`` re-runs ingestion from ``payload``, while
+        ``draft_execution`` re-runs the courier call for an existing
+        ``draft_id`` — retrying the latter as a creation would duplicate it.
 
         Idempotent: if ``entry_id`` is provided and already exists, the entry is
         updated in-place with the new error and an incremented ``retries`` counter.
@@ -477,6 +496,8 @@ class ShippingStore:
                         "payload": payload,
                         "last_error": error,
                         "retries": 0,
+                        "kind": kind,
+                        "draft_id": draft_id,
                     }
                 client.upsert_entity(self._serialize_dlq_entry(entry))
                 return entry
@@ -503,6 +524,8 @@ class ShippingStore:
                     "payload": payload,
                     "last_error": error,
                     "retries": 0,
+                    "kind": kind,
+                    "draft_id": draft_id,
                 }
             data[eid] = entry
             self._dlq_save_unlocked(data)

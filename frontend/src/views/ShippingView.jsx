@@ -435,7 +435,96 @@ function addHours(t, hrs) {
 }
 
 
-function PickupScheduleModal({ onConfirm, onCancel, title }) {
+function previewLine(label, value) {
+    if (!value) return null
+    return (
+        <div style={{ display: 'flex', gap: 8, fontSize: '0.85em' }}>
+            <span style={{ color: 'var(--text-2)', minWidth: 96 }}>{label}</span>
+            <span style={{ fontWeight: 500 }}>{value}</span>
+        </div>
+    )
+}
+
+function formatAddress(addr) {
+    if (!addr) return ''
+    const line = [addr.street, addr.building_number].filter(Boolean).join(' ')
+    const city = [addr.post_code, addr.city].filter(Boolean).join(' ')
+    return [line, city].filter(Boolean).join(', ')
+}
+
+/** Render a single ShipX parcel the way the courier will read it, not the way we stored it. */
+function ExecutePreviewParcel({ entry }) {
+    const payload = entry.payload || {}
+    const parcel = (payload.parcels || [])[0] || {}
+    const dims = parcel.dimensions
+    // ShipX carries dimensions in mm; the operator thinks in cm, as the boxes are labelled.
+    const dimsText = dims
+        ? `${dims.length / 10} × ${dims.width / 10} × ${dims.height / 10} cm`
+        : (parcel.template ? `szablon paczkomatu: ${parcel.template}` : '')
+    const weight = parcel.weight?.amount
+    const receiver = payload.receiver || {}
+    const target = payload.custom_attributes?.target_point
+
+    return (
+        <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {previewLine('Usługa', payload.service || entry.service)}
+            {previewLine('Referencja', payload.reference || entry.reference)}
+            {previewLine('Odbiorca', [receiver.first_name, receiver.last_name].filter(Boolean).join(' '))}
+            {previewLine('Adres', target ? `Paczkomat ${target}` : formatAddress(receiver.address))}
+            {previewLine('Telefon', receiver.phone)}
+            {previewLine('Wymiary', dimsText)}
+            {previewLine('Waga', weight != null ? `${weight} kg` : '')}
+        </div>
+    )
+}
+
+/**
+ * The payload the courier is about to receive, shown before anything is sent.
+ *
+ * Read straight from the preview endpoint rather than re-derived from the draft:
+ * a panel that reconstructed the payload itself could show something the courier
+ * never sees, which is worse than showing nothing.
+ */
+function ExecutePreview({ state }) {
+    if (state.loading) return <div style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>Wczytywanie podglądu…</div>
+    if (state.error) {
+        return (
+            <div className="error-banner">
+                <Icon name="alertTriangle" size={13} />
+                Nie udało się pobrać podglądu: {state.error}
+            </div>
+        )
+    }
+    const data = state.data || {}
+    const parcels = data.parcels || []
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 480 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {previewLine('Nadawca', data.sender?.name)}
+                {previewLine('Adres nadania', formatAddress(data.sender))}
+                {previewLine('Kurier', data.courier)}
+            </div>
+            {data.note && (
+                <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>{data.note}</div>
+            )}
+            {parcels.map(entry => (
+                <ExecutePreviewParcel key={`${entry.package_type}-${entry.package_number}`} entry={entry} />
+            ))}
+        </div>
+    )
+}
+
+function PickupScheduleModal({
+    onConfirm,
+    onCancel,
+    title,
+    children,
+    withSchedule = true,
+    panelTestId,
+    confirmTestId,
+    confirmLabel,
+    confirmDisabled = false,
+}) {
     const { t, lang } = useT()
     const T = t[lang]
     const now = new Date()
@@ -478,35 +567,47 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     return createPortal(
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
             onClick={e => { if (e.target === e.currentTarget) onCancel() }}>
-            <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 24, minWidth: 320, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div
+                data-testid={panelTestId}
+                style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 24, minWidth: 320, maxHeight: '85vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}
+            >
                 <div style={{ fontWeight: 600 }}>{title}</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_pickup_date ?? 'Data podjazdu'}</label>
-                    <input type="date" value={date} min={today}
-                        onChange={e => { handleDateChange(e.target.value); e.target.blur() }}
-                        style={sel}
-                    />
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_time_from ?? 'Od'}</label>
-                        <select value={from} onChange={e => handleFromChange(e.target.value)} style={sel}>
-                            {TIME_SLOTS.filter(t => t >= minFrom && t <= '16:00').map(t => <option key={t} value={t}>{t}</option>)}
-                        </select>
-                    </div>
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_time_to ?? 'Do'}</label>
-                        <select value={to} onChange={e => setTo(e.target.value)} style={sel}>
-                            {TIME_SLOTS.filter(t => toMinutes(t) >= toMinutes(from) + 120).map(t => <option key={t} value={t}>{t}</option>)}
-                        </select>
-                    </div>
-                </div>
-                <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>{T.sh_min_window ?? 'Minimalne okno: 2 godziny'}</div>
+                {children}
+                {withSchedule && (
+                    <>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_pickup_date ?? 'Data podjazdu'}</label>
+                            <input type="date" value={date} min={today}
+                                onChange={e => { handleDateChange(e.target.value); e.target.blur() }}
+                                style={sel}
+                            />
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_time_from ?? 'Od'}</label>
+                                <select value={from} onChange={e => handleFromChange(e.target.value)} style={sel}>
+                                    {TIME_SLOTS.filter(t => t >= minFrom && t <= '16:00').map(t => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                            </div>
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_time_to ?? 'Do'}</label>
+                                <select value={to} onChange={e => setTo(e.target.value)} style={sel}>
+                                    {TIME_SLOTS.filter(t => toMinutes(t) >= toMinutes(from) + 120).map(t => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>{T.sh_min_window ?? 'Minimalne okno: 2 godziny'}</div>
+                    </>
+                )}
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                     <button className="btn btn-ghost" onClick={onCancel}>{T.sh_cancel ?? 'Anuluj'}</button>
                     <button className="btn btn-primary"
-                        onClick={() => onConfirm({ pickup_date: date, pickup_from: from, pickup_to: to })}>
-                        {T.sh_confirm ?? 'Potwierdź'}
+                        data-testid={confirmTestId}
+                        disabled={confirmDisabled}
+                        onClick={() => onConfirm(
+                            withSchedule ? { pickup_date: date, pickup_from: from, pickup_to: to } : null
+                        )}>
+                        {confirmLabel ?? T.sh_confirm ?? 'Potwierdź'}
                     </button>
                 </div>
             </div>
@@ -541,7 +642,9 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
             ? invoiceIdOverride.value
             : invoiceIdBaseline
     )
-    const [pickupModal, setPickupModal] = useState(null) // 'execute' | 'pickup' | null
+    const [pickupModal, setPickupModal] = useState(null) // 'pickup' | null
+    // { loading } | { error } | { data } — null while no preview is open.
+    const [executePreview, setExecutePreview] = useState(null)
     const isBusy = busy.has(draft.id)
     const matchedApaczkaService = apaczkaServices.find(
         service => service.service_id === draft.apaczka_service_id
@@ -557,6 +660,21 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
         draft.status === 'created' &&
         !draft.pickup_ordered
     )
+
+    /** Fetch what the courier would receive. Opens the panel first so the click always responds. */
+    async function openExecutePreview() {
+        setExecutePreview({ loading: true })
+        try {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}/execute/preview`, {
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+            setExecutePreview({ data: await res.json() })
+        } catch (e) {
+            setExecutePreview({ error: e.message })
+        }
+    }
 
     const isSelectable = onToggleSelect && (
         draft.status === 'pending' ||
@@ -850,10 +968,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 <button
                                     className="btn btn-primary"
                                     data-testid={`shipping-execute-${draft.id}`}
-                                    onClick={() => needsPickupSchedule
-                                        ? setPickupModal('execute')
-                                        : onExecute(draft, null)
-                                    }
+                                    onClick={openExecutePreview}
                                     disabled={isBusy}
                                 >
                                     {isBusy
@@ -951,14 +1066,32 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
 
                         {pickupModal && (
                             <PickupScheduleModal
-                                title={pickupModal === 'execute' ? 'Zaplanuj podjazd kuriera' : 'Zamów podjazd kuriera'}
+                                title="Zamów podjazd kuriera"
                                 onCancel={() => setPickupModal(null)}
                                 onConfirm={schedule => {
                                     setPickupModal(null)
-                                    if (pickupModal === 'execute') onExecute(draft, schedule)
-                                    else onPickup(draft, schedule)
+                                    onPickup(draft, schedule)
                                 }}
                             />
+                        )}
+
+                        {executePreview && (
+                            <PickupScheduleModal
+                                title="Sprawdź, co trafi do kuriera"
+                                panelTestId="execute-preview"
+                                confirmTestId="execute-preview-confirm"
+                                confirmLabel="Wyślij do kuriera"
+                                confirmDisabled={!executePreview.data}
+                                withSchedule={needsPickupSchedule}
+                                onCancel={() => setExecutePreview(null)}
+                                onConfirm={schedule => {
+                                    const fingerprint = executePreview.data?.fingerprint
+                                    setExecutePreview(null)
+                                    onExecute(draft, schedule, fingerprint)
+                                }}
+                            >
+                                <ExecutePreview state={executePreview} />
+                            </PickupScheduleModal>
                         )}
                     </div>
                 )}
@@ -1146,13 +1279,16 @@ export default function ShippingView() {
         }
     }
 
-    function handleExecute(draft, schedule) {
+    function handleExecute(draft, schedule, previewFingerprint) {
         return withBusy(draft.id, async () => {
             const token = await getToken()
+            const requestBody = previewFingerprint
+                ? { ...(schedule || {}), preview_fingerprint: previewFingerprint }
+                : schedule
             const res = await fetch(`/api/shipping/drafts/${draft.id}/execute`, {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: schedule ? JSON.stringify(schedule) : null,
+                body: requestBody ? JSON.stringify(requestBody) : null,
             })
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))

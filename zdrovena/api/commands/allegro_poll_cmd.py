@@ -18,8 +18,70 @@ import argparse
 import logging
 import os
 import sys
+from datetime import datetime, timezone
+from typing import Any
 
 logger = logging.getLogger("zdrovena.api.commands.allegro_poll")
+
+_TRACKING_OVERDUE_HOURS = 48
+
+
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _emit_orders_without_tracking_snapshot(
+    shipping_store: Any, *, now: datetime | None = None
+) -> int:
+    """Emit the current count of actionable drafts untracked for at least 48h.
+
+    Azure log alerts can query at most two days of history, so deriving this
+    state by joining historical ``draft.created`` events loses the record at
+    exactly the threshold and cannot implement true 48-hour semantics. The
+    scheduled poller already reads the authoritative draft store; publishing a
+    small current-state snapshot makes the alert exact and rollout-safe.
+    """
+    try:
+        drafts = shipping_store.list_drafts()
+    except Exception:
+        logger.exception("Failed to read drafts for the no-tracking snapshot")
+        return 0
+
+    observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    overdue: list[tuple[str, float]] = []
+    for draft in drafts:
+        if draft.get("tracking_number"):
+            continue
+        if draft.get("status") == "cancelled" or draft.get("fulfillment_status") == "fulfilled":
+            continue
+        created_at = _parse_utc_timestamp(draft.get("created_at"))
+        if created_at is None:
+            logger.warning("Draft %s has no valid created_at", draft.get("id"))
+            continue
+        age_hours = (observed_at - created_at).total_seconds() / 3600
+        if age_hours >= _TRACKING_OVERDUE_HOURS:
+            overdue.append((str(draft.get("id") or ""), age_hours))
+
+    from zdrovena.common.events import log_event
+
+    overdue.sort(key=lambda item: item[1], reverse=True)
+    log_event(
+        "shipping.orders_without_tracking_snapshot",
+        overdue_count=len(overdue),
+        draft_ids=[draft_id for draft_id, _age in overdue[:50]],
+        oldest_age_hours=round(overdue[0][1], 1) if overdue else 0,
+        threshold_hours=_TRACKING_OVERDUE_HOURS,
+        snapshot_truncated=len(overdue) > 50,
+    )
+    return len(overdue)
 
 
 def _setup_logging() -> None:
@@ -122,6 +184,8 @@ def _run_cycle(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     logger.info("Polling cycle complete: %s", stats)
+    overdue_count = _emit_orders_without_tracking_snapshot(shipping_store)
+    logger.info("Orders without tracking after 48h: %d", overdue_count)
 
     # Detection only: create manual-review cases, never replacement shipments
     # and never customer emails. A detection failure must not invalidate the

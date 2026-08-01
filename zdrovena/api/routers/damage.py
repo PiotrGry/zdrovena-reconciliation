@@ -340,6 +340,7 @@ def create_replacement(
     storage: StorageDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
 ) -> dict[str, Any]:
+    del principal
     case = _case_or_404(damage_store, case_id)
     replacement_id = case.get("replacement_draft_id")
     if not replacement_id:
@@ -360,13 +361,12 @@ def create_replacement(
     if draft.get("status") == "needs_review":
         shipping_store.update_draft(str(replacement_id), {"status": "pending"})
 
-    from zdrovena.api.routers.webhooks import execute_draft
+    from zdrovena.api.routers.webhooks import _execute_draft_impl
 
-    result = execute_draft(
+    result = _execute_draft_impl(
         str(replacement_id),
         shipping_store,
         storage,
-        principal,
         pickup_date=None,
         pickup_from=None,
         pickup_to=None,
