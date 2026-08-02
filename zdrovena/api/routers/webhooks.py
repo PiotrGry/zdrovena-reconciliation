@@ -1173,7 +1173,10 @@ def _apaczka_payload_plan(
     """Return the exact Apaczka orders this draft would send, without sending."""
     from zdrovena.common.apaczka import ApaczkaClient
 
-    service_id = draft.get("apaczka_service_id")
+    # A draft with no matched service should have stayed in needs_review; the
+    # preview renders an empty service rather than inventing one, and _run_apaczka
+    # raises on it at execute time.
+    service_id = str(draft.get("apaczka_service_id") or "")
     client = ApaczkaClient("preview", "preview", service_id, None)
     plan: list[dict[str, Any]] = []
     for spec in _apaczka_call_specs(draft, pickup_address):
