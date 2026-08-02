@@ -453,8 +453,37 @@ function formatAddress(addr) {
 }
 
 /** Render a single ShipX parcel the way the courier will read it, not the way we stored it. */
+/**
+ * Apaczka's order shape is nothing like ShipX's, so read it on its own terms
+ * rather than forcing one into the other. Reformatting either into a shared
+ * intermediate would risk showing the operator something the courier never sees.
+ */
+function ApaczkaPreviewParcel({ entry }) {
+    const payload = entry.payload || {}
+    const receiver = payload.address?.receiver || {}
+    const box = (payload.shipment || [])[0] || {}
+    const dimsText = box.dimension1
+        ? `${box.dimension1} × ${box.dimension2} × ${box.dimension3} cm`
+        : ''
+
+    return (
+        <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {previewLine('Usługa', payload.service_id ? `Apaczka #${payload.service_id}` : entry.service)}
+            {previewLine('Referencja', payload.externalId || entry.reference)}
+            {previewLine('Odbiorca', receiver.contact_person || receiver.name)}
+            {previewLine('Adres', [receiver.line1, [receiver.postal_code, receiver.city].filter(Boolean).join(' ')].filter(Boolean).join(', '))}
+            {previewLine('Telefon', receiver.phone)}
+            {previewLine('Punkt odbioru', receiver.foreign_address_id)}
+            {previewLine('Wymiary', dimsText)}
+            {previewLine('Waga', box.weight != null ? `${box.weight} kg` : '')}
+        </div>
+    )
+}
+
 function ExecutePreviewParcel({ entry }) {
     const payload = entry.payload || {}
+    // Apaczka nests everything under `address`; ShipX has a flat `receiver`.
+    if (payload.address) return <ApaczkaPreviewParcel entry={entry} />
     const parcel = (payload.parcels || [])[0] || {}
     const dims = parcel.dimensions
     // ShipX carries dimensions in mm; the operator thinks in cm, as the boxes are labelled.
