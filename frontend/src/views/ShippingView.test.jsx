@@ -443,6 +443,84 @@ describe('execute preview', () => {
         })
     }
 
+    const apaczkaPreviewBody = {
+        fingerprint: 'apaczka-snapshot-xyz',
+        courier: 'apaczka',
+        preview_available: true,
+        sender: {
+            name: 'Maria Gryzło ZDROVENA',
+            street: 'Naściszowa',
+            building_number: '41',
+            post_code: '33-300',
+            city: 'Naściszowa',
+        },
+        parcels: [{
+            service: 'apaczka',
+            package_type: '1-pak',
+            package_number: 1,
+            reference: 'order-1001',
+            payload: {
+                service_id: '42',
+                externalId: 'order-1001',
+                address: {
+                    sender: { name: 'Maria Gryzło ZDROVENA', city: 'Naściszowa' },
+                    receiver: {
+                        name: 'Anna Nowak',
+                        contact_person: 'Anna Nowak',
+                        phone: '600100200',
+                        line1: 'Polna 7',
+                        city: 'Gdansk',
+                        postal_code: '80-001',
+                    },
+                },
+                shipment: [{ weight: 6, dimension1: 30, dimension2: 20, dimension3: 20 }],
+                pickup: { type: 'COURIER' },
+            },
+        }],
+    }
+
+    it('renders an Apaczka payload, not an empty card', async () => {
+        // Apaczka's order shape is nothing like ShipX's, and it is the courier
+        // that actually ships today.
+        mockFetch((url, init = {}) => {
+            if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
+            if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'apaczka' })] })
+            if (url.endsWith('/execute/preview')) return jsonResponse(apaczkaPreviewBody)
+            throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
+        })
+        renderWithProviders(<ShippingView />)
+
+        await openExecute()
+        const panel = await screen.findByTestId('execute-preview')
+
+        expect(panel.textContent).toContain('Anna Nowak')
+        expect(panel.textContent).toContain('Gdansk')
+        expect(panel.textContent).toContain('6 kg')
+    })
+
+    it('refuses to confirm when the courier has no payload preview', async () => {
+        // An empty panel the operator can confirm is worse than no panel: it
+        // invites them to certify having seen nothing.
+        mockFetch((url, init = {}) => {
+            if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
+            if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'allegro_delivery' })] })
+            if (url.endsWith('/execute/preview')) return jsonResponse({
+                fingerprint: 'allegro-snapshot',
+                courier: 'allegro_delivery',
+                preview_available: false,
+                sender: { name: 'Maria Gryzło ZDROVENA' },
+                parcels: [],
+                note: 'Podgląd niedostępny dla Allegro Delivery — payload powstaje z propozycji dostawy.',
+            })
+            throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
+        })
+        renderWithProviders(<ShippingView />)
+
+        await openExecute()
+        const panel = await screen.findByTestId('execute-preview')
+        expect(panel.textContent).toContain('Podgląd niedostępny')
+    })
+
     it('shows the preview and does not execute on the first click', async () => {
         const { executeCalls } = installPreviewFetch()
         renderWithProviders(<ShippingView />)

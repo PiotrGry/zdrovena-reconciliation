@@ -861,18 +861,19 @@ class TestExecutePreviewEndpoint:
         assert resp.status_code == 200, resp.text
         mock_run.assert_called_once()
 
-    def test_preview_for_apaczka_says_so_instead_of_faking_a_payload(self, client, store):
+    def test_preview_for_apaczka_renders_a_real_payload(self, client, store):
+        """Apaczka used to get an empty parcel list and an "InPost only" note.
+        It is the courier that actually ships today, so it gets a real preview."""
         draft = _seed_error_draft(store, courier="apaczka", service="apaczka_courier")
-        with patch(
-            "zdrovena.api.routers.webhooks._get_pickup_address",
-            return_value={"name": "Zdrovena"},
-        ):
+        store.update_draft(draft["id"], {"apaczka_service_id": "42"})
+        with patch("zdrovena.api.routers.webhooks._get_pickup_address", return_value=_PICKUP):
             resp = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["courier"] == "apaczka"
-        assert body["parcels"] == []
-        assert body["note"]
+        assert body["preview_available"] is True
+        assert body["parcels"] and "payload" in body["parcels"][0]
+        assert "note" not in body
 
 
 # ── Order pickup ──────────────────────────────────────────────────────────────
@@ -3678,3 +3679,114 @@ class TestTrackingAssignedCoversEveryPath:
             r.getMessage() for r in caplog.records if "draft.tracking_assigned" in r.getMessage()
         ]
         assert events, "an Allegro waybill is a tracking number like any other"
+
+
+_APACZKA_DRAFT = {
+    "id": "d-apaczka",
+    "shopify_order_number": "1052",
+    "courier": "apaczka",
+    "service": "apaczka",
+    "apaczka_service_id": "42",
+    "receiver": {
+        "first_name": "Ewa",
+        "last_name": "Zielinska",
+        "email": "ewa@z.pl",
+        "phone": "600300400",
+        "locker_id": "",
+    },
+    "shipping_address": {
+        "street": "Polna",
+        "building_number": "7",
+        "city": "Gdansk",
+        "post_code": "80-001",
+    },
+}
+
+_PICKUP = {
+    "name": "Zdrovena",
+    "firstname": "",
+    "lastname": "Zdrovena",
+    "email": "info@wodahumio.pl",
+    "phone": "723624437",
+    "street": "Naściszowa",
+    "building_number": "41",
+    "city": "Naściszowa",
+    "post_code": "33-300",
+}
+
+
+class TestApaczkaPayloadPlan:
+    """Apaczka is the courier that actually ships today, so its preview has to
+    be as trustworthy as InPost's — same identity guarantee, same boundary."""
+
+    def test_plan_lists_one_payload_per_parcel_and_sends_nothing(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="x"):
+            with patch("zdrovena.common.apaczka.ApaczkaClient._call") as mock_call:
+                plan = wh._apaczka_payload_plan(_APACZKA_DRAFT, _PICKUP)
+
+        assert len(plan) >= 1
+        assert "payload" in plan[0]
+        mock_call.assert_not_called()
+
+    def test_preview_payload_is_what_the_execution_path_sends(self):
+        """The preview is worthless if it can differ from the real request."""
+        from zdrovena.api.routers import webhooks as wh
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="x"):
+            plan = wh._apaczka_payload_plan(_APACZKA_DRAFT, _PICKUP)
+
+            with patch(
+                "zdrovena.common.apaczka.ApaczkaClient._call",
+                return_value={"response": {"order": {"id": "ap-1", "waybill_number": "W1"}}},
+            ) as mock_call:
+                wh._run_apaczka(_APACZKA_DRAFT, _PICKUP, MagicMock())
+
+        sent = [c.args[1]["order"] for c in mock_call.call_args_list]
+        assert sent == [entry["payload"] for entry in plan]
+
+    def test_sender_on_the_payload_is_the_pickup_address(self):
+        """Deliberate asymmetry with InPost — Naściszowa, not Kraków."""
+        from zdrovena.api.routers import webhooks as wh
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="x"):
+            plan = wh._apaczka_payload_plan(_APACZKA_DRAFT, _PICKUP)
+
+        sender = plan[0]["payload"]["address"]["sender"]
+        assert sender["city"] == "Naściszowa"
+        assert sender["postal_code"] == "33-300"
+
+
+class TestApaczkaPreviewEndpoint:
+    def _seed(self, store):
+        draft = dict(_APACZKA_DRAFT, id="draft-apz-preview", status="error")
+        store.upsert_draft(draft)
+        return draft
+
+    def test_apaczka_preview_returns_real_payloads(self, client, store):
+        draft = self._seed(store)
+        with patch("zdrovena.api.routers.webhooks._get_pickup_address", return_value=_PICKUP):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["courier"] == "apaczka"
+        assert body["parcels"], "Apaczka is the courier that actually ships — it needs a preview"
+        assert "payload" in body["parcels"][0]
+        assert "note" not in body
+
+    def test_apaczka_preview_sender_is_the_pickup_address(self, client, store):
+        draft = self._seed(store)
+        with patch("zdrovena.api.routers.webhooks._get_pickup_address", return_value=_PICKUP):
+            body = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview").json()
+        assert body["sender"]["city"] == "Naściszowa"
+
+    def test_couriers_without_a_preview_say_so_explicitly(self, client, store):
+        """An empty parcel list dressed up as a preview is worse than none —
+        it invites the operator to confirm having seen nothing."""
+        draft = dict(_APACZKA_DRAFT, id="draft-allegro-preview", courier="allegro_delivery")
+        store.upsert_draft(draft)
+        body = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview").json()
+        assert body["parcels"] == []
+        assert body["preview_available"] is False
+        assert "Allegro" in body["note"]
