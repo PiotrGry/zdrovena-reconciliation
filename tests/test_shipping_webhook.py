@@ -3781,12 +3781,105 @@ class TestApaczkaPreviewEndpoint:
             body = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview").json()
         assert body["sender"]["city"] == "Naściszowa"
 
-    def test_couriers_without_a_preview_say_so_explicitly(self, client, store):
-        """An empty parcel list dressed up as a preview is worse than none —
-        it invites the operator to confirm having seen nothing."""
-        draft = dict(_APACZKA_DRAFT, id="draft-allegro-preview", courier="allegro_delivery")
+    def test_allegro_preview_renders_the_fetched_payload(self, client, store):
+        draft = dict(_ALLEGRO_DRAFT, id="draft-allegro-preview", status="error")
         store.upsert_draft(draft)
-        body = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview").json()
-        assert body["parcels"] == []
+        allegro = MagicMock()
+        allegro.get_delivery_proposal.return_value = _ALLEGRO_PROPOSAL
+
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            body = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview").json()
+
+        assert body["preview_available"] is True
+        assert body["parcels"][0]["payload"]["receiver"]["name"] == "Ola Wisniewska"
+        allegro.create_ship_with_allegro_shipment.assert_not_called()
+
+    def test_allegro_outage_blocks_confirmation_instead_of_hiding(self, client, store):
+        """The execute path calls the same endpoint, so failing closed costs
+        nothing that was not already lost — and it stops the operator
+        confirming a shipment that could never have been created."""
+        from zdrovena.common.shipping_exceptions import CourierTransientError
+
+        draft = dict(_ALLEGRO_DRAFT, id="draft-allegro-down", status="error")
+        store.upsert_draft(draft)
+        allegro = MagicMock()
+        allegro.get_delivery_proposal.side_effect = CourierTransientError(
+            "Allegro unavailable", courier="allegro", action="delivery_proposal"
+        )
+
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
         assert body["preview_available"] is False
+        assert body["parcels"] == []
         assert "Allegro" in body["note"]
+
+
+_ALLEGRO_DRAFT = {
+    "id": "d-allegro",
+    "shopify_order_number": "1053",
+    "external_order_id": "allegro-order-9",
+    "courier": "allegro_delivery",
+    "service": "allegro_delivery",
+    "receiver": {"first_name": "Ola", "last_name": "Wisniewska", "locker_id": ""},
+    "shipping_address": {"street": "Lipowa", "building_number": "3", "city": "Lodz"},
+}
+
+_ALLEGRO_PROPOSAL = {
+    "senderData": {"name": "Maria Gryzło ZDROVENA", "street": "Cieszynska 6/12"},
+    "receiverData": {"name": "Ola Wisniewska", "street": "Lipowa 3", "city": "Lodz"},
+}
+
+
+class TestAllegroPayloadPlan:
+    """Allegro's payload is only knowable after asking Allegro, so the preview
+    makes one read-only GET. The execute path calls the same endpoint, so
+    failing closed costs nothing that was not already lost."""
+
+    def _client(self):
+        c = MagicMock()
+        c.get_delivery_proposal.return_value = _ALLEGRO_PROPOSAL
+        return c
+
+    def test_plan_fetches_the_proposal_and_creates_nothing(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        client = self._client()
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=client):
+            plan = wh._allegro_payload_plan(_ALLEGRO_DRAFT)
+
+        client.get_delivery_proposal.assert_called_once_with("allegro-order-9")
+        client.create_ship_with_allegro_shipment.assert_not_called()
+        assert plan and "payload" in plan[0]
+        assert plan[0]["payload"]["receiver"]["name"] == "Ola Wisniewska"
+
+    def test_preview_payload_is_what_the_execution_path_sends(self):
+        """Identical but for command_id, which is a fresh idempotency key per
+        send and therefore cannot match by design."""
+        from zdrovena.api.routers import webhooks as wh
+
+        client = self._client()
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=client):
+            plan = wh._allegro_payload_plan(_ALLEGRO_DRAFT)
+            client.wait_for_ship_with_allegro_shipment.return_value = "ship-9"
+            client.get_ship_with_allegro_shipment.return_value = {}
+            client.extract_shipment_waybill.return_value = ("c", "AWB-9")
+            wh._run_allegro_delivery(_ALLEGRO_DRAFT, MagicMock())
+
+        sent = dict(client.create_ship_with_allegro_shipment.call_args.kwargs)
+        sent.pop("command_id")
+        assert sent == plan[0]["payload"]
+
+    def test_plan_surfaces_an_allegro_outage_instead_of_guessing(self):
+        from zdrovena.api.routers import webhooks as wh
+        from zdrovena.common.shipping_exceptions import CourierTransientError
+
+        client = self._client()
+        client.get_delivery_proposal.side_effect = CourierTransientError(
+            "Allegro down", courier="allegro", action="delivery_proposal"
+        )
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=client):
+            with pytest.raises(CourierTransientError):
+                wh._allegro_payload_plan(_ALLEGRO_DRAFT)
