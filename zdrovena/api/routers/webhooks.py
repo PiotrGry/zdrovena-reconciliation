@@ -1088,6 +1088,107 @@ def _run_inpost(
     return _shipment_patch(existing)
 
 
+def _apaczka_call_specs(
+    draft: dict[str, Any],
+    pickup_address: dict[str, str],
+    *,
+    pickup_date: str | None = None,
+    pickup_from: str | None = None,
+    pickup_to: str | None = None,
+) -> list[dict[str, Any]]:
+    """Turn a draft into one set of Apaczka builder arguments per parcel.
+
+    Both the preview and the real send consume this, which is what makes the
+    preview honest. Parcels already created are skipped here too, so the preview
+    shows what a retry would actually do rather than the original full set.
+    """
+    from zdrovena.common.inpost import PARCEL_SPECS
+
+    receiver = draft.get("receiver") or {}
+    pickup_point = draft.get("pickup_point") or {}
+    receiver_point_id = str(pickup_point.get("id") or receiver.get("locker_id") or "").strip()
+    addr = draft.get("shipping_address") or {}
+    customer_name = f"{receiver.get('first_name', '')} {receiver.get('last_name', '')}".strip()
+
+    existing = list(draft.get("courier_shipments") or [])
+    existing_keys = {
+        (str(item.get("package_type")), int(item.get("package_number") or 1)) for item in existing
+    }
+
+    specs: list[dict[str, Any]] = []
+    for package_type, package_number, package_count in _physical_parcels(draft):
+        if (package_type, package_number) in existing_keys:
+            continue
+        spec = PARCEL_SPECS.get(package_type, PARCEL_SPECS["1-pak"])
+        specs.append(
+            {
+                "package_type": package_type,
+                "package_number": package_number,
+                "kwargs": {
+                    "receiver_name": customer_name,
+                    "receiver_firstname": receiver.get("first_name", ""),
+                    "receiver_lastname": receiver.get("last_name", ""),
+                    "receiver_email": receiver.get("email", ""),
+                    "receiver_phone": receiver.get("phone", ""),
+                    "receiver_address": " ".join(
+                        filter(
+                            None,
+                            [
+                                addr.get("street", ""),
+                                addr.get("building_number", ""),
+                                addr.get("flat_number", ""),
+                            ],
+                        )
+                    ),
+                    "receiver_city": addr.get("city", ""),
+                    "receiver_zip": addr.get("post_code", ""),
+                    "receiver_point_id": receiver_point_id or None,
+                    # Deliberate: Apaczka prints the pickup address (Naściszowa)
+                    # as the sender, while InPost prints the registered address
+                    # (Kraków). Verified against real Pocztex and DPD waybills.
+                    # Do not "align" the two couriers.
+                    "sender": pickup_address,
+                    "reference": _shipment_reference(
+                        str(draft.get("shopify_order_number", "")),
+                        package_type,
+                        package_number,
+                        package_count,
+                    ),
+                    "weight_kg": spec["weight_kg"],
+                    "width_cm": spec["width"],
+                    "height_cm": spec["height"],
+                    "depth_cm": spec["length"],
+                    "pickup_date": pickup_date,
+                    "pickup_from": pickup_from,
+                    "pickup_to": pickup_to,
+                },
+            }
+        )
+    return specs
+
+
+def _apaczka_payload_plan(
+    draft: dict[str, Any], pickup_address: dict[str, str]
+) -> list[dict[str, Any]]:
+    """Return the exact Apaczka orders this draft would send, without sending."""
+    from zdrovena.common.apaczka import ApaczkaClient
+
+    service_id = draft.get("apaczka_service_id")
+    client = ApaczkaClient("preview", "preview", service_id, None)
+    plan: list[dict[str, Any]] = []
+    for spec in _apaczka_call_specs(draft, pickup_address):
+        plan.append(
+            {
+                "service": draft.get("service"),
+                "package_type": spec["package_type"],
+                "package_number": spec["package_number"],
+                "reference": spec["kwargs"]["reference"],
+                "payload": client.build_shipment_order(**spec["kwargs"]),
+            }
+        )
+    return plan
+
+
 def _run_apaczka(
     draft: dict[str, Any],
     pickup_address: dict[str, str] | None,
@@ -1142,57 +1243,19 @@ def _run_apaczka(
         )
     client = ApaczkaClient(app_id, app_secret, service_id, storage)
     pickup_address = pickup_address or _get_pickup_address()
-    addr = draft.get("shipping_address") or {}
-    customer_name = f"{receiver.get('first_name', '')} {receiver.get('last_name', '')}".strip()
-    from zdrovena.common.inpost import PARCEL_SPECS
-
     existing = list(draft.get("courier_shipments") or [])
-    existing_keys = {
-        (str(item.get("package_type")), int(item.get("package_number") or 1)) for item in existing
-    }
-    for package_type, package_number, package_count in _physical_parcels(draft):
-        if (package_type, package_number) in existing_keys:
-            continue
-        spec = PARCEL_SPECS.get(package_type, PARCEL_SPECS["1-pak"])
-        result = client.create_shipment(
-            receiver_name=customer_name,
-            receiver_firstname=receiver.get("first_name", ""),
-            receiver_lastname=receiver.get("last_name", ""),
-            receiver_email=receiver.get("email", ""),
-            receiver_phone=receiver.get("phone", ""),
-            receiver_address=" ".join(
-                filter(
-                    None,
-                    [
-                        addr.get("street", ""),
-                        addr.get("building_number", ""),
-                        addr.get("flat_number", ""),
-                    ],
-                )
-            ),
-            receiver_city=addr.get("city", ""),
-            receiver_zip=addr.get("post_code", ""),
-            receiver_point_id=receiver_point_id or None,
-            # Deliberate: Apaczka prints the pickup address (Naściszowa) as the
-            # sender, while InPost prints the registered address (Kraków).
-            # Verified against real Pocztex and DPD waybills. The asymmetry reads
-            # like a bug but is not one — do not "align" the two couriers.
-            # See docs/superpowers/specs/2026-07-31-shipping-trust-and-observability-design.md
-            sender=pickup_address,
-            reference=_shipment_reference(
-                str(draft.get("shopify_order_number", "")),
-                package_type,
-                package_number,
-                package_count,
-            ),
-            weight_kg=spec["weight_kg"],
-            width_cm=spec["width"],
-            height_cm=spec["height"],
-            depth_cm=spec["length"],
-            pickup_date=pickup_date,
-            pickup_from=pickup_from,
-            pickup_to=pickup_to,
-        )
+
+    # Same specs the preview renders — see _apaczka_call_specs.
+    for call_spec in _apaczka_call_specs(
+        draft,
+        pickup_address,
+        pickup_date=pickup_date,
+        pickup_from=pickup_from,
+        pickup_to=pickup_to,
+    ):
+        package_type = call_spec["package_type"]
+        package_number = call_spec["package_number"]
+        result = client.create_shipment(**call_spec["kwargs"])
         shipment = {
             "id": str(result.get("id", "")),
             "tracking_number": str(result.get("waybill_number") or ""),
@@ -2384,19 +2447,39 @@ def preview_execute_draft(
 def _execution_preview(draft: dict[str, Any]) -> dict[str, Any]:
     """Build a courier preview and a fingerprint of the reviewed snapshot."""
     courier = draft.get("courier", "apaczka")
-    sender = _get_sender()
     if courier == "inpost":
+        sender = _get_sender()
         preview: dict[str, Any] = {
             "courier": courier,
             "sender": sender,
             "parcels": _inpost_payload_plan(draft, sender),
+            "preview_available": True,
         }
-    else:
+    elif courier == "apaczka":
+        # Apaczka prints the pickup address as sender — deliberate, see
+        # _apaczka_call_specs.
+        pickup_address = _get_pickup_address()
         preview = {
             "courier": courier,
-            "sender": _get_pickup_address() if courier == "apaczka" else sender,
+            "sender": pickup_address,
+            "parcels": _apaczka_payload_plan(draft, pickup_address),
+            "preview_available": True,
+        }
+    else:
+        # Allegro Delivery builds its payload from a live delivery proposal
+        # (see _run_allegro_delivery), so it cannot be rendered without calling
+        # Allegro. Say so plainly: an empty parcel list dressed up as a preview
+        # would invite the operator to confirm having seen nothing, which is
+        # worse than offering no preview at all.
+        preview = {
+            "courier": courier,
+            "sender": _get_sender(),
             "parcels": [],
-            "note": "Preview is currently available for InPost only.",
+            "preview_available": False,
+            "note": (
+                "Podgląd niedostępny dla Allegro Delivery — payload powstaje "
+                "z propozycji dostawy pobieranej z Allegro w chwili wysyłki."
+            ),
         }
 
     # Bind the confirmation to both what was displayed and the complete draft
