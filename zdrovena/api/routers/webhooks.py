@@ -1271,6 +1271,85 @@ def _run_apaczka(
     return _shipment_patch(existing)
 
 
+# Allegro create-commands enum for the InPost sending mode. Contract per Allegro
+# issue #9915: parcel_locker | dispatch_order | pop | any_point. Only sent for
+# InPost drafts; other carriers derive the field from the order.
+_ALLEGRO_INPOST_SENDING_METHODS = frozenset({"parcel_locker", "dispatch_order", "pop", "any_point"})
+
+
+def _allegro_call_spec(draft: dict[str, Any], proposal: dict[str, Any]) -> dict[str, Any]:
+    """Build the create-commands arguments from a draft and Allegro's proposal.
+
+    Everything except ``command_id``, which is a fresh idempotency key minted per
+    send and therefore cannot be previewed. Both the preview and the real send
+    consume this, so the two cannot drift.
+    """
+    # FLAT dimensions, each a {"value", "unit"} object; weight unit is the
+    # plural "KILOGRAMS"; type is required.
+    weight_kg, dims = _parcel_weight_and_dims(draft)
+    packages = [
+        {
+            "type": "PACKAGE",
+            "length": {"value": dims["length"], "unit": "CENTIMETER"},
+            "width": {"value": dims["width"], "unit": "CENTIMETER"},
+            "height": {"value": dims["height"], "unit": "CENTIMETER"},
+            "weight": {"value": round(weight_kg, 2), "unit": "KILOGRAMS"},
+        }
+    ]
+
+    # sender/receiver are required by the API and come prefilled with the
+    # buyer's address by Allegro — which is exactly why the preview has to ask.
+    sender = proposal.get("senderData") or {}
+    receiver = dict(proposal.get("receiverData") or {})
+
+    # Pickup-point / locker code lives inside the receiver block as `point`.
+    pickup_point_id = (draft.get("receiver") or {}).get("locker_id") or None
+    if pickup_point_id:
+        receiver["point"] = pickup_point_id
+
+    additional_properties: dict[str, Any] | None = None
+    sending_method = draft.get("allegro_sending_method")
+    if sending_method and sending_method in _ALLEGRO_INPOST_SENDING_METHODS:
+        additional_properties = {"inpost#sendingMethod": sending_method}
+
+    return {
+        "order_id": str(draft.get("external_order_id") or ""),
+        # Optional since 2026-07-01 — Allegro auto-derives it from the order.
+        "delivery_method_id": draft.get("allegro_delivery_method_id") or None,
+        "credentials_id": draft.get("allegro_credentials_id"),
+        "packages": packages,
+        "sender": sender,
+        "receiver": receiver,
+        "additional_properties": additional_properties,
+    }
+
+
+def _allegro_payload_plan(draft: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the exact create-command Allegro would receive, without sending.
+
+    Costs one read-only GET to Allegro. The execute path calls the same
+    endpoint, so a failure here would have failed there too — letting it
+    propagate is what keeps the operator from confirming a shipment that could
+    never have been created.
+    """
+    order_id = str(draft.get("external_order_id") or "")
+    if not order_id:
+        raise RuntimeError("Ship with Allegro requires external_order_id")
+    client = _get_allegro_client()
+    if client is None:
+        raise RuntimeError("Allegro client is not configured")
+    proposal = client.get_delivery_proposal(order_id)
+    return [
+        {
+            "service": draft.get("service"),
+            "package_type": "allegro",
+            "package_number": 1,
+            "reference": order_id,
+            "payload": _allegro_call_spec(draft, proposal),
+        }
+    ]
+
+
 def _run_allegro_delivery(
     draft: dict[str, Any],
     storage: Any,
@@ -1334,63 +1413,11 @@ def _run_allegro_delivery(
     order_id = str(draft.get("external_order_id") or "")
     if not order_id:
         raise RuntimeError("Ship with Allegro requires external_order_id")
-    # deliveryMethodId is optional since 2026-07-01 — Allegro auto-derives it
-    # from the order. Kept read here so callers with own agreements can still
-    # force a specific method by populating allegro_delivery_method_id in the
-    # draft, but its absence must NOT abort the flow.
-    delivery_method_id = draft.get("allegro_delivery_method_id") or None
-
-    # Build packages per Allegro create-commands contract: FLAT dimensions, each a
-    # {"value", "unit"} object; weight unit is the plural "KILOGRAMS"; type is required.
-    weight_kg, dims = _parcel_weight_and_dims(draft)
-    packages = [
-        {
-            "type": "PACKAGE",
-            "length": {"value": dims["length"], "unit": "CENTIMETER"},
-            "width": {"value": dims["width"], "unit": "CENTIMETER"},
-            "height": {"value": dims["height"], "unit": "CENTIMETER"},
-            "weight": {"value": round(weight_kg, 2), "unit": "KILOGRAMS"},
-        }
-    ]
-
-    # sender/receiver blocks are required by the API. Pull them from the order's
-    # delivery proposal (prefilled with the buyer's address by Allegro).
     proposal = client.get_delivery_proposal(order_id)
-    sender = proposal.get("senderData") or {}
-    receiver = dict(proposal.get("receiverData") or {})
-
-    # Pickup-point / locker code lives inside the receiver block as `point`.
-    pickup_point_id = (draft.get("receiver") or {}).get("locker_id") or None
-    if pickup_point_id:
-        receiver["point"] = pickup_point_id
-
-    # Map InPost sending mode to Allegro additionalProperties.inpost#sendingMethod.
-    # Contract per Allegro issue #9915 (https://github.com/allegro/allegro-api/issues/9915):
-    # valid enum values are parcel_locker | dispatch_order | pop | any_point.
-    # Only sent for InPost draft s; other carriers derive the field from the order.
-    _ALLEGRO_INPOST_SENDING_METHODS = {
-        "parcel_locker",
-        "dispatch_order",
-        "pop",
-        "any_point",
-    }
-    additional_properties: dict[str, Any] | None = None
-    sending_method = draft.get("allegro_sending_method")
-    if sending_method and sending_method in _ALLEGRO_INPOST_SENDING_METHODS:
-        additional_properties = {"inpost#sendingMethod": sending_method}
-
+    call_spec = _allegro_call_spec(draft, proposal)
     command_id = str(_uuid.uuid4())
 
-    client.create_ship_with_allegro_shipment(
-        command_id=command_id,
-        order_id=order_id,
-        delivery_method_id=delivery_method_id,
-        credentials_id=draft.get("allegro_credentials_id"),
-        packages=packages,
-        sender=sender,
-        receiver=receiver,
-        additional_properties=additional_properties,
-    )
+    client.create_ship_with_allegro_shipment(command_id=command_id, **call_spec)
 
     # Non-blocking: krótki polling ~3s. Jeśli create-command jeszcze IN_PROGRESS — zwracamy
     # status='pending_confirmation' i zostawiamy dopytanie o waybill oddzielnemu workerowi.
@@ -2468,21 +2495,42 @@ def _execution_preview(draft: dict[str, Any]) -> dict[str, Any]:
             "parcels": _apaczka_payload_plan(draft, pickup_address),
             "preview_available": True,
         }
+    elif courier == "allegro_delivery":
+        # Allegro fills the sender and the buyer's address itself, so the payload
+        # is only knowable after asking. One read-only GET.
+        try:
+            parcels = _allegro_payload_plan(draft)
+        except Exception as exc:
+            # Fail closed. The execute path calls the same endpoint, so this
+            # request would have failed there too — refusing to confirm costs
+            # nothing that was not already lost, and stops the operator
+            # certifying a shipment that could never have been created.
+            logger.warning("Allegro preview unavailable for draft %s: %s", draft.get("id"), exc)
+            preview = {
+                "courier": courier,
+                "sender": {},
+                "parcels": [],
+                "preview_available": False,
+                "note": (
+                    "Nie udało się pobrać propozycji dostawy z Allegro, więc nie "
+                    "wiadomo, co dokładnie zostałoby wysłane. Wysyłka i tak by się "
+                    "nie powiodła — spróbuj ponownie za chwilę."
+                ),
+            }
+        else:
+            preview = {
+                "courier": courier,
+                "sender": (parcels[0]["payload"].get("sender") if parcels else {}) or {},
+                "parcels": parcels,
+                "preview_available": True,
+            }
     else:
-        # Allegro Delivery builds its payload from a live delivery proposal
-        # (see _run_allegro_delivery), so it cannot be rendered without calling
-        # Allegro. Say so plainly: an empty parcel list dressed up as a preview
-        # would invite the operator to confirm having seen nothing, which is
-        # worse than offering no preview at all.
         preview = {
             "courier": courier,
             "sender": _get_sender(),
             "parcels": [],
             "preview_available": False,
-            "note": (
-                "Podgląd niedostępny dla Allegro Delivery — payload powstaje "
-                "z propozycji dostawy pobieranej z Allegro w chwili wysyłki."
-            ),
+            "note": f"Podgląd nie jest jeszcze dostępny dla kuriera {courier}.",
         }
 
     # Bind the confirmation to both what was displayed and the complete draft
