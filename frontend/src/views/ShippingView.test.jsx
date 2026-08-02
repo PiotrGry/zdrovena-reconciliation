@@ -521,6 +521,67 @@ describe('execute preview', () => {
         expect(panel.textContent).toContain('Podgląd niedostępny')
     })
 
+    it('renders an Allegro payload fetched from Allegro', async () => {
+        mockFetch((url, init = {}) => {
+            if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
+            if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'allegro_delivery' })] })
+            if (url.endsWith('/execute/preview')) return jsonResponse({
+                fingerprint: 'allegro-ok',
+                courier: 'allegro_delivery',
+                preview_available: true,
+                sender: { name: 'Maria Gryzło ZDROVENA' },
+                parcels: [{
+                    service: 'allegro_delivery',
+                    package_type: 'allegro',
+                    package_number: 1,
+                    reference: 'allegro-order-9',
+                    payload: {
+                        order_id: 'allegro-order-9',
+                        receiver: { name: 'Ola Wisniewska', street: 'Lipowa 3', city: 'Lodz' },
+                        packages: [{
+                            type: 'PACKAGE',
+                            length: { value: 30, unit: 'CENTIMETER' },
+                            width: { value: 20, unit: 'CENTIMETER' },
+                            height: { value: 20, unit: 'CENTIMETER' },
+                            weight: { value: 6, unit: 'KILOGRAMS' },
+                        }],
+                    },
+                }],
+            })
+            throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
+        })
+        renderWithProviders(<ShippingView />)
+
+        await openExecute()
+        const panel = await screen.findByTestId('execute-preview')
+        expect(panel.textContent).toContain('Ola Wisniewska')
+        expect(panel.textContent).toContain('6 kg')
+        expect(screen.getByTestId('execute-preview-confirm').disabled).toBe(false)
+    })
+
+    it('blocks confirmation when the courier payload could not be fetched', async () => {
+        // Fail closed: the operator must not certify a shipment nobody can see.
+        mockFetch((url, init = {}) => {
+            if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
+            if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'allegro_delivery' })] })
+            if (url.endsWith('/execute/preview')) return jsonResponse({
+                fingerprint: 'allegro-down',
+                courier: 'allegro_delivery',
+                preview_available: false,
+                sender: {},
+                parcels: [],
+                note: 'Nie udało się pobrać propozycji dostawy z Allegro.',
+            })
+            throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
+        })
+        renderWithProviders(<ShippingView />)
+
+        await openExecute()
+        const panel = await screen.findByTestId('execute-preview')
+        expect(panel.textContent).toContain('Nie udało się pobrać')
+        expect(screen.getByTestId('execute-preview-confirm').disabled).toBe(true)
+    })
+
     it('shows the preview and does not execute on the first click', async () => {
         const { executeCalls } = installPreviewFetch()
         renderWithProviders(<ShippingView />)

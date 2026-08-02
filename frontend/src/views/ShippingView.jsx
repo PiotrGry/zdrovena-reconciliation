@@ -480,10 +480,33 @@ function ApaczkaPreviewParcel({ entry }) {
     )
 }
 
+function AllegroPreviewParcel({ entry }) {
+    const payload = entry.payload || {}
+    const receiver = payload.receiver || {}
+    const box = (payload.packages || [])[0] || {}
+    const dimsText = box.length
+        ? `${box.length.value} × ${box.width?.value} × ${box.height?.value} cm`
+        : ''
+
+    return (
+        <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {previewLine('Usługa', entry.service)}
+            {previewLine('Zamówienie Allegro', payload.order_id || entry.reference)}
+            {previewLine('Odbiorca', receiver.name)}
+            {previewLine('Adres', [receiver.street, [receiver.postCode, receiver.city].filter(Boolean).join(' ')].filter(Boolean).join(', '))}
+            {previewLine('Punkt odbioru', receiver.point)}
+            {previewLine('Wymiary', dimsText)}
+            {previewLine('Waga', box.weight?.value != null ? `${box.weight.value} kg` : '')}
+        </div>
+    )
+}
+
 function ExecutePreviewParcel({ entry }) {
     const payload = entry.payload || {}
-    // Apaczka nests everything under `address`; ShipX has a flat `receiver`.
+    // Three couriers, three unrelated payload shapes. Read each on its own
+    // terms: a shared intermediate could show something no courier receives.
     if (payload.address) return <ApaczkaPreviewParcel entry={entry} />
+    if (payload.packages) return <AllegroPreviewParcel entry={entry} />
     const parcel = (payload.parcels || [])[0] || {}
     const dims = parcel.dimensions
     // ShipX carries dimensions in mm; the operator thinks in cm, as the boxes are labelled.
@@ -1110,7 +1133,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 panelTestId="execute-preview"
                                 confirmTestId="execute-preview-confirm"
                                 confirmLabel="Wyślij do kuriera"
-                                confirmDisabled={!executePreview.data}
+                                confirmDisabled={!executePreview.data || executePreview.data.preview_available === false}
                                 withSchedule={needsPickupSchedule}
                                 onCancel={() => setExecutePreview(null)}
                                 onConfirm={schedule => {
