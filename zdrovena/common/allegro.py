@@ -544,7 +544,10 @@ class AllegroClient:
             stacklevel=2,
         )
         data = self._get("/shipment-management/delivery-services")
-        return list(data.get("deliveryServices") or [])
+        # Current API response uses ``services``. Keep the legacy key as a
+        # read-only fallback for old sandbox responses during Allegro's
+        # endpoint deprecation window.
+        return list(data.get("services") or data.get("deliveryServices") or [])
 
     def get_delivery_proposal(self, order_id: str) -> dict[str, Any]:
         """Proposed shipping data prefilled from the order."""
@@ -606,9 +609,37 @@ class AllegroClient:
         if additional_properties:
             input_body["additionalProperties"] = dict(additional_properties)
 
+        if not sender:
+            raise AllegroBusinessError(
+                detail="Allegro create-command requires input.sender",
+                action="create_ship_with_allegro_shipment",
+            )
+        if not receiver:
+            raise AllegroBusinessError(
+                detail="Allegro create-command requires input.receiver",
+                action="create_ship_with_allegro_shipment",
+            )
+        if not str(receiver.get("email") or "").strip():
+            raise AllegroBusinessError(
+                detail="Allegro create-command requires input.receiver.email",
+                action="create_ship_with_allegro_shipment",
+            )
+        if not packages:
+            raise AllegroBusinessError(
+                detail="Allegro create-command requires at least one package",
+                action="create_ship_with_allegro_shipment",
+            )
+        for index, package in enumerate(packages):
+            if not isinstance(package, dict) or not package.get("type"):
+                raise AllegroBusinessError(
+                    detail=f"Allegro create-command requires input.packages[{index}].type",
+                    action="create_ship_with_allegro_shipment",
+                )
+
         return self._post(
             "/shipment-management/shipments/create-commands",
             {"commandId": command_id, "input": input_body},
+            extra_headers={"Content-Type": _ACCEPT_HEADER},
         )
 
     def get_ship_with_allegro_command_status(self, command_id: str) -> dict[str, Any]:

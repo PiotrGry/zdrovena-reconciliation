@@ -89,6 +89,8 @@ services:
       - ./zdrovena:/app/zdrovena
     environment:
       APP_ENV: "development"
+      FAKE_APACZKA_APP_ID: "${APACZKA_APP_ID:-fake}"
+      FAKE_APACZKA_APP_SECRET: "${APACZKA_APP_SECRET:-fake}"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9009/health')"]
       interval: 10s

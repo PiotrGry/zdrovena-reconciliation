@@ -234,6 +234,7 @@ class ApaczkaClient:
         receiver_point_id: str | None = None,
         sender: dict[str, str],
         reference: str,
+        content: str,
         weight_kg: float = 1.0,
         width_cm: float = 20.0,
         height_cm: float = 15.0,
@@ -245,6 +246,14 @@ class ApaczkaClient:
         """pickup_date: YYYY-MM-DD, pickup_from/pickup_to: HH:MM.
         Available slots from Apaczka pickup_hours endpoint (today + 3 biz days).
         """
+        shipment_content = content.strip()
+        if not shipment_content:
+            raise ApaczkaBusinessError(
+                "Apaczka order.content is required",
+                courier="apaczka",
+                action="create_shipment",
+            )
+
         pickup: dict[str, Any] = {"type": "COURIER"}
         if pickup_date:
             pickup["date"] = pickup_date
@@ -300,6 +309,7 @@ class ApaczkaClient:
                 }
             ],
             "pickup": pickup,
+            "content": shipment_content,
         }
         result = self._call("order_send", {"order": order})
         response = result.get("response", {})

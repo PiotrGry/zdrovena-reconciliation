@@ -70,7 +70,7 @@ class TestGetDeliveryServices:
         with patch.object(
             c._session,
             "request",
-            return_value=_mock_response(200, {"deliveryServices": services}),
+            return_value=_mock_response(200, {"services": services}),
         ):
             result = c.get_delivery_services()
         assert result == services
@@ -89,7 +89,7 @@ class TestGetDeliveryServices:
         with patch.object(
             c._session,
             "request",
-            return_value=_mock_response(200, {"deliveryServices": []}),
+            return_value=_mock_response(200, {"services": []}),
         ) as m:
             c.get_delivery_services()
         url = m.call_args[0][1]
@@ -103,9 +103,12 @@ class TestGetDeliveryProposal:
     def test_returns_proposal_for_order(self):
         c = _mock_client()
         proposal = {
-            "deliveryMethodId": "svc-inpost-locker",
-            "receiver": {"name": "Jan Nowak"},
-            "packages": [{"dimensions": {"length": 30, "width": 20, "height": 15}}],
+            "orderId": "ORDER-123",
+            "suggestedInput": {
+                "receiver": {"name": "Jan Nowak"},
+                "sender": {"name": "Zdrovena"},
+                "packages": [{"type": "PACKAGE"}],
+            },
         }
         with patch.object(
             c._session,
@@ -172,6 +175,7 @@ class TestCreateShipmentCommand:
         # Verify POST body follows the create-commands contract.
         _, kwargs = m.call_args
         body = kwargs["json"]
+        assert kwargs["headers"]["Content-Type"] == ("application/vnd.allegro.public.v1+json")
         assert body["commandId"] == "cmd-uuid-1"
         # order_id is sent as referenceNumber; there is no top-level orderId.
         assert body["input"]["referenceNumber"] == "ORDER-123"
@@ -182,6 +186,32 @@ class TestCreateShipmentCommand:
         assert body["input"]["receiver"]["point"] == "WAW01A"
         assert "pickupPointId" not in body["input"]
         assert "credentialsId" not in body["input"] or body["input"]["credentialsId"] is None
+
+    @pytest.mark.parametrize(
+        ("overrides", "message"),
+        [
+            ({"sender": {}}, "input.sender"),
+            ({"receiver": {}}, "input.receiver"),
+            ({"receiver": {"name": "Buyer"}}, "receiver.email"),
+            ({"packages": []}, "at least one package"),
+            ({"packages": [{}]}, r"packages\[0\]\.type"),
+        ],
+    )
+    def test_rejects_missing_documented_required_fields_before_http(self, overrides, message):
+        c = _mock_client()
+        kwargs = {
+            "command_id": "x",
+            "order_id": "O1",
+            "credentials_id": None,
+            "sender": _SENDER,
+            "receiver": _RECEIVER,
+            "packages": [_PACKAGE],
+            **overrides,
+        }
+        with patch.object(c._session, "request") as request:
+            with pytest.raises(AllegroBusinessError, match=message):
+                c.create_ship_with_allegro_shipment(**kwargs)
+        request.assert_not_called()
 
     def test_omits_delivery_method_id_when_none(self):
         """Since 2026-07-01 deliveryMethodId is optional — Allegro derives it.

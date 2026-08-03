@@ -16,26 +16,28 @@ from zdrovena.api.routers.webhooks import (
     _maybe_push_tracking_to_allegro,
     _run_allegro_delivery,
 )
-from zdrovena.common.shipping_exceptions import CourierServerError
+from zdrovena.common.shipping_exceptions import AllegroBusinessError, CourierServerError
 
 _PROPOSAL = {
-    "senderData": {
-        "name": "Nadawca",
-        "street": "Główna 30",
-        "postalCode": "10-200",
-        "city": "Warszawa",
-        "countryCode": "PL",
-        "email": "sender@mail.com",
-        "phone": "500600700",
-    },
-    "receiverData": {
-        "name": "Jan Kowalski",
-        "street": "Testowa 1",
-        "postalCode": "00-001",
-        "city": "Warszawa",
-        "countryCode": "PL",
-        "email": "j@k.pl",
-        "phone": "600000000",
+    "suggestedInput": {
+        "sender": {
+            "name": "Nadawca",
+            "street": "Główna 30",
+            "postalCode": "10-200",
+            "city": "Warszawa",
+            "countryCode": "PL",
+            "email": "sender@mail.com",
+            "phone": "500600700",
+        },
+        "receiver": {
+            "name": "Jan Kowalski",
+            "street": "Testowa 1",
+            "postalCode": "00-001",
+            "city": "Warszawa",
+            "countryCode": "PL",
+            "email": "masked+order@allegromail.pl",
+            "phone": "600000000",
+        },
     },
 }
 
@@ -134,8 +136,8 @@ class TestRunAllegroDelivery:
         assert call.kwargs["credentials_id"] == "own-agreement-42"
         assert call.kwargs["order_id"] == "ORD-1"
         # sender/receiver blocks come from the delivery proposal.
-        assert call.kwargs["sender"] == _PROPOSAL["senderData"]
-        assert call.kwargs["receiver"]["name"] == _PROPOSAL["receiverData"]["name"]
+        assert call.kwargs["sender"] == _PROPOSAL["suggestedInput"]["sender"]
+        assert call.kwargs["receiver"]["name"] == _PROPOSAL["suggestedInput"]["receiver"]["name"]
         # sending_method is now mapped to additionalProperties; when None it's omitted.
         assert call.kwargs.get("additional_properties") is None
 
@@ -203,6 +205,22 @@ class TestRunAllegroDelivery:
         # Locker code is now carried inside the receiver block as `point`.
         assert call.kwargs["receiver"]["point"] == "WAW01A"
         assert "pickup_point_id" not in call.kwargs
+
+    def test_rejects_delivery_proposal_without_documented_suggested_input(self):
+        client = MagicMock()
+        client.get_delivery_proposal.return_value = {
+            "senderData": {"name": "legacy fake"},
+            "receiverData": {"email": "legacy@example.test"},
+        }
+
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client",
+            return_value=client,
+        ):
+            with pytest.raises(AllegroBusinessError, match="suggestedInput"):
+                _run_allegro_delivery(self._draft(), MagicMock())
+
+        client.create_ship_with_allegro_shipment.assert_not_called()
 
     def test_creates_pickup_new_format(self):
         """pickup_date + new-format pickupTimes -> passes pickup_time to client."""

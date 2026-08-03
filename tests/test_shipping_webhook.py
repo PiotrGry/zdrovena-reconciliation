@@ -1190,6 +1190,61 @@ class TestRunInpost:
         assert result["pickup_ordered"] is False
         mock_disp.assert_not_called()
 
+    def test_async_create_polls_existing_shipx_resource_for_tracking(self):
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.create_kurier_shipment",
+                return_value={"id": "ship-async", "status": "created", "tracking_number": None},
+            ):
+                with patch(
+                    "zdrovena.common.inpost.InPostClient.wait_for_shipment_confirmation",
+                    return_value={
+                        "id": "ship-async",
+                        "status": "confirmed",
+                        "tracking_number": "620ASYNC",
+                    },
+                ) as wait:
+                    result = _run_inpost(_KURIER_DRAFT, _SENDER)
+
+        wait.assert_called_once_with("ship-async", max_attempts=3, interval_s=1.0)
+        assert result["status"] == "created"
+        assert result["tracking_number"] == "620ASYNC"
+
+    def test_pending_retry_reuses_shipx_id_instead_of_sending_second_post(self):
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        draft = {
+            **_KURIER_DRAFT,
+            "status": "pending_confirmation",
+            "courier_draft_id": "ship-existing",
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as create:
+                with patch(
+                    "zdrovena.common.inpost.InPostClient.get_shipment",
+                    return_value={
+                        "id": "ship-existing",
+                        "status": "created",
+                        "tracking_number": None,
+                    },
+                ) as get:
+                    with patch(
+                        "zdrovena.common.inpost.InPostClient.wait_for_shipment_confirmation",
+                        return_value={
+                            "id": "ship-existing",
+                            "status": "confirmed",
+                            "tracking_number": "620EXISTING",
+                        },
+                    ):
+                        result = _run_inpost(draft, _SENDER)
+
+        create.assert_not_called()
+        get.assert_called_once_with("ship-existing")
+        assert result["courier_draft_id"] == "ship-existing"
+        assert result["tracking_number"] == "620EXISTING"
+
     def test_paczkomat_creates_shipment(self):
         from zdrovena.api.routers.webhooks import _run_inpost
 
@@ -1237,6 +1292,7 @@ class TestRunApaczka:
             "courier": "apaczka",
             "service": "apaczka",
             "apaczka_service_id": "53",
+            "order_items": [{"name": "HUMIO 500 ml", "quantity": 2}],
             "receiver": {
                 "first_name": "Piotr",
                 "last_name": "W",
@@ -1253,6 +1309,7 @@ class TestRunApaczka:
         assert result["courier_draft_id"] == "ap-1"
         assert result["tracking_number"] == "WAY001"
         assert result["status"] == "created"
+        assert mock_ship.call_args.kwargs["content"] == "2 x HUMIO 500 ml"
 
     def test_passes_pickup_point_to_apaczka(self):
         from zdrovena.api.routers.webhooks import _run_apaczka

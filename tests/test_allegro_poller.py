@@ -108,15 +108,55 @@ class TestPollOrdersOnce:
         assert stats["updated"] + stats["unchanged"] == 1
         store.upsert_draft.assert_called_once()
 
-    def test_error_draft_is_retried(self):
+    def test_error_draft_is_reused_as_retry_target_without_creating_new_record(self):
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
         store = MagicMock()
         store.list_drafts.return_value = [
-            {"source": "allegro", "external_order_id": "af1", "status": "error"}
+            {
+                "id": "draft-af1-error",
+                "created_at": "2026-07-01T00:00:00+00:00",
+                "source": "allegro",
+                "external_order_id": "af1",
+                "status": "error",
+                "error": "Allegro 415",
+            }
         ]
-        poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
+        stats = poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
+
+        assert stats["created"] == 0
+        assert stats["skipped_duplicate"] == 1
         assert store.upsert_draft.call_count == 1
+        saved = store.upsert_draft.call_args.args[0]
+        assert saved["id"] == "draft-af1-error"
+        assert saved["status"] == "error"
+        assert saved["error"] == "Allegro 415"
+
+    def test_non_error_draft_wins_when_legacy_duplicate_error_record_exists(self):
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af1")]
+        store = MagicMock()
+        store.list_drafts.return_value = [
+            {
+                "id": "duplicate-error",
+                "source": "allegro",
+                "external_order_id": "af1",
+                "status": "error",
+            },
+            {
+                "id": "original-created",
+                "created_at": "2026-07-01T00:00:00+00:00",
+                "source": "allegro",
+                "external_order_id": "af1",
+                "status": "created",
+            },
+        ]
+
+        stats = poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
+
+        assert stats["created"] == 0
+        saved = store.upsert_draft.call_args.args[0]
+        assert saved["id"] == "original-created"
 
     def test_replacement_draft_does_not_shadow_original_order_import(self):
         client = MagicMock()

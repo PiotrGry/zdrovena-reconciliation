@@ -862,7 +862,12 @@ def _run_inpost(
     pickup_from: str | None = None,
     pickup_to: str | None = None,
 ) -> dict[str, Any]:
-    """Create or recreate InPost shipment from stored draft fields. Returns patch dict."""
+    """Create or confirm an InPost shipment without duplicating provider writes.
+
+    ShipX creation is asynchronous.  When a previous call persisted
+    ``courier_draft_id`` with ``pending_confirmation``, this function polls that
+    resource and never sends a second POST for the same draft.
+    """
     if _MOCK_COURIER:
         ref = draft.get("shopify_order_number", "mock")
         logger.info("MOCK_COURIER: skipping InPost API for order %s", ref)
@@ -889,7 +894,10 @@ def _run_inpost(
     reference = str(draft.get("shopify_order_number", ""))
     inpost_service = "paczkomat" if draft.get("service") == "inpost_locker_standard" else "kurier"
 
-    if inpost_service == "paczkomat":
+    existing_shipment_id = str(draft.get("courier_draft_id") or "").strip()
+    if draft.get("status") == "pending_confirmation" and existing_shipment_id:
+        result = client.get_shipment(existing_shipment_id)
+    elif inpost_service == "paczkomat":
         template = _parcel_template(draft)  # fix #4: correct locker size
         result = client.create_paczkomat_shipment(
             receiver_first_name=first_name,
@@ -920,11 +928,25 @@ def _run_inpost(
             dimensions=dims,
         )
 
+    shipment_id = str(result.get("id") or existing_shipment_id)
+    if not shipment_id:
+        raise InPostBusinessError(
+            "InPost create shipment response has no id",
+            courier="inpost",
+            action="create_shipment",
+        )
+    if not result.get("tracking_number"):
+        result = client.wait_for_shipment_confirmation(
+            shipment_id,
+            max_attempts=3,
+            interval_s=1.0,
+        )
+    tracking_number = result.get("tracking_number")
     return {
-        "courier_draft_id": str(result.get("id", "")),
+        "courier_draft_id": shipment_id,
         "dispatch_order_id": None,
-        "tracking_number": result.get("tracking_number"),
-        "status": "created",
+        "tracking_number": tracking_number,
+        "status": "created" if tracking_number else "pending_confirmation",
         "pickup_ordered": False,
         "error": None,
     }
@@ -984,6 +1006,14 @@ def _run_apaczka(
     client = ApaczkaClient(app_id, app_secret, service_id, storage)
     addr = draft.get("shipping_address") or {}
     customer_name = f"{receiver.get('first_name', '')} {receiver.get('last_name', '')}".strip()
+    content_parts: list[str] = []
+    for item in draft.get("order_items") or []:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        quantity = item.get("quantity", 1)
+        content_parts.append(f"{quantity} x {name}")
+    shipment_content = ", ".join(content_parts)[:255] or "Woda butelkowana"
     result = client.create_shipment(
         receiver_name=customer_name,
         receiver_firstname=receiver.get("first_name", ""),
@@ -1005,6 +1035,7 @@ def _run_apaczka(
         receiver_point_id=receiver_point_id or None,
         sender=sender,
         reference=str(draft.get("shopify_order_number", "")),
+        content=shipment_content,
         pickup_date=pickup_date,
         pickup_from=pickup_from,
         pickup_to=pickup_to,
@@ -1102,8 +1133,19 @@ def _run_allegro_delivery(
     # sender/receiver blocks are required by the API. Pull them from the order's
     # delivery proposal (prefilled with the buyer's address by Allegro).
     proposal = client.get_delivery_proposal(order_id)
-    sender = proposal.get("senderData") or {}
-    receiver = dict(proposal.get("receiverData") or {})
+    suggested_input = proposal.get("suggestedInput")
+    if not isinstance(suggested_input, dict):
+        raise AllegroBusinessError(
+            detail="Allegro delivery proposal has no suggestedInput object",
+            action="get_delivery_proposal",
+        )
+    sender = suggested_input.get("sender") or {}
+    receiver = dict(suggested_input.get("receiver") or {})
+    if not sender or not receiver:
+        raise AllegroBusinessError(
+            detail="Allegro delivery proposal has no suggestedInput.sender or receiver",
+            action="get_delivery_proposal",
+        )
 
     # Pickup-point / locker code lives inside the receiver block as `point`.
     pickup_point_id = (draft.get("receiver") or {}).get("locker_id") or None
@@ -1655,6 +1697,11 @@ def _merge_synced_draft(existing: dict[str, Any], incoming: dict[str, Any]) -> d
             merged["fulfilled_at"] = incoming.get("source_updated_at") or incoming.get("updated_at")
     elif incoming_status == "cancelled":
         merged["status"] = "cancelled"
+    elif existing_status == "error":
+        # Source synchronization may refresh addresses/items, but an API failure
+        # remains actionable on the same row until the operator retries it.
+        merged["status"] = "error"
+        merged["error"] = existing.get("error")
     elif existing_status == "pending" and incoming_status == "needs_review":
         merged["status"] = "pending"
     else:
