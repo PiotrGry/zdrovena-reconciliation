@@ -529,22 +529,6 @@ class InPostClient:
         dimensions: dict[str, float] | None = None,
     ) -> dict[str, Any]:
         dims = dimensions or _DEFAULT_DIMS
-        sender_first_name = sender.get("firstname", "")
-        sender_last_name = sender.get("lastname", "")
-        sender_payload = {
-            "company_name": sender.get("company_name") or sender.get("name", ""),
-            "first_name": sender_first_name,
-            "last_name": sender_last_name,
-            "email": sender.get("email", ""),
-            "phone": sender.get("phone", ""),
-            "address": {
-                "street": sender.get("street", ""),
-                "building_number": sender.get("building_number", ""),
-                "city": sender.get("city", ""),
-                "post_code": sender.get("post_code", ""),
-                "country_code": sender.get("country_code", "PL"),
-            },
-        }
         payload = {
             "service": _COURIER_SERVICE,
             "reference": reference,
