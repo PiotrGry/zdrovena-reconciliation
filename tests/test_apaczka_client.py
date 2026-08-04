@@ -437,6 +437,63 @@ class TestCreateShipment:
 # ── get_label ────────────────────────────────────────────────────────────────
 
 
+class TestApaczkaPayloadBuilder:
+    """Apaczka is the courier that actually works today, so its preview matters
+    at least as much as InPost's. The preview and the real send must be the same
+    payload by construction, not two functions kept in sync by hand."""
+
+    def _kwargs(self):
+        return {
+            "receiver_name": "Jan Kowalski",
+            "receiver_firstname": "Jan",
+            "receiver_lastname": "Kowalski",
+            "receiver_email": "jan@example.com",
+            "receiver_phone": "600200300",
+            "receiver_address": "Kwiatowa 1",
+            "receiver_city": "Kraków",
+            "receiver_zip": "30-001",
+            "sender": _SENDER,
+            "reference": "order-2042",
+        }
+
+    def test_builder_matches_what_create_sends(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        built = client.build_shipment_order(**self._kwargs())
+
+        api_response = _ok_response({"status": 200, "response": {"order": {"id": "ap-1"}}})
+        with patch.object(client._session, "post", return_value=api_response) as mock_post:
+            client.create_shipment(**self._kwargs())
+
+        import json as _json
+        from urllib.parse import parse_qs
+
+        body = mock_post.call_args.kwargs.get("data") or mock_post.call_args.args[-1]
+        if isinstance(body, dict):
+            sent_request = _json.loads(body["request"])
+        else:
+            sent_request = _json.loads(parse_qs(body)["request"][0])
+
+        assert built == sent_request["order"], "preview must equal the order actually sent"
+
+    def test_builder_sends_nothing(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        with patch.object(client._session, "post") as mock_post:
+            client.build_shipment_order(**self._kwargs())
+        mock_post.assert_not_called()
+
+    def test_builder_carries_the_pickup_window(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        built = client.build_shipment_order(
+            **self._kwargs(), pickup_date="2026-08-05", pickup_from="10:00", pickup_to="14:00"
+        )
+        assert built["pickup"] == {
+            "type": "COURIER",
+            "date": "2026-08-05",
+            "hours_from": "10:00",
+            "hours_to": "14:00",
+        }
+
+
 class TestGetLabel:
     def test_decodes_base64_waybill(self):
         import base64

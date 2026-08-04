@@ -31,6 +31,25 @@ function fmtDate(iso) {
     }
 }
 
+export function printPdf(blob, title) {
+    const url = URL.createObjectURL(blob)
+    const frame = document.createElement('iframe')
+    frame.title = title
+    // Safari can print a blank PDF when its iframe is visibility:hidden. Keep
+    // it renderable while placing it outside the visible viewport.
+    frame.style.cssText = 'position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;border:0'
+    frame.src = url
+    frame.onload = () => {
+        frame.contentWindow?.focus()
+        frame.contentWindow?.print()
+    }
+    document.body.appendChild(frame)
+    window.setTimeout(() => {
+        URL.revokeObjectURL(url)
+        frame.remove()
+    }, 60_000)
+}
+
 function courierLabel(draft, apaczkaServices = []) {
     if (draft.courier === 'allegro_delivery') {
         if (draft.allegro_sending_method === 'parcel_locker') return 'Wysyłam z Allegro (Paczkomat)'
@@ -317,9 +336,11 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
                                 </table>
                             </div>
                             {preview.allegro_total_to_pay != null && (
-                                <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 6, fontSize: '0.88em',
+                                <div style={{
+                                    marginTop: 12, padding: '8px 12px', borderRadius: 6, fontSize: '0.88em',
                                     background: preview.matches_allegro ? 'var(--ok-bg, #f0fdf4)' : 'var(--warn-bg, #fffbeb)',
-                                    border: `1px solid ${preview.matches_allegro ? 'var(--ok, #86efac)' : 'var(--warn, #fcd34d)'}` }}>
+                                    border: `1px solid ${preview.matches_allegro ? 'var(--ok, #86efac)' : 'var(--warn, #fcd34d)'}`
+                                }}>
                                     {preview.matches_allegro
                                         ? <><Icon name="check" size={13} /> Zgadza się z Allegro „Do zapłaty” ({preview.allegro_total_to_pay.toFixed(2)} zł, bez dostawy)</>
                                         : <><Icon name="alertTriangle" size={13} /> Uwaga: różni się od Allegro „Do zapłaty” ({preview.allegro_total_to_pay.toFixed(2)} zł, bez dostawy){preview.difference != null && ` — różnica ${preview.difference > 0 ? '+' : ''}${preview.difference.toFixed(2)} zł`} — sprawdź przed wysłaniem</>
@@ -356,23 +377,30 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
 const _GLASS_TYPES = new Set(['szkło', 'szkło-2pak'])
 const _BOX_STYLE = {
     plastic: { color: '#3b82f6', bg: '#eff6ff', border: '#bfdbfe' },
-    glass:   { color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' },
+    glass: { color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' },
 }
 
-function isGlassName(name) {
-    return /szk[lł][eo]/i.test(name || '')
+const _PACKAGE_UNITS = {
+    '3-pak': { material: 'plastik', amount: 3 },
+    '2-pak': { material: 'plastik', amount: 2 },
+    '1-pak': { material: 'plastik', amount: 1 },
+    'pół-pak': { material: 'plastik', amount: 0.5 },
+    'szkło-2pak': { material: 'szkło', amount: 2 },
+    'szkło': { material: 'szkło', amount: 1 },
 }
 
-function materialTags(items) {
+function materialTags(breakdown) {
     let plastic = 0, glass = 0
-    for (const it of items) {
-        const qty = it.quantity ?? 1
-        if (isGlassName(it.name)) glass += qty
-        else plastic += qty
+    for (const box of breakdown) {
+        const packageInfo = _PACKAGE_UNITS[box.type]
+        if (!packageInfo) continue
+        const amount = packageInfo.amount * (box.qty ?? 1)
+        if (packageInfo.material === 'szkło') glass += amount
+        else plastic += amount
     }
     const tags = []
-    if (plastic > 0) tags.push({ label: 'plastik', count: plastic, ..._BOX_STYLE.plastic })
-    if (glass > 0) tags.push({ label: 'szkło', count: glass, ..._BOX_STYLE.glass })
+    if (plastic > 0) tags.push({ label: `plastik: ${String(plastic).replace('.', ',')} zgrzewki`, ..._BOX_STYLE.plastic })
+    if (glass > 0) tags.push({ label: `szkło: ${String(glass).replace('.', ',')} zgrzewki`, ..._BOX_STYLE.glass })
     return tags
 }
 
@@ -388,18 +416,17 @@ function Chip({ label, style }) {
 
 
 function MaterialTags({ draft }) {
-    const items = draft.order_items ?? []
-    const tags = materialTags(items)
+    const tags = materialTags(draft.packages_breakdown ?? [])
     return (
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {tags.map(tag => (
-                <Chip key={tag.label} label={`${tag.label} ×${tag.count}`} style={tag} />
+                <Chip key={tag.label} label={tag.label} style={tag} />
             ))}
         </div>
     )
 }
 
-const TIME_SLOTS = ['07:00','08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00']
+const TIME_SLOTS = ['07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00']
 
 function toMinutes(t) { const [h, m] = t.split(':').map(Number); return h * 60 + m }
 function addHours(t, hrs) {
@@ -408,7 +435,148 @@ function addHours(t, hrs) {
 }
 
 
-function PickupScheduleModal({ onConfirm, onCancel, title }) {
+function previewLine(label, value) {
+    if (!value) return null
+    return (
+        <div style={{ display: 'flex', gap: 8, fontSize: '0.85em' }}>
+            <span style={{ color: 'var(--text-2)', minWidth: 96 }}>{label}</span>
+            <span style={{ fontWeight: 500 }}>{value}</span>
+        </div>
+    )
+}
+
+function formatAddress(addr) {
+    if (!addr) return ''
+    const line = [addr.street, addr.building_number].filter(Boolean).join(' ')
+    const city = [addr.post_code, addr.city].filter(Boolean).join(' ')
+    return [line, city].filter(Boolean).join(', ')
+}
+
+/** Render a single ShipX parcel the way the courier will read it, not the way we stored it. */
+/**
+ * Apaczka's order shape is nothing like ShipX's, so read it on its own terms
+ * rather than forcing one into the other. Reformatting either into a shared
+ * intermediate would risk showing the operator something the courier never sees.
+ */
+function ApaczkaPreviewParcel({ entry }) {
+    const payload = entry.payload || {}
+    const receiver = payload.address?.receiver || {}
+    const box = (payload.shipment || [])[0] || {}
+    const dimsText = box.dimension1
+        ? `${box.dimension1} × ${box.dimension2} × ${box.dimension3} cm`
+        : ''
+
+    return (
+        <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {previewLine('Usługa', payload.service_id ? `Apaczka #${payload.service_id}` : entry.service)}
+            {previewLine('Referencja', payload.externalId || entry.reference)}
+            {previewLine('Odbiorca', receiver.contact_person || receiver.name)}
+            {previewLine('Adres', [receiver.line1, [receiver.postal_code, receiver.city].filter(Boolean).join(' ')].filter(Boolean).join(', '))}
+            {previewLine('Telefon', receiver.phone)}
+            {previewLine('Punkt odbioru', receiver.foreign_address_id)}
+            {previewLine('Wymiary', dimsText)}
+            {previewLine('Waga', box.weight != null ? `${box.weight} kg` : '')}
+        </div>
+    )
+}
+
+function AllegroPreviewParcel({ entry }) {
+    const payload = entry.payload || {}
+    const receiver = payload.receiver || {}
+    const box = (payload.packages || [])[0] || {}
+    const dimsText = box.length
+        ? `${box.length.value} × ${box.width?.value} × ${box.height?.value} cm`
+        : ''
+
+    return (
+        <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {previewLine('Usługa', entry.service)}
+            {previewLine('Zamówienie Allegro', payload.order_id || entry.reference)}
+            {previewLine('Odbiorca', receiver.name)}
+            {previewLine('Adres', [receiver.street, [receiver.postCode, receiver.city].filter(Boolean).join(' ')].filter(Boolean).join(', '))}
+            {previewLine('Punkt odbioru', receiver.point)}
+            {previewLine('Wymiary', dimsText)}
+            {previewLine('Waga', box.weight?.value != null ? `${box.weight.value} kg` : '')}
+        </div>
+    )
+}
+
+function ExecutePreviewParcel({ entry }) {
+    const payload = entry.payload || {}
+    // Three couriers, three unrelated payload shapes. Read each on its own
+    // terms: a shared intermediate could show something no courier receives.
+    if (payload.address) return <ApaczkaPreviewParcel entry={entry} />
+    if (payload.packages) return <AllegroPreviewParcel entry={entry} />
+    const parcel = (payload.parcels || [])[0] || {}
+    const dims = parcel.dimensions
+    // ShipX carries dimensions in mm; the operator thinks in cm, as the boxes are labelled.
+    const dimsText = dims
+        ? `${dims.length / 10} × ${dims.width / 10} × ${dims.height / 10} cm`
+        : (parcel.template ? `szablon paczkomatu: ${parcel.template}` : '')
+    const weight = parcel.weight?.amount
+    const receiver = payload.receiver || {}
+    const target = payload.custom_attributes?.target_point
+
+    return (
+        <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {previewLine('Usługa', payload.service || entry.service)}
+            {previewLine('Referencja', payload.reference || entry.reference)}
+            {previewLine('Odbiorca', [receiver.first_name, receiver.last_name].filter(Boolean).join(' '))}
+            {previewLine('Adres', target ? `Paczkomat ${target}` : formatAddress(receiver.address))}
+            {previewLine('Telefon', receiver.phone)}
+            {previewLine('Wymiary', dimsText)}
+            {previewLine('Waga', weight != null ? `${weight} kg` : '')}
+        </div>
+    )
+}
+
+/**
+ * The payload the courier is about to receive, shown before anything is sent.
+ *
+ * Read straight from the preview endpoint rather than re-derived from the draft:
+ * a panel that reconstructed the payload itself could show something the courier
+ * never sees, which is worse than showing nothing.
+ */
+function ExecutePreview({ state }) {
+    if (state.loading) return <div style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>Wczytywanie podglądu…</div>
+    if (state.error) {
+        return (
+            <div className="error-banner">
+                <Icon name="alertTriangle" size={13} />
+                Nie udało się pobrać podglądu: {state.error}
+            </div>
+        )
+    }
+    const data = state.data || {}
+    const parcels = data.parcels || []
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 480 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {previewLine('Nadawca', data.sender?.name)}
+                {previewLine('Adres nadania', formatAddress(data.sender))}
+                {previewLine('Kurier', data.courier)}
+            </div>
+            {data.note && (
+                <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>{data.note}</div>
+            )}
+            {parcels.map(entry => (
+                <ExecutePreviewParcel key={`${entry.package_type}-${entry.package_number}`} entry={entry} />
+            ))}
+        </div>
+    )
+}
+
+function PickupScheduleModal({
+    onConfirm,
+    onCancel,
+    title,
+    children,
+    withSchedule = true,
+    panelTestId,
+    confirmTestId,
+    confirmLabel,
+    confirmDisabled = false,
+}) {
     const { t, lang } = useT()
     const T = t[lang]
     const now = new Date()
@@ -451,35 +619,47 @@ function PickupScheduleModal({ onConfirm, onCancel, title }) {
     return createPortal(
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
             onClick={e => { if (e.target === e.currentTarget) onCancel() }}>
-            <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 24, minWidth: 320, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div
+                data-testid={panelTestId}
+                style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 24, minWidth: 320, maxHeight: '85vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}
+            >
                 <div style={{ fontWeight: 600 }}>{title}</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_pickup_date ?? 'Data podjazdu'}</label>
-                    <input type="date" value={date} min={today}
-                        onChange={e => { handleDateChange(e.target.value); e.target.blur() }}
-                        style={sel}
-                    />
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_time_from ?? 'Od'}</label>
-                        <select value={from} onChange={e => handleFromChange(e.target.value)} style={sel}>
-                            {TIME_SLOTS.filter(t => t >= minFrom && t <= '16:00').map(t => <option key={t} value={t}>{t}</option>)}
-                        </select>
-                    </div>
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_time_to ?? 'Do'}</label>
-                        <select value={to} onChange={e => setTo(e.target.value)} style={sel}>
-                            {TIME_SLOTS.filter(t => toMinutes(t) >= toMinutes(from) + 120).map(t => <option key={t} value={t}>{t}</option>)}
-                        </select>
-                    </div>
-                </div>
-                <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>{T.sh_min_window ?? 'Minimalne okno: 2 godziny'}</div>
+                {children}
+                {withSchedule && (
+                    <>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_pickup_date ?? 'Data podjazdu'}</label>
+                            <input type="date" value={date} min={today}
+                                onChange={e => { handleDateChange(e.target.value); e.target.blur() }}
+                                style={sel}
+                            />
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_time_from ?? 'Od'}</label>
+                                <select value={from} onChange={e => handleFromChange(e.target.value)} style={sel}>
+                                    {TIME_SLOTS.filter(t => t >= minFrom && t <= '16:00').map(t => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                            </div>
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_time_to ?? 'Do'}</label>
+                                <select value={to} onChange={e => setTo(e.target.value)} style={sel}>
+                                    {TIME_SLOTS.filter(t => toMinutes(t) >= toMinutes(from) + 120).map(t => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>{T.sh_min_window ?? 'Minimalne okno: 2 godziny'}</div>
+                    </>
+                )}
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                     <button className="btn btn-ghost" onClick={onCancel}>{T.sh_cancel ?? 'Anuluj'}</button>
                     <button className="btn btn-primary"
-                        onClick={() => onConfirm({ pickup_date: date, pickup_from: from, pickup_to: to })}>
-                        {T.sh_confirm ?? 'Potwierdź'}
+                        data-testid={confirmTestId}
+                        disabled={confirmDisabled}
+                        onClick={() => onConfirm(
+                            withSchedule ? { pickup_date: date, pickup_from: from, pickup_to: to } : null
+                        )}>
+                        {confirmLabel ?? T.sh_confirm ?? 'Potwierdź'}
                     </button>
                 </div>
             </div>
@@ -514,7 +694,9 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
             ? invoiceIdOverride.value
             : invoiceIdBaseline
     )
-    const [pickupModal, setPickupModal] = useState(null) // 'execute' | 'pickup' | null
+    const [pickupModal, setPickupModal] = useState(null) // 'pickup' | null
+    // { loading } | { error } | { data } — null while no preview is open.
+    const [executePreview, setExecutePreview] = useState(null)
     const isBusy = busy.has(draft.id)
     const matchedApaczkaService = apaczkaServices.find(
         service => service.service_id === draft.apaczka_service_id
@@ -531,11 +713,26 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
         !draft.pickup_ordered
     )
 
+    /** Fetch what the courier would receive. Opens the panel first so the click always responds. */
+    async function openExecutePreview() {
+        setExecutePreview({ loading: true })
+        try {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}/execute/preview`, {
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+            setExecutePreview({ data: await res.json() })
+        } catch (e) {
+            setExecutePreview({ error: e.message })
+        }
+    }
+
     const isSelectable = onToggleSelect && (
         draft.status === 'pending' ||
         draft.status === 'needs_review' ||
         draft.status === 'error' ||
-        (draft.courier === 'inpost' && draft.status === 'created' && !draft.pickup_ordered)
+        draft.status === 'created'
     )
 
     return (
@@ -550,6 +747,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                         type="checkbox"
                         checked={selected || false}
                         onChange={() => onToggleSelect(draft.id)}
+                        aria-label={`Wybierz przesyłkę ${draft.shopify_order_number || draft.id}`}
                         style={{ cursor: 'pointer', accentColor: 'var(--primary, #3b82f6)' }}
                     />
                 ) : <span style={{ width: 16 }} />}
@@ -563,372 +761,392 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                 </button>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-            <div
-                className="accordion-header"
-                style={{ padding: '10px 16px 10px 0', cursor: 'default', display: 'grid', alignItems: 'center',
-                    gridTemplateColumns: columnGridTemplate }}
-            >
-                <OrderNumberCell draft={draft} />
-                <span><SourceCell source={draft.source} /></span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {draft.customer_name || '—'}
-                </span>
-                <span className="dim" style={{ fontSize: '0.8em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {draft.receiver?.email || ''}
-                </span>
-                <span className="dim mono" style={{ fontSize: '0.8em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {draft.receiver?.phone || ''}
-                </span>
-                <span style={{ display: 'flex', gap: 4, flexWrap: 'nowrap', overflow: 'hidden' }}><MaterialTags draft={draft} /></span>
-                <span><Pill kind={courierPillKind(draft)}>{courierLabel(draft, apaczkaServices)}</Pill></span>
-                <span className="mono dim" style={{ fontSize: '0.85em' }}>{fmtDate(draft.order_date || draft.created_at)}</span>
-                <span>
-                    <Pill kind={
-                        draft.status === 'created' ? 'ok'
-                            : draft.status === 'pending' ? 'default'
-                            : draft.status === 'needs_review' ? 'warn'
-                            : draft.status === 'pending_confirmation' ? 'info'
-                            : 'warn'
-                    }>
-                        {draft.status === 'pending' ? (T.sh_status_pending ?? 'oczekujące')
-                            : draft.status === 'created' ? (T.sh_status_created ?? 'nadane')
-                            : draft.status === 'needs_review' ? (T.sh_status_needs_review ?? 'do sprawdzenia')
-                            : draft.status === 'pending_confirmation' ? (T.sh_status_pending_confirmation ?? 'czeka na Allegro')
-                            : (T.sh_status_error ?? 'błąd')}
-                    </Pill>
-                </span>
-                <span>
-                    {draft.pickup_ordered && (
-                        <span style={{ fontSize: '0.72em', padding: '2px 7px', borderRadius: 4, background: 'var(--ok-subtle, #f0fdf4)', color: 'var(--ok, #16a34a)', border: '1px solid var(--ok-border, #86efac)', whiteSpace: 'nowrap' }}>
-                            {T.sh_pickup_done ?? 'podjazd ✓'}
-                        </span>
-                    )}
-                </span>
-            </div>
+                <div
+                    className="accordion-header"
+                    style={{
+                        padding: '10px 16px 10px 0', cursor: 'default', display: 'grid', alignItems: 'center',
+                        gridTemplateColumns: columnGridTemplate
+                    }}
+                >
+                    <OrderNumberCell draft={draft} />
+                    <span><SourceCell source={draft.source} /></span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {draft.customer_name || '—'}
+                    </span>
+                    <span className="dim" style={{ fontSize: '0.8em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {draft.receiver?.email || ''}
+                    </span>
+                    <span className="dim mono" style={{ fontSize: '0.8em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {draft.receiver?.phone || ''}
+                    </span>
+                    <span style={{ display: 'flex', gap: 4, flexWrap: 'nowrap', overflow: 'hidden' }}><MaterialTags draft={draft} /></span>
+                    <span><Pill kind={courierPillKind(draft)}>{courierLabel(draft, apaczkaServices)}</Pill></span>
+                    <span className="mono dim" style={{ fontSize: '0.85em' }}>{fmtDate(draft.order_date || draft.created_at)}</span>
+                    <span>
+                        <Pill kind={
+                            draft.status === 'created' ? 'ok'
+                                : draft.status === 'pending' ? 'default'
+                                    : draft.status === 'needs_review' ? 'warn'
+                                        : draft.status === 'pending_confirmation' ? 'info'
+                                            : 'warn'
+                        }>
+                            {draft.status === 'pending' ? (T.sh_status_pending ?? 'oczekujące')
+                                : draft.status === 'created' ? (T.sh_status_created ?? 'nadane')
+                                    : draft.status === 'needs_review' ? (T.sh_status_needs_review ?? 'do sprawdzenia')
+                                        : draft.status === 'pending_confirmation' ? (T.sh_status_pending_confirmation ?? 'czeka na Allegro')
+                                            : (T.sh_status_error ?? 'błąd')}
+                        </Pill>
+                    </span>
+                    <span>
+                        {draft.pickup_ordered && (
+                            <span style={{ fontSize: '0.72em', padding: '2px 7px', borderRadius: 4, background: 'var(--ok-subtle, #f0fdf4)', color: 'var(--ok, #16a34a)', border: '1px solid var(--ok-border, #86efac)', whiteSpace: 'nowrap' }}>
+                                {T.sh_pickup_done ?? 'podjazd ✓'}
+                            </span>
+                        )}
+                    </span>
+                </div>
 
-            {open && (
-                <div className="accordion-body">
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: '12px 24px' }}>
-                        <div>
-                            <div className="detail-label">
-                                {draft.service === 'inpost_locker_standard' ? 'Paczkomat' : 'Adres dostawy'}
-                            </div>
-                            {draft.service === 'inpost_locker_standard' ? (
-                                <div>
-                                    <span className="mono">{draft.receiver?.locker_id || '—'}</span>
-                                    {draft.shipping_address?.city && (
-                                        <span className="dim"> · {draft.shipping_address.city}</span>
-                                    )}
-                                </div>
-                            ) : (
-                                <div>
-                                    {[draft.shipping_address?.street, draft.shipping_address?.building_number, draft.shipping_address?.flat_number].filter(Boolean).join(' ')}<br />
-                                    {draft.shipping_address?.post_code} {draft.shipping_address?.city}
-                                </div>
-                            )}
-                        </div>
-                        <div>
-                            <div className="detail-label">Numer śledzenia</div>
+                {open && (
+                    <div className="accordion-body">
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: '12px 24px' }}>
                             <div>
-                                {draft.tracking_number
-                                    ? (
-                                        <span className="mono copyable" title="Kliknij żeby skopiować"
-                                            onClick={() => navigator.clipboard.writeText(draft.tracking_number)}
-                                            style={{ cursor: 'pointer' }}>
-                                            {draft.tracking_number}
-                                        </span>
-                                    )
-                                    : <span className="dim">—</span>}
-                            </div>
-                            <div className="detail-label" style={{ marginTop: 10 }}>ID draftu kuriera</div>
-                            <div className="mono dim">{draft.courier_draft_id || '—'}</div>
-                        </div>
-                        <div>
-                            <div className="detail-label">Paczki</div>
-                            {draft.packages_breakdown?.length > 0 ? (
-                                <table style={{ borderCollapse: 'collapse', width: '100%', marginTop: 6, fontSize: '0.9em' }}>
-                                    <thead>
-                                        <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                                            <th style={{ textAlign: 'left', padding: '3px 12px 3px 0', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Typ</th>
-                                            <th style={{ textAlign: 'center', padding: '3px 12px', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Szt.</th>
-                                            <th style={{ textAlign: 'left', padding: '3px 0', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Materiał</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {draft.packages_breakdown.map((b, i) => {
-                                            const isGlass = _GLASS_TYPES.has(b.type)
-                                            const s = isGlass ? _BOX_STYLE.glass : _BOX_STYLE.plastic
-                                            return (
-                                                <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                                                    <td style={{ padding: '6px 12px 6px 0', fontWeight: 500 }}>
-                                                        <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: s.color, marginRight: 6, flexShrink: 0 }} />
-                                                        {b.type}
-                                                    </td>
-                                                    <td style={{ padding: '6px 12px', textAlign: 'center' }}>
-                                                        <span className="mono" style={{ fontWeight: 600, fontSize: '1em' }}>{b.qty}</span>
-                                                    </td>
-                                                    <td style={{ padding: '6px 0', color: s.color, fontWeight: 500 }}>
-                                                        {isGlass ? 'szkło' : 'plastik'}
-                                                    </td>
-                                                </tr>
-                                            )
-                                        })}
-                                    </tbody>
-                                </table>
-                            ) : <span className="dim">—</span>}
-                        </div>
-                    </div>
-
-                    {draft.courier === 'apaczka' && (
-                        <div style={{ marginTop: 12 }}>
-                            <div className="detail-label">{T.sh_apaczka_service_label ?? 'Serwis Apaczka'}</div>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', margin: '4px 0 6px' }}>
-                                <Pill kind={matchStatusPillKind(draft.shipping_service_match_status)}>
-                                    {matchStatusLabel(draft.shipping_service_match_status)}
-                                </Pill>
-                                {draft.shipping_service_match_source && (
-                                    <span className="dim" style={{ fontSize: '0.85em' }}>
-                                        Źródło: {draft.shipping_service_match_source}
-                                    </span>
+                                <div className="detail-label">
+                                    {draft.service === 'inpost_locker_standard' ? 'Paczkomat' : 'Adres dostawy'}
+                                </div>
+                                {draft.service === 'inpost_locker_standard' ? (
+                                    <div>
+                                        <span className="mono">{draft.receiver?.locker_id || '—'}</span>
+                                        {draft.shipping_address?.city && (
+                                            <span className="dim"> · {draft.shipping_address.city}</span>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div>
+                                        {[draft.shipping_address?.street, draft.shipping_address?.building_number, draft.shipping_address?.flat_number].filter(Boolean).join(' ')}<br />
+                                        {draft.shipping_address?.post_code} {draft.shipping_address?.city}
+                                    </div>
                                 )}
                             </div>
-                            {draft.pickup_point?.id && (
-                                <div style={{ margin: '4px 0 8px', fontSize: '0.88em' }}>
-                                    <span className="dim">Punkt: </span>
-                                    <span className="mono">{draft.pickup_point.id}</span>
-                                    {draft.pickup_point.name && (
-                                        <span className="dim"> · {draft.pickup_point.name}</span>
+                            <div>
+                                <div className="detail-label">Numer śledzenia</div>
+                                <div>
+                                    {draft.tracking_number
+                                        ? (
+                                            <span className="mono copyable" title="Kliknij żeby skopiować"
+                                                onClick={() => navigator.clipboard.writeText(draft.tracking_number)}
+                                                style={{ cursor: 'pointer' }}>
+                                                {draft.tracking_number}
+                                            </span>
+                                        )
+                                        : <span className="dim">—</span>}
+                                </div>
+                                <div className="detail-label" style={{ marginTop: 10 }}>ID draftu kuriera</div>
+                                <div className="mono dim">{draft.courier_draft_id || '—'}</div>
+                            </div>
+                            <div>
+                                <div className="detail-label">Paczki</div>
+                                {draft.packages_breakdown?.length > 0 ? (
+                                    <table style={{ borderCollapse: 'collapse', width: '100%', marginTop: 6, fontSize: '0.9em' }}>
+                                        <thead>
+                                            <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                                                <th style={{ textAlign: 'left', padding: '3px 12px 3px 0', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Typ</th>
+                                                <th style={{ textAlign: 'center', padding: '3px 12px', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Szt.</th>
+                                                <th style={{ textAlign: 'left', padding: '3px 0', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Materiał</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {draft.packages_breakdown.map((b, i) => {
+                                                const isGlass = _GLASS_TYPES.has(b.type)
+                                                const s = isGlass ? _BOX_STYLE.glass : _BOX_STYLE.plastic
+                                                return (
+                                                    <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                                                        <td style={{ padding: '6px 12px 6px 0', fontWeight: 500 }}>
+                                                            <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: s.color, marginRight: 6, flexShrink: 0 }} />
+                                                            {b.type}
+                                                        </td>
+                                                        <td style={{ padding: '6px 12px', textAlign: 'center' }}>
+                                                            <span className="mono" style={{ fontWeight: 600, fontSize: '1em' }}>{b.qty}</span>
+                                                        </td>
+                                                        <td style={{ padding: '6px 0', color: s.color, fontWeight: 500 }}>
+                                                            {isGlass ? 'szkło' : 'plastik'}
+                                                        </td>
+                                                    </tr>
+                                                )
+                                            })}
+                                        </tbody>
+                                    </table>
+                                ) : <span className="dim">—</span>}
+                            </div>
+                        </div>
+
+                        {draft.courier === 'apaczka' && (
+                            <div style={{ marginTop: 12 }}>
+                                <div className="detail-label">{T.sh_apaczka_service_label ?? 'Serwis Apaczka'}</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', margin: '4px 0 6px' }}>
+                                    <Pill kind={matchStatusPillKind(draft.shipping_service_match_status)}>
+                                        {matchStatusLabel(draft.shipping_service_match_status)}
+                                    </Pill>
+                                    {draft.shipping_service_match_source && (
+                                        <span className="dim" style={{ fontSize: '0.85em' }}>
+                                            Źródło: {draft.shipping_service_match_source}
+                                        </span>
                                     )}
                                 </div>
-                            )}
-                            {showApaczkaServiceEditor ? (
-                                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
-                                    <select
-                                        value={selectedApaczkaService}
-                                        onChange={e => setApaczkaServiceEdit({
-                                            baseline: apaczkaServiceBaseline,
-                                            value: e.target.value,
-                                        })}
-                                        disabled={isBusy}
-                                    >
-                                        <option value="">{T.sh_apaczka_service_placeholder ?? '— wybierz serwis —'}</option>
-                                        {apaczkaServices.map(s => (
-                                            <option key={s.service_id} value={s.service_id}>{s.label}</option>
-                                        ))}
-                                    </select>
-                                    <button
-                                        className="btn btn-secondary"
-                                        disabled={
-                                            isBusy ||
-                                            !selectedApaczkaService ||
-                                            selectedApaczkaService === draft.apaczka_service_id
-                                        }
-                                        onClick={() => onSetApaczkaService(draft, selectedApaczkaService)}
-                                    >
-                                        {isBusy
-                                            ? (T.sh_apaczka_service_save_busy ?? 'Zapisywanie…')
-                                            : (T.sh_apaczka_service_save ?? 'Zapisz')}
-                                    </button>
-                                </div>
-                            ) : (
-                                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
-                                    <strong>{matchedApaczkaService.label}</strong>
-                                    {canManage && (
-                                        <button
-                                            className="btn btn-ghost"
-                                            onClick={() => setEditingOverride({
-                                                baseline: matchStatusBaseline,
-                                                value: true,
+                                {draft.pickup_point?.id && (
+                                    <div style={{ margin: '4px 0 8px', fontSize: '0.88em' }}>
+                                        <span className="dim">Punkt: </span>
+                                        <span className="mono">{draft.pickup_point.id}</span>
+                                        {draft.pickup_point.name && (
+                                            <span className="dim"> · {draft.pickup_point.name}</span>
+                                        )}
+                                    </div>
+                                )}
+                                {showApaczkaServiceEditor ? (
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+                                        <select
+                                            value={selectedApaczkaService}
+                                            onChange={e => setApaczkaServiceEdit({
+                                                baseline: apaczkaServiceBaseline,
+                                                value: e.target.value,
                                             })}
                                             disabled={isBusy}
                                         >
-                                            Zmień
-                                        </button>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {draft.source === 'allegro' && (
-                        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                            <div className="detail-label">Faktura Fakturownia</div>
-                            {localInvoiceId && localInvoiceId !== 'pending' && !draft.fakturownia_invoice_error ? (
-                                <div style={{ marginTop: 4, color: 'var(--ok, #16a34a)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                                    <Icon name="check" size={14} />
-                                    <span>Faktura #{localInvoiceId}</span>
-                                </div>
-                            ) : (
-                                <div style={{ marginTop: 4 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                        <span
-                                            className={draft.fakturownia_invoice_error ? undefined : 'dim'}
-                                            style={{ fontSize: '0.88em', color: draft.fakturownia_invoice_error ? 'var(--error)' : undefined }}
+                                            <option value="">{T.sh_apaczka_service_placeholder ?? '— wybierz serwis —'}</option>
+                                            {apaczkaServices.map(s => (
+                                                <option key={s.service_id} value={s.service_id}>{s.label}</option>
+                                            ))}
+                                        </select>
+                                        <button
+                                            className="btn btn-secondary"
+                                            disabled={
+                                                isBusy ||
+                                                !selectedApaczkaService ||
+                                                selectedApaczkaService === draft.apaczka_service_id
+                                            }
+                                            onClick={() => onSetApaczkaService(draft, selectedApaczkaService)}
                                         >
-                                            {draft.fakturownia_invoice_error
-                                                ? `Automatyzacja wymaga uwagi${localInvoiceId ? ` (faktura #${localInvoiceId})` : ''}`
-                                                : 'Oczekiwanie na automatyczną fakturę'}
-                                        </span>
+                                            {isBusy
+                                                ? (T.sh_apaczka_service_save_busy ?? 'Zapisywanie…')
+                                                : (T.sh_apaczka_service_save ?? 'Zapisz')}
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+                                        <strong>{matchedApaczkaService.label}</strong>
                                         {canManage && (
                                             <button
-                                                className="btn btn-secondary"
-                                                data-testid={`shipping-invoice-${draft.id}`}
-                                                style={{ fontSize: '0.82em', padding: '3px 10px' }}
-                                                onClick={() => setShowInvoicePanel(true)}
+                                                className="btn btn-ghost"
+                                                onClick={() => setEditingOverride({
+                                                    baseline: matchStatusBaseline,
+                                                    value: true,
+                                                })}
+                                                disabled={isBusy}
                                             >
-                                                <Icon name="invoice" size={12} /> {draft.fakturownia_invoice_error ? 'Sprawdź i ponów' : 'Sprawdź'}
+                                                Zmień
                                             </button>
                                         )}
                                     </div>
-                                    {draft.fakturownia_invoice_error && (
-                                        <div className="dim" style={{ fontSize: '0.78em', marginTop: 4 }}>
-                                            {draft.fakturownia_invoice_error}
+                                )}
+                            </div>
+                        )}
+
+                        {draft.source === 'allegro' && (
+                            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                                <div className="detail-label">Faktura Fakturownia</div>
+                                {localInvoiceId && localInvoiceId !== 'pending' && !draft.fakturownia_invoice_error ? (
+                                    <div style={{ marginTop: 4, color: 'var(--ok, #16a34a)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <Icon name="check" size={14} />
+                                        <span>Faktura #{localInvoiceId}</span>
+                                    </div>
+                                ) : (
+                                    <div style={{ marginTop: 4 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                            <span
+                                                className={draft.fakturownia_invoice_error ? undefined : 'dim'}
+                                                style={{ fontSize: '0.88em', color: draft.fakturownia_invoice_error ? 'var(--error)' : undefined }}
+                                            >
+                                                {draft.fakturownia_invoice_error
+                                                    ? `Automatyzacja wymaga uwagi${localInvoiceId ? ` (faktura #${localInvoiceId})` : ''}`
+                                                    : 'Oczekiwanie na automatyczną fakturę'}
+                                            </span>
+                                            {canManage && (
+                                                <button
+                                                    className="btn btn-secondary"
+                                                    data-testid={`shipping-invoice-${draft.id}`}
+                                                    style={{ fontSize: '0.82em', padding: '3px 10px' }}
+                                                    onClick={() => setShowInvoicePanel(true)}
+                                                >
+                                                    <Icon name="invoice" size={12} /> {draft.fakturownia_invoice_error ? 'Sprawdź i ponów' : 'Sprawdź'}
+                                                </button>
+                                            )}
                                         </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {showInvoicePanel && (
-                        <InvoicePreviewPanel
-                            draft={draft}
-                            getToken={getToken}
-                            onClose={() => setShowInvoicePanel(false)}
-                            onCreated={result => {
-                                if (result.fakturownia_invoice_id) {
-                                    setInvoiceIdOverride({
-                                        baseline: invoiceIdBaseline,
-                                        value: result.fakturownia_invoice_id,
-                                    })
-                                    if (onDraftUpdate) onDraftUpdate()
-                                }
-                                setShowInvoicePanel(false)
-                            }}
-                        />
-                    )}
-
-                    {draft.error && (
-                        <div className="error-banner" style={{ marginTop: 8 }}>
-                            <Icon name="alertTriangle" size={13} />
-                            {draft.error}
-                        </div>
-                    )}
-
-                    <div className="draft-actions">
-                        {canManage && (draft.status === 'pending' || draft.status === 'error') && (
-                            <button
-                                className="btn btn-primary"
-                                data-testid={`shipping-execute-${draft.id}`}
-                                onClick={() => needsPickupSchedule
-                                    ? setPickupModal('execute')
-                                    : onExecute(draft, null)
-                                }
-                                disabled={isBusy}
-                            >
-                                {isBusy
-                                    ? <><Icon name="loader" size={13} className="spin" /> Realizowanie…</>
-                                    : <><Icon name="send" size={13} /> Realizuj</>
-                                }
-                            </button>
+                                        {draft.fakturownia_invoice_error && (
+                                            <div className="dim" style={{ fontSize: '0.78em', marginTop: 4 }}>
+                                                {draft.fakturownia_invoice_error}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         )}
 
-                        {canManage && draft.status === 'needs_review' && draft.courier !== 'apaczka' && (
-                            <button
-                                className="btn btn-primary"
-                                onClick={() => onReviewDraft(draft)}
-                                disabled={isBusy}
-                            >
-                                {isBusy
-                                    ? <><Icon name="loader" size={13} className="spin" /> Zatwierdzanie…</>
-                                    : <>Zatwierdź</>
-                                }
-                            </button>
+                        {showInvoicePanel && (
+                            <InvoicePreviewPanel
+                                draft={draft}
+                                getToken={getToken}
+                                onClose={() => setShowInvoicePanel(false)}
+                                onCreated={result => {
+                                    if (result.fakturownia_invoice_id) {
+                                        setInvoiceIdOverride({
+                                            baseline: invoiceIdBaseline,
+                                            value: result.fakturownia_invoice_id,
+                                        })
+                                        if (onDraftUpdate) onDraftUpdate()
+                                    }
+                                    setShowInvoicePanel(false)
+                                }}
+                            />
                         )}
 
-                        {draft.courier_draft_id && draft.status === 'created' && (
-                            <button
-                                className="btn btn-secondary"
-                                onClick={() => onPrintLabel(draft)}
-                                disabled={isBusy}
-                            >
-                                <Icon name="printer" size={13} />
-                                Drukuj etykietę
-                            </button>
+                        {draft.error && (
+                            <div className="error-banner" style={{ marginTop: 8 }}>
+                                <Icon name="alertTriangle" size={13} />
+                                {draft.error}
+                            </div>
                         )}
 
-                        {draft.status === 'pending_confirmation' && (
-                            <button
-                                className="btn btn-secondary"
-                                onClick={() => onConfirmPending(draft)}
-                                disabled={isBusy}
-                                title="Allegro jeszcze przetwarza tę przesyłkę — sprawdzane automatycznie co 5s, albo kliknij żeby sprawdzić od razu"
-                            >
-                                {isBusy
-                                    ? <><Icon name="loader" size={13} className="spin" /> {T.sh_confirm_pending_busy ?? 'Sprawdzanie…'}</>
-                                    : <><Icon name="refresh" size={13} /> {T.sh_confirm_pending ?? 'Sprawdź status'}</>
-                                }
-                            </button>
-                        )}
-
-                        {canManage && canPickup && (
-                            <button
-                                className="btn btn-secondary"
-                                data-testid={`shipping-pickup-${draft.id}`}
-                                onClick={() => setPickupModal('pickup')}
-                                disabled={isBusy}
-                            >
-                                {isBusy
-                                    ? <><Icon name="loader" size={13} className="spin" /> Zamawianie…</>
-                                    : <><Icon name="truck" size={13} /> Zamów podjazd</>
-                                }
-                            </button>
-                        )}
-
-                        {draft.pickup_ordered && (
-                            <span className="pickup-badge">
-                                <Icon name="check" size={12} />
-                                Podjazd zamówiony
-                            </span>
-                        )}
-
-                        {canManage && draft.status === 'created' && (
-                            draft.fulfillment_status === 'fulfilled' ? (
-                                <span className="pickup-badge" title={draft.fulfilled_at || ''}>
-                                    <Icon name="check" size={12} />
-                                    Zrealizowane{draft.source === 'allegro' ? ' (Allegro: PROCESSING)' : ''}
-                                </span>
-                            ) : (
+                        <div className="draft-actions">
+                            {canManage && (draft.status === 'pending' || draft.status === 'error') && (
                                 <button
-                                    className="btn btn-secondary"
-                                    onClick={() => onMarkFulfilled(draft)}
+                                    className="btn btn-primary"
+                                    data-testid={`shipping-execute-${draft.id}`}
+                                    onClick={openExecutePreview}
                                     disabled={isBusy}
-                                    title={draft.source === 'allegro'
-                                        ? 'Oznacz lokalnie jako zrealizowane i wyślij PROCESSING do Allegro'
-                                        : 'Oznacz lokalnie jako zrealizowane'}
                                 >
                                     {isBusy
-                                        ? <><Icon name="loader" size={13} className="spin" /> Oznaczanie…</>
-                                        : <><Icon name="check" size={13} /> Oznacz jako zrealizowane</>
+                                        ? <><Icon name="loader" size={13} className="spin" /> Realizowanie…</>
+                                        : <><Icon name="send" size={13} /> Realizuj</>
                                     }
                                 </button>
-                            )
+                            )}
+
+                            {canManage && draft.status === 'needs_review' && draft.courier !== 'apaczka' && (
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={() => onReviewDraft(draft)}
+                                    disabled={isBusy}
+                                >
+                                    {isBusy
+                                        ? <><Icon name="loader" size={13} className="spin" /> Zatwierdzanie…</>
+                                        : <>Zatwierdź</>
+                                    }
+                                </button>
+                            )}
+
+                            {draft.courier_draft_id && draft.status === 'created' && (
+                                <button
+                                    className="btn btn-secondary"
+                                    onClick={() => onPrintLabel(draft)}
+                                    disabled={isBusy}
+                                    title={draft.courier === 'inpost'
+                                        ? 'InPost pobiera etykietę PDF A6'
+                                        : 'Otwiera systemowe okno drukowania'}
+                                >
+                                    <Icon name="printer" size={13} />
+                                    {draft.courier === 'inpost' ? 'Drukuj A6' : 'Drukuj etykietę'}
+                                </button>
+                            )}
+
+                            {draft.status === 'pending_confirmation' && (
+                                <button
+                                    className="btn btn-secondary"
+                                    onClick={() => onConfirmPending(draft)}
+                                    disabled={isBusy}
+                                    title="Allegro jeszcze przetwarza tę przesyłkę — sprawdzane automatycznie co 5s, albo kliknij żeby sprawdzić od razu"
+                                >
+                                    {isBusy
+                                        ? <><Icon name="loader" size={13} className="spin" /> {T.sh_confirm_pending_busy ?? 'Sprawdzanie…'}</>
+                                        : <><Icon name="refresh" size={13} /> {T.sh_confirm_pending ?? 'Sprawdź status'}</>
+                                    }
+                                </button>
+                            )}
+
+                            {canManage && canPickup && (
+                                <button
+                                    className="btn btn-secondary"
+                                    data-testid={`shipping-pickup-${draft.id}`}
+                                    onClick={() => setPickupModal('pickup')}
+                                    disabled={isBusy}
+                                >
+                                    {isBusy
+                                        ? <><Icon name="loader" size={13} className="spin" /> Zamawianie…</>
+                                        : <><Icon name="truck" size={13} /> Zamów podjazd</>
+                                    }
+                                </button>
+                            )}
+
+                            {draft.pickup_ordered && (
+                                <span className="pickup-badge">
+                                    <Icon name="check" size={12} />
+                                    Podjazd zamówiony
+                                </span>
+                            )}
+
+                            {canManage && draft.status === 'created' && (
+                                draft.fulfillment_status === 'fulfilled' ? (
+                                    <span className="pickup-badge" title={draft.fulfilled_at || ''}>
+                                        <Icon name="check" size={12} />
+                                        Zrealizowane{draft.source === 'allegro' ? ' (Allegro: PROCESSING)' : ''}
+                                    </span>
+                                ) : (
+                                    <button
+                                        className="btn btn-secondary"
+                                        onClick={() => onMarkFulfilled(draft)}
+                                        disabled={isBusy}
+                                        title={draft.source === 'allegro'
+                                            ? 'Oznacz lokalnie jako zrealizowane i wyślij PROCESSING do Allegro'
+                                            : 'Oznacz lokalnie jako zrealizowane'}
+                                    >
+                                        {isBusy
+                                            ? <><Icon name="loader" size={13} className="spin" /> Oznaczanie…</>
+                                            : <><Icon name="check" size={13} /> Oznacz jako zrealizowane</>
+                                        }
+                                    </button>
+                                )
+                            )}
+                        </div>
+
+                        {pickupModal && (
+                            <PickupScheduleModal
+                                title="Zamów podjazd kuriera"
+                                onCancel={() => setPickupModal(null)}
+                                onConfirm={schedule => {
+                                    setPickupModal(null)
+                                    onPickup(draft, schedule)
+                                }}
+                            />
+                        )}
+
+                        {executePreview && (
+                            <PickupScheduleModal
+                                title="Sprawdź, co trafi do kuriera"
+                                panelTestId="execute-preview"
+                                confirmTestId="execute-preview-confirm"
+                                confirmLabel="Wyślij do kuriera"
+                                confirmDisabled={!executePreview.data || executePreview.data.preview_available === false}
+                                withSchedule={needsPickupSchedule}
+                                onCancel={() => setExecutePreview(null)}
+                                onConfirm={schedule => {
+                                    const fingerprint = executePreview.data?.fingerprint
+                                    setExecutePreview(null)
+                                    onExecute(draft, schedule, fingerprint)
+                                }}
+                            >
+                                <ExecutePreview state={executePreview} />
+                            </PickupScheduleModal>
                         )}
                     </div>
-
-                    {pickupModal && (
-                        <PickupScheduleModal
-                            title={pickupModal === 'execute' ? 'Zaplanuj podjazd kuriera' : 'Zamów podjazd kuriera'}
-                            onCancel={() => setPickupModal(null)}
-                            onConfirm={schedule => {
-                                setPickupModal(null)
-                                if (pickupModal === 'execute') onExecute(draft, schedule)
-                                else onPickup(draft, schedule)
-                            }}
-                        />
-                    )}
-                </div>
-            )}
+                )}
             </div>
         </div>
     )
@@ -1107,21 +1325,22 @@ export default function ShippingView() {
             }
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
             const blob = await res.blob()
-            const objUrl = URL.createObjectURL(blob)
-            window.open(objUrl, '_blank')
-            setTimeout(() => URL.revokeObjectURL(objUrl), 30_000)
+            printPdf(blob, `Etykieta ${draft.shopify_order_number || draft.id}`)
         } catch (e) {
             pushToast({ kind: 'error', msg: `Błąd pobierania etykiety: ${e.message}` })
         }
     }
 
-    function handleExecute(draft, schedule) {
+    function handleExecute(draft, schedule, previewFingerprint) {
         return withBusy(draft.id, async () => {
             const token = await getToken()
+            const requestBody = previewFingerprint
+                ? { ...(schedule || {}), preview_fingerprint: previewFingerprint }
+                : schedule
             const res = await fetch(`/api/shipping/drafts/${draft.id}/execute`, {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: schedule ? JSON.stringify(schedule) : null,
+                body: requestBody ? JSON.stringify(requestBody) : null,
             })
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}))
@@ -1208,7 +1427,7 @@ export default function ShippingView() {
                     fetch(`/api/shipping/drafts/${id}/confirm`, {
                         method: 'POST',
                         headers: { Authorization: `Bearer ${token}` },
-                    }).catch(() => {})
+                    }).catch(() => { })
                 ))
                 load({ silent: true })
             } catch { /* retry on next tick */ }
@@ -1278,6 +1497,37 @@ export default function ShippingView() {
         load()
     }
 
+    async function handleBulkPrint() {
+        const selected = [...selectedDraftIds]
+            .map(id => drafts.find(draft => draft.id === id))
+            .filter(draft => draft?.status === 'created' && draft.courier_draft_id)
+        if (!selected.length) return
+
+        setBulkProgress({ done: 0, total: selected.length })
+        try {
+            const token = await getToken()
+            const res = await fetch('/api/shipping/labels/batch', {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ draft_ids: selected.map(draft => draft.id) }),
+            })
+            if (res.status === 409) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(body.detail || 'Co najmniej jedna etykieta nie jest jeszcze gotowa.')
+            }
+            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+            printPdf(await res.blob(), `Etykiety A6 (${selected.length})`)
+            setSelectedDraftIds(new Set())
+        } catch (error) {
+            pushToast({ kind: 'error', msg: `Błąd drukowania etykiet: ${error.message}` })
+        } finally {
+            setBulkProgress(null)
+        }
+    }
+
     const filtered = drafts.filter(d => {
         if (filterStatus !== 'all' && d.status !== filterStatus) return false
         if (filterCourier !== 'all' && d.courier !== filterCourier) return false
@@ -1301,7 +1551,7 @@ export default function ShippingView() {
 
     const selectableIds = visibleDrafts
         .filter(d => d.status === 'pending' || d.status === 'needs_review' || d.status === 'error' ||
-            (d.courier === 'inpost' && d.status === 'created' && !d.pickup_ordered))
+            d.status === 'created')
         .map(d => d.id)
     const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedDraftIds.has(id))
     function handleSelectAll() {
@@ -1313,216 +1563,234 @@ export default function ShippingView() {
 
     return (
         <>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gap)' }}>
-            <PageHead
-                title={T.shipping_title ?? 'Wysyłki'}
-                sub={T.shipping_sub ?? 'Drafty przesyłek tworzonych automatycznie przy złożeniu zamówienia Shopify'}
-            />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gap)' }}>
+                <PageHead
+                    title={T.shipping_title ?? 'Wysyłki'}
+                    sub={T.shipping_sub ?? 'Drafty przesyłek tworzonych automatycznie przy złożeniu zamówienia Shopify'}
+                />
 
-            <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
-                <div className="search">
-                    <Icon name="search" size={14} />
-                    <input
-                        placeholder={T.sh_search ?? 'Szukaj po numerze lub kliencie…'}
-                        value={search}
-                        onChange={e => setSearch(e.target.value)}
-                    />
-                    {search && (
-                        <button className="btn-ghost" style={{ padding: '0 4px' }} onClick={() => setSearch('')}>
-                            <Icon name="x" size={12} />
-                        </button>
-                    )}
-                </div>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-                        style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}>
-                        <option value="all">{T.sh_filter_all_status ?? 'Wszystkie statusy'}</option>
-                        <option value="pending">{T.sh_status_pending ?? 'oczekujące'}</option>
-                        <option value="needs_review">{T.sh_status_needs_review ?? 'do sprawdzenia'}</option>
-                        <option value="created">{T.sh_status_created ?? 'nadane'}</option>
-                        <option value="pending_confirmation">{T.sh_status_pending_confirmation ?? 'czeka na Allegro'}</option>
-                        <option value="error">{T.sh_status_error ?? 'błąd'}</option>
-                    </select>
-                    <select value={filterCourier} onChange={e => setFilterCourier(e.target.value)}
-                        style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}>
-                        <option value="all">{T.sh_filter_all_courier ?? 'Wszyscy kurierzy'}</option>
-                        <option value="inpost">InPost</option>
-                        <option value="apaczka">Apaczka</option>
-                        <option value="allegro_delivery">Wysyłam z Allegro</option>
-                    </select>
-                    <select value={filterSource} onChange={e => setFilterSource(e.target.value)}
-                        title={T.sh_filter_source ?? 'Źródło zamówienia'}
-                        style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}>
-                        <option value="all">{T.sh_filter_all_source ?? 'Wszystkie źródła'}</option>
-                        <option value="shopify">Shopify</option>
-                        <option value="allegro">Allegro</option>
-                    </select>
-                    <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
-                        title="From date"
-                        style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: filterDateFrom ? 'var(--text)' : 'var(--text-3)', cursor: 'pointer' }}
-                    />
-                    {filterDateFrom && <button className="btn-ghost" style={{ padding: '0 4px', fontSize: '0.82em' }} onClick={() => setFilterDateFrom('')}><Icon name="x" size={12} /></button>}
-                </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    {canManage && selectedDraftIds.size > 0 && (() => {
-                        const pendingSelected = [...selectedDraftIds].filter(id => {
-                            const d = drafts.find(x => x.id === id)
-                            return d && (d.status === 'pending' || d.status === 'error')
-                        })
-                        const pickupSelected = [...selectedDraftIds].filter(id => {
-                            const d = drafts.find(x => x.id === id)
-                            return d && d.courier === 'inpost' && d.status === 'created' && !d.pickup_ordered
-                        })
-                        return (<>
-                            {pendingSelected.length > 0 && (
-                                <button
-                                    className="btn btn-primary"
-                                    style={{ fontSize: '0.85em' }}
-                                    onClick={handleBulkExecute}
-                                    disabled={bulkProgress !== null}
-                                >
-                                    {bulkProgress !== null
-                                        ? `Realizuję ${bulkProgress.done}/${bulkProgress.total}…`
-                                        : `Realizuj zaznaczone (${pendingSelected.length})`}
-                                </button>
-                            )}
-                            {pickupSelected.length > 0 && (
-                                <button
-                                    className="btn btn-secondary"
-                                    style={{ fontSize: '0.85em' }}
-                                    onClick={() => setBulkPickupModal(true)}
-                                    disabled={bulkProgress !== null}
-                                >
-                                    {bulkProgress !== null
-                                        ? `Podjazd ${bulkProgress.done}/${bulkProgress.total}…`
-                                        : `Zamów podjazd (${pickupSelected.length})`}
-                                </button>
-                            )}
-                        </>)
-                    })()}
-                    <span className="mono dim">{drafts.length} {T.shipping_drafts_count ?? 'draftów'}</span>
-                    {errorCount > 0 && (
-                        <Pill kind="warn">{errorCount} {T.shipping_errors ?? 'błędów'}</Pill>
-                    )}
-                    <button className="btn btn-ghost" onClick={() => setExpandAll(v => !v)} style={{ fontSize: '0.82em', gap: 4 }} title={expandAll ? 'Collapse all' : 'Expand all'}>
-                        <Icon name={expandAll ? 'chevronUp' : 'chevronDown'} size={13} />
-                        {expandAll ? (T.sh_collapse ?? 'Zwiń') : (T.sh_expand ?? 'Rozwiń')}
-                    </button>
-                    <button className="btn btn-ghost" onClick={handleSync} disabled={syncing || loading} title="Synchronizuj zamówienia z Allegro i Shopify">
-                        <Icon name={syncing ? 'refresh' : 'zap'} size={14} className={syncing ? 'spin' : undefined} />
-                        {syncing ? 'Synchronizowanie...' : 'Synchronizuj'}
-                        {syncResult?.error && <span style={{ color: 'var(--error)', fontSize: '0.75em', marginLeft: 4 }}>!</span>}
-                    </button>
-                    <button className="btn btn-ghost" onClick={load} disabled={loading} title="Odśwież widok">
-                        <Icon name="refresh" size={14} className={loading ? 'spin' : undefined} />
-                        {loading ? 'Odświeżanie...' : 'Odśwież'}
-                    </button>
-                </div>
-            </div>
-
-            <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
-                {!loading && !error && filtered.length > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'center', minWidth: tableMinWidth, borderBottom: '2px solid var(--border-strong)', background: 'var(--surface-2)' }}>
-                        <div style={{ width: 56, flexShrink: 0 }} />
-                        <div className="shipping-table-header" style={{ gridTemplateColumns: columnGridTemplate }}>
-                            {SHIPPING_COLUMNS.map(column => {
-                                const active = sortState.key === column.id
-                                const ariaSort = active
-                                    ? (sortState.direction === 'asc' ? 'ascending' : 'descending')
-                                    : 'none'
-                                return (
-                                    <div
-                                        key={column.id}
-                                        className="shipping-table-heading"
-                                        role="columnheader"
-                                        aria-sort={column.sortable ? ariaSort : undefined}
+                <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
+                    <div className="search">
+                        <Icon name="search" size={14} />
+                        <input
+                            placeholder={T.sh_search ?? 'Szukaj po numerze lub kliencie…'}
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                        />
+                        {search && (
+                            <button className="btn-ghost" style={{ padding: '0 4px' }} onClick={() => setSearch('')}>
+                                <Icon name="x" size={12} />
+                            </button>
+                        )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+                            style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}>
+                            <option value="all">{T.sh_filter_all_status ?? 'Wszystkie statusy'}</option>
+                            <option value="pending">{T.sh_status_pending ?? 'oczekujące'}</option>
+                            <option value="needs_review">{T.sh_status_needs_review ?? 'do sprawdzenia'}</option>
+                            <option value="created">{T.sh_status_created ?? 'nadane'}</option>
+                            <option value="pending_confirmation">{T.sh_status_pending_confirmation ?? 'czeka na Allegro'}</option>
+                            <option value="error">{T.sh_status_error ?? 'błąd'}</option>
+                        </select>
+                        <select value={filterCourier} onChange={e => setFilterCourier(e.target.value)}
+                            style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}>
+                            <option value="all">{T.sh_filter_all_courier ?? 'Wszyscy kurierzy'}</option>
+                            <option value="inpost">InPost</option>
+                            <option value="apaczka">Apaczka</option>
+                            <option value="allegro_delivery">Wysyłam z Allegro</option>
+                        </select>
+                        <select value={filterSource} onChange={e => setFilterSource(e.target.value)}
+                            title={T.sh_filter_source ?? 'Źródło zamówienia'}
+                            style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}>
+                            <option value="all">{T.sh_filter_all_source ?? 'Wszystkie źródła'}</option>
+                            <option value="shopify">Shopify</option>
+                            <option value="allegro">Allegro</option>
+                        </select>
+                        <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
+                            title="From date"
+                            style={{ fontSize: '0.82em', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: filterDateFrom ? 'var(--text)' : 'var(--text-3)', cursor: 'pointer' }}
+                        />
+                        {filterDateFrom && <button className="btn-ghost" style={{ padding: '0 4px', fontSize: '0.82em' }} onClick={() => setFilterDateFrom('')}><Icon name="x" size={12} /></button>}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        {canManage && selectedDraftIds.size > 0 && (() => {
+                            const pendingSelected = [...selectedDraftIds].filter(id => {
+                                const d = drafts.find(x => x.id === id)
+                                return d && (d.status === 'pending' || d.status === 'error')
+                            })
+                            const pickupSelected = [...selectedDraftIds].filter(id => {
+                                const d = drafts.find(x => x.id === id)
+                                return d && d.courier === 'inpost' && d.status === 'created' && !d.pickup_ordered
+                            })
+                            const printSelected = [...selectedDraftIds].filter(id => {
+                                const d = drafts.find(x => x.id === id)
+                                return d && d.status === 'created' && d.courier_draft_id
+                            })
+                            return (<>
+                                {printSelected.length > 0 && (
+                                    <button
+                                        className="btn btn-secondary"
+                                        style={{ fontSize: '0.85em' }}
+                                        onClick={handleBulkPrint}
+                                        disabled={bulkProgress !== null}
+                                        title="Otwiera jedno okno drukowania dla wszystkich zaznaczonych etykiet; etykiety InPost są pobierane jako PDF A6"
                                     >
-                                        <button
-                                            type="button"
-                                            className="shipping-table-sort"
-                                            onClick={() => handleSort(column)}
-                                            disabled={!column.sortable}
-                                            title={column.sortable ? `Sortuj: ${column.label}` : column.label}
+                                        <Icon name="printer" size={13} />
+                                        {bulkProgress !== null
+                                            ? `Przygotowuję ${bulkProgress.done}/${bulkProgress.total}…`
+                                            : `Drukuj etykiety (${printSelected.length})`}
+                                    </button>
+                                )}
+                                {pendingSelected.length > 0 && (
+                                    <button
+                                        className="btn btn-primary"
+                                        style={{ fontSize: '0.85em' }}
+                                        onClick={handleBulkExecute}
+                                        disabled={bulkProgress !== null}
+                                    >
+                                        {bulkProgress !== null
+                                            ? `Realizuję ${bulkProgress.done}/${bulkProgress.total}…`
+                                            : `Realizuj zaznaczone (${pendingSelected.length})`}
+                                    </button>
+                                )}
+                                {pickupSelected.length > 0 && (
+                                    <button
+                                        className="btn btn-secondary"
+                                        style={{ fontSize: '0.85em' }}
+                                        onClick={() => setBulkPickupModal(true)}
+                                        disabled={bulkProgress !== null}
+                                    >
+                                        {bulkProgress !== null
+                                            ? `Podjazd ${bulkProgress.done}/${bulkProgress.total}…`
+                                            : `Zamów podjazd (${pickupSelected.length})`}
+                                    </button>
+                                )}
+                            </>)
+                        })()}
+                        <span className="mono dim">{drafts.length} {T.shipping_drafts_count ?? 'draftów'}</span>
+                        {errorCount > 0 && (
+                            <Pill kind="warn">{errorCount} {T.shipping_errors ?? 'błędów'}</Pill>
+                        )}
+                        <button className="btn btn-ghost" onClick={() => setExpandAll(v => !v)} style={{ fontSize: '0.82em', gap: 4 }} title={expandAll ? 'Collapse all' : 'Expand all'}>
+                            <Icon name={expandAll ? 'chevronUp' : 'chevronDown'} size={13} />
+                            {expandAll ? (T.sh_collapse ?? 'Zwiń') : (T.sh_expand ?? 'Rozwiń')}
+                        </button>
+                        <button className="btn btn-ghost" onClick={handleSync} disabled={syncing || loading} title="Synchronizuj zamówienia z Allegro i Shopify">
+                            <Icon name={syncing ? 'refresh' : 'zap'} size={14} className={syncing ? 'spin' : undefined} />
+                            {syncing ? 'Synchronizowanie...' : 'Synchronizuj'}
+                            {syncResult?.error && <span style={{ color: 'var(--error)', fontSize: '0.75em', marginLeft: 4 }}>!</span>}
+                        </button>
+                        <button className="btn btn-ghost" onClick={load} disabled={loading} title="Odśwież widok">
+                            <Icon name="refresh" size={14} className={loading ? 'spin' : undefined} />
+                            {loading ? 'Odświeżanie...' : 'Odśwież'}
+                        </button>
+                    </div>
+                </div>
+
+                <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
+                    {!loading && !error && filtered.length > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', minWidth: tableMinWidth, borderBottom: '2px solid var(--border-strong)', background: 'var(--surface-2)' }}>
+                            <div style={{ width: 56, flexShrink: 0 }} />
+                            <div className="shipping-table-header" style={{ gridTemplateColumns: columnGridTemplate }}>
+                                {SHIPPING_COLUMNS.map(column => {
+                                    const active = sortState.key === column.id
+                                    const ariaSort = active
+                                        ? (sortState.direction === 'asc' ? 'ascending' : 'descending')
+                                        : 'none'
+                                    return (
+                                        <div
+                                            key={column.id}
+                                            className="shipping-table-heading"
+                                            role="columnheader"
+                                            aria-sort={column.sortable ? ariaSort : undefined}
                                         >
-                                            <span>{column.label}</span>
-                                            {active && (
-                                                <Icon name={sortState.direction === 'asc' ? 'caretUp' : 'caret'} size={12} />
-                                            )}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="shipping-column-resize"
-                                            onPointerDown={event => startColumnResize(event, column)}
-                                            aria-label={`Zmień szerokość kolumny ${column.label}`}
-                                            title={`Zmień szerokość kolumny ${column.label}`}
-                                        />
-                                    </div>
-                                )
-                            })}
+                                            <button
+                                                type="button"
+                                                className="shipping-table-sort"
+                                                onClick={() => handleSort(column)}
+                                                disabled={!column.sortable}
+                                                title={column.sortable ? `Sortuj: ${column.label}` : column.label}
+                                            >
+                                                <span>{column.label}</span>
+                                                {active && (
+                                                    <Icon name={sortState.direction === 'asc' ? 'caretUp' : 'caret'} size={12} />
+                                                )}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="shipping-column-resize"
+                                                onPointerDown={event => startColumnResize(event, column)}
+                                                aria-label={`Zmień szerokość kolumny ${column.label}`}
+                                                title={`Zmień szerokość kolumny ${column.label}`}
+                                            />
+                                        </div>
+                                    )
+                                })}
+                            </div>
                         </div>
-                    </div>
-                )}
-                {!loading && !error && filtered.length > 0 && selectableIds.length > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: tableMinWidth, padding: '6px 16px 6px 0', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
-                        <div style={{ width: 56, flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
-                            <input type="checkbox" checked={allSelected} onChange={handleSelectAll}
-                                style={{ cursor: 'pointer', accentColor: 'var(--primary, #3b82f6)' }} />
+                    )}
+                    {!loading && !error && filtered.length > 0 && selectableIds.length > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: tableMinWidth, padding: '6px 16px 6px 0', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
+                            <div style={{ width: 56, flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
+                                <input type="checkbox" checked={allSelected} onChange={handleSelectAll}
+                                    style={{ cursor: 'pointer', accentColor: 'var(--primary, #3b82f6)' }} />
+                            </div>
+                            <span style={{ fontSize: '0.82em', color: 'var(--text-2)' }}>
+                                {allSelected
+                                    ? `${T.sh_selected_all ?? 'Zaznaczono wszystkie'} (${selectableIds.length})`
+                                    : `${T.sh_select_all ?? 'Zaznacz wszystkie'} (${selectableIds.length})`}
+                            </span>
                         </div>
-                        <span style={{ fontSize: '0.82em', color: 'var(--text-2)' }}>
-                            {allSelected
-                                ? `${T.sh_selected_all ?? 'Zaznaczono wszystkie'} (${selectableIds.length})`
-                                : `${T.sh_select_all ?? 'Zaznacz wszystkie'} (${selectableIds.length})`}
-                        </span>
-                    </div>
-                )}
-                {loading && (
-                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--c-text-2)' }}>
-                        Ładowanie…
-                    </div>
-                )}
-                {error && (
-                    <div className="error-banner" style={{ margin: 16 }}>
-                        <Icon name="alertTriangle" size={14} />
-                        {error}
-                    </div>
-                )}
-                {!loading && !error && filtered.length === 0 && (
-                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--c-text-2)' }}>
-                        {search ? 'Brak wyników.' : 'Brak draftów wysyłek.'}
-                    </div>
-                )}
-                {!loading && visibleDrafts.map(draft => (
-                    <DraftRow
-                        key={`${draft.id}:${expandAll ?? 'individual'}`}
-                        draft={draft}
-                        busy={busy}
-                        canManage={canManage}
-                        onPrintLabel={handlePrintLabel}
-                        onExecute={handleExecute}
-                        onPickup={handlePickup}
-                        onMarkFulfilled={handleMarkFulfilled}
-                        onConfirmPending={handleConfirmPending}
-                        onSetApaczkaService={handleSetApaczkaService}
-                        onReviewDraft={handleReviewDraft}
-                        apaczkaServices={apaczkaServices}
-                        selected={selectedDraftIds.has(draft.id)}
-                        onToggleSelect={handleToggleSelect}
-                        forceOpen={expandAll}
-                        getToken={getToken}
-                        onDraftUpdate={load}
-                        columnGridTemplate={columnGridTemplate}
-                        tableMinWidth={tableMinWidth}
-                    />
-                ))}
+                    )}
+                    {loading && (
+                        <div style={{ padding: 24, textAlign: 'center', color: 'var(--c-text-2)' }}>
+                            Ładowanie…
+                        </div>
+                    )}
+                    {error && (
+                        <div className="error-banner" style={{ margin: 16 }}>
+                            <Icon name="alertTriangle" size={14} />
+                            {error}
+                        </div>
+                    )}
+                    {!loading && !error && filtered.length === 0 && (
+                        <div style={{ padding: 24, textAlign: 'center', color: 'var(--c-text-2)' }}>
+                            {search ? 'Brak wyników.' : 'Brak draftów wysyłek.'}
+                        </div>
+                    )}
+                    {!loading && visibleDrafts.map(draft => (
+                        <DraftRow
+                            key={`${draft.id}:${expandAll ?? 'individual'}`}
+                            draft={draft}
+                            busy={busy}
+                            canManage={canManage}
+                            onPrintLabel={handlePrintLabel}
+                            onExecute={handleExecute}
+                            onPickup={handlePickup}
+                            onMarkFulfilled={handleMarkFulfilled}
+                            onConfirmPending={handleConfirmPending}
+                            onSetApaczkaService={handleSetApaczkaService}
+                            onReviewDraft={handleReviewDraft}
+                            apaczkaServices={apaczkaServices}
+                            selected={selectedDraftIds.has(draft.id)}
+                            onToggleSelect={handleToggleSelect}
+                            forceOpen={expandAll}
+                            getToken={getToken}
+                            onDraftUpdate={load}
+                            columnGridTemplate={columnGridTemplate}
+                            tableMinWidth={tableMinWidth}
+                        />
+                    ))}
+                </div>
             </div>
-        </div>
-        {bulkPickupModal && (
-            <PickupScheduleModal
-                title="Zamów podjazd kuriera (wszystkie zaznaczone)"
-                onConfirm={handleBulkPickup}
-                onCancel={() => setBulkPickupModal(false)}
-            />
-        )}
+            {bulkPickupModal && (
+                <PickupScheduleModal
+                    title="Zamów podjazd kuriera (wszystkie zaznaczone)"
+                    onConfirm={handleBulkPickup}
+                    onCancel={() => setBulkPickupModal(false)}
+                />
+            )}
         </>
     )
 }

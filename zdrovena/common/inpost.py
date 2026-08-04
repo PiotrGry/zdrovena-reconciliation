@@ -460,7 +460,7 @@ class InPostClient:
         )
         return resp.json() or {}
 
-    def create_paczkomat_shipment(
+    def build_paczkomat_payload(
         self,
         *,
         receiver_first_name: str,
@@ -486,9 +486,33 @@ class InPostClient:
                 "sending_method": "dispatch_order",
             },
         }
-        return self._post_shipment(payload)
+        return payload
 
-    def create_kurier_shipment(
+    @staticmethod
+    def _shipx_sender(sender: dict[str, str]) -> dict[str, Any]:
+        """Map our flat sender dict onto the ShipX `sender` contract.
+
+        ShipX requires company_name, first_name, last_name and a nested address;
+        a company seller has no personal name, so the company name stands in for
+        the required person fields rather than being sent empty.
+        """
+        name = sender.get("name", "")
+        return {
+            "company_name": sender.get("company_name") or name,
+            "first_name": sender.get("firstname") or name,
+            "last_name": sender.get("lastname") or name,
+            "email": sender.get("email", ""),
+            "phone": sender.get("phone", ""),
+            "address": {
+                "street": sender.get("street", ""),
+                "building_number": sender.get("building_number", "1"),
+                "city": sender.get("city", ""),
+                "post_code": sender.get("post_code", ""),
+                "country_code": "PL",
+            },
+        }
+
+    def build_kurier_payload(
         self,
         *,
         receiver_first_name: str,
@@ -537,7 +561,7 @@ class InPostClient:
                     "country_code": "PL",
                 },
             },
-            "sender": sender_payload,
+            "sender": self._shipx_sender(sender),
             "parcels": [
                 {
                     "dimensions": {
@@ -551,7 +575,20 @@ class InPostClient:
             ],
             "custom_attributes": {"sending_method": "dispatch_order"},
         }
-        return self._post_shipment(payload)
+        return payload
+
+    def create_paczkomat_shipment(self, **kwargs: Any) -> dict[str, Any]:
+        """Build and send. The builder is public so a preview can show the exact
+        payload without a network call — see build_kurier_payload."""
+        return self._post_shipment(self.build_paczkomat_payload(**kwargs))
+
+    def create_kurier_shipment(self, **kwargs: Any) -> dict[str, Any]:
+        """Build and send.
+
+        Split from the builder so a preview and the real request cannot drift:
+        they are the same function, not two functions kept in sync by hand.
+        """
+        return self._post_shipment(self.build_kurier_payload(**kwargs))
 
     def _post_shipment(self, payload: dict[str, Any]) -> dict[str, Any]:
         _validate_shipment_payload(payload)
@@ -720,5 +757,10 @@ class InPostClient:
 
     def get_label(self, shipment_id: str) -> bytes:
         url = f"{_BASE}/v1/shipments/{shipment_id}/label"
-        resp = self._request("GET", url, action="get_label")
+        resp = self._request(
+            "GET",
+            url,
+            action="get_label",
+            params={"format": "Pdf", "type": "A6"},
+        )
         return resp.content

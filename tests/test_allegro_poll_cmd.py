@@ -1,11 +1,69 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from zdrovena.api.commands import allegro_poll_cmd
+
+
+def test_no_tracking_snapshot_uses_exact_48h_and_current_draft_state():
+    now = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    store = MagicMock()
+    store.list_drafts.return_value = [
+        {
+            "id": "exactly-48h",
+            "created_at": "2026-07-30T12:00:00Z",
+            "status": "pending",
+            "tracking_number": None,
+        },
+        {
+            "id": "older",
+            "created_at": "2026-07-29T10:00:00+00:00",
+            "status": "error",
+            "tracking_number": "",
+        },
+        {
+            "id": "too-young",
+            "created_at": "2026-07-30T12:01:00Z",
+            "status": "pending",
+            "tracking_number": None,
+        },
+        {
+            "id": "tracked",
+            "created_at": "2026-07-20T12:00:00Z",
+            "status": "created",
+            "tracking_number": "TRK-1",
+        },
+        {
+            "id": "cancelled",
+            "created_at": "2026-07-20T12:00:00Z",
+            "status": "cancelled",
+            "tracking_number": None,
+        },
+        {
+            "id": "fulfilled",
+            "created_at": "2026-07-20T12:00:00Z",
+            "status": "created",
+            "fulfillment_status": "fulfilled",
+            "tracking_number": None,
+        },
+    ]
+
+    with patch("zdrovena.common.events.log_event") as event:
+        count = allegro_poll_cmd._emit_orders_without_tracking_snapshot(store, now=now)
+
+    assert count == 2
+    event.assert_called_once_with(
+        "shipping.orders_without_tracking_snapshot",
+        overdue_count=2,
+        draft_ids=["older", "exactly-48h"],
+        oldest_age_hours=74.0,
+        threshold_hours=48,
+        snapshot_truncated=False,
+    )
 
 
 def test_build_fakturownia_client_uses_configured_base_url(monkeypatch):

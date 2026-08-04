@@ -87,8 +87,14 @@ class ShopifyDedupStore:
         self._connection_string = connection_string
         self._local_root = local_root or _DEFAULT_ROOT
         self._use_table = bool(account_url or connection_string)
+        self._cached_client: Any = None
 
-    def _table_client(self) -> Any:  # pragma: no cover — Azure SDK adapter, live-only
+    def _table_client(self) -> Any:
+        """Cached per instance: create_table_if_not_exists is a network call that
+        answers 409 once the table exists, so re-issuing it per operation is
+        pure overhead."""
+        if self._cached_client is not None:
+            return self._cached_client
         from azure.data.tables import TableServiceClient
         from azure.identity import DefaultAzureCredential
 
@@ -103,7 +109,8 @@ class ShopifyDedupStore:
                     "ShopifyDedupStore: neither account_url nor connection_string is set"
                 )
             svc = TableServiceClient.from_connection_string(self._connection_string)
-        return svc.create_table_if_not_exists(TABLE_NAME)
+        self._cached_client = svc.create_table_if_not_exists(TABLE_NAME)
+        return self._cached_client
 
     # ── Local fallback ─────────────────────────────────────────────────────────
 

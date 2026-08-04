@@ -8,5 +8,33 @@ COPY zdrovena/ zdrovena/
 # Install api + cloud + dev dependencies
 RUN pip install --no-cache-dir -e ".[api,cloud,ksef,dev]"
 
+# sops — activates the local SOPS+age secrets tier
+# (zdrovena/common/_local_secret_fallback.py) inside the container, so an
+# Allegro refresh token rotated here is persisted to the same encrypted file
+# the host uses instead of dying with the container. DEV IMAGE ONLY: the
+# production Dockerfile has no sops and resolves secrets from Key Vault.
+#
+# Fetched and checksum-verified with the interpreter already in the base
+# image — no curl/apt layer, and a tampered download fails the build rather
+# than shipping an unverified binary. Checksums are the official ones from
+# the v3.9.4 release's sops-v3.9.4.checksums.txt.
+ARG SOPS_VERSION=3.9.4
+ARG TARGETARCH=amd64
+RUN python3 -c "\
+import hashlib, os, sys, urllib.request; \
+sums = { \
+ 'amd64': '5488e32bc471de7982ad895dd054bbab3ab91c417a118426134551e9626e4e85', \
+ 'arm64': '16564c6b181d88505d9e0dfef62771894293d85cde5884d9b1a843859eee174b', \
+}; \
+v = os.environ['SOPS_VERSION']; a = os.environ['TARGETARCH']; \
+sys.exit('unsupported TARGETARCH for sops: ' + a) if a not in sums else None; \
+url = 'https://github.com/getsops/sops/releases/download/v%s/sops-v%s.linux.%s' % (v, v, a); \
+data = urllib.request.urlopen(url, timeout=180).read(); \
+got = hashlib.sha256(data).hexdigest(); \
+sys.exit('sops checksum mismatch for %s: got %s' % (a, got)) if got != sums[a] else None; \
+open('/usr/local/bin/sops', 'wb').write(data)" \
+    && chmod 0755 /usr/local/bin/sops \
+    && sops --version --disable-version-check
+
 # zdrovena/ is overridden by volume mount in docker-compose.yml for hot reload
 CMD ["uvicorn", "zdrovena.api.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]

@@ -225,15 +225,7 @@ class TestKurierShipment:
         assert addr["post_code"] == "00-001"
         assert addr["country_code"] == "PL"
         assert sent["service"] == "inpost_courier_standard"
-        assert sent["sender"]["company_name"] == "Zdrovena"
-        assert sent["sender"]["email"] == "sender@zdrovena.pl"
-        assert sent["sender"]["address"] == {
-            "street": "Testowa 1",
-            "building_number": "1",
-            "city": "Warszawa",
-            "post_code": "00-001",
-            "country_code": "PL",
-        }
+        assert sent["sender"] == InPostClient._shipx_sender(_SENDER)
 
     @pytest.mark.parametrize(
         ("overrides", "message"),
@@ -297,6 +289,136 @@ class TestAsyncShipmentConfirmation:
         assert mock_get.call_count == 2
 
 
+class TestKurierSenderContract:
+    """The sender block must match the ShipX contract, not our internal shape.
+
+    Production regression (2026-07-31): the flat `_get_sender()` dict was passed
+    through verbatim, so ShipX rejected every kurier shipment with
+    `validation_failed` naming company_name/first_name/last_name/address.
+    """
+
+    def _kwargs(self):
+        return {
+            "receiver_first_name": "Jan",
+            "receiver_last_name": "Kowalski",
+            "receiver_email": "jan@example.com",
+            "receiver_phone": "600200300",
+            "receiver_street": "Kwiatowa",
+            "receiver_building_number": "5",
+            "receiver_city": "Warszawa",
+            "receiver_post_code": "00-001",
+            "sender": _SENDER,
+            "reference": "order-1060",
+        }
+
+    def _sent_sender(self):
+        client = InPostClient(_TOKEN, _ORG)
+        resp = _ok_response({"id": "ship-sender"})
+        with patch.object(client._session, "post", return_value=resp) as mock_post:
+            client.create_kurier_shipment(**self._kwargs())
+        return mock_post.call_args.kwargs["json"]["sender"]
+
+    def test_required_identity_fields_present_and_non_empty(self):
+        sender = self._sent_sender()
+        for field in ("company_name", "first_name", "last_name"):
+            assert field in sender, f"ShipX requires sender.{field}"
+            assert sender[field], f"ShipX rejects an empty sender.{field}"
+
+    def test_address_is_nested_object_with_country_code(self):
+        sender = self._sent_sender()
+        assert "address" in sender, "ShipX requires a nested sender.address object"
+        assert sender["address"] == {
+            "street": "Testowa 1",
+            "building_number": "1",
+            "city": "Warszawa",
+            "post_code": "00-001",
+            "country_code": "PL",
+        }
+
+    def test_no_flat_internal_address_keys_leak_into_payload(self):
+        sender = self._sent_sender()
+        for leaked in ("street", "building_number", "city", "post_code", "firstname", "lastname"):
+            assert leaked not in sender, f"internal key {leaked!r} must not reach ShipX"
+
+    def test_contact_fields_forwarded(self):
+        sender = self._sent_sender()
+        assert sender["email"] == "sender@zdrovena.pl"
+        assert sender["phone"] == "500000000"
+
+    def test_blank_firstname_falls_back_to_company_name(self):
+        """`_get_sender()` sets firstname='' for a company seller; ShipX still
+        requires a non-empty first_name."""
+        sender = self._sent_sender()
+        assert sender["first_name"] == "Zdrovena"
+        assert sender["company_name"] == "Zdrovena"
+
+
+class TestPayloadBuilders:
+    """The preview and the real send must be the same payload by construction.
+
+    A preview assembled by separate code would drift from what is actually sent
+    and would make the operator's trust problem worse, not better.
+    """
+
+    def _kwargs(self):
+        return {
+            "receiver_first_name": "Jan",
+            "receiver_last_name": "Kowalski",
+            "receiver_email": "jan@example.com",
+            "receiver_phone": "600200300",
+            "receiver_street": "Kwiatowa",
+            "receiver_building_number": "5",
+            "receiver_city": "Warszawa",
+            "receiver_post_code": "00-001",
+            "sender": _SENDER,
+            "reference": "order-1060",
+        }
+
+    def _locker_kwargs(self):
+        return {
+            "receiver_first_name": "Jan",
+            "receiver_last_name": "Kowalski",
+            "receiver_email": "jan@example.com",
+            "receiver_phone": "600200300",
+            "target_point": "KRA01M",
+            "reference": "order-1061",
+        }
+
+    def test_build_kurier_payload_matches_what_create_sends(self):
+        client = InPostClient(_TOKEN, _ORG)
+        built = client.build_kurier_payload(**self._kwargs())
+
+        resp = _ok_response({"id": "ship-1"})
+        with patch.object(client._session, "post", return_value=resp) as mock_post:
+            client.create_kurier_shipment(**self._kwargs())
+        sent = mock_post.call_args.kwargs["json"]
+
+        assert built == sent, "preview payload must equal the payload actually sent"
+
+    def test_build_kurier_payload_sends_nothing(self):
+        client = InPostClient(_TOKEN, _ORG)
+        with patch.object(client._session, "post") as mock_post:
+            client.build_kurier_payload(**self._kwargs())
+        mock_post.assert_not_called()
+
+    def test_build_paczkomat_payload_matches_what_create_sends(self):
+        client = InPostClient(_TOKEN, _ORG)
+        built = client.build_paczkomat_payload(**self._locker_kwargs())
+
+        resp = _ok_response({"id": "ship-2"})
+        with patch.object(client._session, "post", return_value=resp) as mock_post:
+            client.create_paczkomat_shipment(**self._locker_kwargs())
+        sent = mock_post.call_args.kwargs["json"]
+
+        assert built == sent
+
+    def test_build_paczkomat_payload_sends_nothing(self):
+        client = InPostClient(_TOKEN, _ORG)
+        with patch.object(client._session, "post") as mock_post:
+            client.build_paczkomat_payload(**self._locker_kwargs())
+        mock_post.assert_not_called()
+
+
 # ── create_dispatch_order ────────────────────────────────────────────────────
 
 
@@ -357,6 +479,7 @@ class TestGetLabel:
         # URL targets shipment-specific label endpoint
         called_url = mock_get.call_args.args[0]
         assert called_url.endswith("/v1/shipments/ship-1/label")
+        assert mock_get.call_args.kwargs["params"] == {"format": "Pdf", "type": "A6"}
 
     def test_4xx_raises_inpost_error(self):
         client = InPostClient(_TOKEN, _ORG)

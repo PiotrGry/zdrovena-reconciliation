@@ -9,6 +9,7 @@ tests/test_local_secret_fallback.py). Uses tmp_path for .env.local /
 
 from __future__ import annotations
 
+import argparse
 import shutil
 import subprocess
 from pathlib import Path
@@ -17,9 +18,40 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scripts import secrets_sync as sync
-from scripts.secrets_manifest import ENV_LOCAL_SECRETS
+from scripts.secrets_manifest import ENV_LOCAL_SECRETS, SOPS_ONLY_SECRETS
 
 _REAL_SOPS_AVAILABLE = shutil.which("sops") is not None and shutil.which("age-keygen") is not None
+
+
+def _setup_real_sops(tmp_path, monkeypatch) -> Path:
+    """Generate a throwaway age keypair and a matching .sops.yaml in tmp_path.
+
+    Returns the private key file. sops discovers .sops.yaml relative to the
+    process's CWD (verified empirically — NOT relative to the input file's
+    own directory), so this chdirs into tmp_path where both the config and
+    ENV_LOCAL_PATH/SOPS_PATH (set by the _isolate_paths autouse fixture)
+    live. That matches real usage too: the CLI is invoked as
+    `uv run python scripts/secrets_sync.py encrypt` from the repo root,
+    where .sops.yaml also lives.
+    """
+    keygen = subprocess.run(["age-keygen"], capture_output=True, text=True, check=True)
+    # age-keygen writes the private key (plus a "# public key: ..." comment
+    # line) to stdout; stderr only gets a human-readable "Public key: ..."
+    # status line. Parse the comment line from stdout so we get the exact
+    # key deterministically.
+    public_key_line = next(
+        line for line in keygen.stdout.splitlines() if line.startswith("# public key:")
+    )
+    public_key = public_key_line.split(":", 1)[1].strip()
+
+    age_key_file = tmp_path / "age-keys.txt"
+    age_key_file.write_text(keygen.stdout)
+    monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(age_key_file))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".sops.yaml").write_text(
+        f"creation_rules:\n  - path_regex: \\.env\\.local\\.sops$\n    age: {public_key}\n"
+    )
+    return age_key_file
 
 
 @pytest.fixture(autouse=True)
@@ -39,8 +71,8 @@ class TestPull:
 
     def test_writes_found_secrets_and_reports_missing(self, tmp_path):
         def fake_get(vault_url, name):
-            if name == "allegro-refresh-token":
-                return "secret-refresh-value"
+            if name == "allegro-client-secret":
+                return "secret-client-value"
             if name == "notify-phone":
                 return "48123123123"
             return None
@@ -50,10 +82,41 @@ class TestPull:
 
         assert rc == 0
         content = sync.ENV_LOCAL_PATH.read_text()
-        assert "ALLEGRO_REFRESH_TOKEN=secret-refresh-value" in content
+        assert "ALLEGRO_CLIENT_SECRET=secret-client-value" in content
         assert "NOTIFY_PHONE=48123123123" in content
         # Everything else in the manifest was not found -> not written.
         assert "ALLEGRO_CLIENT_ID=" not in content
+
+    def test_never_writes_a_rotating_secret_into_plaintext(self, tmp_path):
+        """SOPS_ONLY_SECRETS must not reach .env.local, even from Key Vault.
+
+        An env var there is checked before the SOPS tier by get_secret(), so
+        pulling a rotating token into the plaintext file would pin the
+        process to a value Allegro invalidates on the next refresh.
+        """
+
+        def fake_get(vault_url, name):
+            return f"kv-value-for-{name}"
+
+        with patch("zdrovena.common._keyvault.get_keyvault_secret", side_effect=fake_get):
+            rc = sync.cmd_pull(None)
+
+        assert rc == 0
+        content = sync.ENV_LOCAL_PATH.read_text()
+        for name in SOPS_ONLY_SECRETS:
+            assert f"{name.upper().replace('-', '_')}=" not in content
+
+    def test_strips_a_rotating_secret_already_present_in_env_local(self, tmp_path):
+        sync.ENV_LOCAL_PATH.write_text(
+            "ALLEGRO_REFRESH_TOKEN=stale-shadowing-value\nOTHER=keep-me\n"
+        )
+        with patch("zdrovena.common._keyvault.get_keyvault_secret", return_value=None):
+            rc = sync.cmd_pull(None)
+
+        assert rc == 0
+        content = sync.ENV_LOCAL_PATH.read_text()
+        assert "ALLEGRO_REFRESH_TOKEN" not in content
+        assert "OTHER=keep-me" in content
 
     def test_missing_secrets_do_not_crash(self, tmp_path):
         with patch("zdrovena.common._keyvault.get_keyvault_secret", return_value=None):
@@ -93,7 +156,7 @@ class TestPull:
         assert lines.count("SHOPIFY_ACCESS_TOKEN=rotated-value") == 1
         assert "OTHER=x" in lines
 
-    def test_looks_up_every_manifest_secret(self, tmp_path):
+    def test_looks_up_every_manifest_secret_except_the_rotating_ones(self, tmp_path):
         seen: list[str] = []
 
         def fake_get(vault_url, name):
@@ -103,7 +166,12 @@ class TestPull:
         with patch("zdrovena.common._keyvault.get_keyvault_secret", side_effect=fake_get):
             sync.cmd_pull(None)
 
-        assert seen == ENV_LOCAL_SECRETS
+        # Whole manifest, minus the secrets that must never reach plaintext.
+        assert seen == [name for name in ENV_LOCAL_SECRETS if name not in SOPS_ONLY_SECRETS]
+        assert not SOPS_ONLY_SECRETS & set(seen)
+        # Guard against SOPS_ONLY_SECRETS silently drifting out of the
+        # manifest and this test degenerating into "pull everything".
+        assert SOPS_ONLY_SECRETS & set(ENV_LOCAL_SECRETS)
 
 
 class TestPush:
@@ -300,31 +368,7 @@ class TestRealSopsRoundTrip:
     """
 
     def test_encrypt_then_decrypt_recovers_original_content(self, tmp_path, monkeypatch):
-        keygen = subprocess.run(["age-keygen"], capture_output=True, text=True, check=True)
-        # age-keygen writes the private key (plus a "# public key: ..."
-        # comment line) to stdout; stderr only gets a human-readable
-        # "Public key: ..." status line. Parse the comment line from stdout
-        # so we get the exact key deterministically.
-        public_key_line = next(
-            line for line in keygen.stdout.splitlines() if line.startswith("# public key:")
-        )
-        public_key = public_key_line.split(":", 1)[1].strip()
-
-        age_key_file = tmp_path / "age-keys.txt"
-        age_key_file.write_text(keygen.stdout)
-        monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(age_key_file))
-
-        # sops discovers .sops.yaml relative to the process's CWD (verified
-        # empirically — NOT relative to the input file's own directory), so
-        # chdir into tmp_path where both the config and ENV_LOCAL_PATH/
-        # SOPS_PATH (set by the _isolate_paths autouse fixture) live. This
-        # matches real usage too: the CLI is invoked as
-        # `uv run python scripts/secrets_sync.py encrypt` from the repo
-        # root, where .sops.yaml also lives.
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / ".sops.yaml").write_text(
-            f"creation_rules:\n  - path_regex: \\.env\\.local\\.sops$\n    age: {public_key}\n"
-        )
+        _setup_real_sops(tmp_path, monkeypatch)
 
         original_content = "ALLEGRO_CLIENT_ID=real-round-trip-value\nOTHER_KEY=other-value\n"
         sync.ENV_LOCAL_PATH.write_text(original_content)
@@ -347,3 +391,82 @@ class TestRealSopsRoundTrip:
         decrypted_content = sync.ENV_LOCAL_PATH.read_text()
         assert "ALLEGRO_CLIENT_ID=real-round-trip-value" in decrypted_content
         assert "OTHER_KEY=other-value" in decrypted_content
+
+    def test_encrypt_preserves_a_key_that_only_exists_in_the_snapshot(self, tmp_path, monkeypatch):
+        """The rotated-token case, end to end against real sops.
+
+        set_secret() writes a rotated Allegro refresh token straight into
+        .env.local.sops; that key deliberately has no .env.local counterpart
+        (an env var there would shadow the whole SOPS tier). A later
+        `encrypt` must not drop it.
+        """
+        age_key_file = _setup_real_sops(tmp_path, monkeypatch)
+
+        # Snapshot holds the rotated token; .env.local never does.
+        sync.ENV_LOCAL_PATH.write_text("ALLEGRO_CLIENT_ID=client-id-v1\n")
+        assert sync.cmd_encrypt(argparse.Namespace(replace=True)) == 0
+        from zdrovena.common import _local_secret_fallback as fallback
+
+        monkeypatch.setattr(fallback, "_SOPS_FILE", sync.SOPS_PATH)
+        monkeypatch.setattr(fallback, "_AGE_KEY_FILE", age_key_file)
+        assert fallback.write_local_fallback("allegro-refresh-token", "rotated-token-v2") is True
+
+        # A routine re-encrypt after editing .env.local must keep it.
+        sync.ENV_LOCAL_PATH.write_text("ALLEGRO_CLIENT_ID=client-id-v2\n")
+        assert sync.cmd_encrypt(argparse.Namespace(replace=False)) == 0
+
+        assert fallback.read_local_fallback("allegro-refresh-token") == "rotated-token-v2"
+        assert fallback.read_local_fallback("allegro-client-id") == "client-id-v2"
+
+    def test_replace_flag_drops_snapshot_only_keys(self, tmp_path, monkeypatch):
+        """--replace is the documented way to actually remove a key."""
+        age_key_file = _setup_real_sops(tmp_path, monkeypatch)
+
+        sync.ENV_LOCAL_PATH.write_text("ALLEGRO_CLIENT_ID=client-id\n")
+        assert sync.cmd_encrypt(argparse.Namespace(replace=True)) == 0
+        from zdrovena.common import _local_secret_fallback as fallback
+
+        monkeypatch.setattr(fallback, "_SOPS_FILE", sync.SOPS_PATH)
+        monkeypatch.setattr(fallback, "_AGE_KEY_FILE", age_key_file)
+        assert fallback.write_local_fallback("allegro-refresh-token", "doomed") is True
+        assert fallback.read_local_fallback("allegro-refresh-token") == "doomed"
+
+        assert sync.cmd_encrypt(argparse.Namespace(replace=True)) == 0
+        assert fallback.read_local_fallback("allegro-refresh-token") is None
+
+
+class TestEncryptMergeGuards:
+    def test_refuses_to_overwrite_an_undecryptable_snapshot(self, tmp_path, capsys):
+        sync.ENV_LOCAL_PATH.write_text("KEY=value\n")
+        sync.SOPS_PATH.write_text("ENC[corrupted-or-wrong-key]\n")
+        with patch("shutil.which", return_value="/usr/bin/sops"):
+            with patch.object(sync, "_decrypt_sops_file", return_value=None):
+                rc = sync.cmd_encrypt(argparse.Namespace(replace=False))
+
+        assert rc == 1
+        assert "could not be decrypted" in capsys.readouterr().err
+        # The unreadable snapshot must be left exactly as it was.
+        assert sync.SOPS_PATH.read_text() == "ENC[corrupted-or-wrong-key]\n"
+
+    def test_replace_overwrites_even_an_undecryptable_snapshot(self, tmp_path):
+        sync.ENV_LOCAL_PATH.write_text("KEY=value\n")
+        sync.SOPS_PATH.write_text("ENC[corrupted]\n")
+        proc = MagicMock(stdout="ENC[fresh]\n")
+        with patch("shutil.which", return_value="/usr/bin/sops"):
+            with patch("subprocess.run", return_value=proc):
+                rc = sync.cmd_encrypt(argparse.Namespace(replace=True))
+
+        assert rc == 0
+        assert sync.SOPS_PATH.read_text() == "ENC[fresh]\n"
+
+    def test_missing_snapshot_needs_no_decrypt(self, tmp_path):
+        """First-ever encrypt: nothing to merge, no decrypt attempted."""
+        sync.ENV_LOCAL_PATH.write_text("KEY=value\n")
+        proc = MagicMock(stdout="ENC[...]\n")
+        with patch("shutil.which", return_value="/usr/bin/sops"):
+            with patch.object(sync, "_decrypt_sops_file") as decrypt:
+                with patch("subprocess.run", return_value=proc):
+                    rc = sync.cmd_encrypt(argparse.Namespace(replace=False))
+
+        assert rc == 0
+        decrypt.assert_not_called()

@@ -51,6 +51,17 @@
               }
             ],
             "title": "Pickup To"
+          },
+          "preview_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Fingerprint"
           }
         },
         "title": "Body_execute_draft_api_shipping_drafts__draft_id__execute_post",
@@ -3177,6 +3188,61 @@
           }
         ],
         "summary": "(Re)create courier shipment for a draft",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/drafts/{draft_id}/execute/preview": {
+      "get": {
+        "operationId": "preview_execute_draft_api_shipping_drafts__draft_id__execute_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "title": "Draft Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Preview Execute Draft Api Shipping Drafts  Draft Id  Execute Preview Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "Draft not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Show exactly what would be sent to the courier, without sending it",
         "tags": [
           "shipping"
         ]

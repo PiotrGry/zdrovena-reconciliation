@@ -7,8 +7,10 @@ import hashlib
 import hmac
 import io
 import json
+import logging
 import os
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -424,35 +426,39 @@ class TestListDrafts:
 # ── Execute draft ─────────────────────────────────────────────────────────────
 
 
+def _seed_error_draft(store, courier="inpost", service="inpost_courier_standard"):
+    draft = {
+        "id": "draft-exec-1",
+        "created_at": "2026-05-20T10:00:00+00:00",
+        "source": "shopify",
+        "shopify_order_id": "10",
+        "shopify_order_number": "1099",
+        "customer_name": "Test User",
+        "courier": courier,
+        "service": service,
+        "tracking_number": None,
+        "courier_draft_id": None,
+        "status": "error",
+        "packages_count": 1,
+        "pickup_ordered": False,
+        "receiver": {
+            "first_name": "Test",
+            "last_name": "User",
+            "email": "t@t.com",
+            "phone": "500000000",
+            "locker_id": "WAW01A",
+        },
+        "shipping_address": {"street": "Kwiatowa 1", "city": "Warszawa", "post_code": "00-001"},
+        "parcel": {"template": "small", "weight_kg": None},
+        "error": "no credentials",
+    }
+    store.upsert_draft(draft)
+    return draft
+
+
 class TestExecuteDraft:
     def _seed_error_draft(self, store, courier="inpost", service="inpost_courier_standard"):
-        draft = {
-            "id": "draft-exec-1",
-            "created_at": "2026-05-20T10:00:00+00:00",
-            "source": "shopify",
-            "shopify_order_id": "10",
-            "shopify_order_number": "1099",
-            "customer_name": "Test User",
-            "courier": courier,
-            "service": service,
-            "tracking_number": None,
-            "courier_draft_id": None,
-            "status": "error",
-            "packages_count": 1,
-            "pickup_ordered": False,
-            "receiver": {
-                "first_name": "Test",
-                "last_name": "User",
-                "email": "t@t.com",
-                "phone": "500000000",
-                "locker_id": "WAW01A",
-            },
-            "shipping_address": {"street": "Kwiatowa 1", "city": "Warszawa", "post_code": "00-001"},
-            "parcel": {"template": "small", "weight_kg": None},
-            "error": "no credentials",
-        }
-        store.upsert_draft(draft)
-        return draft
+        return _seed_error_draft(store, courier=courier, service=service)
 
     def test_404_for_missing_draft(self, client):
         resp = client.post("/api/shipping/drafts/nonexistent/execute")
@@ -488,6 +494,52 @@ class TestExecuteDraft:
         with patch("zdrovena.api.routers.webhooks._run_inpost", side_effect=Exception("API down")):
             resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
         assert resp.status_code == 502
+
+    def test_execute_failure_lands_in_dlq_for_recovery(self, client, store):
+        """A shipment that never left must be recoverable, not silently lost.
+
+        Draft creation had a DLQ but execution did not, so a broken courier
+        integration produced zero DLQ entries and zero alerts while every
+        courier shipment failed.
+        """
+        draft = self._seed_error_draft(store)
+        with patch("zdrovena.api.routers.webhooks._run_inpost", side_effect=Exception("API down")):
+            client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+
+        entries = store.list_dlq()
+        assert len(entries) == 1, "the failed execution must be queued for retry"
+        assert entries[0]["kind"] == "draft_execution"
+        assert entries[0]["draft_id"] == draft["id"]
+        assert "API down" in entries[0]["last_error"]
+
+    def test_dlq_write_failure_does_not_mask_the_courier_error(self, client, store):
+        """Best-effort: bookkeeping must never swallow the real failure."""
+        draft = self._seed_error_draft(store)
+        with patch("zdrovena.api.routers.webhooks._run_inpost", side_effect=Exception("API down")):
+            with patch.object(store, "enqueue_dlq", side_effect=RuntimeError("table down")):
+                resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 502
+
+    def test_execute_failure_log_names_the_root_cause(self, client, store, caplog):
+        """The log line must carry WHY it failed, not just WHICH draft failed.
+
+        Observability regression: the handler logged only the draft id, so
+        AppExceptions.OuterMessage in Log Analytics read 'execute_draft failed
+        for <uuid>' and the real courier error was recoverable only by parsing
+        the raw stack text.
+        """
+        draft = self._seed_error_draft(store)
+        cause = "InPost 400: validation_failed sender.company_name required"
+        with caplog.at_level(logging.ERROR, logger="zdrovena.api.routers.webhooks"):
+            with patch("zdrovena.api.routers.webhooks._run_inpost", side_effect=Exception(cause)):
+                client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+
+        failures = [r for r in caplog.records if "execute_draft failed" in r.getMessage()]
+        assert failures, "expected an execute_draft failure log record"
+        assert any(cause in r.getMessage() for r in failures), (
+            "log message must include the underlying courier error, "
+            f"got: {[r.getMessage() for r in failures]}"
+        )
 
     def test_second_execute_after_success_is_409_and_does_not_recall_courier(self, client, store):
         # R5-A: once a draft is created, a repeat execute must be rejected and
@@ -731,6 +783,97 @@ class TestExecuteDraft:
             resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
         assert resp.status_code == 200
         allegro_client.create_shipment.assert_not_called()
+
+
+class TestExecutePreviewEndpoint:
+    def test_preview_returns_payload_and_sends_nothing(self, client, store):
+        draft = _seed_error_draft(store)
+        with patch("zdrovena.api.routers.webhooks._run_inpost") as mock_run:
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "sender" in body and "parcels" in body
+        assert len(body["fingerprint"]) == 64
+        mock_run.assert_not_called()
+
+    def test_preview_404_for_unknown_draft(self, client):
+        resp = client.get("/api/shipping/drafts/does-not-exist/execute/preview")
+        assert resp.status_code == 404
+
+    def test_preview_shows_one_parcel_per_box_with_its_payload(self, client, store):
+        draft = _seed_error_draft(store)
+        store.update_draft(draft["id"], {"packages_breakdown": [{"type": "2-pak", "qty": 2}]})
+        resp = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
+        assert resp.status_code == 200, resp.text
+        parcels = resp.json()["parcels"]
+        assert len(parcels) == 2
+        assert parcels[0]["package_type"] == "2-pak"
+        assert parcels[0]["payload"]["service"] == "inpost_courier_standard"
+        assert parcels[0]["payload"]["parcels"][0]["weight"]["amount"] == 12.0
+
+    def test_preview_does_not_claim_the_draft_for_execution(self, client, store):
+        """A preview that blocks the execute it precedes would be a trap."""
+        draft = _seed_error_draft(store)
+        client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
+        assert store.get_draft(draft["id"])["status"] == "error"
+
+    def test_execute_rejects_a_draft_changed_after_preview(self, client, store):
+        draft = _seed_error_draft(store)
+        preview = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview").json()
+        store.update_draft(
+            draft["id"],
+            {
+                "shipping_address": {
+                    **draft["shipping_address"],
+                    "street": "Changed after review",
+                }
+            },
+        )
+
+        with patch("zdrovena.api.routers.webhooks._run_inpost") as mock_run:
+            resp = client.post(
+                f"/api/shipping/drafts/{draft['id']}/execute",
+                json={"preview_fingerprint": preview["fingerprint"]},
+            )
+
+        assert resp.status_code == 409
+        assert "changed after preview" in resp.json()["detail"]
+        mock_run.assert_not_called()
+        assert store.get_draft(draft["id"])["status"] == "error"
+
+    def test_execute_accepts_the_unchanged_preview_fingerprint(self, client, store):
+        draft = _seed_error_draft(store)
+        preview = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview").json()
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "ship-reviewed",
+                "tracking_number": "TRK-REVIEWED",
+                "status": "created",
+                "error": None,
+            },
+        ) as mock_run:
+            resp = client.post(
+                f"/api/shipping/drafts/{draft['id']}/execute",
+                json={"preview_fingerprint": preview["fingerprint"]},
+            )
+
+        assert resp.status_code == 200, resp.text
+        mock_run.assert_called_once()
+
+    def test_preview_for_apaczka_renders_a_real_payload(self, client, store):
+        """Apaczka used to get an empty parcel list and an "InPost only" note.
+        It is the courier that actually ships today, so it gets a real preview."""
+        draft = _seed_error_draft(store, courier="apaczka", service="apaczka_courier")
+        store.update_draft(draft["id"], {"apaczka_service_id": "42"})
+        with patch("zdrovena.api.routers.webhooks._get_pickup_address", return_value=_PICKUP):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["courier"] == "apaczka"
+        assert body["preview_available"] is True
+        assert body["parcels"] and "payload" in body["parcels"][0]
+        assert "note" not in body
 
 
 # ── Order pickup ──────────────────────────────────────────────────────────────
@@ -1190,7 +1333,7 @@ class TestRunInpost:
         assert result["pickup_ordered"] is False
         mock_disp.assert_not_called()
 
-    def test_async_create_polls_existing_shipx_resource_for_tracking(self):
+    def test_async_create_returns_empty_tracking_without_polling_if_none_returned(self):
         from zdrovena.api.routers.webhooks import _run_inpost
 
         with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
@@ -1200,17 +1343,12 @@ class TestRunInpost:
             ):
                 with patch(
                     "zdrovena.common.inpost.InPostClient.wait_for_shipment_confirmation",
-                    return_value={
-                        "id": "ship-async",
-                        "status": "confirmed",
-                        "tracking_number": "620ASYNC",
-                    },
                 ) as wait:
                     result = _run_inpost(_KURIER_DRAFT, _SENDER)
 
-        wait.assert_called_once_with("ship-async", max_attempts=3, interval_s=1.0)
+        wait.assert_not_called()
+        assert result["courier_draft_id"] == "ship-async"
         assert result["status"] == "created"
-        assert result["tracking_number"] == "620ASYNC"
 
     def test_pending_retry_reuses_shipx_id_instead_of_sending_second_post(self):
         from zdrovena.api.routers.webhooks import _run_inpost
@@ -1280,6 +1418,141 @@ class TestRunInpost:
         kw = mock_ship.call_args.kwargs
         assert kw["receiver_building_number"] == "24/5"
 
+    def test_each_physical_box_creates_a_typed_shipment(self):
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        draft = {
+            **_KURIER_DRAFT,
+            "packages_breakdown": [{"type": "3-pak", "qty": 1}, {"type": "1-pak", "qty": 1}],
+        }
+        persisted: list[dict[str, str]] = []
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_ship:
+                mock_ship.side_effect = [
+                    {"id": "ship-3pak", "tracking_number": "TRK-3"},
+                    {"id": "ship-1pak", "tracking_number": "TRK-1"},
+                ]
+                result = _run_inpost(draft, _SENDER, on_shipment_created=persisted.append)
+
+        assert [shipment["package_type"] for shipment in result["courier_shipments"]] == [
+            "3-pak",
+            "1-pak",
+        ]
+        assert [shipment["id"] for shipment in persisted] == ["ship-3pak", "ship-1pak"]
+        assert [call.kwargs["reference"] for call in mock_ship.call_args_list] == [
+            "1050 | plastik | 3-pak 1/1",
+            "1050 | plastik | 1-pak 1/1",
+        ]
+
+    @pytest.mark.parametrize(
+        ("package_type", "material"),
+        [("pół-pak", "plastik"), ("szkło", "szkło"), ("szkło-2pak", "szkło")],
+    )
+    def test_reference_identifies_package_material(self, package_type, material):
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        draft = {
+            **_KURIER_DRAFT,
+            "packages_breakdown": [{"type": package_type, "qty": 1}],
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_ship:
+                mock_ship.return_value = {"id": "ship-1", "tracking_number": "TRK-1"}
+                _run_inpost(draft, _SENDER)
+
+        assert mock_ship.call_args.kwargs["reference"] == (
+            f"1050 | {material} | {package_type} 1/1"
+        )
+
+
+class TestInPostPayloadPlan:
+    def test_plan_lists_one_payload_per_parcel(self, store):
+        from zdrovena.api.routers import webhooks as wh
+
+        draft = {
+            "id": "d1",
+            "shopify_order_number": "1700",
+            "courier": "inpost",
+            "service": "inpost_courier_standard",
+            "receiver": {
+                "first_name": "Jan",
+                "last_name": "Kowalski",
+                "email": "j@example.com",
+                "phone": "600200300",
+            },
+            "shipping_address": {
+                "street": "Kwiatowa",
+                "building_number": "5",
+                "city": "Warszawa",
+                "post_code": "00-001",
+            },
+            "packages": [{"type": "1-pak", "count": 1}],
+        }
+        sender = {"name": "Zdrovena", "street": "Cieszynska"}
+        plan = wh._inpost_payload_plan(draft, sender)
+
+        assert len(plan) >= 1
+        assert plan[0]["service"] == "inpost_courier_standard"
+        assert "payload" in plan[0]
+
+    def test_plan_expands_a_multi_box_breakdown(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        draft = dict(_KURIER_DRAFT)
+        draft["packages_breakdown"] = [{"type": "3-pak", "qty": 2}, {"type": "szkło", "qty": 1}]
+        plan = wh._inpost_payload_plan(draft, _SENDER)
+
+        assert [entry["package_type"] for entry in plan] == ["3-pak", "3-pak", "szkło"]
+        assert [entry["package_number"] for entry in plan] == [1, 2, 1]
+
+    def test_preview_payload_is_what_the_execution_path_sends(self):
+        """The preview is worthless if it can differ from the real request.
+
+        Assert at the ShipX transport boundary, not at the client wrapper: the
+        outage that started this work was a payload whose shape the carrier
+        rejected, and every test that mocked the wrapper missed it.
+        """
+        from zdrovena.api.routers import webhooks as wh
+
+        for draft in (_KURIER_DRAFT, _PACZKOMAT_DRAFT):
+            plan = wh._inpost_payload_plan(draft, _SENDER)
+            with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+                with patch(
+                    "zdrovena.common.inpost.InPostClient._post_shipment",
+                    return_value={"id": "s-1", "tracking_number": "T1"},
+                ) as mock_post:
+                    wh._run_inpost(draft, _SENDER)
+
+            sent = [call.args[0] for call in mock_post.call_args_list]
+            assert sent == [entry["payload"] for entry in plan]
+
+    def test_partial_retry_previews_only_payloads_execution_will_send(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        draft = {
+            **_KURIER_DRAFT,
+            "packages_breakdown": [{"type": "1-pak", "qty": 2}],
+            "courier_shipments": [
+                {
+                    "id": "already-created",
+                    "tracking_number": "TRK-1",
+                    "package_type": "1-pak",
+                    "package_number": "1",
+                }
+            ],
+        }
+        plan = wh._inpost_payload_plan(draft, _SENDER)
+
+        assert [(item["package_type"], item["package_number"]) for item in plan] == [("1-pak", 2)]
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient._post_shipment",
+                return_value={"id": "new-shipment", "tracking_number": "TRK-2"},
+            ) as mock_post:
+                wh._run_inpost(draft, _SENDER)
+
+        assert [call.args[0] for call in mock_post.call_args_list] == [plan[0]["payload"]]
+
 
 class TestRunApaczka:
     def test_creates_shipment_returns_patch(self):
@@ -1310,6 +1583,7 @@ class TestRunApaczka:
         assert result["tracking_number"] == "WAY001"
         assert result["status"] == "created"
         assert mock_ship.call_args.kwargs["content"] == "2 x HUMIO 500 ml"
+        assert mock_ship.call_args.kwargs["reference"] == "1060 | plastik | 1-pak 1/1"
 
     def test_passes_pickup_point_to_apaczka(self):
         from zdrovena.api.routers.webhooks import _run_apaczka
@@ -1786,6 +2060,32 @@ class TestGetLabel:
                 resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/pdf"
+
+    def test_inpost_multiple_box_labels_are_merged(self, client, store):
+        draft = self._seed_created_draft(store, courier="inpost")
+        store.update_draft(
+            draft["id"],
+            {
+                "courier_shipments": [
+                    {"id": "ship-3pak", "package_type": "3-pak", "package_number": "1"},
+                    {"id": "ship-1pak", "package_type": "1-pak", "package_number": "1"},
+                ]
+            },
+        )
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                side_effect=[b"first", b"second"],
+            ) as mock_label:
+                with patch(
+                    "zdrovena.api.routers.webhooks._merge_pdfs", return_value=b"merged"
+                ) as merge:
+                    resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
+
+        assert resp.status_code == 200
+        assert resp.content == b"merged"
+        assert [call.args[0] for call in mock_label.call_args_list] == ["ship-3pak", "ship-1pak"]
+        merge.assert_called_once_with([b"first", b"second"])
 
     def test_label_502_on_courier_error(self, client, store):
         draft = self._seed_created_draft(store, courier="inpost")
@@ -3199,3 +3499,439 @@ class TestSingleLabelNotReady:
         # R5-B: pre-confirmation → 409 LABEL_NOT_READY, not a generic 502.
         assert resp.status_code == 409
         assert resp.json()["error_code"] == "LabelNotReadyError"
+
+
+class TestPickupAddressSecrets:
+    """`pickup_phone` was never provisioned in the prod Key Vault, so every
+    dispatch-order execute raised MissingSecretError and surfaced as a 502.
+    A missing pickup phone must degrade to the sender phone, not hard-fail."""
+
+    _PRESENT: ClassVar[dict[str, str]] = {
+        "pickup_name": "Zdrovena Magazyn",
+        "pickup_street": "Testowa",
+        "pickup_building_number": "1",
+        "pickup_city": "Warszawa",
+        "pickup_post_code": "00-001",
+        "pickup_email": "magazyn@zdrovena.pl",
+        "sender_phone": "500000000",
+    }
+
+    def _fake_get_secret(self, missing):
+        from zdrovena.common.exceptions import MissingSecretError
+
+        def _inner(service, required=True):
+            if service in missing:
+                if required:
+                    raise MissingSecretError(service, "humio")
+                return None
+            return self._PRESENT.get(service, "x")
+
+        return _inner
+
+    def test_missing_pickup_phone_falls_back_to_sender_phone(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        with patch.object(wh, "get_secret", self._fake_get_secret({"pickup_phone"})):
+            addr = wh._get_pickup_address()
+        assert addr["phone"] == "500000000"
+
+    def test_present_pickup_phone_wins_over_sender_phone(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        present = dict(self._PRESENT, pickup_phone="600111222")
+
+        def _get(service, required=True):
+            return present.get(service, "x")
+
+        with patch.object(wh, "get_secret", _get):
+            addr = wh._get_pickup_address()
+        assert addr["phone"] == "600111222"
+
+    def test_other_pickup_fields_still_required(self):
+        """Only the phone degrades; a missing street is still a hard error."""
+        from zdrovena.api.routers import webhooks as wh
+        from zdrovena.common.exceptions import MissingSecretError
+
+        with patch.object(wh, "get_secret", self._fake_get_secret({"pickup_street"})):
+            with pytest.raises(MissingSecretError):
+                wh._get_pickup_address()
+
+
+def _seed_origin_draft(store):
+    """An executable draft, mirroring TestExecuteDraft._seed_error_draft."""
+    draft = {
+        "id": "draft-origin-1",
+        "created_at": "2026-05-20T10:00:00+00:00",
+        "source": "shopify",
+        "shopify_order_id": "77",
+        "shopify_order_number": "1177",
+        "customer_name": "Test User",
+        "courier": "inpost",
+        "service": "inpost_courier_standard",
+        "tracking_number": None,
+        "courier_draft_id": None,
+        "status": "error",
+        "packages_count": 1,
+        "pickup_ordered": False,
+        "receiver": {
+            "first_name": "Test",
+            "last_name": "User",
+            "email": "t@t.com",
+            "phone": "500000000",
+            "locker_id": "WAW01A",
+        },
+        "shipping_address": {"street": "Kwiatowa 1", "city": "Warszawa", "post_code": "00-001"},
+        "parcel": {"template": "small", "weight_kg": None},
+        "error": "no credentials",
+    }
+    store.upsert_draft(draft)
+    return draft
+
+
+class TestShipmentOrigin:
+    """126 drafts carry tracking numbers this system never created, because the
+    operator dispatches through carrier portals and the sync writes the number
+    back. Status 'created' therefore says nothing about who shipped it."""
+
+    def test_sync_marks_tracking_we_did_not_create_as_external(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {"id": "d1", "tracking_number": None, "courier_draft_id": None}
+        incoming = {"id": "d1", "tracking_number": "TRK-MANUAL", "status": "created"}
+        merged = wh._merge_synced_draft(existing, incoming)
+        assert merged["shipment_origin"] == "external"
+
+    def test_sync_marks_our_own_shipment_as_system(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {"id": "d2", "tracking_number": "TRK1", "courier_draft_id": "ship-1"}
+        incoming = {"id": "d2", "tracking_number": "TRK1", "status": "created"}
+        merged = wh._merge_synced_draft(existing, incoming)
+        assert merged["shipment_origin"] == "system"
+
+    def test_sync_does_not_invent_an_origin_without_tracking(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {"id": "d3", "tracking_number": None, "courier_draft_id": None}
+        incoming = {"id": "d3", "tracking_number": None, "status": "pending"}
+        merged = wh._merge_synced_draft(existing, incoming)
+        assert merged.get("shipment_origin") is None
+
+    def test_sync_never_downgrades_a_recorded_origin(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {
+            "id": "d4",
+            "tracking_number": "TRK1",
+            "courier_draft_id": None,
+            "shipment_origin": "system",
+        }
+        incoming = {"id": "d4", "tracking_number": "TRK1", "status": "created"}
+        merged = wh._merge_synced_draft(existing, incoming)
+        assert merged["shipment_origin"] == "system"
+
+    def test_execute_records_system_origin(self, client, store):
+        draft = _seed_origin_draft(store)
+        with patch(
+            "zdrovena.api.routers.webhooks._run_inpost",
+            return_value={
+                "courier_draft_id": "ship-1",
+                "tracking_number": "TRK1",
+                "status": "created",
+                "error": None,
+            },
+        ):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+        assert resp.status_code == 200, resp.text
+        assert store.get_draft(draft["id"])["shipment_origin"] == "system"
+
+    def test_execute_emits_tracking_assigned_event(self, client, store, caplog):
+        draft = _seed_origin_draft(store)
+        with caplog.at_level(logging.INFO, logger="zdrovena.events"):
+            with patch(
+                "zdrovena.api.routers.webhooks._run_inpost",
+                return_value={
+                    "courier_draft_id": "ship-1",
+                    "tracking_number": "TRK1",
+                    "status": "created",
+                    "error": None,
+                },
+            ):
+                client.post(f"/api/shipping/drafts/{draft['id']}/execute")
+
+        events = [
+            r.getMessage() for r in caplog.records if "draft.tracking_assigned" in r.getMessage()
+        ]
+        assert events, "the no-tracking alert depends on this event existing"
+        assert "system" in events[0]
+
+
+class TestTrackingAssignedCoversEveryPath:
+    """Codex review, 2026-07-31: the alert joins draft.created against
+    draft.tracking_assigned, so any path that assigns a tracking number without
+    emitting the event makes that draft look unshipped and pages falsely.
+    The manual-portal path is the common one — 126 of 197 drafts."""
+
+    def test_sync_assigning_external_tracking_emits_the_event(self, caplog):
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {"id": "d1", "tracking_number": None, "courier_draft_id": None}
+        incoming = {"id": "d1", "tracking_number": "TRK-MANUAL", "status": "created"}
+        with caplog.at_level(logging.INFO, logger="zdrovena.events"):
+            wh._merge_synced_draft(existing, incoming)
+
+        events = [
+            r.getMessage() for r in caplog.records if "draft.tracking_assigned" in r.getMessage()
+        ]
+        assert events, "a manually shipped draft would otherwise page as untracked"
+        assert "external" in events[0]
+
+    def test_sync_does_not_re_emit_for_an_already_known_origin(self, caplog):
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {
+            "id": "d2",
+            "tracking_number": "TRK1",
+            "courier_draft_id": None,
+            "shipment_origin": "external",
+        }
+        incoming = {"id": "d2", "tracking_number": "TRK1", "status": "created"}
+        with caplog.at_level(logging.INFO, logger="zdrovena.events"):
+            wh._merge_synced_draft(existing, incoming)
+
+        events = [
+            r.getMessage() for r in caplog.records if "draft.tracking_assigned" in r.getMessage()
+        ]
+        assert not events, "the event marks assignment, not every subsequent sync"
+
+    def test_allegro_async_confirmation_is_marked_system(self, client, store, caplog):
+        """Ship-with-Allegro can return pending_confirmation; the waybill then
+        arrives through /confirm, which bypasses the execute path entirely."""
+        draft = _seed_origin_draft(store)
+        store.update_draft(
+            draft["id"], {"status": "pending_confirmation", "allegro_command_id": "cmd-1"}
+        )
+
+        allegro = MagicMock()
+        allegro.get_ship_with_allegro_command_status.return_value = {
+            "status": "SUCCESS",
+            "shipmentId": "allegro-ship-1",
+        }
+        allegro.get_ship_with_allegro_shipment.return_value = {"id": "allegro-ship-1"}
+        allegro.extract_shipment_waybill.return_value = ("carrier-1", "AWB-1")
+
+        with caplog.at_level(logging.INFO, logger="zdrovena.events"):
+            with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+                with patch("zdrovena.api.routers.webhooks._maybe_push_tracking_to_allegro"):
+                    resp = client.post(f"/api/shipping/drafts/{draft['id']}/confirm")
+
+        assert resp.status_code == 200, resp.text
+        assert store.get_draft(draft["id"])["shipment_origin"] == "system"
+        events = [
+            r.getMessage() for r in caplog.records if "draft.tracking_assigned" in r.getMessage()
+        ]
+        assert events, "an Allegro waybill is a tracking number like any other"
+
+
+_APACZKA_DRAFT = {
+    "id": "d-apaczka",
+    "shopify_order_number": "1052",
+    "courier": "apaczka",
+    "service": "apaczka",
+    "apaczka_service_id": "42",
+    "receiver": {
+        "first_name": "Ewa",
+        "last_name": "Zielinska",
+        "email": "ewa@z.pl",
+        "phone": "600300400",
+        "locker_id": "",
+    },
+    "shipping_address": {
+        "street": "Polna",
+        "building_number": "7",
+        "city": "Gdansk",
+        "post_code": "80-001",
+    },
+}
+
+_PICKUP = {
+    "name": "Zdrovena",
+    "firstname": "",
+    "lastname": "Zdrovena",
+    "email": "info@wodahumio.pl",
+    "phone": "723624437",
+    "street": "Naściszowa",
+    "building_number": "41",
+    "city": "Naściszowa",
+    "post_code": "33-300",
+}
+
+
+class TestApaczkaPayloadPlan:
+    """Apaczka is the courier that actually ships today, so its preview has to
+    be as trustworthy as InPost's — same identity guarantee, same boundary."""
+
+    def test_plan_lists_one_payload_per_parcel_and_sends_nothing(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="x"):
+            with patch("zdrovena.common.apaczka.ApaczkaClient._call") as mock_call:
+                plan = wh._apaczka_payload_plan(_APACZKA_DRAFT, _PICKUP)
+
+        assert len(plan) >= 1
+        assert "payload" in plan[0]
+        mock_call.assert_not_called()
+
+    def test_preview_payload_is_what_the_execution_path_sends(self):
+        """The preview is worthless if it can differ from the real request."""
+        from zdrovena.api.routers import webhooks as wh
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="x"):
+            plan = wh._apaczka_payload_plan(_APACZKA_DRAFT, _PICKUP)
+
+            with patch(
+                "zdrovena.common.apaczka.ApaczkaClient._call",
+                return_value={"response": {"order": {"id": "ap-1", "waybill_number": "W1"}}},
+            ) as mock_call:
+                wh._run_apaczka(_APACZKA_DRAFT, _PICKUP, MagicMock())
+
+        sent = [c.args[1]["order"] for c in mock_call.call_args_list]
+        assert sent == [entry["payload"] for entry in plan]
+
+    def test_sender_on_the_payload_is_the_pickup_address(self):
+        """Deliberate asymmetry with InPost — Naściszowa, not Kraków."""
+        from zdrovena.api.routers import webhooks as wh
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="x"):
+            plan = wh._apaczka_payload_plan(_APACZKA_DRAFT, _PICKUP)
+
+        sender = plan[0]["payload"]["address"]["sender"]
+        assert sender["city"] == "Naściszowa"
+        assert sender["postal_code"] == "33-300"
+
+
+class TestApaczkaPreviewEndpoint:
+    def _seed(self, store):
+        draft = dict(_APACZKA_DRAFT, id="draft-apz-preview", status="error")
+        store.upsert_draft(draft)
+        return draft
+
+    def test_apaczka_preview_returns_real_payloads(self, client, store):
+        draft = self._seed(store)
+        with patch("zdrovena.api.routers.webhooks._get_pickup_address", return_value=_PICKUP):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["courier"] == "apaczka"
+        assert body["parcels"], "Apaczka is the courier that actually ships — it needs a preview"
+        assert "payload" in body["parcels"][0]
+        assert "note" not in body
+
+    def test_apaczka_preview_sender_is_the_pickup_address(self, client, store):
+        draft = self._seed(store)
+        with patch("zdrovena.api.routers.webhooks._get_pickup_address", return_value=_PICKUP):
+            body = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview").json()
+        assert body["sender"]["city"] == "Naściszowa"
+
+    def test_allegro_preview_renders_the_fetched_payload(self, client, store):
+        draft = dict(_ALLEGRO_DRAFT, id="draft-allegro-preview", status="error")
+        store.upsert_draft(draft)
+        allegro = MagicMock()
+        allegro.get_delivery_proposal.return_value = _ALLEGRO_PROPOSAL
+
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            body = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview").json()
+
+        assert body["preview_available"] is True
+        assert body["parcels"][0]["payload"]["receiver"]["name"] == "Ola Wisniewska"
+        allegro.create_ship_with_allegro_shipment.assert_not_called()
+
+    def test_allegro_outage_blocks_confirmation_instead_of_hiding(self, client, store):
+        """The execute path calls the same endpoint, so failing closed costs
+        nothing that was not already lost — and it stops the operator
+        confirming a shipment that could never have been created."""
+        from zdrovena.common.shipping_exceptions import CourierTransientError
+
+        draft = dict(_ALLEGRO_DRAFT, id="draft-allegro-down", status="error")
+        store.upsert_draft(draft)
+        allegro = MagicMock()
+        allegro.get_delivery_proposal.side_effect = CourierTransientError(
+            "Allegro unavailable", courier="allegro", action="delivery_proposal"
+        )
+
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["preview_available"] is False
+        assert body["parcels"] == []
+        assert "Allegro" in body["note"]
+
+
+_ALLEGRO_DRAFT = {
+    "id": "d-allegro",
+    "shopify_order_number": "1053",
+    "external_order_id": "allegro-order-9",
+    "courier": "allegro_delivery",
+    "service": "allegro_delivery",
+    "receiver": {"first_name": "Ola", "last_name": "Wisniewska", "locker_id": ""},
+    "shipping_address": {"street": "Lipowa", "building_number": "3", "city": "Lodz"},
+}
+
+_ALLEGRO_PROPOSAL = {
+    "senderData": {"name": "Maria Gryzło ZDROVENA", "street": "Cieszynska 6/12"},
+    "receiverData": {"name": "Ola Wisniewska", "street": "Lipowa 3", "city": "Lodz"},
+}
+
+
+class TestAllegroPayloadPlan:
+    """Allegro's payload is only knowable after asking Allegro, so the preview
+    makes one read-only GET. The execute path calls the same endpoint, so
+    failing closed costs nothing that was not already lost."""
+
+    def _client(self):
+        c = MagicMock()
+        c.get_delivery_proposal.return_value = _ALLEGRO_PROPOSAL
+        return c
+
+    def test_plan_fetches_the_proposal_and_creates_nothing(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        client = self._client()
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=client):
+            plan = wh._allegro_payload_plan(_ALLEGRO_DRAFT)
+
+        client.get_delivery_proposal.assert_called_once_with("allegro-order-9")
+        client.create_ship_with_allegro_shipment.assert_not_called()
+        assert plan and "payload" in plan[0]
+        assert plan[0]["payload"]["receiver"]["name"] == "Ola Wisniewska"
+
+    def test_preview_payload_is_what_the_execution_path_sends(self):
+        """Identical but for command_id, which is a fresh idempotency key per
+        send and therefore cannot match by design."""
+        from zdrovena.api.routers import webhooks as wh
+
+        client = self._client()
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=client):
+            plan = wh._allegro_payload_plan(_ALLEGRO_DRAFT)
+            client.wait_for_ship_with_allegro_shipment.return_value = "ship-9"
+            client.get_ship_with_allegro_shipment.return_value = {}
+            client.extract_shipment_waybill.return_value = ("c", "AWB-9")
+            wh._run_allegro_delivery(_ALLEGRO_DRAFT, MagicMock())
+
+        sent = dict(client.create_ship_with_allegro_shipment.call_args.kwargs)
+        sent.pop("command_id")
+        assert sent == plan[0]["payload"]
+
+    def test_plan_surfaces_an_allegro_outage_instead_of_guessing(self):
+        from zdrovena.api.routers import webhooks as wh
+        from zdrovena.common.shipping_exceptions import CourierTransientError
+
+        client = self._client()
+        client.get_delivery_proposal.side_effect = CourierTransientError(
+            "Allegro down", courier="allegro", action="delivery_proposal"
+        )
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=client):
+            with pytest.raises(CourierTransientError):
+                wh._allegro_payload_plan(_ALLEGRO_DRAFT)

@@ -220,7 +220,7 @@ class ApaczkaClient:
         response = result.get("response") or {}
         return list(response.get("orders") or []) if isinstance(response, dict) else []
 
-    def create_shipment(
+    def build_shipment_order(
         self,
         *,
         receiver_name: str,
@@ -311,11 +311,24 @@ class ApaczkaClient:
             "pickup": pickup,
             "content": shipment_content,
         }
+        return order
+
+    def create_shipment(self, **kwargs: Any) -> dict[str, Any]:
+        """Build and send.
+
+        Split from the builder so the operator's preview and the real request
+        cannot drift: they are the same function, not two kept in sync by hand.
+        """
+        order = self.build_shipment_order(**kwargs)
         result = self._call("order_send", {"order": order})
         response = result.get("response", {})
         created_order = response.get("order", response) if isinstance(response, dict) else {}
         order_id = created_order.get("id")
-        logger.info("Apaczka shipment created: order_id=%s reference=%s", order_id, reference)
+        logger.info(
+            "Apaczka shipment created: order_id=%s reference=%s",
+            order_id,
+            kwargs.get("reference"),
+        )
         return created_order or result
 
     # ── Cancel ────────────────────────────────────────────────────────────────
