@@ -20,33 +20,27 @@ echo ""
 
 # ── 1. Bash syntax check on CI workflow scripts ──────────────────────────────
 echo "--- Shell syntax"
+
+# Prefer the repo venv: PyYAML is a dependency there, system python may lack it.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON="python3"
+[[ -x "$REPO_ROOT/.venv/bin/python" ]] && PYTHON="$REPO_ROOT/.venv/bin/python"
+
+LINT_ARGS=()
 if command -v shellcheck &>/dev/null; then
-  for f in .github/workflows/_full-test-suite.yml .github/workflows/_deploy.yml; do
-    # Extract bash run blocks and validate
-    if shellcheck --shell=bash <(grep -A100 "run: |" "$f" 2>/dev/null | grep -v "run: |") 2>/dev/null; then
-      ok "shellcheck: $f"
-    fi
-  done
+  LINT_ARGS+=(--shellcheck)
 else
-  skip "shellcheck not installed (pip install shellcheck-py)"
+  skip "shellcheck not installed (bash -n only)"
 fi
 
-# Validate bash in workflow inline — catch obvious syntax errors
-for f in .github/workflows/_full-test-suite.yml; do
-  if bash -n <(python3 - "$f" << 'PYEOF'
-import sys, re
-with open(sys.argv[1]) as fh:
-    content = fh.read()
-# Extract run: blocks (multi-line)
-blocks = re.findall(r'run:\s*\|?\s*\n((?:[ \t]+.+\n?)+)', content)
-print('\n'.join(b for b in blocks))
-PYEOF
-) 2>&1; then
-    ok "bash syntax: $f"
-  else
-    fail "bash syntax error in: $f"
-  fi
-done
+# PyYAML is a transitive dependency, so it can be absent on a bare interpreter.
+if ! "$PYTHON" -c "import yaml" &>/dev/null; then
+  skip "PyYAML not available for $PYTHON — install it to lint workflow shell"
+elif "$PYTHON" scripts/ci/lint-workflow-shell.py "${LINT_ARGS[@]}" .github/workflows/*.yml; then
+  ok "workflow shell syntax"
+else
+  fail "shell syntax error in a workflow run: block (see above)"
+fi
 
 # ── 2. az CLI available ───────────────────────────────────────────────────────
 echo ""
