@@ -74,3 +74,6 @@ htmlcov/
 
 # git worktrees (superpowers subagent-driven-development)
 .worktrees/
+*.pdf
+tmp/
+outputs/
