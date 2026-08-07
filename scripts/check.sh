@@ -183,6 +183,13 @@ else
   echo -e "${SKIP} frontend/node_modules missing — run 'cd frontend && npm install' first"
 fi
 
+step "Frontend tests (Vitest)"
+if [ -d "$FRONTEND_DIR/node_modules" ]; then
+  (cd "$FRONTEND_DIR" && npm test 2>&1 | tail -12) && ok "vitest" || fail "frontend tests failed — run: cd frontend && npm test"
+else
+  echo -e "${SKIP} frontend/node_modules missing — skipping tests"
+fi
+
 step "Frontend TypeScript build"
 if [ -d "$FRONTEND_DIR/node_modules" ]; then
   (cd "$FRONTEND_DIR" && npm run build 2>&1 | tail -5) && ok "vite build" || fail "frontend build failed — run: cd frontend && npm run build"

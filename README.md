@@ -429,9 +429,9 @@ oba tokeny prosto do zaszyfrowanego pliku.
 Uwaga na `encrypt`: domyślnie **scala**, więc klucze istniejące tylko w
 snapshocie przeżyją. Do faktycznego usunięcia klucza służy `--replace`.
 
-### Fake providerzy HTTP
+### Emulatory providerów HTTP
 
-Do bezpiecznych testów integracji uruchom fake provider service:
+Do bezpiecznych testów integracji uruchom serwis emulatorów:
 
 ```bash
 uvicorn zdrovena.fake_providers.app:app --port 9009
@@ -455,6 +455,12 @@ APACZKA_BASE_URL=http://localhost:9009/apaczka/api/v2
 FAKTUROWNIA_BASE_URL=http://localhost:9009/fakturownia
 FAKTUROWNIA_API_TOKEN=fake
 ```
+
+Allegro, InPost i Apaczka mają osobne implementacje kontraktów, formatów błędów
+i stanów asynchronicznych. Emulatory nie importują builderów klientów aplikacji:
+błędny payload lub HMAC ma upaść na granicy providera. W szczególności InPost
+zwraca najpierw `created` bez trackingu, a ponowiony POST z tym samym `reference`
+tworzy nowy zasób — takiej operacji nie wolno traktować jako idempotentnej.
 
 Reset stanu i scenariusze awarii:
 

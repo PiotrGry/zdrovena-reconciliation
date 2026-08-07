@@ -571,6 +571,7 @@ function PickupScheduleModal({
     onCancel,
     title,
     children,
+    summary,
     withSchedule = true,
     panelTestId,
     confirmTestId,
@@ -625,6 +626,7 @@ function PickupScheduleModal({
             >
                 <div style={{ fontWeight: 600 }}>{title}</div>
                 {children}
+                {summary}
                 {withSchedule && (
                     <>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -649,6 +651,14 @@ function PickupScheduleModal({
                             </div>
                         </div>
                         <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>{T.sh_min_window ?? 'Minimalne okno: 2 godziny'}</div>
+                        {/* Say the window back in full. The date input renders per
+                            locale and the hours live in two separate selects, so
+                            without this the operator never sees the exact value
+                            that will be sent — which for Apaczka cannot be undone
+                            without cancelling the shipment. */}
+                        <div data-testid="pickup-window-summary" style={{ fontSize: '0.85em' }}>
+                            {T.sh_pickup_window ?? 'Podjazd'}: <strong>{date}</strong>, <strong>{from}–{to}</strong>
+                        </div>
                     </>
                 )}
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -706,9 +716,11 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
         draft.shipping_service_match_status !== 'auto_matched' ||
         !matchedApaczkaService
     )
-    const needsPickupSchedule = draft.courier === 'inpost'
+    // Apaczka is absent on purpose: its API has no standalone pickup call, so a
+    // pickup can only travel inside order_send at execute time.
+    const canOrderPickup = draft.courier === 'inpost' || draft.courier === 'allegro_delivery'
     const canPickup = (
-        needsPickupSchedule &&
+        canOrderPickup &&
         draft.status === 'created' &&
         !draft.pickup_ordered
     )
@@ -793,7 +805,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                             {draft.status === 'pending' ? (T.sh_status_pending ?? 'oczekujące')
                                 : draft.status === 'created' ? (T.sh_status_created ?? 'nadane')
                                     : draft.status === 'needs_review' ? (T.sh_status_needs_review ?? 'do sprawdzenia')
-                                        : draft.status === 'pending_confirmation' ? (T.sh_status_pending_confirmation ?? 'czeka na Allegro')
+                                        : draft.status === 'pending_confirmation' ? (T.sh_status_pending_confirmation ?? 'czeka na kuriera')
                                             : (T.sh_status_error ?? 'błąd')}
                         </Pill>
                     </span>
@@ -1062,7 +1074,9 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                     className="btn btn-secondary"
                                     onClick={() => onConfirmPending(draft)}
                                     disabled={isBusy}
-                                    title="Allegro jeszcze przetwarza tę przesyłkę — sprawdzane automatycznie co 5s, albo kliknij żeby sprawdzić od razu"
+                                    title={draft.courier === 'inpost'
+                                        ? 'InPost nadał numer przesyłki, czeka na numer śledzenia — sprawdzane automatycznie co 5s, albo kliknij żeby sprawdzić od razu'
+                                        : 'Allegro jeszcze przetwarza tę przesyłkę — sprawdzane automatycznie co 5s, albo kliknij żeby sprawdzić od razu'}
                                 >
                                     {isBusy
                                         ? <><Icon name="loader" size={13} className="spin" /> {T.sh_confirm_pending_busy ?? 'Sprawdzanie…'}</>
@@ -1134,7 +1148,13 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 confirmTestId="execute-preview-confirm"
                                 confirmLabel="Wyślij do kuriera"
                                 confirmDisabled={!executePreview.data || executePreview.data.preview_available === false}
-                                withSchedule={needsPickupSchedule}
+                                // One pickup control for every carrier. It has to live here
+                                // because Apaczka's API has no pickup resource — a collection
+                                // can only be requested inside order_send, at execute time. All
+                                // three now read this window: Apaczka through _apaczka_call_specs,
+                                // Allegro through _order_allegro_pickup, InPost through
+                                // create_dispatch_order.
+                                withSchedule={true}
                                 onCancel={() => setExecutePreview(null)}
                                 onConfirm={schedule => {
                                     const fingerprint = executePreview.data?.fingerprint
@@ -1171,6 +1191,7 @@ export default function ShippingView() {
     const [selectedDraftIds, setSelectedDraftIds] = useState(new Set())
     const [bulkProgress, setBulkProgress] = useState(null)
     const [bulkPickupModal, setBulkPickupModal] = useState(false)
+    const [bulkExecuteModal, setBulkExecuteModal] = useState(null)
     const [expandAll, setExpandAll] = useState(null)
     const [apaczkaServices, setApaczkaServices] = useState([])
     const [syncing, setSyncing] = useState(false)
@@ -1410,8 +1431,10 @@ export default function ShippingView() {
         }, 'Nie udało się sprawdzić statusu')()
     }
 
-    // Auto-poll drafts stuck in pending_confirmation (Allegro create-command still
-    // IN_PROGRESS) so the operator doesn't have to keep clicking "Sprawdź status".
+    // Auto-poll drafts stuck in pending_confirmation so the operator doesn't have
+    // to keep clicking "Sprawdź status". Two carriers land here: an Allegro
+    // create-command still IN_PROGRESS, and an InPost shipment that ShipX has
+    // accepted but not yet given a tracking number.
     const pendingConfirmationKey = drafts
         .filter(d => d.status === 'pending_confirmation')
         .map(d => d.id)
@@ -1466,15 +1489,32 @@ export default function ShippingView() {
         })
     }
 
+    // Bulk execute is pickup-free for InPost and Allegro: for them a collection is
+    // a separate call, so it stays a separate, deliberate button. Apaczka has no
+    // standalone pickup endpoint — the collection rides inside order_send — so
+    // executing an Apaczka draft always requests a courier, and the only choice
+    // left is whether the operator got to pick the window. We therefore refuse to
+    // bulk-execute Apaczka until a window is named, rather than shipping an
+    // undated COURIER request whose behaviour we have not verified.
     async function handleBulkExecute() {
-        const ids = [...selectedDraftIds]
-        setBulkProgress({ done: 0, total: ids.length })
-        for (let i = 0; i < ids.length; i++) {
-            const draft = drafts.find(d => d.id === ids[i])
-            if (draft) {
-                try { await handleExecute(draft) } catch { /* error visible in row */ }
-            }
-            setBulkProgress({ done: i + 1, total: ids.length })
+        const selected = [...selectedDraftIds]
+            .map(id => drafts.find(d => d.id === id))
+            .filter(Boolean)
+        if (selected.some(d => d.courier === 'apaczka')) {
+            setBulkExecuteModal({ drafts: selected })
+            return
+        }
+        await runBulkExecute(selected, null)
+    }
+
+    async function runBulkExecute(selected, schedule) {
+        setBulkProgress({ done: 0, total: selected.length })
+        for (let i = 0; i < selected.length; i++) {
+            const draft = selected[i]
+            // Only Apaczka gets the window — see handleBulkExecute.
+            const perDraftSchedule = draft.courier === 'apaczka' ? schedule : null
+            try { await handleExecute(draft, perDraftSchedule) } catch { /* error visible in row */ }
+            setBulkProgress({ done: i + 1, total: selected.length })
         }
         setBulkProgress(null)
         setSelectedDraftIds(new Set())
@@ -1486,7 +1526,7 @@ export default function ShippingView() {
         setBulkPickupModal(false)
         const eligible = [...selectedDraftIds]
             .map(id => drafts.find(d => d.id === id))
-            .filter(d => d && d.courier === 'inpost' && d.status === 'created' && !d.pickup_ordered)
+            .filter(d => d && (d.courier === 'inpost' || d.courier === 'allegro_delivery') && d.status === 'created' && !d.pickup_ordered)
         setBulkProgress({ done: 0, total: eligible.length })
         for (let i = 0; i < eligible.length; i++) {
             try { await handlePickup(eligible[i], schedule) } catch { /* error visible in row */ }
@@ -1590,7 +1630,7 @@ export default function ShippingView() {
                             <option value="pending">{T.sh_status_pending ?? 'oczekujące'}</option>
                             <option value="needs_review">{T.sh_status_needs_review ?? 'do sprawdzenia'}</option>
                             <option value="created">{T.sh_status_created ?? 'nadane'}</option>
-                            <option value="pending_confirmation">{T.sh_status_pending_confirmation ?? 'czeka na Allegro'}</option>
+                            <option value="pending_confirmation">{T.sh_status_pending_confirmation ?? 'czeka na kuriera'}</option>
                             <option value="error">{T.sh_status_error ?? 'błąd'}</option>
                         </select>
                         <select value={filterCourier} onChange={e => setFilterCourier(e.target.value)}
@@ -1621,7 +1661,7 @@ export default function ShippingView() {
                             })
                             const pickupSelected = [...selectedDraftIds].filter(id => {
                                 const d = drafts.find(x => x.id === id)
-                                return d && d.courier === 'inpost' && d.status === 'created' && !d.pickup_ordered
+                                return d && (d.courier === 'inpost' || d.courier === 'allegro_delivery') && d.status === 'created' && !d.pickup_ordered
                             })
                             const printSelected = [...selectedDraftIds].filter(id => {
                                 const d = drafts.find(x => x.id === id)
@@ -1791,6 +1831,47 @@ export default function ShippingView() {
                     onCancel={() => setBulkPickupModal(false)}
                 />
             )}
+
+            {bulkExecuteModal && (() => {
+                const apaczkaDrafts = bulkExecuteModal.drafts.filter(d => d.courier === 'apaczka')
+                const otherCount = bulkExecuteModal.drafts.length - apaczkaDrafts.length
+                const parcelCount = apaczkaDrafts.reduce(
+                    (sum, d) => sum + (packagesSortValue(d) || 0), 0
+                )
+                return (
+                    <PickupScheduleModal
+                        title="Podjazd dla przesyłek Apaczka"
+                        panelTestId="bulk-execute-pickup"
+                        confirmTestId="bulk-execute-pickup-confirm"
+                        confirmLabel="Realizuj zaznaczone"
+                        summary={
+                            <div data-testid="bulk-execute-scope" style={{ fontSize: '0.85em', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <div>
+                                    Okno dotyczy <strong>{apaczkaDrafts.length}</strong>{' '}
+                                    {apaczkaDrafts.length === 1 ? 'przesyłki Apaczka' : 'przesyłek Apaczka'}
+                                    {' '}(<strong>{parcelCount}</strong> {parcelCount === 1 ? 'paczka' : 'paczek'}).
+                                </div>
+                                <div style={{ color: 'var(--text-2)' }}>
+                                    Apaczka zamawia kuriera już przy realizacji — tego nie da się
+                                    później odwołać bez anulowania przesyłki.
+                                </div>
+                                {otherCount > 0 && (
+                                    <div style={{ color: 'var(--text-2)' }}>
+                                        Pozostałe {otherCount} — InPost / Allegro — realizuję bez podjazdu.
+                                        Podjazd zamówisz osobno przyciskiem „Zamów podjazd”.
+                                    </div>
+                                )}
+                            </div>
+                        }
+                        onConfirm={schedule => {
+                            const pending = bulkExecuteModal.drafts
+                            setBulkExecuteModal(null)
+                            runBulkExecute(pending, schedule)
+                        }}
+                        onCancel={() => setBulkExecuteModal(null)}
+                    />
+                )
+            })()}
         </>
     )
 }

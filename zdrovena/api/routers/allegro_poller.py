@@ -6,8 +6,9 @@ Shopify-like payload and pushed through the existing ``_create_draft`` pipeline
 so shipping logic (package calc, courier picking, phone/address normalisation)
 is reused as-is.
 
-Idempotency: a draft is created only if there is no existing non-error draft
+Idempotency: a draft is created only if there is no existing original draft
 with the same ``(source='allegro', external_order_id=<allegro id>)`` pair.
+Errored drafts remain the retry target; they must never cause a second row.
 
 Errors on one order do not block the others.
 """
@@ -28,18 +29,21 @@ logger = logging.getLogger("zdrovena.api.routers.allegro_poller")
 _MAX_AUTOMATIC_INVOICE_ATTEMPTS = 3
 
 
-def _existing_active_allegro_draft(
+def _existing_allegro_draft(
     drafts: list[dict[str, Any]], external_order_id: str
 ) -> dict[str, Any] | None:
+    errored_match: dict[str, Any] | None = None
     for d in drafts:
         if (
             d.get("source") == "allegro"
             and not d.get("is_replacement")
             and str(d.get("external_order_id", "")) == str(external_order_id)
-            and d.get("status") != "error"
         ):
-            return d
-    return None
+            if d.get("status") != "error":
+                return d
+            if errored_match is None:
+                errored_match = d
+    return errored_match
 
 
 def _invoice_attempt_count(draft: dict[str, Any]) -> int:
@@ -137,7 +141,14 @@ def poll_orders_once(
         return stats
 
     try:
-        drafts = shipping_store.list_drafts()
+        # High limit, for the same reason the Shopify sync uses one: list_drafts
+        # reads every row anyway and the cap only slices the result, but the
+        # default 200 is a dedup trap. Sorted newest-first, it hides the oldest
+        # drafts once the store passes 200 rows, so _existing_allegro_draft finds
+        # nothing and the order is created again. Each duplicate is written with
+        # created_at=now, entering the window and evicting another old row, which
+        # duplicates on the next cycle — a self-sustaining loop.
+        drafts = shipping_store.list_drafts(limit=10_000)
     except Exception:
         # Resilience boundary: store read failure degrades to "no known drafts"
         # (dedup best-effort) rather than aborting the whole cycle.
@@ -152,7 +163,7 @@ def poll_orders_once(
             stats["errors"] += 1
             continue
 
-        existing = _existing_active_allegro_draft(drafts, allegro_id)
+        existing = _existing_allegro_draft(drafts, allegro_id)
         is_new = existing is None
         try:
             shopify_like = allegro_to_shopify_order(form)

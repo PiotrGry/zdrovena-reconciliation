@@ -108,6 +108,21 @@ class TestPaczkomatShipment:
         # Default parcel template
         assert sent["parcels"] == [{"template": "small"}]
 
+    @pytest.mark.parametrize(
+        ("overrides", "message"),
+        [
+            ({"receiver_email": ""}, "receiver.email"),
+            ({"receiver_phone": ""}, "receiver.phone"),
+            ({"target_point": ""}, "custom_attributes.target_point"),
+        ],
+    )
+    def test_rejects_missing_documented_locker_fields_before_http(self, overrides, message):
+        client = InPostClient(_TOKEN, _ORG)
+        with patch.object(client._session, "post") as mock_post:
+            with pytest.raises(InPostBusinessError, match=message):
+                client.create_paczkomat_shipment(**{**self._kwargs(), **overrides})
+        mock_post.assert_not_called()
+
     def test_4xx_raises_inpost_error(self):
         client = InPostClient(_TOKEN, _ORG)
         with patch.object(client._session, "post", return_value=_err_response(400, "bad-target")):
@@ -212,6 +227,22 @@ class TestKurierShipment:
         assert sent["service"] == "inpost_courier_standard"
         assert sent["sender"] == InPostClient._shipx_sender(_SENDER)
 
+    @pytest.mark.parametrize(
+        ("overrides", "message"),
+        [
+            ({"receiver_phone": ""}, "receiver.phone"),
+            ({"receiver_street": ""}, "receiver.address.street"),
+            ({"sender": {**_SENDER, "email": ""}}, "sender.email"),
+            ({"weight_kg": 0}, r"weight\.amount must be at least 1"),
+        ],
+    )
+    def test_rejects_missing_documented_courier_fields_before_http(self, overrides, message):
+        client = InPostClient(_TOKEN, _ORG)
+        with patch.object(client._session, "post") as mock_post:
+            with pytest.raises(InPostBusinessError, match=message):
+                client.create_kurier_shipment(**{**self._kwargs(), **overrides})
+        mock_post.assert_not_called()
+
     def test_courier_service_env_var_override(self, monkeypatch):
         import zdrovena.common.inpost as inpost_mod
 
@@ -222,6 +253,40 @@ class TestKurierShipment:
             client.create_kurier_shipment(**self._kwargs())
         sent = mock_post.call_args.kwargs["json"]
         assert sent["service"] == "inpost_courier_c2c"
+
+
+class TestAsyncShipmentConfirmation:
+    def test_polls_created_shipment_until_tracking_number_is_available(self):
+        client = InPostClient(_TOKEN, _ORG)
+        created = _ok_response({"id": "ship-async", "status": "created", "tracking_number": None})
+        confirmed = _ok_response(
+            {"id": "ship-async", "status": "confirmed", "tracking_number": "620ASYNC"},
+            status=200,
+        )
+        with patch.object(client._session, "get", side_effect=[created, confirmed]) as mock_get:
+            with patch("zdrovena.common.inpost.time.sleep"):
+                result = client.wait_for_shipment_confirmation(
+                    "ship-async", max_attempts=3, interval_s=0
+                )
+
+        assert result["tracking_number"] == "620ASYNC"
+        assert mock_get.call_count == 2
+
+    def test_returns_last_pending_response_without_creating_another_shipment(self):
+        client = InPostClient(_TOKEN, _ORG)
+        pending = _ok_response(
+            {"id": "ship-pending", "status": "created", "tracking_number": None},
+            status=200,
+        )
+        with patch.object(client._session, "get", return_value=pending) as mock_get:
+            with patch("zdrovena.common.inpost.time.sleep"):
+                result = client.wait_for_shipment_confirmation(
+                    "ship-pending", max_attempts=2, interval_s=0
+                )
+
+        assert result["status"] == "created"
+        assert result["tracking_number"] is None
+        assert mock_get.call_count == 2
 
 
 class TestKurierSenderContract:

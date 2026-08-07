@@ -12,7 +12,7 @@ import requests
 from uvicorn import Config, Server
 
 from zdrovena.common.allegro import AllegroClient
-from zdrovena.common.apaczka import ApaczkaClient
+from zdrovena.common.apaczka import ApaczkaClient, _sign
 from zdrovena.common.client import FakturowniaClient as MonthCloseFakturowniaClient
 from zdrovena.common.fakturownia import FakturowniaClient
 from zdrovena.common.inpost import InPostClient
@@ -101,8 +101,6 @@ def test_allegro_client_uses_fake_provider_over_http(
     monkeypatch.setenv("ALLEGRO_BASE_URL", f"{fake_provider_url}/allegro")
     monkeypatch.setenv("ALLEGRO_AUTH_URL", f"{fake_provider_url}/allegro/auth/oauth/token")
     monkeypatch.setenv("PROVIDER_MODE", "fake")
-    _set_scenario(fake_provider_url, "allegro", "create_command", "pending")
-
     client = AllegroClient(
         client_id="client-id",
         client_secret="client-secret",
@@ -119,8 +117,24 @@ def test_allegro_client_uses_fake_provider_over_http(
         command_id="cmd-1",
         order_id="fake-order-1",
         credentials_id=None,
-        sender={"name": "Zdrovena", "street": "Magazynowa 1"},
-        receiver={"name": "Buyer", "street": "Prosta 1"},
+        sender={
+            "name": "Zdrovena",
+            "street": "Magazynowa 1",
+            "postalCode": "00-002",
+            "city": "Warszawa",
+            "countryCode": "PL",
+            "email": "sender@example.test",
+            "phone": "500500501",
+        },
+        receiver={
+            "name": "Buyer",
+            "street": "Prosta 1",
+            "postalCode": "00-001",
+            "city": "Warszawa",
+            "countryCode": "PL",
+            "email": "masked+buyer@allegromail.pl",
+            "phone": "500500500",
+        },
         packages=[
             {
                 "type": "PACKAGE",
@@ -131,8 +145,14 @@ def test_allegro_client_uses_fake_provider_over_http(
             }
         ],
     )
-    assert command["status"] == "IN_PROGRESS"
+    # POST only accepts the asynchronous command; processing status belongs to
+    # the command-status resource, as it does in Allegro production.
+    assert command["commandId"] == "cmd-1"
+    assert "input" in command
+    assert "status" not in command
 
+    status = client.get_ship_with_allegro_command_status("cmd-1")
+    assert status["status"] == "IN_PROGRESS"
     status = client.get_ship_with_allegro_command_status("cmd-1")
     assert status["status"] == "SUCCESS"
     shipment = client.get_ship_with_allegro_shipment(status["shipmentId"])
@@ -186,10 +206,26 @@ def test_inpost_client_stateful_success_and_label_not_ready(
         receiver_building_number="1",
         receiver_city="Warszawa",
         receiver_post_code="00-001",
-        sender={"name": "Zdrovena"},
+        sender={
+            "name": "Zdrovena",
+            "email": "sender@example.test",
+            "phone": "500500501",
+            "street": "Magazynowa",
+            "building_number": "2",
+            "city": "Warszawa",
+            "post_code": "00-002",
+        },
         reference="order-1576",
     )
-    assert duplicate["id"] == shipment["id"]
+    # ShipX does not promise idempotency for `reference`: repeated POSTs are
+    # independent paid writes and application code must prevent duplicates.
+    assert shipment["status"] == "created"
+    assert shipment["tracking_number"] is None
+    assert duplicate["id"] != shipment["id"]
+
+    confirmed = client.get_shipment(shipment["id"])
+    assert confirmed["status"] == "confirmed"
+    assert confirmed["tracking_number"]
 
     dispatch = client.create_dispatch_order(shipment["id"], {"name": "Zdrovena"})
     assert dispatch["status"] == "created"
@@ -207,11 +243,22 @@ def test_apaczka_client_stateful_success_and_provider_validation_failure(
 
     monkeypatch.setattr(apaczka_module, "_BASE", f"{fake_provider_url}/apaczka/api/v2")
     client = ApaczkaClient(
-        app_id="app-id",
-        app_secret="secret",
+        app_id="fake",
+        app_secret="fake",
         service_id="21",
         storage=_MemoryStorage(),
     )
+    sender = {
+        "name": "Zdrovena",
+        "firstname": "Piotr",
+        "lastname": "Gryzlo",
+        "email": "sender@example.test",
+        "phone": "500500501",
+        "street": "Magazynowa",
+        "building_number": "2",
+        "city": "Warszawa",
+        "post_code": "00-002",
+    }
 
     shipment = client.create_shipment(
         receiver_name="Anna Nowak",
@@ -222,8 +269,9 @@ def test_apaczka_client_stateful_success_and_provider_validation_failure(
         receiver_address="Prosta 1",
         receiver_city="Warszawa",
         receiver_zip="00-001",
-        sender={"name": "Zdrovena"},
+        sender=sender,
         reference="order-1639",
+        content="Woda butelkowana",
     )
     duplicate = client.create_shipment(
         receiver_name="Anna Nowak",
@@ -234,10 +282,12 @@ def test_apaczka_client_stateful_success_and_provider_validation_failure(
         receiver_address="Prosta 1",
         receiver_city="Warszawa",
         receiver_zip="00-001",
-        sender={"name": "Zdrovena"},
+        sender=sender,
         reference="order-1639",
+        content="Woda butelkowana",
     )
-    assert duplicate["id"] == shipment["id"]
+    # externalId is business metadata, not a provider idempotency guarantee.
+    assert duplicate["id"] != shipment["id"]
     assert client.get_label(shipment["id"]).startswith(b"%PDF")
 
     _set_scenario(fake_provider_url, "apaczka", "order_send", "provider_validation_failure")
@@ -251,8 +301,9 @@ def test_apaczka_client_stateful_success_and_provider_validation_failure(
             receiver_address="Prosta 1",
             receiver_city="Warszawa",
             receiver_zip="00-001",
-            sender={"name": "Zdrovena"},
+            sender=sender,
             reference="order-validation-error",
+            content="Woda butelkowana",
         )
 
 
@@ -365,12 +416,35 @@ def test_fake_provider_validates_contracts_and_can_reset_state(fake_provider_url
         json={
             "service": "inpost_courier_standard",
             "reference": "order-1",
-            "receiver": {"email": "buyer@example.test"},
-            "parcels": [{"template": "small"}],
+            "receiver": {
+                "first_name": "Anna",
+                "last_name": "Nowak",
+                "email": "buyer@example.test",
+                "phone": "500500500",
+                "address": {
+                    "street": "Prosta",
+                    "building_number": "1",
+                    "city": "Warszawa",
+                    "post_code": "00-001",
+                },
+            },
+            "parcels": [
+                {
+                    "dimensions": {
+                        "unit": "mm",
+                        "length": 300,
+                        "width": 200,
+                        "height": 200,
+                    },
+                    "weight": {"unit": "kg", "amount": 1},
+                }
+            ],
         },
         timeout=2,
     )
-    assert created.status_code == 200
+    assert created.status_code == 201
+    assert created.json()["status"] == "created"
+    assert created.json()["tracking_number"] is None
     assert requests.get(f"{fake_provider_url}/__fake__/state", timeout=2).json()["inpost"][
         "shipments"
     ]
@@ -379,3 +453,95 @@ def test_fake_provider_validates_contracts_and_can_reset_state(fake_provider_url
     assert not requests.get(f"{fake_provider_url}/__fake__/state", timeout=2).json()["inpost"][
         "shipments"
     ]
+
+
+def test_fake_providers_reject_documented_contract_violations(fake_provider_url: str) -> None:
+    wrong_allegro_media_type = requests.post(
+        f"{fake_provider_url}/allegro/shipment-management/shipments/create-commands",
+        headers={
+            "Authorization": "Bearer fake-token",
+            "Accept": "application/vnd.allegro.public.v1+json",
+        },
+        json={"commandId": "cmd-1", "input": {}},
+        timeout=2,
+    )
+    assert wrong_allegro_media_type.status_code == 415
+
+    missing_locker_point = requests.post(
+        f"{fake_provider_url}/inpost/v1/organizations/org-1/shipments",
+        headers={"Authorization": "Bearer fake-token"},
+        json={
+            "service": "inpost_locker_standard",
+            "receiver": {"email": "buyer@example.test", "phone": "500500500"},
+            "parcels": [{"template": "small"}],
+        },
+        timeout=2,
+    )
+    assert missing_locker_point.status_code == 422
+
+    request_data = {
+        "order": {
+            "service_id": "21",
+            "address": {},
+            "shipment": [],
+            "pickup": {"type": "COURIER"},
+        }
+    }
+    missing_apaczka_content = requests.post(
+        f"{fake_provider_url}/apaczka/api/v2/order_send/",
+        data=_sign("fake", "fake", "order_send", request_data),
+        timeout=2,
+    )
+    assert missing_apaczka_content.status_code == 200
+    assert missing_apaczka_content.json()["status"] == 422
+
+
+def test_fake_apaczka_rejects_wrong_hmac_even_for_valid_payload(fake_provider_url: str) -> None:
+    signed = _sign("fake", "wrong-secret", "service_structure", {})
+    response = requests.post(
+        f"{fake_provider_url}/apaczka/api/v2/service_structure/",
+        data=signed,
+        timeout=2,
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == 401
+    assert "signature" in response.json()["message"].lower()
+
+
+def test_fake_allegro_generates_optional_command_id_and_polls_async(
+    fake_provider_url: str,
+) -> None:
+    headers = {
+        "Authorization": "Bearer fake-token",
+        "Accept": "application/vnd.allegro.public.v1+json",
+        "Content-Type": "application/vnd.allegro.public.v1+json",
+    }
+    proposal = requests.get(
+        f"{fake_provider_url}/allegro/shipment-management/delivery-proposals/fake-order-1",
+        headers=headers,
+        timeout=2,
+    ).json()
+    accepted = requests.post(
+        f"{fake_provider_url}/allegro/shipment-management/shipments/create-commands",
+        headers=headers,
+        json={"input": proposal["suggestedInput"]},
+        timeout=2,
+    )
+    assert accepted.status_code == 201
+    assert "status" not in accepted.json()
+    command_id = accepted.json()["commandId"]
+
+    first = requests.get(
+        f"{fake_provider_url}/allegro/shipment-management/shipments/create-commands/{command_id}",
+        headers=headers,
+        timeout=2,
+    )
+    assert first.json()["status"] == "IN_PROGRESS"
+    assert first.headers["Retry-After"] == "1"
+    second = requests.get(
+        f"{fake_provider_url}/allegro/shipment-management/shipments/create-commands/{command_id}",
+        headers=headers,
+        timeout=2,
+    )
+    assert second.json()["status"] == "SUCCESS"
+    assert second.json()["shipmentId"]
