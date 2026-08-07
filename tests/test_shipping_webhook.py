@@ -3673,6 +3673,41 @@ def _seed_origin_draft(store):
     return draft
 
 
+class TestPendingResolvedByTheShop:
+    """The shop is the source of truth for shipments today: the operator creates
+    them in Shopify or Apaczka and the portal follows. A draft waiting on an
+    InPost confirmation must yield to a tracking number arriving from there."""
+
+    def test_tracking_from_the_shop_clears_pending_confirmation(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {"id": "d1", "status": "pending_confirmation", "tracking_number": ""}
+        incoming = {"id": "d1", "status": "created", "tracking_number": "TRK-MANUAL"}
+        merged = wh._merge_synced_draft(existing, incoming)
+        assert merged["status"] == "created"
+        assert merged["tracking_number"] == "TRK-MANUAL"
+
+    def test_pending_survives_a_sync_that_brings_no_tracking(self):
+        """Without a number there is no proof the parcel exists, so the draft
+        keeps waiting rather than claiming to be sent."""
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {"id": "d2", "status": "pending_confirmation", "tracking_number": ""}
+        incoming = {"id": "d2", "status": "created", "tracking_number": ""}
+        merged = wh._merge_synced_draft(existing, incoming)
+        assert merged["status"] == "pending_confirmation"
+
+    def test_executing_is_never_released_by_a_sync(self):
+        """executing is a concurrency claim, not a wait — a shop tracking number
+        must not unlock a draft another request is mid-way through."""
+        from zdrovena.api.routers import webhooks as wh
+
+        existing = {"id": "d3", "status": "executing", "tracking_number": ""}
+        incoming = {"id": "d3", "status": "created", "tracking_number": "TRK-MANUAL"}
+        merged = wh._merge_synced_draft(existing, incoming)
+        assert merged["status"] == "executing"
+
+
 class TestShipmentOrigin:
     """126 drafts carry tracking numbers this system never created, because the
     operator dispatches through carrier portals and the sync writes the number

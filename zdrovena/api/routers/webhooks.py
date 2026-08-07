@@ -2058,7 +2058,17 @@ def _merge_synced_draft(existing: dict[str, Any], incoming: dict[str, Any]) -> d
     existing_status = existing.get("status")
     incoming_status = incoming.get("status")
 
-    if existing_status in _SYNC_TERMINAL_STATUSES or existing_status in _SYNC_BUSY_STATUSES:
+    if (
+        existing_status == "pending_confirmation"
+        and str(merged.get("tracking_number") or "").strip()
+    ):
+        # The shop is the source of truth for shipments today: the operator
+        # creates them in Shopify or Apaczka and the portal follows. A tracking
+        # number arriving from there is proof the parcel exists, so the draft
+        # must stop saying "czeka na kuriera" — otherwise it waits forever on an
+        # InPost confirmation that is never coming, for a parcel already sent.
+        merged["status"] = "created"
+    elif existing_status in _SYNC_TERMINAL_STATUSES or existing_status in _SYNC_BUSY_STATUSES:
         merged["status"] = existing_status
     elif incoming_status == "created":
         merged["status"] = "created"
