@@ -141,7 +141,14 @@ def poll_orders_once(
         return stats
 
     try:
-        drafts = shipping_store.list_drafts()
+        # High limit, for the same reason the Shopify sync uses one: list_drafts
+        # reads every row anyway and the cap only slices the result, but the
+        # default 200 is a dedup trap. Sorted newest-first, it hides the oldest
+        # drafts once the store passes 200 rows, so _existing_allegro_draft finds
+        # nothing and the order is created again. Each duplicate is written with
+        # created_at=now, entering the window and evicting another old row, which
+        # duplicates on the next cycle — a self-sustaining loop.
+        drafts = shipping_store.list_drafts(limit=10_000)
     except Exception:
         # Resilience boundary: store read failure degrades to "no known drafts"
         # (dedup best-effort) rather than aborting the whole cycle.

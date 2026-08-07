@@ -15,6 +15,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from zdrovena.api.routers.allegro_poller import poll_orders_once
+from zdrovena.common.shipping_store import ShippingStore
 
 
 def _form(order_id: str, sku: str = "HUMIO-PET-6-001") -> dict:
@@ -107,6 +108,54 @@ class TestPollOrdersOnce:
         assert stats["skipped_duplicate"] == 1
         assert stats["updated"] + stats["unchanged"] == 1
         store.upsert_draft.assert_called_once()
+
+    def test_dedup_survives_a_store_larger_than_the_default_list_limit(self, tmp_path):
+        """A real store with more rows than list_drafts' default page.
+
+        list_drafts sorts newest-first and truncates, so an order whose draft is
+        among the oldest rows becomes invisible to the dedup lookup and gets
+        created a second time. Each duplicate is written with created_at=now,
+        which evicts another old row from the window and duplicates that order
+        on the next cycle — the loop feeds itself. Mocked stores cannot catch
+        this because a MagicMock ignores the limit argument, so this one uses a
+        real ShippingStore.
+        """
+        store = ShippingStore(local_root=tmp_path / "shipping")
+
+        # One genuinely old draft for the order we are about to re-poll...
+        store.upsert_draft(
+            {
+                "id": "draft-old",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "source": "allegro",
+                "external_order_id": "af-old",
+                "status": "pending",
+            }
+        )
+        # ...buried under more recent rows than the default limit returns.
+        for i in range(250):
+            store.upsert_draft(
+                {
+                    "id": f"draft-filler-{i}",
+                    "created_at": f"2026-06-{(i % 28) + 1:02d}T{(i % 24):02d}:00:00+00:00",
+                    "source": "allegro",
+                    "external_order_id": f"filler-{i}",
+                    "status": "pending",
+                }
+            )
+
+        assert len(store.list_drafts()) == 200, "precondition: default limit truncates"
+
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af-old")]
+        stats = poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
+
+        assert stats["created"] == 0, "the order already has a draft — it must not be recreated"
+        assert stats["skipped_duplicate"] == 1
+        matching = [
+            d for d in store.list_drafts(limit=10_000) if d.get("external_order_id") == "af-old"
+        ]
+        assert len(matching) == 1, f"expected exactly one draft for af-old, got {len(matching)}"
 
     def test_error_draft_is_reused_as_retry_target_without_creating_new_record(self):
         client = MagicMock()

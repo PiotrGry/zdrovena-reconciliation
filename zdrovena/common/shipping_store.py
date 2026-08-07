@@ -589,6 +589,17 @@ class ShippingStore:
         else:
             records = list(self._local_load().values())
         records.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+        if len(records) > limit:
+            # Truncation is newest-first, so the rows dropped here are the
+            # oldest. Any caller building a lookup index from this list will
+            # miss them and treat those orders as new. That silently duplicated
+            # 70 Allegro drafts before anyone noticed, so say it out loud.
+            logger.warning(
+                "list_drafts truncated: %d rows in store, returning newest %d — "
+                "callers deduplicating by order id must pass a higher limit",
+                len(records),
+                limit,
+            )
         return records[:limit]
 
 
