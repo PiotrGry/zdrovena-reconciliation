@@ -18,7 +18,18 @@ dependencies = [
 ksef = ["cryptography>=48.0.1", "signxml>=4.0.0", "lxml>=6.1.0"]
 pdf = ["pypdf>=4.0.0", "pdf2image>=1.17.0"]
 report = ["playwright>=1.40.0", "playwright-stealth>=2.0.0"]
-api = ["fastapi>=0.125.0", "uvicorn[standard]>=0.29.0", "PyJWT[crypto]>=2.8.0", "pypdf>=4.0.0"]
+# httpx is a runtime dependency, not a test-only one: zdrovena/common/sms_service.py
+# and zdrovena/api/client.py import it at module level, and webhooks.py imports
+# sms_service on the new-order path. It used to be declared only in the `dev`
+# extra, which the Dockerfile does not install — SMS would have raised
+# ModuleNotFoundError into a swallowed warning as soon as smsapi_token was set.
+api = [
+    "fastapi>=0.125.0",
+    "uvicorn[standard]>=0.29.0",
+    "PyJWT[crypto]>=2.8.0",
+    "pypdf>=4.0.0",
+    "httpx>=0.27.0",
+]
 cloud = [
     "azure-storage-blob>=12.24.0",
     "azure-identity>=1.18.0",

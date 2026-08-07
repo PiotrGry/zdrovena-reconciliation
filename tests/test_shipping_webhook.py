@@ -925,10 +925,52 @@ class TestOrderPickup:
         assert resp.status_code == 200
 
     def test_400_for_apaczka_draft(self, client, store):
+        """Apaczka's API has no standalone pickup call — service_structure,
+        orders and order_send are the whole surface — so a pickup can only ride
+        along inside order_send at execute time."""
         draft = self._seed_created_kurier(store)
         store.update_draft(draft["id"], {"courier": "apaczka", "service": "apaczka"})
         resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
         assert resp.status_code == 400
+
+    def test_pickup_ordered_for_allegro_draft(self, client, store):
+        """Ship-with-Allegro exposes pickup-proposals + pickups/create-commands,
+        so the same button works there."""
+        draft = self._seed_created_kurier(store)
+        store.update_draft(
+            draft["id"], {"courier": "allegro_delivery", "service": "allegro_delivery"}
+        )
+        allegro = MagicMock()
+        allegro.get_ship_with_allegro_pickup_proposals.return_value = [
+            {"date": "2026-08-07", "minTime": "09:00", "maxTime": "13:00"}
+        ]
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+
+        assert resp.status_code == 200, resp.text
+        assert store.get_draft(draft["id"])["pickup_ordered"] is True
+        sent = allegro.create_ship_with_allegro_pickup.call_args.kwargs
+        assert sent["pickup_time"] == {
+            "date": "2026-08-07",
+            "minTime": "09:00",
+            "maxTime": "13:00",
+        }
+
+    def test_allegro_pickup_with_no_slot_releases_the_claim(self, client, store):
+        """No slot is not a silent success: the flag must stay false so the
+        operator can try another day."""
+        draft = self._seed_created_kurier(store)
+        store.update_draft(
+            draft["id"], {"courier": "allegro_delivery", "service": "allegro_delivery"}
+        )
+        allegro = MagicMock()
+        allegro.get_ship_with_allegro_pickup_proposals.return_value = []
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+
+        assert resp.status_code == 409, resp.text
+        assert store.get_draft(draft["id"])["pickup_ordered"] is False
+        allegro.create_ship_with_allegro_pickup.assert_not_called()
 
     def test_409_when_pickup_already_ordered(self, client, store):
         draft = self._seed_created_kurier(store)
@@ -1333,7 +1375,11 @@ class TestRunInpost:
         assert result["pickup_ordered"] is False
         mock_disp.assert_not_called()
 
-    def test_async_create_returns_empty_tracking_without_polling_if_none_returned(self):
+    def test_async_create_parks_at_pending_without_blocking_on_confirmation(self):
+        """Creation stays non-blocking — no polling inside the request — but a
+        shipment with no tracking number is not "nadane" yet. It parks at
+        pending_confirmation so the operator sees "waiting", and the confirm
+        endpoint (or its 5s UI poll) promotes it once ShipX answers."""
         from zdrovena.api.routers.webhooks import _run_inpost
 
         with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
@@ -1348,7 +1394,42 @@ class TestRunInpost:
 
         wait.assert_not_called()
         assert result["courier_draft_id"] == "ship-async"
+        assert result["status"] == "pending_confirmation"
+        assert not result["tracking_number"]
+
+    def test_create_with_tracking_is_immediately_created(self):
+        """The other half of the contract: when ShipX answers with a tracking
+        number straight away there is nothing to wait for."""
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.create_kurier_shipment",
+                return_value={"id": "ship-sync", "tracking_number": "620SYNC"},
+            ):
+                result = _run_inpost(_KURIER_DRAFT, _SENDER)
+
         assert result["status"] == "created"
+        assert result["tracking_number"] == "620SYNC"
+
+    def test_multi_parcel_stays_pending_until_every_parcel_has_tracking(self):
+        """A draft is only fully sent when every physical parcel has a waybill;
+        one confirmed parcel must not mark the whole order as nadane."""
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        draft = {
+            **_KURIER_DRAFT,
+            "packages_breakdown": [{"type": "1-pak", "qty": 2}],
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_ship:
+                mock_ship.side_effect = [
+                    {"id": "ship-a", "tracking_number": "620A"},
+                    {"id": "ship-b", "tracking_number": None},
+                ]
+                result = _run_inpost(draft, _SENDER)
+
+        assert result["status"] == "pending_confirmation"
 
     def test_pending_retry_reuses_shipx_id_instead_of_sending_second_post(self):
         from zdrovena.api.routers.webhooks import _run_inpost
@@ -1440,15 +1521,21 @@ class TestRunInpost:
         ]
         assert [shipment["id"] for shipment in persisted] == ["ship-3pak", "ship-1pak"]
         assert [call.kwargs["reference"] for call in mock_ship.call_args_list] == [
-            "1050 | plastik | 3-pak 1/1",
-            "1050 | plastik | 1-pak 1/1",
+            "1050 | plastik | 3-pak",
+            "1050 | plastik | 1-pak",
         ]
 
     @pytest.mark.parametrize(
-        ("package_type", "material"),
-        [("pół-pak", "plastik"), ("szkło", "szkło"), ("szkło-2pak", "szkło")],
+        ("package_type", "material", "size"),
+        [
+            ("pół-pak", "plastik", "pół-pak"),
+            # Glass carries its material in the type name; the reference must
+            # not repeat it as "szkło | szkło".
+            ("szkło", "szkło", "1-pak"),
+            ("szkło-2pak", "szkło", "2-pak"),
+        ],
     )
-    def test_reference_identifies_package_material(self, package_type, material):
+    def test_reference_identifies_package_material(self, package_type, material, size):
         from zdrovena.api.routers.webhooks import _run_inpost
 
         draft = {
@@ -1460,9 +1547,7 @@ class TestRunInpost:
                 mock_ship.return_value = {"id": "ship-1", "tracking_number": "TRK-1"}
                 _run_inpost(draft, _SENDER)
 
-        assert mock_ship.call_args.kwargs["reference"] == (
-            f"1050 | {material} | {package_type} 1/1"
-        )
+        assert mock_ship.call_args.kwargs["reference"] == f"1050 | {material} | {size}"
 
 
 class TestInPostPayloadPlan:
@@ -1583,7 +1668,7 @@ class TestRunApaczka:
         assert result["tracking_number"] == "WAY001"
         assert result["status"] == "created"
         assert mock_ship.call_args.kwargs["content"] == "2 x HUMIO 500 ml"
-        assert mock_ship.call_args.kwargs["reference"] == "1060 | plastik | 1-pak 1/1"
+        assert mock_ship.call_args.kwargs["reference"] == "1060 | plastik | 1-pak"
 
     def test_passes_pickup_point_to_apaczka(self):
         from zdrovena.api.routers.webhooks import _run_apaczka
@@ -3732,6 +3817,50 @@ class TestTrackingAssignedCoversEveryPath:
         ]
         assert events, "an Allegro waybill is a tracking number like any other"
 
+    def test_inpost_confirm_promotes_draft_once_shipx_returns_tracking(self, client, store):
+        """InPost parks at pending_confirmation until ShipX has a tracking
+        number; /confirm is what promotes it, without POSTing a second time."""
+        draft = _seed_origin_draft(store)
+        store.update_draft(
+            draft["id"], {"status": "pending_confirmation", "courier_draft_id": "ship-77"}
+        )
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.get_shipment",
+                return_value={"id": "ship-77", "tracking_number": "620DONE"},
+            ):
+                with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as create:
+                    resp = client.post(f"/api/shipping/drafts/{draft['id']}/confirm")
+
+        assert resp.status_code == 200, resp.text
+        create.assert_not_called()
+        updated = store.get_draft(draft["id"])
+        assert updated["status"] == "created"
+        assert updated["tracking_number"] == "620DONE"
+        assert updated["shipment_origin"] == "system"
+
+    def test_inpost_confirm_stays_202_while_shipx_has_no_tracking(self, client, store):
+        """Still waiting is not an error and must not flip the draft to created."""
+        draft = _seed_origin_draft(store)
+        store.update_draft(
+            draft["id"], {"status": "pending_confirmation", "courier_draft_id": "ship-78"}
+        )
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.get_shipment",
+                return_value={"id": "ship-78", "tracking_number": None},
+            ):
+                with patch(
+                    "zdrovena.common.inpost.InPostClient.wait_for_shipment_confirmation",
+                    return_value={"id": "ship-78", "tracking_number": None},
+                ):
+                    resp = client.post(f"/api/shipping/drafts/{draft['id']}/confirm")
+
+        assert resp.status_code == 202, resp.text
+        assert store.get_draft(draft["id"])["status"] == "pending_confirmation"
+
 
 _APACZKA_DRAFT = {
     "id": "d-apaczka",
@@ -3879,9 +4008,15 @@ _ALLEGRO_DRAFT = {
     "shipping_address": {"street": "Lipowa", "building_number": "3", "city": "Lodz"},
 }
 
+# Allegro returns the prefilled address blocks under `suggestedInput`. There is
+# no senderData/receiverData in the documented response — this fixture used to
+# claim there was, which is the same wrong shape that shipped empty sender
+# blocks to the create-commands endpoint in production.
 _ALLEGRO_PROPOSAL = {
-    "senderData": {"name": "Maria Gryzło ZDROVENA", "street": "Cieszynska 6/12"},
-    "receiverData": {"name": "Ola Wisniewska", "street": "Lipowa 3", "city": "Lodz"},
+    "suggestedInput": {
+        "sender": {"name": "Maria Gryzło ZDROVENA", "street": "Cieszynska 6/12"},
+        "receiver": {"name": "Ola Wisniewska", "street": "Lipowa 3", "city": "Lodz"},
+    }
 }
 
 

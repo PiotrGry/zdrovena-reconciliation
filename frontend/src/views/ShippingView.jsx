@@ -706,9 +706,11 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
         draft.shipping_service_match_status !== 'auto_matched' ||
         !matchedApaczkaService
     )
-    const needsPickupSchedule = draft.courier === 'inpost'
+    // Apaczka is absent on purpose: its API has no standalone pickup call, so a
+    // pickup can only travel inside order_send at execute time.
+    const canOrderPickup = draft.courier === 'inpost' || draft.courier === 'allegro_delivery'
     const canPickup = (
-        needsPickupSchedule &&
+        canOrderPickup &&
         draft.status === 'created' &&
         !draft.pickup_ordered
     )
@@ -793,7 +795,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                             {draft.status === 'pending' ? (T.sh_status_pending ?? 'oczekujące')
                                 : draft.status === 'created' ? (T.sh_status_created ?? 'nadane')
                                     : draft.status === 'needs_review' ? (T.sh_status_needs_review ?? 'do sprawdzenia')
-                                        : draft.status === 'pending_confirmation' ? (T.sh_status_pending_confirmation ?? 'czeka na Allegro')
+                                        : draft.status === 'pending_confirmation' ? (T.sh_status_pending_confirmation ?? 'czeka na kuriera')
                                             : (T.sh_status_error ?? 'błąd')}
                         </Pill>
                     </span>
@@ -1062,7 +1064,9 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                     className="btn btn-secondary"
                                     onClick={() => onConfirmPending(draft)}
                                     disabled={isBusy}
-                                    title="Allegro jeszcze przetwarza tę przesyłkę — sprawdzane automatycznie co 5s, albo kliknij żeby sprawdzić od razu"
+                                    title={draft.courier === 'inpost'
+                                        ? 'InPost nadał numer przesyłki, czeka na numer śledzenia — sprawdzane automatycznie co 5s, albo kliknij żeby sprawdzić od razu'
+                                        : 'Allegro jeszcze przetwarza tę przesyłkę — sprawdzane automatycznie co 5s, albo kliknij żeby sprawdzić od razu'}
                                 >
                                     {isBusy
                                         ? <><Icon name="loader" size={13} className="spin" /> {T.sh_confirm_pending_busy ?? 'Sprawdzanie…'}</>
@@ -1134,7 +1138,11 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 confirmTestId="execute-preview-confirm"
                                 confirmLabel="Wyślij do kuriera"
                                 confirmDisabled={!executePreview.data || executePreview.data.preview_available === false}
-                                withSchedule={needsPickupSchedule}
+                                // Pickup stays a deliberate second step via "Zamów podjazd".
+                                // These fields were shown only for InPost, the one carrier whose
+                                // execute path ignores them: _run_inpost never reads pickup_date,
+                                // so the operator picked a window and no pickup was ordered.
+                                withSchedule={false}
                                 onCancel={() => setExecutePreview(null)}
                                 onConfirm={schedule => {
                                     const fingerprint = executePreview.data?.fingerprint
@@ -1410,8 +1418,10 @@ export default function ShippingView() {
         }, 'Nie udało się sprawdzić statusu')()
     }
 
-    // Auto-poll drafts stuck in pending_confirmation (Allegro create-command still
-    // IN_PROGRESS) so the operator doesn't have to keep clicking "Sprawdź status".
+    // Auto-poll drafts stuck in pending_confirmation so the operator doesn't have
+    // to keep clicking "Sprawdź status". Two carriers land here: an Allegro
+    // create-command still IN_PROGRESS, and an InPost shipment that ShipX has
+    // accepted but not yet given a tracking number.
     const pendingConfirmationKey = drafts
         .filter(d => d.status === 'pending_confirmation')
         .map(d => d.id)
@@ -1486,7 +1496,7 @@ export default function ShippingView() {
         setBulkPickupModal(false)
         const eligible = [...selectedDraftIds]
             .map(id => drafts.find(d => d.id === id))
-            .filter(d => d && d.courier === 'inpost' && d.status === 'created' && !d.pickup_ordered)
+            .filter(d => d && (d.courier === 'inpost' || d.courier === 'allegro_delivery') && d.status === 'created' && !d.pickup_ordered)
         setBulkProgress({ done: 0, total: eligible.length })
         for (let i = 0; i < eligible.length; i++) {
             try { await handlePickup(eligible[i], schedule) } catch { /* error visible in row */ }
@@ -1590,7 +1600,7 @@ export default function ShippingView() {
                             <option value="pending">{T.sh_status_pending ?? 'oczekujące'}</option>
                             <option value="needs_review">{T.sh_status_needs_review ?? 'do sprawdzenia'}</option>
                             <option value="created">{T.sh_status_created ?? 'nadane'}</option>
-                            <option value="pending_confirmation">{T.sh_status_pending_confirmation ?? 'czeka na Allegro'}</option>
+                            <option value="pending_confirmation">{T.sh_status_pending_confirmation ?? 'czeka na kuriera'}</option>
                             <option value="error">{T.sh_status_error ?? 'błąd'}</option>
                         </select>
                         <select value={filterCourier} onChange={e => setFilterCourier(e.target.value)}
@@ -1621,7 +1631,7 @@ export default function ShippingView() {
                             })
                             const pickupSelected = [...selectedDraftIds].filter(id => {
                                 const d = drafts.find(x => x.id === id)
-                                return d && d.courier === 'inpost' && d.status === 'created' && !d.pickup_ordered
+                                return d && (d.courier === 'inpost' || d.courier === 'allegro_delivery') && d.status === 'created' && !d.pickup_ordered
                             })
                             const printSelected = [...selectedDraftIds].filter(id => {
                                 const d = drafts.find(x => x.id === id)

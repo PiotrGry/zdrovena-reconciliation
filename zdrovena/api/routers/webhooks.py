@@ -908,21 +908,52 @@ def _physical_parcels(draft: dict[str, Any]) -> list[tuple[str, int, int]]:
     return parcels or [("1-pak", 1, 1)]
 
 
+# The glass package types encode their material in the type name, which made
+# the reference read "szkło | szkło". The material column already carries that,
+# so the type column shows the size alone.
+_GLASS_PACKAGE_SIZES = {
+    "szkło": "1-pak",
+    "szkło-2pak": "2-pak",
+}
+
+
 def _shipment_reference(
     order_number: str, package_type: str, package_number: int, package_count: int
 ) -> str:
-    material = "szkło" if package_type in {"szkło", "szkło-2pak"} else "plastik"
-    return f"{order_number} | {material} | {package_type} {package_number}/{package_count}"
+    """Build the courier's reference: ``<order> | <material> | <size>``.
+
+    The ``n/count`` suffix is only added for a genuine multi-parcel send. A
+    single parcel always read "1/1", which told the operator nothing and ate
+    width on the label.
+    """
+    material = "szkło" if package_type in _GLASS_PACKAGE_SIZES else "plastik"
+    size = _GLASS_PACKAGE_SIZES.get(package_type, package_type)
+    reference = f"{order_number} | {material} | {size}"
+    if package_count > 1:
+        reference = f"{reference} {package_number}/{package_count}"
+    return reference
 
 
 def _shipment_patch(shipments: list[dict[str, str]]) -> dict[str, Any]:
+    """Build the draft patch for a set of created ShipX shipments.
+
+    ShipX creation is asynchronous: the POST returns a shipment id, and the
+    tracking number appears only once InPost confirms it. A draft is only
+    ``created`` once every parcel has one — until then it stays
+    ``pending_confirmation`` so the operator sees "waiting" rather than a
+    "nadane" that has no tracking number behind it. The ``confirm`` endpoint
+    (or its 5s UI poll) promotes it.
+    """
     first = shipments[0] if shipments else {}
+    confirmed = bool(shipments) and all(
+        str(shipment.get("tracking_number") or "").strip() for shipment in shipments
+    )
     return {
         "courier_draft_id": first.get("id"),
         "courier_shipments": shipments,
         "dispatch_order_id": None,
         "tracking_number": first.get("tracking_number"),
-        "status": "created",
+        "status": "created" if confirmed else "pending_confirmation",
         "pickup_ordered": False,
         "error": None,
     }
@@ -1035,6 +1066,46 @@ def _inpost_payload_plan(draft: dict[str, Any], sender: dict[str, str]) -> list[
     return plan
 
 
+def _is_resumable_inpost_draft(draft: dict[str, Any]) -> bool:
+    """True when the draft already has a ShipX shipment waiting on confirmation."""
+    return bool(
+        draft.get("status") == "pending_confirmation"
+        and str(draft.get("courier_draft_id") or "").strip()
+    )
+
+
+def _resume_inpost_shipment(client: Any, draft: dict[str, Any]) -> dict[str, Any]:
+    """Ask ShipX about a shipment this draft already created, and never POST again.
+
+    A draft left at ``pending_confirmation`` with a ShipX id is a shipment that
+    exists at InPost and is only missing its tracking number. The per-parcel
+    filter in ``_pending_inpost_call_specs`` cannot see it, because that keys on
+    ``courier_shipments``, which single-parcel drafts from before that field
+    existed never populated. Without this path a retry POSTs a second real
+    shipment: two labels, two pickups, double cost.
+
+    Shared by ``_run_inpost`` (operator clicked "wyślij" again) and the
+    ``confirm`` endpoint (the 5s UI poll), so both resolve tracking identically.
+    """
+    existing = list(draft.get("courier_shipments") or [])
+    shipment_id = str(draft.get("courier_draft_id") or "").strip()
+
+    result = client.get_shipment(shipment_id)
+    if not result.get("tracking_number"):
+        result = client.wait_for_shipment_confirmation(
+            shipment_id,
+            max_attempts=3,
+            interval_s=1.0,
+        )
+    resumed = {
+        "id": str(result.get("id") or shipment_id),
+        "tracking_number": str(result.get("tracking_number") or ""),
+        "package_type": str(existing[0].get("package_type") if existing else "1-pak"),
+        "package_number": str(existing[0].get("package_number") if existing else 1),
+    }
+    return _shipment_patch([resumed, *existing[1:]])
+
+
 def _run_inpost(
     draft: dict[str, Any],
     sender: dict[str, str],
@@ -1069,6 +1140,11 @@ def _run_inpost(
     client = InPostClient(token, org_id)
 
     existing = list(draft.get("courier_shipments") or [])
+
+    # Resume, do not re-create. See _resume_inpost_shipment.
+    if _is_resumable_inpost_draft(draft):
+        return _resume_inpost_shipment(client, draft)
+
     for (
         inpost_service,
         package_type,
@@ -1314,8 +1390,22 @@ def _allegro_call_spec(draft: dict[str, Any], proposal: dict[str, Any]) -> dict[
 
     # sender/receiver are required by the API and come prefilled with the
     # buyer's address by Allegro — which is exactly why the preview has to ask.
-    sender = proposal.get("senderData") or {}
-    receiver = dict(proposal.get("receiverData") or {})
+    # They live under `suggestedInput`; there is no senderData/receiverData in
+    # the documented response. Reading the wrong keys silently produced empty
+    # address blocks instead of failing, so both shapes are checked explicitly.
+    suggested_input = proposal.get("suggestedInput")
+    if not isinstance(suggested_input, dict):
+        raise AllegroBusinessError(
+            detail="Allegro delivery proposal has no suggestedInput object",
+            action="get_delivery_proposal",
+        )
+    sender = suggested_input.get("sender") or {}
+    receiver = dict(suggested_input.get("receiver") or {})
+    if not sender or not receiver:
+        raise AllegroBusinessError(
+            detail="Allegro delivery proposal has no suggestedInput.sender or receiver",
+            action="get_delivery_proposal",
+        )
 
     # Pickup-point / locker code lives inside the receiver block as `point`.
     pickup_point_id = (draft.get("receiver") or {}).get("locker_id") or None
@@ -1463,46 +1553,11 @@ def _run_allegro_delivery(
     pickup_ordered = False
     if pickup_date:
         try:
-            proposals = client.get_ship_with_allegro_pickup_proposals([shipment_id])
-            # Prefer new-format entries (with `date`); fall back to legacy `id`
-            # (deprecated but still accepted by servers pre-2026-07-01).
-            new_format = next((p for p in proposals if p.get("date")), None)
-            legacy_format = next(
-                (p for p in proposals if p.get("id") and not p.get("date")),
-                None,
-            )
-            selected = new_format or legacy_format
-            if selected:
-                pu_cmd = str(_uuid.uuid4())
-                if selected.get("date"):
-                    pickup_time = {
-                        "date": selected["date"],
-                        "minTime": selected.get("minTime", "08:00"),
-                        "maxTime": selected.get("maxTime", "18:00"),
-                    }
-                    client.create_ship_with_allegro_pickup(
-                        command_id=pu_cmd,
-                        shipment_ids=[shipment_id],
-                        pickup_time=pickup_time,
-                    )
-                else:
-                    # Legacy path (deprecated post-2026-07-01) — kept for
-                    # sandbox/older-server compatibility.
-                    client.create_ship_with_allegro_pickup(
-                        command_id=pu_cmd,
-                        shipment_ids=[shipment_id],
-                        proposal_item_id=selected["id"],
-                    )
-                pickup_ordered = True
-            else:
-                logger.warning(
-                    "No pickup proposals available for shipment %s on %s",
-                    shipment_id,
-                    pickup_date,
-                )
+            pickup_ordered = _order_allegro_pickup(client, shipment_id, pickup_date)
         except (AllegroBusinessError, AllegroAuthError, CourierTransientError):
-            # Pickup is best-effort: the shipment is already created, so a pickup
-            # failure must not abort the flow — operator can retry the pickup.
+            # Pickup is best-effort here: the shipment is already created, so a
+            # pickup failure must not abort the flow — the operator can retry it
+            # from the "Zamów podjazd" button, which raises instead of swallowing.
             logger.exception("Allegro Delivery pickup failed for %s", shipment_id)
 
     return {
@@ -1514,6 +1569,50 @@ def _run_allegro_delivery(
         "allegro_command_id": command_id,
         "error": None,
     }
+
+
+def _order_allegro_pickup(client: Any, shipment_id: str, pickup_date: str | None) -> bool:
+    """Order a Ship-with-Allegro courier pickup. Returns False when Allegro
+    offers no slot.
+
+    Allegro does not take an arbitrary window: it returns proposals and you pick
+    one. Shared by the execute path and the "Zamów podjazd" button so both send
+    the same command.
+    """
+    import uuid as _pickup_uuid
+
+    proposals = client.get_ship_with_allegro_pickup_proposals([shipment_id])
+    # Prefer new-format entries (with `date`); fall back to legacy `id`
+    # (deprecated but still accepted by servers pre-2026-07-01).
+    new_format = next((p for p in proposals if p.get("date")), None)
+    legacy_format = next((p for p in proposals if p.get("id") and not p.get("date")), None)
+    selected = new_format or legacy_format
+    if not selected:
+        logger.warning(
+            "No pickup proposals available for shipment %s on %s", shipment_id, pickup_date
+        )
+        return False
+
+    command_id = str(_pickup_uuid.uuid4())
+    if selected.get("date"):
+        client.create_ship_with_allegro_pickup(
+            command_id=command_id,
+            shipment_ids=[shipment_id],
+            pickup_time={
+                "date": selected["date"],
+                "minTime": selected.get("minTime", "08:00"),
+                "maxTime": selected.get("maxTime", "18:00"),
+            },
+        )
+    else:
+        # Legacy path (deprecated post-2026-07-01) — kept for sandbox/older
+        # servers.
+        client.create_ship_with_allegro_pickup(
+            command_id=command_id,
+            shipment_ids=[shipment_id],
+            proposal_item_id=selected["id"],
+        )
+    return True
 
 
 # ── Background task: create draft on Shopify webhook ─────────────────────────
@@ -2731,6 +2830,54 @@ def _execute_draft_impl(
         ) from exc
 
 
+def _confirm_pending_inpost(draft_id: str, draft: dict[str, Any], shipping_store: Any) -> Any:
+    """Resolve a pending InPost draft: promote to created once ShipX confirms.
+
+    Returns 202 while the tracking number is still missing, so the UI poll and a
+    cron worker can both keep asking without the draft ever claiming to be sent.
+    """
+    if not _is_resumable_inpost_draft(draft):
+        raise HTTPException(
+            status_code=409,
+            detail="Draft has no courier_draft_id to confirm",
+        )
+
+    if _MOCK_COURIER:
+        patch = {
+            "status": "created",
+            "tracking_number": f"MOCK{draft.get('shopify_order_number', 'x')}0000000000",
+            "error": None,
+        }
+        shipping_store.update_draft(draft_id, patch)
+        return shipping_store.get_draft(draft_id) or patch
+
+    from zdrovena.common.inpost import InPostClient
+
+    client = InPostClient(get_secret("inpost_api_token"), get_secret("inpost_organization_id"))
+    try:
+        patch = _resume_inpost_shipment(client, draft)
+    except (InPostBusinessError, CourierTransientError) as exc:
+        logger.exception("InPost confirm poll failed for draft %s", draft_id)
+        raise HTTPException(status_code=502, detail=f"InPost API error: {exc}") from exc
+
+    if patch.get("status") != "created":
+        # Still unconfirmed — persist nothing but the shipment list so a later
+        # poll sees the same parcels, and tell the caller to come back.
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "pending_confirmation",
+                "courier_draft_id": patch.get("courier_draft_id"),
+                "draft_id": draft_id,
+            },
+        )
+
+    patch["shipment_origin"] = SHIPMENT_ORIGIN_SYSTEM
+    shipping_store.update_draft(draft_id, patch)
+    _emit_tracking_assigned(draft_id, draft.get("shopify_order_number"), SHIPMENT_ORIGIN_SYSTEM)
+    return shipping_store.get_draft(draft_id) or patch
+
+
 # ── Confirm pending Allegro create-command ───────────────────────────────────
 
 
@@ -2771,6 +2918,13 @@ def confirm_pending_command(
 
     command_id = draft.get("allegro_command_id")
     if not command_id:
+        # InPost parks at pending_confirmation too: ShipX returns a shipment id
+        # before it has a tracking number. Resolve it through the same resume
+        # path execute uses, so the operator's "Sprawdź status" and a retry
+        # cannot disagree about what the shipment is. An outstanding Allegro
+        # command still wins — that is what identifies an Allegro draft here.
+        if draft.get("courier") == "inpost":
+            return _confirm_pending_inpost(draft_id, draft, shipping_store)
         raise HTTPException(
             status_code=409,
             detail="Draft has no allegro_command_id",
@@ -2880,8 +3034,15 @@ def order_pickup(
     draft = shipping_store.get_draft(draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
-    if draft.get("courier") != "inpost":
-        raise HTTPException(status_code=400, detail="Pickup only available for InPost shipments")
+    courier = draft.get("courier")
+    # Apaczka is absent on purpose: its API (service_structure / orders /
+    # order_send) has no standalone pickup call. An Apaczka pickup can only be
+    # requested inside the order_send payload, i.e. at execute time.
+    if courier not in {"inpost", "allegro_delivery"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Pickup is only available for InPost and Ship-with-Allegro shipments",
+        )
     if draft.get("status") != "created":
         raise HTTPException(status_code=409, detail="Draft must be in 'created' state")
     if draft.get("pickup_ordered"):
@@ -2898,7 +3059,26 @@ def order_pickup(
 
     if _MOCK_COURIER:
         ref = draft.get("shopify_order_number", "mock")
-        logger.info("MOCK_COURIER: skipping InPost dispatch order for draft %s", ref)
+        logger.info("MOCK_COURIER: skipping %s pickup for draft %s", courier, ref)
+    elif courier == "allegro_delivery":
+        try:
+            allegro = _get_allegro_client()
+            if allegro is None:
+                raise HTTPException(status_code=502, detail="Allegro credentials missing")
+            if not _order_allegro_pickup(allegro, str(courier_draft_id), pickup_date):
+                # Release the claim: no pickup was ordered, so the operator must
+                # be able to try again on another date.
+                shipping_store.update_draft(draft_id, {"pickup_ordered": False})
+                raise HTTPException(
+                    status_code=409,
+                    detail="Allegro has no pickup slot available for this shipment",
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("order_pickup failed for draft %s", draft_id)
+            shipping_store.update_draft(draft_id, {"pickup_ordered": False})
+            raise HTTPException(status_code=502, detail=f"Allegro pickup error: {exc}") from exc
     else:
         try:
             from zdrovena.common.inpost import InPostClient

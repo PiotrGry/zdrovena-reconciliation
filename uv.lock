@@ -4898,6 +4898,7 @@ all = [
 ]
 api = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "pypdf" },
     { name = "uvicorn", extra = ["standard"] },
@@ -4953,6 +4954,7 @@ requires-dist = [
     { name = "checkov", marker = "extra == 'iac'", specifier = ">=3.0.0" },
     { name = "cryptography", marker = "extra == 'ksef'", specifier = ">=48.0.1" },
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.125.0" },
+    { name = "httpx", marker = "extra == 'api'", specifier = ">=0.27.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100.0" },
     { name = "keyring", specifier = ">=25.3.0" },

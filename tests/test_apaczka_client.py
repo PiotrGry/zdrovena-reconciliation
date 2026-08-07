@@ -454,6 +454,7 @@ class TestApaczkaPayloadBuilder:
             "receiver_zip": "30-001",
             "sender": _SENDER,
             "reference": "order-2042",
+            "content": "Woda butelkowana",
         }
 
     def test_builder_matches_what_create_sends(self):
