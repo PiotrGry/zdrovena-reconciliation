@@ -1138,11 +1138,13 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 confirmTestId="execute-preview-confirm"
                                 confirmLabel="Wyślij do kuriera"
                                 confirmDisabled={!executePreview.data || executePreview.data.preview_available === false}
-                                // Pickup stays a deliberate second step via "Zamów podjazd".
-                                // These fields were shown only for InPost, the one carrier whose
-                                // execute path ignores them: _run_inpost never reads pickup_date,
-                                // so the operator picked a window and no pickup was ordered.
-                                withSchedule={false}
+                                // One pickup control for every carrier. It has to live here
+                                // because Apaczka's API has no pickup resource — a collection
+                                // can only be requested inside order_send, at execute time. All
+                                // three now read this window: Apaczka through _apaczka_call_specs,
+                                // Allegro through _order_allegro_pickup, InPost through
+                                // create_dispatch_order.
+                                withSchedule={true}
                                 onCancel={() => setExecutePreview(null)}
                                 onConfirm={schedule => {
                                     const fingerprint = executePreview.data?.fingerprint

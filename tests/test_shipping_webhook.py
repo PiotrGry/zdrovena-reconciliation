@@ -1375,6 +1375,59 @@ class TestRunInpost:
         assert result["pickup_ordered"] is False
         mock_disp.assert_not_called()
 
+    def test_pickup_window_orders_the_dispatch_at_execute(self):
+        """One pickup control for every carrier. Apaczka's API has no pickup
+        resource, so a collection can only be requested inside order_send at
+        execute time — which makes execute the only moment all three carriers
+        share. InPost used to accept the window and silently drop it, leaving
+        the parcel to sit uncollected."""
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_ship:
+                with patch(
+                    "zdrovena.common.inpost.InPostClient.create_dispatch_order"
+                ) as mock_disp:
+                    mock_ship.return_value = {"id": "ship-1", "tracking_number": "TRK1"}
+                    mock_disp.return_value = {"id": "disp-9"}
+                    result = _run_inpost(
+                        _KURIER_DRAFT,
+                        _SENDER,
+                        pickup_date="2026-08-08",
+                        pickup_from="09:00",
+                        pickup_to="13:00",
+                    )
+
+        mock_disp.assert_called_once()
+        assert mock_disp.call_args.args[0] == "ship-1"
+        assert mock_disp.call_args.kwargs["pickup_date"] == "2026-08-08"
+        assert mock_disp.call_args.kwargs["pickup_from"] == "09:00"
+        assert mock_disp.call_args.kwargs["pickup_to"] == "13:00"
+        assert result["pickup_ordered"] is True
+        assert result["dispatch_order_id"] == "disp-9"
+
+    def test_failed_dispatch_does_not_fail_the_execute(self):
+        """The shipment already exists, so a pickup failure must not undo it.
+        pickup_ordered stays False, which is what keeps 'Zamów podjazd'
+        available as the retry."""
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_ship:
+                with patch(
+                    "zdrovena.common.inpost.InPostClient.create_dispatch_order",
+                    side_effect=RuntimeError("InPost dispatch down"),
+                ):
+                    mock_ship.return_value = {"id": "ship-1", "tracking_number": "TRK1"}
+                    result = _run_inpost(
+                        _KURIER_DRAFT, _SENDER, pickup_date="2026-08-08", pickup_from="09:00"
+                    )
+
+        assert result["courier_draft_id"] == "ship-1"
+        assert result["tracking_number"] == "TRK1"
+        assert result["pickup_ordered"] is False
+        assert result["dispatch_order_id"] is None
+
     def test_async_create_parks_at_pending_without_blocking_on_confirmation(self):
         """Creation stays non-blocking — no polling inside the request — but a
         shipment with no tracking number is not "nadane" yet. It parks at

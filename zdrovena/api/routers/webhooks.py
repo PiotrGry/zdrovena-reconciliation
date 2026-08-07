@@ -1166,7 +1166,33 @@ def _run_inpost(
         if on_shipment_created:
             on_shipment_created(shipment)
 
-    return _shipment_patch(existing)
+    patch = _shipment_patch(existing)
+
+    # Pickup is chosen at execute for every carrier, because Apaczka can only
+    # be told about one inside order_send — its API has no pickup resource at
+    # all (12 documented methods, none of them books a collection). Making the
+    # operator's one pickup control work the same for all three means doing it
+    # here. Apaczka and Allegro already did; InPost is the one that ignored the
+    # window and left the parcel sitting uncollected.
+    if pickup_date:
+        shipment_id = str(patch.get("courier_draft_id") or "")
+        try:
+            dispatch = client.create_dispatch_order(
+                shipment_id,
+                _get_pickup_address(),
+                pickup_date=pickup_date,
+                pickup_from=pickup_from,
+                pickup_to=pickup_to,
+            )
+            patch["dispatch_order_id"] = str(dispatch.get("id") or "") or None
+            patch["pickup_ordered"] = True
+        except Exception:
+            # Best-effort, the same way Allegro treats it: the shipment already
+            # exists, so a failed pickup must not fail the execute. pickup_ordered
+            # stays False, which is what keeps "Zamów podjazd" available to retry.
+            logger.exception("InPost dispatch order failed for shipment %s", shipment_id)
+
+    return patch
 
 
 def _apaczka_call_specs(
