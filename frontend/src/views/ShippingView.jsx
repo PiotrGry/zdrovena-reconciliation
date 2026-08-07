@@ -571,6 +571,7 @@ function PickupScheduleModal({
     onCancel,
     title,
     children,
+    summary,
     withSchedule = true,
     panelTestId,
     confirmTestId,
@@ -625,6 +626,7 @@ function PickupScheduleModal({
             >
                 <div style={{ fontWeight: 600 }}>{title}</div>
                 {children}
+                {summary}
                 {withSchedule && (
                     <>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -649,6 +651,14 @@ function PickupScheduleModal({
                             </div>
                         </div>
                         <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>{T.sh_min_window ?? 'Minimalne okno: 2 godziny'}</div>
+                        {/* Say the window back in full. The date input renders per
+                            locale and the hours live in two separate selects, so
+                            without this the operator never sees the exact value
+                            that will be sent — which for Apaczka cannot be undone
+                            without cancelling the shipment. */}
+                        <div data-testid="pickup-window-summary" style={{ fontSize: '0.85em' }}>
+                            {T.sh_pickup_window ?? 'Podjazd'}: <strong>{date}</strong>, <strong>{from}–{to}</strong>
+                        </div>
                     </>
                 )}
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -1181,6 +1191,7 @@ export default function ShippingView() {
     const [selectedDraftIds, setSelectedDraftIds] = useState(new Set())
     const [bulkProgress, setBulkProgress] = useState(null)
     const [bulkPickupModal, setBulkPickupModal] = useState(false)
+    const [bulkExecuteModal, setBulkExecuteModal] = useState(null)
     const [expandAll, setExpandAll] = useState(null)
     const [apaczkaServices, setApaczkaServices] = useState([])
     const [syncing, setSyncing] = useState(false)
@@ -1478,15 +1489,32 @@ export default function ShippingView() {
         })
     }
 
+    // Bulk execute is pickup-free for InPost and Allegro: for them a collection is
+    // a separate call, so it stays a separate, deliberate button. Apaczka has no
+    // standalone pickup endpoint — the collection rides inside order_send — so
+    // executing an Apaczka draft always requests a courier, and the only choice
+    // left is whether the operator got to pick the window. We therefore refuse to
+    // bulk-execute Apaczka until a window is named, rather than shipping an
+    // undated COURIER request whose behaviour we have not verified.
     async function handleBulkExecute() {
-        const ids = [...selectedDraftIds]
-        setBulkProgress({ done: 0, total: ids.length })
-        for (let i = 0; i < ids.length; i++) {
-            const draft = drafts.find(d => d.id === ids[i])
-            if (draft) {
-                try { await handleExecute(draft) } catch { /* error visible in row */ }
-            }
-            setBulkProgress({ done: i + 1, total: ids.length })
+        const selected = [...selectedDraftIds]
+            .map(id => drafts.find(d => d.id === id))
+            .filter(Boolean)
+        if (selected.some(d => d.courier === 'apaczka')) {
+            setBulkExecuteModal({ drafts: selected })
+            return
+        }
+        await runBulkExecute(selected, null)
+    }
+
+    async function runBulkExecute(selected, schedule) {
+        setBulkProgress({ done: 0, total: selected.length })
+        for (let i = 0; i < selected.length; i++) {
+            const draft = selected[i]
+            // Only Apaczka gets the window — see handleBulkExecute.
+            const perDraftSchedule = draft.courier === 'apaczka' ? schedule : null
+            try { await handleExecute(draft, perDraftSchedule) } catch { /* error visible in row */ }
+            setBulkProgress({ done: i + 1, total: selected.length })
         }
         setBulkProgress(null)
         setSelectedDraftIds(new Set())
@@ -1803,6 +1831,47 @@ export default function ShippingView() {
                     onCancel={() => setBulkPickupModal(false)}
                 />
             )}
+
+            {bulkExecuteModal && (() => {
+                const apaczkaDrafts = bulkExecuteModal.drafts.filter(d => d.courier === 'apaczka')
+                const otherCount = bulkExecuteModal.drafts.length - apaczkaDrafts.length
+                const parcelCount = apaczkaDrafts.reduce(
+                    (sum, d) => sum + (packagesSortValue(d) || 0), 0
+                )
+                return (
+                    <PickupScheduleModal
+                        title="Podjazd dla przesyłek Apaczka"
+                        panelTestId="bulk-execute-pickup"
+                        confirmTestId="bulk-execute-pickup-confirm"
+                        confirmLabel="Realizuj zaznaczone"
+                        summary={
+                            <div data-testid="bulk-execute-scope" style={{ fontSize: '0.85em', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <div>
+                                    Okno dotyczy <strong>{apaczkaDrafts.length}</strong>{' '}
+                                    {apaczkaDrafts.length === 1 ? 'przesyłki Apaczka' : 'przesyłek Apaczka'}
+                                    {' '}(<strong>{parcelCount}</strong> {parcelCount === 1 ? 'paczka' : 'paczek'}).
+                                </div>
+                                <div style={{ color: 'var(--text-2)' }}>
+                                    Apaczka zamawia kuriera już przy realizacji — tego nie da się
+                                    później odwołać bez anulowania przesyłki.
+                                </div>
+                                {otherCount > 0 && (
+                                    <div style={{ color: 'var(--text-2)' }}>
+                                        Pozostałe {otherCount} — InPost / Allegro — realizuję bez podjazdu.
+                                        Podjazd zamówisz osobno przyciskiem „Zamów podjazd”.
+                                    </div>
+                                )}
+                            </div>
+                        }
+                        onConfirm={schedule => {
+                            const pending = bulkExecuteModal.drafts
+                            setBulkExecuteModal(null)
+                            runBulkExecute(pending, schedule)
+                        }}
+                        onCancel={() => setBulkExecuteModal(null)}
+                    />
+                )
+            })()}
         </>
     )
 }

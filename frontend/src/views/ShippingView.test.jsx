@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -50,7 +50,12 @@ function installShippingFetch({
     let draftsCalls = 0
     let confirmCalls = 0
     const updateDraftCalls = []
+    const executeCalls = []
     const fetchMock = mockFetch((url, init = {}) => {
+        if (url.includes('/execute') && init.method === 'POST') {
+            executeCalls.push({ url, body: init.body ? JSON.parse(init.body) : null })
+            return jsonResponse({ status: 'created' })
+        }
         if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: apaczkaServices })
         if (url === '/api/shipping/sync') {
             return syncDeferred
@@ -76,7 +81,12 @@ function installShippingFetch({
         }
         throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
     })
-    return { fetchMock, getConfirmCalls: () => confirmCalls, getUpdateDraftCalls: () => updateDraftCalls }
+    return {
+        fetchMock,
+        getConfirmCalls: () => confirmCalls,
+        getUpdateDraftCalls: () => updateDraftCalls,
+        getExecuteCalls: () => executeCalls,
+    }
 }
 
 function installPrintSupport() {
@@ -649,5 +659,81 @@ describe('execute preview', () => {
         })
 
         expect(executeCalls).toHaveLength(1)
+    })
+})
+
+describe('bulk execute pickup', () => {
+    async function selectRows(user, ...orderNumbers) {
+        for (const number of orderNumbers) {
+            await user.click(await screen.findByLabelText(`Wybierz przesyłkę ${number}`))
+        }
+        await user.click(screen.getByRole('button', { name: /Realizuj zaznaczone/ }))
+    }
+
+    it('sends no pickup window when the selection has no Apaczka draft', async () => {
+        const user = userEvent.setup()
+        const { getExecuteCalls } = installShippingFetch({
+            drafts: [
+                draft({ id: 'a', shopify_order_number: '1001', courier: 'inpost' }),
+                draft({ id: 'b', shopify_order_number: '1002', courier: 'allegro_delivery' }),
+            ],
+        })
+        renderWithProviders(<ShippingView />)
+
+        await selectRows(user, '1001', '1002')
+
+        // InPost and Allegro book a collection through a separate call, so bulk
+        // execute must not ask for a window or send one.
+        await waitFor(() => expect(getExecuteCalls()).toHaveLength(2))
+        expect(screen.queryByTestId('bulk-execute-pickup')).not.toBeInTheDocument()
+        expect(getExecuteCalls().every(call => call.body === null)).toBe(true)
+    })
+
+    it('names the window before executing Apaczka, and gives it only to Apaczka', async () => {
+        const user = userEvent.setup()
+        const { getExecuteCalls } = installShippingFetch({
+            drafts: [
+                draft({ id: 'a', shopify_order_number: '1001', courier: 'apaczka', packages_count: 3 }),
+                draft({ id: 'b', shopify_order_number: '1002', courier: 'inpost' }),
+            ],
+        })
+        renderWithProviders(<ShippingView />)
+
+        await selectRows(user, '1001', '1002')
+
+        // Apaczka requests the courier inside order_send, so nothing may go out
+        // before the operator has named a window.
+        expect(getExecuteCalls()).toHaveLength(0)
+        const scope = await screen.findByTestId('bulk-execute-scope')
+        expect(scope).toHaveTextContent('1')
+        expect(scope).toHaveTextContent('3')
+        expect(screen.getByTestId('pickup-window-summary')).toBeInTheDocument()
+
+        await user.click(screen.getByTestId('bulk-execute-pickup-confirm'))
+
+        await waitFor(() => expect(getExecuteCalls()).toHaveLength(2))
+        const bodyByUrl = Object.fromEntries(getExecuteCalls().map(c => [c.url, c.body]))
+        expect(bodyByUrl['/api/shipping/drafts/a/execute']).toMatchObject({
+            pickup_date: expect.any(String),
+            pickup_from: expect.any(String),
+            pickup_to: expect.any(String),
+        })
+        expect(bodyByUrl['/api/shipping/drafts/b/execute']).toBeNull()
+    })
+
+    it('executes nothing when the Apaczka window is cancelled', async () => {
+        const user = userEvent.setup()
+        const { getExecuteCalls } = installShippingFetch({
+            drafts: [draft({ id: 'a', shopify_order_number: '1001', courier: 'apaczka' })],
+        })
+        renderWithProviders(<ShippingView />)
+
+        await selectRows(user, '1001')
+        const panel = await screen.findByTestId('bulk-execute-pickup')
+
+        await user.click(within(panel).getByText('Anuluj'))
+
+        expect(getExecuteCalls()).toHaveLength(0)
+        expect(screen.queryByTestId('bulk-execute-pickup')).not.toBeInTheDocument()
     })
 })
