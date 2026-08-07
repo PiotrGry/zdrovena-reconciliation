@@ -364,7 +364,7 @@ describe('ShippingView', () => {
         expect(screen.queryByText(/SECRET_TOKEN|Traceback/)).not.toBeInTheDocument()
     })
 
-    it('polls pending Allegro confirmation and refreshes after it reaches a terminal state', async () => {
+    it('polls pending confirmation and refreshes after it reaches a terminal state', async () => {
         const pending = draft({ id: 'pending-1', status: 'pending_confirmation' })
         const created = draft({ id: 'pending-1', status: 'created' })
         const { getConfirmCalls } = installShippingFetch({
@@ -373,7 +373,7 @@ describe('ShippingView', () => {
         })
 
         renderWithProviders(<ShippingView />)
-        await screen.findByText('czeka na Allegro')
+        await screen.findByText('czeka na kuriera')
 
         await act(async () => {
             await new Promise(resolve => setTimeout(resolve, 5100))
