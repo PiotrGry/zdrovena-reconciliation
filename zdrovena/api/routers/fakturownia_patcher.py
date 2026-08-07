@@ -111,7 +111,10 @@ def patch_allegro_invoices_once(
     stats = _new_stats()
 
     try:
-        drafts = shipping_store.list_drafts()
+        # High limit: the default 200 silently hides the oldest drafts once the
+        # store passes 200 rows, so old orders would never get their invoice
+        # patched. Same trap that duplicated Allegro drafts in the poller.
+        drafts = shipping_store.list_drafts(limit=10_000)
     # Resilience boundary: this worker must never crash a cycle (see docstring).
     # Any storage backend failure is counted and the cycle aborts cleanly.
     except Exception:

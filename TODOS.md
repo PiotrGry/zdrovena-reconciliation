@@ -344,6 +344,32 @@ az monitor metrics alert create --name test-alert --resource-group zdrovena-rg \
 - **Depends on:** Shipping draft automation (Azure Function) deployed first
 - **Context:** After the shipping Function is live, Application Insights logs are sufficient initially. Add a daily digest (email or Slack) when volume grows beyond ~50 orders/month.
 
+### Verify what an undated Apaczka COURIER pickup means
+- **What:** `build_shipment_order` always sends `pickup: {"type": "COURIER"}`; the date and
+  hours are optional refinements on top. Establish what Apaczka actually does when the
+  block carries no `date` — next business day, ignored, or no collection at all.
+- **Why:** This is the assumption the bulk-execute guard is built on. Bulk execute currently
+  refuses to run Apaczka without a named window precisely because the undated behaviour is
+  unverified. Confirming it either relaxes the guard or justifies keeping it.
+- **How:** One test order against the Apaczka sandbox/live account with no `date`, then read
+  back the order and see whether a collection was scheduled.
+- **Effort:** XS
+- **Priority:** P2
+- **Blocks:** relaxing the bulk-execute Apaczka guard
+
+### Apaczka `pickup_hours` availability lookup
+- **What:** Apaczka documents a `pickup_hours` endpoint (today + 3 business days) returning
+  bookable slots. It is referenced in a docstring in `apaczka.py` but **not implemented** —
+  the pickup date/hours the operator picks are never validated against real availability.
+- **Why:** Apaczka is the carrier where an invalid slot is least recoverable: the collection
+  rides inside `order_send`, and there is no pickup-only cancel — undoing it means cancelling
+  the whole shipment (`cancel_order/{id}`). InPost, by contrast, has `cancel_dispatch_order`.
+- **How:** Add the client method, then have the pickup modal offer only returned slots for
+  Apaczka selections instead of the fixed `TIME_SLOTS` list.
+- **Effort:** S
+- **Priority:** P2
+- **Context:** Owner decision 2026-08-08, alongside the carrier-aware bulk execute.
+
 ---
 
 ## Shipping — Technical Debt (from /review 2026-06-24)

@@ -184,6 +184,19 @@ def _run_cycle(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     logger.info("Polling cycle complete: %s", stats)
+
+    # ShipX issues a waybill after the POST returns, so InPost drafts park at
+    # pending_confirmation. The browser poll only runs while the shipping page
+    # is open; this is what resolves them when nobody is watching. A failure
+    # here must not invalidate the completed order/invoice cycle above.
+    try:
+        from zdrovena.api.routers.inpost_poller import resolve_pending_inpost_once
+
+        inpost_stats = resolve_pending_inpost_once(shipping_store=shipping_store)
+        logger.info("InPost pending resolution complete: %s", inpost_stats)
+    except Exception:
+        logger.exception("InPost pending resolution failed")
+
     overdue_count = _emit_orders_without_tracking_snapshot(shipping_store)
     logger.info("Orders without tracking after 48h: %d", overdue_count)
 

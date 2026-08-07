@@ -323,6 +323,7 @@ class TestCreateShipment:
             "receiver_zip": "30-001",
             "sender": _SENDER,
             "reference": "order-2042",
+            "content": "Woda butelkowana",
         }
 
     def test_success_returns_response_dict(self):
@@ -353,11 +354,19 @@ class TestCreateShipment:
         order = data["order"]
         assert order["service_id"] == _SERVICE_ID
         assert order["externalId"] == "order-2042"
+        assert order["content"] == "Woda butelkowana"
         assert order["address"]["sender"]["email"] == "sender@zdrovena.pl"
         assert order["address"]["receiver"]["line1"] == "Kwiatowa 1"
         assert order["address"]["receiver"]["postal_code"] == "30-001"
         assert order["address"]["receiver"]["country_code"] == "PL"
         assert order["shipment"][0]["shipment_type_code"] == "PACZKA"
+
+    def test_rejects_empty_content_before_http(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        with patch.object(client._session, "post") as mock_post:
+            with pytest.raises(ApaczkaBusinessError, match=r"order\.content is required"):
+                client.create_shipment(**{**self._kwargs(), "content": "   "})
+        mock_post.assert_not_called()
 
     def test_pickup_point_id_sent_as_foreign_address_id(self):
         client = ApaczkaClient(_APP_ID, _SECRET, "23", storage=MagicMock())
@@ -445,6 +454,7 @@ class TestApaczkaPayloadBuilder:
             "receiver_zip": "30-001",
             "sender": _SENDER,
             "reference": "order-2042",
+            "content": "Woda butelkowana",
         }
 
     def test_builder_matches_what_create_sends(self):

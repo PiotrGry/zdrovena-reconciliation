@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from http import HTTPStatus
 from typing import Any
 
@@ -244,6 +245,139 @@ CARRIER_LOCKER_SLOTS: dict[str, list[dict]] = {
 _DEFAULT_DIMS = PARCEL_SPECS["1-pak"]
 
 
+def _require_non_empty_fields(data: dict[str, Any], fields: tuple[str, ...], path: str) -> None:
+    missing = [
+        field
+        for field in fields
+        if data.get(field) is None or (isinstance(data.get(field), str) and not data[field].strip())
+    ]
+    if missing:
+        raise InPostBusinessError(
+            f"InPost shipment requires {path}.{', '.join(missing)}",
+            courier="inpost",
+            action="create_shipment",
+        )
+
+
+def _validate_shipment_payload(payload: dict[str, Any]) -> None:
+    """Validate the documented ShipX minimum before a paid provider call."""
+    _require_non_empty_fields(payload, ("service",), "shipment")
+
+    receiver = payload.get("receiver")
+    if not isinstance(receiver, dict):
+        raise InPostBusinessError(
+            "InPost shipment requires receiver",
+            courier="inpost",
+            action="create_shipment",
+        )
+    _require_non_empty_fields(receiver, ("phone",), "receiver")
+
+    service = str(payload["service"])
+    if "locker" in service:
+        _require_non_empty_fields(receiver, ("email",), "receiver")
+        custom_attributes = payload.get("custom_attributes")
+        if not isinstance(custom_attributes, dict):
+            raise InPostBusinessError(
+                "InPost locker shipment requires custom_attributes.target_point",
+                courier="inpost",
+                action="create_shipment",
+            )
+        _require_non_empty_fields(custom_attributes, ("target_point",), "custom_attributes")
+    elif "courier" in service:
+        if not receiver.get("company_name") and not (
+            receiver.get("first_name") and receiver.get("last_name")
+        ):
+            raise InPostBusinessError(
+                "InPost courier receiver requires company_name or first_name and last_name",
+                courier="inpost",
+                action="create_shipment",
+            )
+        address = receiver.get("address")
+        if not isinstance(address, dict):
+            raise InPostBusinessError(
+                "InPost courier receiver.address is required",
+                courier="inpost",
+                action="create_shipment",
+            )
+        _require_non_empty_fields(
+            address,
+            ("street", "building_number", "city", "post_code"),
+            "receiver.address",
+        )
+
+        sender = payload.get("sender")
+        if isinstance(sender, dict):
+            if not sender.get("company_name") and not (
+                sender.get("first_name") and sender.get("last_name")
+            ):
+                raise InPostBusinessError(
+                    "InPost courier sender requires company_name or first_name and last_name",
+                    courier="inpost",
+                    action="create_shipment",
+                )
+            _require_non_empty_fields(sender, ("email", "phone"), "sender")
+            sender_address = sender.get("address")
+            if not isinstance(sender_address, dict):
+                raise InPostBusinessError(
+                    "InPost courier sender.address is required when sender is provided",
+                    courier="inpost",
+                    action="create_shipment",
+                )
+            _require_non_empty_fields(
+                sender_address,
+                ("street", "building_number", "city", "post_code"),
+                "sender.address",
+            )
+
+    parcels = payload.get("parcels")
+    if not isinstance(parcels, list) or not parcels:
+        raise InPostBusinessError(
+            "InPost shipment requires at least one parcel",
+            courier="inpost",
+            action="create_shipment",
+        )
+    for index, parcel in enumerate(parcels):
+        if not isinstance(parcel, dict):
+            raise InPostBusinessError(
+                f"InPost parcels[{index}] must be an object",
+                courier="inpost",
+                action="create_shipment",
+            )
+        if parcel.get("template"):
+            continue
+        dimensions = parcel.get("dimensions")
+        weight = parcel.get("weight")
+        if not isinstance(dimensions, dict) or not isinstance(weight, dict):
+            raise InPostBusinessError(
+                f"InPost parcels[{index}] requires template or dimensions and weight",
+                courier="inpost",
+                action="create_shipment",
+            )
+        _require_non_empty_fields(
+            dimensions,
+            ("length", "width", "height"),
+            f"parcels[{index}].dimensions",
+        )
+        _require_non_empty_fields(weight, ("amount",), f"parcels[{index}].weight")
+        numeric_values = {
+            "length": dimensions["length"],
+            "width": dimensions["width"],
+            "height": dimensions["height"],
+            "weight.amount": weight["amount"],
+        }
+        for field, value in numeric_values.items():
+            try:
+                is_positive = float(value) >= 1
+            except (TypeError, ValueError):
+                is_positive = False
+            if not is_positive:
+                raise InPostBusinessError(
+                    f"InPost parcels[{index}].{field} must be at least 1",
+                    courier="inpost",
+                    action="create_shipment",
+                )
+
+
 class InPostClient:
     def __init__(self, api_token: str, organization_id: str) -> None:
         self._org_id = organization_id
@@ -441,6 +575,7 @@ class InPostClient:
         return self._post_shipment(self.build_kurier_payload(**kwargs))
 
     def _post_shipment(self, payload: dict[str, Any]) -> dict[str, Any]:
+        _validate_shipment_payload(payload)
         url = f"{_BASE}/v1/organizations/{self._org_id}/shipments"
         resp = self._request("POST", url, action="create_shipment", json=payload)
         data = resp.json()
@@ -451,6 +586,40 @@ class InPostClient:
             data.get("service"),
         )
         return data
+
+    def wait_for_shipment_confirmation(
+        self,
+        shipment_id: str,
+        *,
+        max_attempts: int = 3,
+        interval_s: float = 1.0,
+    ) -> dict[str, Any]:
+        """Poll ShipX after asynchronous creation.
+
+        ShipX can return ``status=created`` and ``tracking_number=null`` from
+        POST.  A later GET exposes ``confirmed`` and the tracking number.  The
+        last provider response is returned when the short polling window ends;
+        callers must persist the shipment id and continue later instead of
+        issuing another paid POST.
+        """
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
+        last: dict[str, Any] = {}
+        terminal_without_tracking = {"canceled", "rejected"}
+        for attempt in range(max_attempts):
+            last = self.get_shipment(shipment_id)
+            if last.get("tracking_number"):
+                return last
+            status = str(last.get("status") or "")
+            if status in terminal_without_tracking:
+                raise InPostBusinessError(
+                    f"InPost shipment {shipment_id} ended with status {status}",
+                    courier="inpost",
+                    action="wait_for_shipment_confirmation",
+                )
+            if attempt + 1 < max_attempts:
+                time.sleep(interval_s)
+        return last
 
     # ── Dispatch order (kurier only) ──────────────────────────────────────────
 
