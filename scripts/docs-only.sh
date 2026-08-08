@@ -7,11 +7,11 @@
 # on changed paths, so the path-awareness has to live here.
 #
 # Deliberately narrow — markdown and PDF only, matched by extension rather than
-# by directory. docs/ currently holds nothing but .md, so an extension match
-# already covers all of it; whitelisting `docs/**` as a directory would only add
-# the risk that a future non-.md file dropped in there is silently waved through,
-# which is exactly how docs/audit/fixtures/*.json used to be loaded at runtime by
-# tests/test_allegro_create_shipment.py.
+# by directory. docs/ currently holds nothing but .md and .pdf, so an extension
+# match already covers all of it; whitelisting `docs/**` as a directory would
+# only add the risk that a future executable file dropped in there is silently
+# waved through, which is exactly how docs/audit/fixtures/*.json used to be
+# loaded at runtime by tests/test_allegro_create_shipment.py.
 #
 # Explicitly NOT:
 #   scripts/**   is `backend` in .github/path-filters.yml
