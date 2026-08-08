@@ -20,14 +20,18 @@ os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 
 from zdrovena.api.main import app
 from zdrovena.api.routers.webhooks import (
-    _parcel_weight_and_dims,
-    _physical_parcels,
     _pick_courier,
-    _shipment_reference,
     _verify_shopify_hmac,
 )
 from zdrovena.common.shipping_store import ShippingStore
 from zdrovena.common.shopify_dedup_store import ShopifyDedupStore
+from zdrovena.shipping.domain.models import PackageBreakdownItem, PackagePlan, PhysicalParcel
+from zdrovena.shipping.domain.planning import (
+    calc_packages,
+    parcel_weight_and_dims,
+    physical_parcels,
+    shipment_reference,
+)
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -1349,10 +1353,14 @@ _PACZKOMAT_DRAFT = {
 
 class TestPhysicalParcelsCharacterization:
     def test_missing_breakdown_falls_back_to_one_1pak(self):
-        assert _physical_parcels({}) == [("1-pak", 1, 1)]
+        parcels = physical_parcels({})
+
+        assert parcels == [PhysicalParcel(package_type="1-pak", position=1, count_for_type=1)]
 
     def test_empty_breakdown_falls_back_to_one_1pak(self):
-        assert _physical_parcels({"packages_breakdown": []}) == [("1-pak", 1, 1)]
+        parcels = physical_parcels({"packages_breakdown": []})
+
+        assert parcels == [PhysicalParcel(package_type="1-pak", position=1, count_for_type=1)]
 
     def test_mixed_package_types_preserve_input_order(self):
         draft = {
@@ -1363,19 +1371,23 @@ class TestPhysicalParcelsCharacterization:
             ]
         }
 
-        assert _physical_parcels(draft) == [
-            ("2-pak", 1, 1),
-            ("szkło", 1, 1),
-            ("pół-pak", 1, 1),
+        parcels = physical_parcels(draft)
+
+        assert parcels == [
+            PhysicalParcel(package_type="2-pak", position=1, count_for_type=1),
+            PhysicalParcel(package_type="szkło", position=1, count_for_type=1),
+            PhysicalParcel(package_type="pół-pak", position=1, count_for_type=1),
         ]
 
     def test_repeated_package_type_expands_quantity(self):
         draft = {"packages_breakdown": [{"type": "1-pak", "qty": 3}]}
 
-        assert _physical_parcels(draft) == [
-            ("1-pak", 1, 3),
-            ("1-pak", 2, 3),
-            ("1-pak", 3, 3),
+        parcels = physical_parcels(draft)
+
+        assert parcels == [
+            PhysicalParcel(package_type="1-pak", position=1, count_for_type=3),
+            PhysicalParcel(package_type="1-pak", position=2, count_for_type=3),
+            PhysicalParcel(package_type="1-pak", position=3, count_for_type=3),
         ]
 
     def test_numbering_restarts_for_each_package_type(self):
@@ -1386,17 +1398,24 @@ class TestPhysicalParcelsCharacterization:
             ]
         }
 
-        assert _physical_parcels(draft) == [
-            ("2-pak", 1, 2),
-            ("2-pak", 2, 2),
-            ("szkło", 1, 2),
-            ("szkło", 2, 2),
+        parcels = physical_parcels(draft)
+
+        assert parcels == [
+            PhysicalParcel(package_type="2-pak", position=1, count_for_type=2),
+            PhysicalParcel(package_type="2-pak", position=2, count_for_type=2),
+            PhysicalParcel(package_type="szkło", position=1, count_for_type=2),
+            PhysicalParcel(package_type="szkło", position=2, count_for_type=2),
         ]
 
     def test_string_quantity_is_coerced_to_int(self):
         draft = {"packages_breakdown": [{"type": "3-pak", "qty": "2"}]}
 
-        assert _physical_parcels(draft) == [("3-pak", 1, 2), ("3-pak", 2, 2)]
+        parcels = physical_parcels(draft)
+
+        assert parcels == [
+            PhysicalParcel(package_type="3-pak", position=1, count_for_type=2),
+            PhysicalParcel(package_type="3-pak", position=2, count_for_type=2),
+        ]
 
     def test_blank_type_falls_back_but_unknown_type_is_preserved(self):
         draft = {
@@ -1406,9 +1425,11 @@ class TestPhysicalParcelsCharacterization:
             ]
         }
 
-        assert _physical_parcels(draft) == [
-            ("1-pak", 1, 1),
-            ("custom-box", 1, 1),
+        parcels = physical_parcels(draft)
+
+        assert parcels == [
+            PhysicalParcel(package_type="1-pak", position=1, count_for_type=1),
+            PhysicalParcel(package_type="custom-box", position=1, count_for_type=1),
         ]
 
 
@@ -1416,7 +1437,7 @@ class TestParcelWeightAndDimsCharacterization:
     def test_empty_breakdown_uses_default_weight_and_dimensions(self):
         from zdrovena.common.inpost import PARCEL_SPECS
 
-        weight, dimensions = _parcel_weight_and_dims({"packages_breakdown": []})
+        weight, dimensions = parcel_weight_and_dims({"packages_breakdown": []})
 
         assert weight == 6.0
         assert dimensions is PARCEL_SPECS["1-pak"]
@@ -1424,7 +1445,7 @@ class TestParcelWeightAndDimsCharacterization:
     def test_unknown_only_breakdown_uses_default_weight_and_dimensions(self):
         from zdrovena.common.inpost import PARCEL_SPECS
 
-        weight, dimensions = _parcel_weight_and_dims(
+        weight, dimensions = parcel_weight_and_dims(
             {"packages_breakdown": [{"type": "custom-box", "qty": 9}]}
         )
 
@@ -1432,7 +1453,7 @@ class TestParcelWeightAndDimsCharacterization:
         assert dimensions is PARCEL_SPECS["1-pak"]
 
     def test_quantity_multiplies_package_weight(self):
-        weight, dimensions = _parcel_weight_and_dims(
+        weight, dimensions = parcel_weight_and_dims(
             {"packages_breakdown": [{"type": "pół-pak", "qty": 3}]}
         )
 
@@ -1446,7 +1467,7 @@ class TestParcelWeightAndDimsCharacterization:
         }
 
     def test_largest_dimensions_are_selected_by_volume_not_quantity(self):
-        weight, dimensions = _parcel_weight_and_dims(
+        weight, dimensions = parcel_weight_and_dims(
             {
                 "packages_breakdown": [
                     {"type": "pół-pak", "qty": 10},
@@ -1465,7 +1486,7 @@ class TestParcelWeightAndDimsCharacterization:
         }
 
     def test_returned_dimensions_keep_exact_legacy_dictionary_shape(self):
-        weight, dimensions = _parcel_weight_and_dims(
+        weight, dimensions = parcel_weight_and_dims(
             {"packages_breakdown": [{"type": "szkło", "qty": 1}]}
         )
 
@@ -1489,16 +1510,16 @@ class TestParcelWeightAndDimsCharacterization:
 
 class TestShipmentReferenceCharacterization:
     def test_single_parcel_has_no_numbering_suffix(self):
-        assert _shipment_reference("1050", "1-pak", 1, 1) == "1050 | plastik | 1-pak"
+        assert shipment_reference("1050", "1-pak", 1, 1) == "1050 | plastik | 1-pak"
 
     def test_repeated_same_type_parcels_have_numbering_suffix(self):
-        assert _shipment_reference("1050", "2-pak", 1, 2) == "1050 | plastik | 2-pak 1/2"
-        assert _shipment_reference("1050", "2-pak", 2, 2) == "1050 | plastik | 2-pak 2/2"
+        assert shipment_reference("1050", "2-pak", 1, 2) == "1050 | plastik | 2-pak 1/2"
+        assert shipment_reference("1050", "2-pak", 2, 2) == "1050 | plastik | 2-pak 2/2"
 
     def test_mixed_single_package_types_do_not_get_global_numbering(self):
         references = [
-            _shipment_reference("1050", "3-pak", 1, 1),
-            _shipment_reference("1050", "1-pak", 1, 1),
+            shipment_reference("1050", "3-pak", 1, 1),
+            shipment_reference("1050", "1-pak", 1, 1),
         ]
 
         assert references == [
@@ -1514,24 +1535,22 @@ class TestShipmentReferenceCharacterization:
         ],
     )
     def test_glass_package_type_formats_material_and_size(self, package_type, expected):
-        assert _shipment_reference("1050", package_type, 1, 1) == expected
+        assert shipment_reference("1050", package_type, 1, 1) == expected
 
     def test_unknown_package_type_is_formatted_as_plastic_without_normalization(self):
-        assert _shipment_reference("1050", "custom-box", 1, 1) == "1050 | plastik | custom-box"
+        assert shipment_reference("1050", "custom-box", 1, 1) == "1050 | plastik | custom-box"
 
 
-class TestLegacyParcelHelperShapes:
-    def test_helpers_return_only_existing_primitive_shapes(self):
-        parcels = _physical_parcels({"packages_breakdown": [{"type": "1-pak", "qty": 1}]})
-        summary = _parcel_weight_and_dims({"packages_breakdown": [{"type": "1-pak", "qty": 1}]})
-        reference = _shipment_reference("1050", "1-pak", 1, 1)
+class TestParcelDomainShapes:
+    def test_typed_parcels_keep_explicit_legacy_conversion(self):
+        parcels = physical_parcels({"packages_breakdown": [{"type": "1-pak", "qty": 1}]})
+        legacy_parcels = [parcel.to_legacy_tuple() for parcel in parcels]
+        summary = parcel_weight_and_dims({"packages_breakdown": [{"type": "1-pak", "qty": 1}]})
+        reference = shipment_reference("1050", "1-pak", 1, 1)
 
         assert isinstance(parcels, list)
-        assert all(isinstance(parcel, tuple) for parcel in parcels)
-        assert all(
-            isinstance(package_type, str) and isinstance(position, int) and isinstance(count, int)
-            for package_type, position, count in parcels
-        )
+        assert all(isinstance(parcel, PhysicalParcel) for parcel in parcels)
+        assert legacy_parcels == [("1-pak", 1, 1)]
         assert isinstance(summary, tuple)
         assert isinstance(summary[0], float)
         assert isinstance(summary[1], dict)
@@ -1548,7 +1567,7 @@ class TestParcelCatalogCompatibility:
             "packages_breakdown": [{"type": "2-pak", "qty": 1}],
         }
         call_specs = _inpost_call_specs(draft, _SENDER)
-        _weight, dimensions = _parcel_weight_and_dims(draft)
+        _weight, dimensions = parcel_weight_and_dims(draft)
 
         assert _DEFAULT_DIMS is PARCEL_SPECS["1-pak"]
         assert dimensions is PARCEL_SPECS["2-pak"]
@@ -1571,7 +1590,7 @@ class TestParcelCatalogCompatibility:
             "packages_breakdown": [{"type": "custom-box", "qty": 2}],
         }
 
-        weight, dimensions = _parcel_weight_and_dims(draft)
+        weight, dimensions = parcel_weight_and_dims(draft)
         plan = wh._inpost_payload_plan(draft, _SENDER)
 
         assert weight == 9.0
@@ -3142,19 +3161,40 @@ class TestCreateDraftKaucjaFilter:
 
 
 class TestCalcPackages:
-    """Unit tests for the _calc_packages packaging algorithm."""
+    """Unit tests for the typed parcel planning algorithm."""
 
     def _items(self, *specs):
         """Build product_items list from (name, qty) tuples."""
         return [{"name": n, "quantity": q} for n, q in specs]
 
     def _run(self, *specs):
-        from zdrovena.api.routers.webhooks import _calc_packages
-
         items = self._items(*specs)
-        count, breakdown = _calc_packages(items)
+        plan = calc_packages(items)
+        count, breakdown = plan.to_legacy_tuple()
+
+        assert isinstance(plan, PackagePlan)
+        assert all(isinstance(item, PackageBreakdownItem) for item in plan.breakdown)
+        assert count == plan.package_count
+        assert breakdown == [item.to_legacy_dict() for item in plan.breakdown]
+
         bd = {b["type"]: b["qty"] for b in breakdown}
         return count, bd
+
+    def test_typed_plan_has_exact_legacy_serialization(self):
+        plan = calc_packages(self._items(("HUMIO - woda alkaliczna, 12 butelek", 5)))
+
+        assert plan.package_count == 2
+        assert plan.breakdown == (
+            PackageBreakdownItem(package_type="3-pak", quantity=1),
+            PackageBreakdownItem(package_type="2-pak", quantity=1),
+        )
+        assert plan.to_legacy_tuple() == (
+            2,
+            [
+                {"type": "3-pak", "qty": 1},
+                {"type": "2-pak", "qty": 1},
+            ],
+        )
 
     # ── Plastik ───────────────────────────────────────────────────────────────
 

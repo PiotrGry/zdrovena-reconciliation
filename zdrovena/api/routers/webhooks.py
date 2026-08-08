@@ -74,7 +74,6 @@ from zdrovena.common.shipping_store import (
 )
 from zdrovena.common.shopify_dedup_store import DedupStoreError
 from zdrovena.shipping.domain.planning import (
-    GLASS_PACKAGE_SIZES,
     calc_packages,
     package_fit_warnings,
     parcel_weight_and_dims,
@@ -881,34 +880,6 @@ def _parcel_template(draft: dict[str, Any]) -> str:
     return "large"
 
 
-def _parcel_weight_and_dims(draft: dict[str, Any]) -> tuple[float, dict[str, float]]:
-    """Derive total weight and largest-box dimensions from packages_breakdown (bug #5)."""
-    return parcel_weight_and_dims(draft)
-
-
-def _physical_parcels(draft: dict[str, Any]) -> list[tuple[str, int, int]]:
-    """Expand a package breakdown into (type, position, count-for-type) tuples."""
-    return [parcel.to_legacy_tuple() for parcel in physical_parcels(draft)]
-
-
-# The glass package types encode their material in the type name, which made
-# the reference read "szkło | szkło". The material column already carries that,
-# so the type column shows the size alone.
-_GLASS_PACKAGE_SIZES = GLASS_PACKAGE_SIZES
-
-
-def _shipment_reference(
-    order_number: str, package_type: str, package_number: int, package_count: int
-) -> str:
-    """Build the courier's reference: ``<order> | <material> | <size>``.
-
-    The ``n/count`` suffix is only added for a genuine multi-parcel send. A
-    single parcel always read "1/1", which told the operator nothing and ate
-    width on the label.
-    """
-    return shipment_reference(order_number, package_type, package_number, package_count)
-
-
 def _shipment_patch(shipments: list[dict[str, str]]) -> dict[str, Any]:
     """Build the draft patch for a set of created ShipX shipments.
 
@@ -1623,49 +1594,6 @@ def _order_allegro_pickup(client: Any, shipment_id: str, pickup_date: str | None
 
 
 # ── Background task: create draft on Shopify webhook ─────────────────────────
-
-
-def _assert_packages_fit_locker(
-    breakdown: list[dict[str, Any]],
-    *,
-    carrier: str = "inpost",
-) -> list[str]:
-    """Sanity-check that every box in ``breakdown`` fits the carrier's largest locker slot.
-
-    Returns a list of warning strings (empty if everything fits). We log each
-    warning but do NOT hard-fail — an oversized parcel still ships via
-    courier-to-door; we just can't hand it off at an automat. Used by
-    ``_calc_packages`` for P2-3 sanity assertions.
-    """
-    warnings = package_fit_warnings(breakdown, carrier=carrier)
-    for msg in warnings:
-        logger.warning("_calc_packages: %s", msg)
-    return warnings
-
-
-def _calc_packages(
-    product_items: list[dict[str, Any]],
-) -> tuple[int, list[dict[str, Any]]]:
-    """Return (packages_count, packages_breakdown) for a list of filtered line items.
-
-    Plastik: greedy largest-box-first (3-pak → 2-pak → 1-pak → pół-pak).
-    Szkło: greedy 2-pak consolidation (szkło-2pak → szkło for remainder).
-
-    Post-condition (P2-3): every produced box is checked against the InPost
-    ``LOCKER_LARGE_SLOT`` catalogue and any overflow is logged as a warning so
-    operators can catch a mis-configured PARCEL_SPECS (e.g. a box larger than
-    the paczkomat slot) early.
-    """
-    package_plan = calc_packages(product_items)
-    packages_count, breakdown = package_plan.to_legacy_tuple()
-
-    # P2-3: sanity-check that every produced box fits the InPost large slot.
-    # We log warnings only — an oversized parcel is still valid, it just can't
-    # be handed off at a locker/automat.
-    for warning in package_fit_warnings(breakdown, carrier="inpost"):
-        logger.warning("_calc_packages: %s", warning)
-
-    return packages_count, breakdown
 
 
 def _create_draft_safely(

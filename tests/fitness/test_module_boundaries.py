@@ -56,6 +56,17 @@ SHIPPING_FORBIDDEN_IMPORTS = (
     "azure.storage",
 )
 
+LEGACY_PARCEL_WRAPPERS = frozenset(
+    {
+        "_assert_packages_fit_locker",
+        "_calc_packages",
+        "_parcel_weight_and_dims",
+        "_physical_parcels",
+        "_shipment_reference",
+    }
+)
+WEBHOOKS_MODULE = "zdrovena.api.routers.webhooks"
+
 
 def _get_imports(filepath: pathlib.Path) -> list[str]:
     """Zwraca listę modułów zdrovena importowanych w pliku."""
@@ -161,6 +172,33 @@ class TestModuleBoundaries:
 
         assert not violations, (
             "\n\nshipping/ musi pozostać czystą domeną bez API, storage i klientów providerów:\n"
+            + "\n".join(violations)
+        )
+
+    def test_production_does_not_use_legacy_parcel_wrappers(self) -> None:
+        """Production callers use shipping.domain rather than webhooks compatibility."""
+        violations: list[str] = []
+        for filepath in ROOT.rglob("*.py"):
+            tree = ast.parse(filepath.read_text(encoding="utf-8"))
+            rel = _relative(filepath)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == WEBHOOKS_MODULE:
+                    imported = LEGACY_PARCEL_WRAPPERS.intersection(
+                        alias.name for alias in node.names
+                    )
+                    for symbol in sorted(imported):
+                        violations.append(f"  {rel}:{node.lineno} imports {symbol}")
+                elif isinstance(node, ast.Call):
+                    called_name = None
+                    if isinstance(node.func, ast.Name):
+                        called_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        called_name = node.func.attr
+                    if called_name in LEGACY_PARCEL_WRAPPERS:
+                        violations.append(f"  {rel}:{node.lineno} calls {called_name}")
+
+        assert not violations, (
+            "\n\nKod produkcyjny nie może używać parcelowych wrapperów z webhooks.py:\n"
             + "\n".join(violations)
         )
 
