@@ -7,7 +7,8 @@
 - **Cost:** +€35/month (+€420/year)
 - **Timeline:** 1-2 weeks
 - **Priority:** P1 (blocker for production launch)
-- **Status:** Not started
+- **Status:** Partially done (reviewed 2026-08-08) — Task 1 ✅, Task 3 ✅ (już
+  skonfigurowane w Terraform). Tasks 2, 4, 5, 6 niezweryfikowane.
 
 ### Prerequisites
 - [ ] Terraform refactor complete (split files, api_prod naming) — ✅ DONE
@@ -374,41 +375,59 @@ az monitor metrics alert create --name test-alert --resource-group zdrovena-rg \
 
 ## Shipping — Technical Debt (from /review 2026-06-24)
 
+> **Reviewed 2026-08-08.** Four of the six items below were already fixed but still
+> read as open — including the only P1, which made this section look like a
+> production blocker when it is not. Line numbers from the original review have been
+> dropped: `webhooks.py` has grown past 3000 lines and they no longer point anywhere
+> meaningful. Use function names.
+
 ### Webhook idempotency
 - **What:** Shopify retries create duplicate drafts (new UUID per call). Double-execute = double shipment.
-- **Fix:** Check `shopify_order_id` before insert in `_create_draft`; use it as RowKey for idempotent upsert.
-- **Priority:** P1
-- **File:** `zdrovena/api/routers/webhooks.py:373`
+- **Priority:** ~~P1~~
+- **Status:** ✅ DONE — solved differently than proposed. Instead of reusing
+  `shopify_order_id` as the RowKey, there is a dedicated `ShopifyDedupStore`
+  (`zdrovena/common/shopify_dedup_store.py`) whose `mark_seen_if_new()` is an atomic
+  claim on the webhook id, wired into the handler as `ShopifyDedupStoreDep`. The
+  retry-duplicates-draft risk is closed.
 
 ### execute_draft race condition (TOCTOU)
 - **What:** Two concurrent execute calls for same draft can both pass the `status != "created"` guard and create two courier shipments.
-- **Fix:** Use ETag/optimistic concurrency in `update_entity` (Azure Table Storage mode="replace" with ETag).
-- **Priority:** P2
-- **File:** `zdrovena/api/routers/webhooks.py:465`
+- **Priority:** ~~P2~~
+- **Status:** ✅ DONE — exactly the proposed fix. `ShippingStore.try_claim_execution()`
+  moves the draft to `executing` under ETag `IfNotModified`, so only one caller wins
+  the claim (R5-A). `_execute_draft_impl` refuses to call the courier without it.
 
 ### ShippingStore _deserialize type coercion
 - **What:** Every string from Table Storage is speculatively JSON-parsed. `"null"` → `None`, `"1234567890"` → int. Can corrupt customer names or tracking numbers.
-- **Fix:** Whitelist known dict/list fields (`receiver`, `shipping_address`, `packages_breakdown`, `order_items`) instead of parsing all strings.
-- **Priority:** P2
-- **File:** `zdrovena/common/shipping_store.py:52`
+- **Priority:** ~~P2~~
+- **Status:** ✅ DONE in effect. The whitelist was not added, but `_deserialize` now
+  replaces the value **only** when the parse yields a `dict` or `list`
+  (`shipping_store.py`, `isinstance(parsed, (dict, list))`). A tracking number stays a
+  string and `"null"` stays `"null"`, which is the outcome the whitelist was for.
 
 ### _table_client() creates new Azure client per operation
 - **What:** Each upsert/update/get spawns a new TableServiceClient + create_table_if_not_exists HTTP call. Unnecessary overhead on every request.
-- **Fix:** Cache the client at class construction time.
-- **Priority:** P3
-- **File:** `zdrovena/common/shipping_store.py:81`
+- **Priority:** ~~P3~~
+- **Status:** ✅ DONE — `_table_service()` builds the service client once ("it holds the
+  credential and HTTP pool") and `self._table_clients` caches the per-table client, so
+  `create_table_if_not_exists` fires once per table rather than once per operation.
 
 ### Missing auth enforcement tests (403 for non-privileged callers)
-- **What:** execute_draft/order_pickup/update_draft have no tests for `zdrovena-viewer` role (should get 403).
-- **Fix:** Add 3-4 tests with non-admin token.
+- **What:** `execute_draft` / `order_pickup` / `update_draft` have no tests asserting 403 for the `zdrovena-viewer` role.
 - **Priority:** P3
-- **File:** `tests/test_shipping_webhook.py`
+- **Status:** Still open, but the original pointer was wrong. `zdrovena-viewer` role tests
+  do exist — in `tests/test_fastapi.py` and `tests/test_integrations_health.py`, not in
+  `tests/test_shipping_webhook.py`. What is missing is specifically these three shipping
+  endpoints. The 403 assertions already in `test_shipping_webhook.py` are HMAC
+  topic/domain rejections, not role checks — don't mistake them for coverage.
+- **Fix:** Add 3-4 tests with a viewer-role token, reusing the role fixtures from `test_fastapi.py`.
 
 ### Missing SMS notification tests
-- **What:** `_maybe_send_new_order_sms` has zero test coverage — no happy path, no exception-swallowed path.
-- **Fix:** Add `TestSmsNotification` class with 3 test cases.
+- **What:** `_maybe_send_new_order_sms` (the webhook-side hook) has no test coverage.
 - **Priority:** P3
-- **File:** `tests/test_shipping_webhook.py`
+- **Status:** Narrower than originally written. `tests/test_sms_service.py` covers the SMS
+  service itself; what is untested is the hook in `webhooks.py` — the happy path and the
+  swallowed-exception path.
 
 ---
 
@@ -439,7 +458,7 @@ az keyvault secret set --vault-name $AKV --name notify-phone            --value 
 
 az keyvault secret set --vault-name $AKV --name sender-name             --value "Humio Woda Alkaliczna"
 az keyvault secret set --vault-name $AKV --name sender-street           --value "<ulica nadawcy>"
-az keyvault secret set --vault-name $AKV --name sender-building-number  --value "<numer budynku>"  # TODO: bug #9.3 — currently hardcoded "1"
+az keyvault secret set --vault-name $AKV --name sender-building-number  --value "<numer budynku>"  # nie jest hardcoded: webhooks.py czyta get_secret("sender_building_number", required=False) or "1"
 az keyvault secret set --vault-name $AKV --name sender-city             --value "<miasto>"
 az keyvault secret set --vault-name $AKV --name sender-post-code        --value "<XX-XXX>"
 az keyvault secret set --vault-name $AKV --name sender-phone            --value "48XXXXXXXXX"
@@ -447,6 +466,18 @@ az keyvault secret set --vault-name $AKV --name sender-email            --value 
 ```
 
 ### Status sekretów
+
+> **⚠️ Nieaktualne (sprawdzone 2026-08-08).** Ta tabela pochodzi sprzed deployu
+> produkcyjnego i mówi „❌ do dodania" o sekretach, których prod ewidentnie używa —
+> inaczej Shopify/InPost/Apaczka/SMS by nie działały, a adres podjazdu został
+> potwierdzony w AKV. Kolumna „Prod" jest więc niewiarygodna w całości.
+>
+> Nie nadpisuję jej zgadywanymi ✅, bo `az` nie jest tu zalogowany. Odtworzenie
+> prawdziwego stanu to jedno polecenie — i dopiero jego wynik powinien tu trafić:
+>
+> ```bash
+> az keyvault secret list --vault-name <vault> --query "[].name" -o tsv | sort
+> ```
 
 | Sekret AKV | Dev (.env.local) | Prod (Key Vault) | Uwagi |
 |---|---|---|---|
