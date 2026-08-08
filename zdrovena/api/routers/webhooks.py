@@ -865,7 +865,7 @@ def _parcel_template(draft: dict[str, Any]) -> str:
     breakdown = draft.get("packages_breakdown") or []
 
     # 1. auto-pick by dims + weight of the largest box (safest single-parcel pick)
-    total_weight, largest_dims = _parcel_weight_and_dims(draft)
+    total_weight, largest_dims = parcel_weight_and_dims(draft)
     if breakdown and largest_dims:
         auto = pick_paczkomat_template(dict(largest_dims), total_weight)
         if auto:
@@ -951,9 +951,12 @@ def _inpost_call_specs(
     inpost_service = "paczkomat" if draft.get("service") == "inpost_locker_standard" else "kurier"
 
     specs: list[tuple[str, str, int, str, dict[str, Any]]] = []
-    for package_type, package_number, package_count in _physical_parcels(draft):
+    for parcel in physical_parcels(draft):
+        package_type = parcel.package_type
+        package_number = parcel.position
+        package_count = parcel.count_for_type
         spec = PARCEL_SPECS.get(package_type, PARCEL_SPECS["1-pak"])
-        reference = _shipment_reference(order_number, package_type, package_number, package_count)
+        reference = shipment_reference(order_number, package_type, package_number, package_count)
         if inpost_service == "paczkomat":
             kwargs: dict[str, Any] = {
                 "receiver_first_name": receiver.get("first_name", ""),
@@ -1207,7 +1210,10 @@ def _apaczka_call_specs(
     }
 
     specs: list[dict[str, Any]] = []
-    for package_type, package_number, package_count in _physical_parcels(draft):
+    for parcel in physical_parcels(draft):
+        package_type = parcel.package_type
+        package_number = parcel.position
+        package_count = parcel.count_for_type
         if (package_type, package_number) in existing_keys:
             continue
         spec = PARCEL_SPECS.get(package_type, PARCEL_SPECS["1-pak"])
@@ -1239,7 +1245,7 @@ def _apaczka_call_specs(
                     # (Kraków). Verified against real Pocztex and DPD waybills.
                     # Do not "align" the two couriers.
                     "sender": pickup_address,
-                    "reference": _shipment_reference(
+                    "reference": shipment_reference(
                         str(draft.get("shopify_order_number", "")),
                         package_type,
                         package_number,
@@ -1378,7 +1384,7 @@ def _allegro_call_spec(draft: dict[str, Any], proposal: dict[str, Any]) -> dict[
     """
     # FLAT dimensions, each a {"value", "unit"} object; weight unit is the
     # plural "KILOGRAMS"; type is required.
-    weight_kg, dims = _parcel_weight_and_dims(draft)
+    weight_kg, dims = parcel_weight_and_dims(draft)
     packages = [
         {
             "type": "PACKAGE",
@@ -1656,7 +1662,8 @@ def _calc_packages(
     # P2-3: sanity-check that every produced box fits the InPost large slot.
     # We log warnings only — an oversized parcel is still valid, it just can't
     # be handed off at a locker/automat.
-    _assert_packages_fit_locker(breakdown, carrier="inpost")
+    for warning in package_fit_warnings(breakdown, carrier="inpost"):
+        logger.warning("_calc_packages: %s", warning)
 
     return packages_count, breakdown
 
@@ -1860,7 +1867,10 @@ def _build_draft_record(
     line_items = order.get("line_items") or []
     product_items = [item for item in line_items if not SKIP_RE.search(item.get("name", ""))]
     total_qty = max(sum(item.get("quantity", 1) for item in product_items), 1)
-    packages_count, packages_breakdown = _calc_packages(product_items)
+    package_plan = calc_packages(product_items)
+    packages_count, packages_breakdown = package_plan.to_legacy_tuple()
+    for warning in package_fit_warnings(packages_breakdown, carrier="inpost"):
+        logger.warning("_calc_packages: %s", warning)
     if inpost_service == "paczkomat":
         locker_id = (
             (pickup_point or {}).get("id")
