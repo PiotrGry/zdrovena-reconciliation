@@ -27,7 +27,6 @@ import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
 from functools import lru_cache
-from math import ceil
 from typing import Annotated, Any
 
 from fastapi import (
@@ -46,7 +45,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, ShopifyDedupStoreDep, StorageDep
 from zdrovena.api.observability import correlation_scope, get_correlation_id
-from zdrovena.audit.bottles import SKIP_RE, bottles_per_unit, is_glass
+from zdrovena.audit.bottles import SKIP_RE
 from zdrovena.common.appenv import is_production_env
 from zdrovena.common.events import log_event
 from zdrovena.common.secrets import get_secret
@@ -74,6 +73,14 @@ from zdrovena.common.shipping_store import (
     ShippingStore,
 )
 from zdrovena.common.shopify_dedup_store import DedupStoreError
+from zdrovena.shipping.domain.planning import (
+    GLASS_PACKAGE_SIZES,
+    calc_packages,
+    package_fit_warnings,
+    parcel_weight_and_dims,
+    physical_parcels,
+    shipment_reference,
+)
 
 # Who actually dispatched the parcel. Shipping is largely done by hand in the
 # carrier portals, and the Shopify sync writes the resulting tracking number
@@ -876,45 +883,18 @@ def _parcel_template(draft: dict[str, Any]) -> str:
 
 def _parcel_weight_and_dims(draft: dict[str, Any]) -> tuple[float, dict[str, float]]:
     """Derive total weight and largest-box dimensions from packages_breakdown (bug #5)."""
-    from zdrovena.common.inpost import _DEFAULT_DIMS, PARCEL_SPECS
-
-    breakdown = draft.get("packages_breakdown") or []
-    total_weight = 0.0
-    largest_dims: dict[str, float] = _DEFAULT_DIMS
-    largest_volume = 0.0
-
-    for box in breakdown:
-        box_type = box.get("type", "")
-        qty = box.get("qty", 1)
-        spec = PARCEL_SPECS.get(box_type)
-        if not spec:
-            continue
-        total_weight += spec["weight_kg"] * qty
-        vol = spec["length"] * spec["width"] * spec["height"]
-        if vol > largest_volume:
-            largest_volume = vol
-            largest_dims = spec
-
-    return (total_weight if total_weight > 0 else 6.0), largest_dims
+    return parcel_weight_and_dims(draft)
 
 
 def _physical_parcels(draft: dict[str, Any]) -> list[tuple[str, int, int]]:
     """Expand a package breakdown into (type, position, count-for-type) tuples."""
-    parcels: list[tuple[str, int, int]] = []
-    for box in draft.get("packages_breakdown") or []:
-        package_type = str(box.get("type") or "1-pak")
-        quantity = int(box.get("qty") or 1)
-        parcels.extend((package_type, position, quantity) for position in range(1, quantity + 1))
-    return parcels or [("1-pak", 1, 1)]
+    return [parcel.to_legacy_tuple() for parcel in physical_parcels(draft)]
 
 
 # The glass package types encode their material in the type name, which made
 # the reference read "szkło | szkło". The material column already carries that,
 # so the type column shows the size alone.
-_GLASS_PACKAGE_SIZES = {
-    "szkło": "1-pak",
-    "szkło-2pak": "2-pak",
-}
+_GLASS_PACKAGE_SIZES = GLASS_PACKAGE_SIZES
 
 
 def _shipment_reference(
@@ -926,12 +906,7 @@ def _shipment_reference(
     single parcel always read "1/1", which told the operator nothing and ate
     width on the label.
     """
-    material = "szkło" if package_type in _GLASS_PACKAGE_SIZES else "plastik"
-    size = _GLASS_PACKAGE_SIZES.get(package_type, package_type)
-    reference = f"{order_number} | {material} | {size}"
-    if package_count > 1:
-        reference = f"{reference} {package_number}/{package_count}"
-    return reference
+    return shipment_reference(order_number, package_type, package_number, package_count)
 
 
 def _shipment_patch(shipments: list[dict[str, str]]) -> dict[str, Any]:
@@ -1656,35 +1631,9 @@ def _assert_packages_fit_locker(
     courier-to-door; we just can't hand it off at an automat. Used by
     ``_calc_packages`` for P2-3 sanity assertions.
     """
-    from zdrovena.common.inpost import LOCKER_LARGE_SLOT, PARCEL_SPECS
-
-    slot = LOCKER_LARGE_SLOT.get(carrier)
-    if not slot:
-        return []
-    warnings: list[str] = []
-    for box in breakdown:
-        box_type = box.get("type", "")
-        spec = PARCEL_SPECS.get(box_type)
-        if not spec:
-            continue
-        # Sort sides so we compare shortest-to-shortest, etc. (rotation-invariant)
-        pkg_sides = sorted([spec["length"], spec["width"], spec["height"]])
-        slot_sides = sorted([slot["height"], slot["width"], slot["depth"]])
-        if any(p > s for p, s in zip(pkg_sides, slot_sides, strict=True)):
-            msg = (
-                f"box '{box_type}' ({spec['length']}×{spec['width']}×{spec['height']} cm) "
-                f"exceeds {carrier} locker large slot "
-                f"({slot['height']}×{slot['width']}×{slot['depth']} cm)"
-            )
-            warnings.append(msg)
-            logger.warning("_calc_packages: %s", msg)
-        if spec["weight_kg"] > slot["max_weight_kg"]:
-            msg = (
-                f"box '{box_type}' weight {spec['weight_kg']} kg exceeds "
-                f"{carrier} locker max {slot['max_weight_kg']} kg"
-            )
-            warnings.append(msg)
-            logger.warning("_calc_packages: %s", msg)
+    warnings = package_fit_warnings(breakdown, carrier=carrier)
+    for msg in warnings:
+        logger.warning("_calc_packages: %s", msg)
     return warnings
 
 
@@ -1701,47 +1650,15 @@ def _calc_packages(
     operators can catch a mis-configured PARCEL_SPECS (e.g. a box larger than
     the paczkomat slot) early.
     """
-    plastic_half_packs = 0
-    glass_half_packs = 0
-    for item in product_items:
-        qty = item.get("quantity", 1)
-        name = item.get("name", "")
-        bottle_count = bottles_per_unit(name)
-        half_packs = ceil(float(qty) * bottle_count / 6) if bottle_count else int(qty) * 2
-        if is_glass(item.get("name", "")):
-            glass_half_packs += half_packs
-        else:
-            plastic_half_packs += half_packs
-
-    breakdown: list[dict[str, Any]] = []
-
-    # Plastik — greedy
-    remaining = plastic_half_packs // 2
-    for box_size, label in ((3, "3-pak"), (2, "2-pak"), (1, "1-pak")):
-        if remaining >= box_size:
-            count = remaining // box_size
-            breakdown.append({"type": label, "qty": count})
-            remaining -= count * box_size
-    if plastic_half_packs % 2:
-        breakdown.append({"type": "pół-pak", "qty": 1})
-
-    # Szkło — greedy: 2-pak first, then single boxes
-    remaining_glass = (glass_half_packs + 1) // 2
-    if remaining_glass >= 2:
-        count = remaining_glass // 2
-        breakdown.append({"type": "szkło-2pak", "qty": count})
-        remaining_glass -= count * 2
-    if remaining_glass > 0:
-        breakdown.append({"type": "szkło", "qty": remaining_glass})
-
-    total = sum(b["qty"] for b in breakdown)
+    package_plan = calc_packages(product_items)
+    packages_count, breakdown = package_plan.to_legacy_tuple()
 
     # P2-3: sanity-check that every produced box fits the InPost large slot.
     # We log warnings only — an oversized parcel is still valid, it just can't
     # be handed off at a locker/automat.
     _assert_packages_fit_locker(breakdown, carrier="inpost")
 
-    return max(total, 1), breakdown
+    return packages_count, breakdown
 
 
 def _create_draft_safely(

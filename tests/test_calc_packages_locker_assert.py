@@ -9,7 +9,135 @@ from zdrovena.api.routers.webhooks import (
     _calc_packages,
 )
 
-# ── _assert_packages_fit_locker ──────────────────────────────────────────────
+# ── Package catalog snapshots ─────────────────────────────────────────────────────
+
+
+class TestPackageCatalogSnapshot:
+    def test_inpost_catalog_exports_alias_canonical_mutable_objects(self):
+        from zdrovena.common import inpost, shipping_parcels
+
+        assert inpost.PARCEL_SPECS is shipping_parcels.PARCEL_SPECS
+        assert inpost.LOCKER_LARGE_SLOT is shipping_parcels.LOCKER_LARGE_SLOT
+        assert inpost._DEFAULT_DIMS is shipping_parcels._DEFAULT_DIMS
+
+    def test_current_package_types_are_exactly_preserved(self):
+        from zdrovena.common.inpost import PARCEL_SPECS
+
+        assert set(PARCEL_SPECS) == {
+            "3-pak",
+            "2-pak",
+            "1-pak",
+            "pół-pak",
+            "szkło",
+            "szkło-2pak",
+        }
+
+    def test_package_dimensions_weights_and_templates_are_unchanged(self):
+        from zdrovena.common.inpost import PARCEL_SPECS
+
+        assert PARCEL_SPECS == {
+            "3-pak": {
+                "length": 40,
+                "width": 40,
+                "height": 20,
+                "weight_kg": 18.0,
+                "paczkomat_template": "large",
+            },
+            "2-pak": {
+                "length": 40,
+                "width": 30,
+                "height": 20,
+                "weight_kg": 12.0,
+                "paczkomat_template": "large",
+            },
+            "1-pak": {
+                "length": 30,
+                "width": 20,
+                "height": 20,
+                "weight_kg": 6.0,
+                "paczkomat_template": "large",
+            },
+            "pół-pak": {
+                "length": 20,
+                "width": 15,
+                "height": 20,
+                "weight_kg": 3.0,
+                "paczkomat_template": "large",
+            },
+            "szkło": {
+                "length": 30,
+                "width": 30,
+                "height": 20,
+                "weight_kg": 9.0,
+                "paczkomat_template": "large",
+            },
+            "szkło-2pak": {
+                "length": 30,
+                "width": 30,
+                "height": 20,
+                "weight_kg": 9.0,
+                "paczkomat_template": "large",
+            },
+        }
+
+    def test_cross_carrier_locker_limits_are_unchanged(self):
+        from zdrovena.common.inpost import (
+            CARRIER_LOCKER_SLOTS,
+            LOCKER_LARGE_SLOT,
+            PACZKOMAT_SLOTS,
+        )
+
+        assert PACZKOMAT_SLOTS == {
+            "small": {"height": 8, "width": 38, "depth": 64, "max_weight_kg": 25},
+            "medium": {"height": 19, "width": 38, "depth": 64, "max_weight_kg": 25},
+            "large": {"height": 41, "width": 38, "depth": 64, "max_weight_kg": 25},
+        }
+
+        assert LOCKER_LARGE_SLOT == {
+            "inpost": {
+                "height": 41,
+                "width": 38,
+                "depth": 64,
+                "max_weight_kg": 25,
+                "verified": True,
+            },
+            "orlen": {
+                "height": 41,
+                "width": 38,
+                "depth": 60,
+                "max_weight_kg": 20,
+                "verified": True,
+            },
+            "dpd_automat": {
+                "height": 50,
+                "width": 44,
+                "depth": 59,
+                "max_weight_kg": 20,
+                "verified": True,
+            },
+            "dpd_punkt": {
+                "height": 64,
+                "width": 41,
+                "depth": 38,
+                "max_weight_kg": 20,
+                "verified": True,
+            },
+        }
+        assert CARRIER_LOCKER_SLOTS == {
+            "inpost": [
+                {"name": "A", "height": 8, "width": 38, "depth": 64, "max_weight_kg": 25},
+                {"name": "B", "height": 19, "width": 38, "depth": 64, "max_weight_kg": 25},
+                {"name": "C", "height": 41, "width": 38, "depth": 64, "max_weight_kg": 25},
+            ],
+            "dpd_automat": [
+                {"name": "S", "height": 11, "width": 44, "depth": 59, "max_weight_kg": 20},
+                {"name": "M", "height": 24, "width": 44, "depth": 59, "max_weight_kg": 20},
+                {"name": "L", "height": 50, "width": 44, "depth": 59, "max_weight_kg": 20},
+            ],
+        }
+
+
+# ── _assert_packages_fit_locker ─────────────────────────────────────────────
 
 
 class TestAssertPackagesFitLocker:

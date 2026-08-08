@@ -22,6 +22,9 @@ from zdrovena.common.shipping_exceptions import (
     InPostShipmentNotCancellable,
     InPostTransientError,
 )
+from zdrovena.common.shipping_parcels import _DEFAULT_DIMS as _DEFAULT_DIMS
+from zdrovena.common.shipping_parcels import LOCKER_LARGE_SLOT as LOCKER_LARGE_SLOT
+from zdrovena.common.shipping_parcels import PARCEL_SPECS as PARCEL_SPECS
 
 logger = logging.getLogger("zdrovena.common.inpost")
 
@@ -82,56 +85,6 @@ def _extract_error_code(resp: requests.Response) -> str:
     return ""
 
 
-# Physical dimensions and weights per package type produced by _calc_packages.
-# Dimensions in cm; weight_kg is gross weight of a single box.
-# szkło-2pak = two szkło boxes → same per-box spec, sent as qty=2 in parcels list.
-# paczkomat_template: InPost locker template (A=small/B=medium/C=large); None = too big for any locker.
-# dpd_template / orlen_template: to be filled when those carriers are integrated.
-PARCEL_SPECS: dict[str, dict] = {
-    "3-pak": {
-        "length": 40,
-        "width": 40,
-        "height": 20,
-        "weight_kg": 18.0,
-        "paczkomat_template": "large",
-    },
-    "2-pak": {
-        "length": 40,
-        "width": 30,
-        "height": 20,
-        "weight_kg": 12.0,
-        "paczkomat_template": "large",
-    },
-    "1-pak": {
-        "length": 30,
-        "width": 20,
-        "height": 20,
-        "weight_kg": 6.0,
-        "paczkomat_template": "large",
-    },
-    "pół-pak": {
-        "length": 20,
-        "width": 15,
-        "height": 20,
-        "weight_kg": 3.0,
-        "paczkomat_template": "large",
-    },
-    "szkło": {
-        "length": 30,
-        "width": 30,
-        "height": 20,
-        "weight_kg": 9.0,
-        "paczkomat_template": "large",
-    },
-    "szkło-2pak": {
-        "length": 30,
-        "width": 30,
-        "height": 20,
-        "weight_kg": 9.0,
-        "paczkomat_template": "large",
-    },
-}
-
 # InPost paczkomat slot sizes (per InPost + apaczka.pl).
 # Dimensions: height × width × depth (cm), max_weight_kg per slot.
 # Used by pick_paczkomat_template() to select the smallest slot that fits a
@@ -187,44 +140,6 @@ def pick_paczkomat_template(dims: dict, weight_kg: float) -> str | None:
     return None
 
 
-# Max package dimensions that fit in the "large" slot of each carrier's locker/automat.
-# Dimensions: height × width × depth (cm), max_weight_kg.
-# ✅ = verified against carrier/aggregator website; ❓ = unverified, use with caution.
-#
-# P2-2: DPD dimensions verified 2026-07 against dpd.com FAQ, apaczka.pl and
-# polkurier.pl (all agreed on 50×44×59 for the automat and 64×41×38 for the
-# Żabka punkt). Sources cited on each entry.
-LOCKER_LARGE_SLOT: dict[str, dict] = {
-    "inpost": {
-        "height": 41,
-        "width": 38,
-        "depth": 64,
-        "max_weight_kg": 25,
-        "verified": True,
-    },  # ✅ apaczka.pl / inpost.pl
-    "orlen": {
-        "height": 41,
-        "width": 38,
-        "depth": 60,
-        "max_weight_kg": 20,
-        "verified": True,
-    },  # ✅ apaczka.pl (60×41×38)
-    "dpd_automat": {
-        "height": 50,
-        "width": 44,
-        "depth": 59,
-        "max_weight_kg": 20,
-        "verified": True,
-    },  # ✅ dpd.com/pl/pl/faq (2025-06); apaczka.pl DPD Pickup Station guide (2026)
-    "dpd_punkt": {
-        "height": 64,
-        "width": 41,
-        "depth": 38,
-        "max_weight_kg": 20,
-        "verified": True,
-    },  # ✅ apaczka.pl “DPD Pickup (Drzwi-Punkt)” (sieć Żabka: 64×41×38)
-}
-
 # Per-carrier locker slot catalogue — used by _calc_packages to sanity-check
 # that a computed shipment can physically be handed off (P2-3).
 # Each carrier lists slots ordered smallest → largest.
@@ -241,8 +156,6 @@ CARRIER_LOCKER_SLOTS: dict[str, list[dict]] = {
         {"name": "L", "height": 50, "width": 44, "depth": 59, "max_weight_kg": 20},
     ],
 }
-
-_DEFAULT_DIMS = PARCEL_SPECS["1-pak"]
 
 
 def _require_non_empty_fields(data: dict[str, Any], fields: tuple[str, ...], path: str) -> None:

@@ -19,7 +19,13 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 
 from zdrovena.api.main import app
-from zdrovena.api.routers.webhooks import _pick_courier, _verify_shopify_hmac
+from zdrovena.api.routers.webhooks import (
+    _parcel_weight_and_dims,
+    _physical_parcels,
+    _pick_courier,
+    _shipment_reference,
+    _verify_shopify_hmac,
+)
 from zdrovena.common.shipping_store import ShippingStore
 from zdrovena.common.shopify_dedup_store import ShopifyDedupStore
 
@@ -1341,6 +1347,246 @@ _PACZKOMAT_DRAFT = {
 }
 
 
+class TestPhysicalParcelsCharacterization:
+    def test_missing_breakdown_falls_back_to_one_1pak(self):
+        assert _physical_parcels({}) == [("1-pak", 1, 1)]
+
+    def test_empty_breakdown_falls_back_to_one_1pak(self):
+        assert _physical_parcels({"packages_breakdown": []}) == [("1-pak", 1, 1)]
+
+    def test_mixed_package_types_preserve_input_order(self):
+        draft = {
+            "packages_breakdown": [
+                {"type": "2-pak", "qty": 1},
+                {"type": "szkło", "qty": 1},
+                {"type": "pół-pak", "qty": 1},
+            ]
+        }
+
+        assert _physical_parcels(draft) == [
+            ("2-pak", 1, 1),
+            ("szkło", 1, 1),
+            ("pół-pak", 1, 1),
+        ]
+
+    def test_repeated_package_type_expands_quantity(self):
+        draft = {"packages_breakdown": [{"type": "1-pak", "qty": 3}]}
+
+        assert _physical_parcels(draft) == [
+            ("1-pak", 1, 3),
+            ("1-pak", 2, 3),
+            ("1-pak", 3, 3),
+        ]
+
+    def test_numbering_restarts_for_each_package_type(self):
+        draft = {
+            "packages_breakdown": [
+                {"type": "2-pak", "qty": 2},
+                {"type": "szkło", "qty": 2},
+            ]
+        }
+
+        assert _physical_parcels(draft) == [
+            ("2-pak", 1, 2),
+            ("2-pak", 2, 2),
+            ("szkło", 1, 2),
+            ("szkło", 2, 2),
+        ]
+
+    def test_string_quantity_is_coerced_to_int(self):
+        draft = {"packages_breakdown": [{"type": "3-pak", "qty": "2"}]}
+
+        assert _physical_parcels(draft) == [("3-pak", 1, 2), ("3-pak", 2, 2)]
+
+    def test_blank_type_falls_back_but_unknown_type_is_preserved(self):
+        draft = {
+            "packages_breakdown": [
+                {"type": "", "qty": 1},
+                {"type": "custom-box", "qty": 1},
+            ]
+        }
+
+        assert _physical_parcels(draft) == [
+            ("1-pak", 1, 1),
+            ("custom-box", 1, 1),
+        ]
+
+
+class TestParcelWeightAndDimsCharacterization:
+    def test_empty_breakdown_uses_default_weight_and_dimensions(self):
+        from zdrovena.common.inpost import PARCEL_SPECS
+
+        weight, dimensions = _parcel_weight_and_dims({"packages_breakdown": []})
+
+        assert weight == 6.0
+        assert dimensions is PARCEL_SPECS["1-pak"]
+
+    def test_unknown_only_breakdown_uses_default_weight_and_dimensions(self):
+        from zdrovena.common.inpost import PARCEL_SPECS
+
+        weight, dimensions = _parcel_weight_and_dims(
+            {"packages_breakdown": [{"type": "custom-box", "qty": 9}]}
+        )
+
+        assert weight == 6.0
+        assert dimensions is PARCEL_SPECS["1-pak"]
+
+    def test_quantity_multiplies_package_weight(self):
+        weight, dimensions = _parcel_weight_and_dims(
+            {"packages_breakdown": [{"type": "pół-pak", "qty": 3}]}
+        )
+
+        assert weight == 9.0
+        assert dimensions == {
+            "length": 20,
+            "width": 15,
+            "height": 20,
+            "weight_kg": 3.0,
+            "paczkomat_template": "large",
+        }
+
+    def test_largest_dimensions_are_selected_by_volume_not_quantity(self):
+        weight, dimensions = _parcel_weight_and_dims(
+            {
+                "packages_breakdown": [
+                    {"type": "pół-pak", "qty": 10},
+                    {"type": "2-pak", "qty": 1},
+                ]
+            }
+        )
+
+        assert weight == 42.0
+        assert dimensions == {
+            "length": 40,
+            "width": 30,
+            "height": 20,
+            "weight_kg": 12.0,
+            "paczkomat_template": "large",
+        }
+
+    def test_returned_dimensions_keep_exact_legacy_dictionary_shape(self):
+        weight, dimensions = _parcel_weight_and_dims(
+            {"packages_breakdown": [{"type": "szkło", "qty": 1}]}
+        )
+
+        assert isinstance(weight, float)
+        assert isinstance(dimensions, dict)
+        assert dimensions == {
+            "length": 30,
+            "width": 30,
+            "height": 20,
+            "weight_kg": 9.0,
+            "paczkomat_template": "large",
+        }
+        assert list(dimensions) == [
+            "length",
+            "width",
+            "height",
+            "weight_kg",
+            "paczkomat_template",
+        ]
+
+
+class TestShipmentReferenceCharacterization:
+    def test_single_parcel_has_no_numbering_suffix(self):
+        assert _shipment_reference("1050", "1-pak", 1, 1) == "1050 | plastik | 1-pak"
+
+    def test_repeated_same_type_parcels_have_numbering_suffix(self):
+        assert _shipment_reference("1050", "2-pak", 1, 2) == "1050 | plastik | 2-pak 1/2"
+        assert _shipment_reference("1050", "2-pak", 2, 2) == "1050 | plastik | 2-pak 2/2"
+
+    def test_mixed_single_package_types_do_not_get_global_numbering(self):
+        references = [
+            _shipment_reference("1050", "3-pak", 1, 1),
+            _shipment_reference("1050", "1-pak", 1, 1),
+        ]
+
+        assert references == [
+            "1050 | plastik | 3-pak",
+            "1050 | plastik | 1-pak",
+        ]
+
+    @pytest.mark.parametrize(
+        ("package_type", "expected"),
+        [
+            ("szkło", "1050 | szkło | 1-pak"),
+            ("szkło-2pak", "1050 | szkło | 2-pak"),
+        ],
+    )
+    def test_glass_package_type_formats_material_and_size(self, package_type, expected):
+        assert _shipment_reference("1050", package_type, 1, 1) == expected
+
+    def test_unknown_package_type_is_formatted_as_plastic_without_normalization(self):
+        assert _shipment_reference("1050", "custom-box", 1, 1) == "1050 | plastik | custom-box"
+
+
+class TestLegacyParcelHelperShapes:
+    def test_helpers_return_only_existing_primitive_shapes(self):
+        parcels = _physical_parcels({"packages_breakdown": [{"type": "1-pak", "qty": 1}]})
+        summary = _parcel_weight_and_dims({"packages_breakdown": [{"type": "1-pak", "qty": 1}]})
+        reference = _shipment_reference("1050", "1-pak", 1, 1)
+
+        assert isinstance(parcels, list)
+        assert all(isinstance(parcel, tuple) for parcel in parcels)
+        assert all(
+            isinstance(package_type, str) and isinstance(position, int) and isinstance(count, int)
+            for package_type, position, count in parcels
+        )
+        assert isinstance(summary, tuple)
+        assert isinstance(summary[0], float)
+        assert isinstance(summary[1], dict)
+        assert isinstance(reference, str)
+
+
+class TestParcelCatalogCompatibility:
+    def test_existing_catalog_entry_is_the_same_mutable_object_used_by_planning(self):
+        from zdrovena.api.routers.webhooks import _inpost_call_specs
+        from zdrovena.common.inpost import _DEFAULT_DIMS, PARCEL_SPECS
+
+        draft = {
+            **_KURIER_DRAFT,
+            "packages_breakdown": [{"type": "2-pak", "qty": 1}],
+        }
+        call_specs = _inpost_call_specs(draft, _SENDER)
+        _weight, dimensions = _parcel_weight_and_dims(draft)
+
+        assert _DEFAULT_DIMS is PARCEL_SPECS["1-pak"]
+        assert dimensions is PARCEL_SPECS["2-pak"]
+        assert call_specs[0][4]["dimensions"] is PARCEL_SPECS["2-pak"]
+
+    def test_monkeypatching_existing_catalog_path_changes_current_planning_paths(self, monkeypatch):
+        from zdrovena.api.routers import webhooks as wh
+        from zdrovena.common import inpost
+
+        patched_spec = {
+            "length": 11,
+            "width": 12,
+            "height": 13,
+            "weight_kg": 4.5,
+            "paczkomat_template": "medium",
+        }
+        monkeypatch.setitem(inpost.PARCEL_SPECS, "custom-box", patched_spec)
+        draft = {
+            **_KURIER_DRAFT,
+            "packages_breakdown": [{"type": "custom-box", "qty": 2}],
+        }
+
+        weight, dimensions = _parcel_weight_and_dims(draft)
+        plan = wh._inpost_payload_plan(draft, _SENDER)
+
+        assert weight == 9.0
+        assert dimensions is patched_spec
+        assert plan[0]["payload"]["parcels"][0] == {
+            "dimensions": {
+                "unit": "mm",
+                "length": 110,
+                "width": 120,
+                "height": 130,
+            },
+            "weight": {"unit": "kg", "amount": 4.5},
+        }
+
+
 class TestRunInpost:
     def test_kurier_execute_creates_shipment_without_dispatch(self):
         from zdrovena.api.routers.webhooks import _run_inpost
@@ -1632,6 +1878,66 @@ class TestInPostPayloadPlan:
         assert len(plan) >= 1
         assert plan[0]["service"] == "inpost_courier_standard"
         assert "payload" in plan[0]
+
+    def test_fixed_kurier_preview_payload_matches_golden(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        draft = {
+            **_KURIER_DRAFT,
+            "packages_breakdown": [{"type": "2-pak", "qty": 1}],
+        }
+
+        assert wh._inpost_payload_plan(draft, _SENDER) == [
+            {
+                "service": "inpost_courier_standard",
+                "package_type": "2-pak",
+                "package_number": 1,
+                "reference": "1050 | plastik | 2-pak",
+                "payload": {
+                    "service": "inpost_courier_standard",
+                    "reference": "1050 | plastik | 2-pak",
+                    "receiver": {
+                        "first_name": "Jan",
+                        "last_name": "Kowalski",
+                        "email": "jan@k.pl",
+                        "phone": "600100200",
+                        "address": {
+                            "street": "Kwiatowa 1",
+                            "building_number": "1",
+                            "city": "Warszawa",
+                            "post_code": "00-001",
+                            "country_code": "PL",
+                        },
+                    },
+                    "sender": {
+                        "company_name": "Zdrovena",
+                        "first_name": "Zdrovena",
+                        "last_name": "Zdrovena",
+                        "email": "sender@zdrovena.pl",
+                        "phone": "500000000",
+                        "address": {
+                            "street": "Testowa 1",
+                            "building_number": "1",
+                            "city": "Warszawa",
+                            "post_code": "00-001",
+                            "country_code": "PL",
+                        },
+                    },
+                    "parcels": [
+                        {
+                            "dimensions": {
+                                "unit": "mm",
+                                "length": 400,
+                                "width": 300,
+                                "height": 200,
+                            },
+                            "weight": {"unit": "kg", "amount": 12.0},
+                        }
+                    ],
+                    "custom_attributes": {"sending_method": "dispatch_order"},
+                },
+            }
+        ]
 
     def test_plan_expands_a_multi_box_breakdown(self):
         from zdrovena.api.routers import webhooks as wh
@@ -3999,6 +4305,64 @@ class TestApaczkaPayloadPlan:
         assert "payload" in plan[0]
         mock_call.assert_not_called()
 
+    def test_fixed_payload_plan_matches_golden(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        draft = {
+            **_APACZKA_DRAFT,
+            "packages_breakdown": [{"type": "pół-pak", "qty": 1}],
+            "order_items": [{"name": "HUMIO 500 ml", "quantity": 2}],
+        }
+
+        assert wh._apaczka_payload_plan(draft, _PICKUP) == [
+            {
+                "service": "apaczka",
+                "package_type": "pół-pak",
+                "package_number": 1,
+                "reference": "1052 | plastik | pół-pak",
+                "payload": {
+                    "service_id": "42",
+                    "externalId": "1052 | plastik | pół-pak",
+                    "address": {
+                        "sender": {
+                            "name": "Zdrovena",
+                            "contact_person": "Zdrovena",
+                            "email": "info@wodahumio.pl",
+                            "phone": "723624437",
+                            "line1": "Naściszowa 41",
+                            "line2": "",
+                            "city": "Naściszowa",
+                            "postal_code": "33-300",
+                            "country_code": "PL",
+                        },
+                        "receiver": {
+                            "name": "Ewa Zielinska",
+                            "contact_person": "Ewa Zielinska",
+                            "email": "ewa@z.pl",
+                            "phone": "600300400",
+                            "line1": "Polna 7",
+                            "line2": "",
+                            "city": "Gdansk",
+                            "postal_code": "80-001",
+                            "country_code": "PL",
+                        },
+                    },
+                    "shipment": [
+                        {
+                            "weight": 3.0,
+                            "dimension1": 20,
+                            "dimension2": 15,
+                            "dimension3": 20,
+                            "is_nstd": 0,
+                            "shipment_type_code": "PACZKA",
+                        }
+                    ],
+                    "pickup": {"type": "COURIER"},
+                    "content": "2 x HUMIO 500 ml",
+                },
+            }
+        ]
+
     def test_preview_payload_is_what_the_execution_path_sends(self):
         """The preview is worthless if it can differ from the real request."""
         from zdrovena.api.routers import webhooks as wh
@@ -4129,6 +4493,56 @@ class TestAllegroPayloadPlan:
         client.create_ship_with_allegro_shipment.assert_not_called()
         assert plan and "payload" in plan[0]
         assert plan[0]["payload"]["receiver"]["name"] == "Ola Wisniewska"
+
+    def test_fixed_proposal_payload_matches_golden(self):
+        from zdrovena.api.routers import webhooks as wh
+
+        draft = {
+            **_ALLEGRO_DRAFT,
+            "packages_breakdown": [
+                {"type": "2-pak", "qty": 2},
+                {"type": "pół-pak", "qty": 1},
+            ],
+        }
+        client = self._client()
+
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=client):
+            plan = wh._allegro_payload_plan(draft)
+
+        assert plan == [
+            {
+                "service": "allegro_delivery",
+                "package_type": "allegro",
+                "package_number": 1,
+                "reference": "allegro-order-9",
+                "payload": {
+                    "order_id": "allegro-order-9",
+                    "delivery_method_id": None,
+                    "credentials_id": None,
+                    "packages": [
+                        {
+                            "type": "PACKAGE",
+                            "length": {"value": 40, "unit": "CENTIMETER"},
+                            "width": {"value": 30, "unit": "CENTIMETER"},
+                            "height": {"value": 20, "unit": "CENTIMETER"},
+                            "weight": {"value": 27.0, "unit": "KILOGRAMS"},
+                        }
+                    ],
+                    "sender": {
+                        "name": "Maria Gryzło ZDROVENA",
+                        "street": "Cieszynska 6/12",
+                    },
+                    "receiver": {
+                        "name": "Ola Wisniewska",
+                        "street": "Lipowa 3",
+                        "city": "Lodz",
+                    },
+                    "additional_properties": None,
+                },
+            }
+        ]
+        client.get_delivery_proposal.assert_called_once_with("allegro-order-9")
+        client.create_ship_with_allegro_shipment.assert_not_called()
 
     def test_preview_payload_is_what_the_execution_path_sends(self):
         """Identical but for command_id, which is a fresh idempotency key per
