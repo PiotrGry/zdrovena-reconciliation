@@ -21,35 +21,28 @@ if [[ -z "${VIRTUAL_ENV:-}" && -f "$REPO_ROOT/.venv/bin/activate" ]]; then
 fi
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Smart Detection: Skip Python tests if only infra/docs changed
+# Docs-only fast path
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-# Check which files changed (compare HEAD with remote)
-if git rev-parse --verify origin/develop >/dev/null 2>&1; then
-  CHANGED_FILES=$(git diff --name-only HEAD origin/develop 2>/dev/null || true)
-  
-  # If no changes detected, check staged files instead
-  if [[ -z "$CHANGED_FILES" ]]; then
-    CHANGED_FILES=$(git diff --name-only --cached 2>/dev/null || true)
-  fi
-  
-  # Check if ALL changes are non-Python files (infra, docs, workflows, scripts, TODOS)
-  if [[ -n "$CHANGED_FILES" ]]; then
-    # Remove infra/docs/workflow/scripts changes from the list
-    PYTHON_CHANGES=$(echo "$CHANGED_FILES" | grep -vE '^(infra/|docs/|scripts/|\.github/workflows/|README\.md|TODOS\.md|CLAUDE\.md|\.gitignore)' || true)
-    
-    if [[ -z "$PYTHON_CHANGES" ]]; then
-      echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-      echo -e "${YELLOW}Smart Skip: Only infrastructure/docs changed, skipping Python tests${NC}"
-      echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-      echo ""
-      echo "Changed files:"
-      echo "$CHANGED_FILES" | sed 's/^/  - /'
-      echo ""
-      echo -e "${GREEN}Fast-forwarding push (no Python code changed)${NC}"
-      echo ""
-      exit 0
-    fi
+# scripts/docs-only.sh owns the definition of "documentation" — see the comment
+# block there for what is deliberately excluded and why. It exits non-zero both
+# for code changes and for a range it cannot resolve, so an unknown range runs
+# the full gate rather than skipping it.
+#
+# CHECK_RANGE is set by the pre-push hook to the exact range being pushed;
+# without it the helper falls back to @{upstream}...HEAD.
+if [[ "${CHECK_DOCS_FASTPATH:-1}" != "0" ]]; then
+  if DOCS_CHANGED=$("$SCRIPT_DIR/docs-only.sh" ${CHECK_RANGE:+"$CHECK_RANGE"} 2>/dev/null); then
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}Docs-only change — skipping the full gate${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "Changed files:"
+    echo "$DOCS_CHANGED" | sed 's/^/  - /'
+    echo ""
+    echo -e "${GREEN}Safe to push (only .md / .pdf changed).${NC}"
+    echo -e "Wymuś pełny przebieg: CHECK_DOCS_FASTPATH=0 bash scripts/check.sh"
+    echo ""
+    exit 0
   fi
 fi
 
