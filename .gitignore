@@ -63,6 +63,7 @@ infra/terraform/.terraform.lock.hcl
 
 # Coverage
 .coverage
+coverage.json
 htmlcov/
 .claude/
 
@@ -75,5 +76,7 @@ htmlcov/
 # git worktrees (superpowers subagent-driven-development)
 .worktrees/
 *.pdf
+# …except reports we deliberately keep with the documentation.
+!docs/reports/*.pdf
 tmp/
 outputs/

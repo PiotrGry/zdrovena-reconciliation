@@ -1,7 +1,7 @@
 """Golden-master contract test for POST /shipment-management/shipments/create-commands.
 
 Loads the real request contract captured in
-``docs/audit/fixtures/allegro_create_commands_request.json`` and asserts that
+``tests/fixtures/allegro/create-commands-request.json`` and asserts that
 ``AllegroClient.create_ship_with_allegro_shipment`` reproduces the exact payload
 shape Allegro expects. This is the regression guard for the 4 contract bugs that
 made "Wysyłam z Allegro" return 400 Bad Request:
@@ -22,13 +22,7 @@ from unittest.mock import MagicMock, patch
 
 from zdrovena.common.allegro import AllegroClient
 
-_FIXTURE = (
-    Path(__file__).resolve().parents[1]
-    / "docs"
-    / "audit"
-    / "fixtures"
-    / "allegro_create_commands_request.json"
-)
+_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "allegro" / "create-commands-request.json"
 
 
 def _load_fixture() -> dict:

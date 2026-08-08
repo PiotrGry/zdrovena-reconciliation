@@ -568,7 +568,7 @@ class AllegroClient:
     ) -> dict[str, Any]:
         """POST /shipment-management/shipments/create-commands.
 
-        Contract (see docs/audit/fixtures/allegro_create_commands_request.json):
+        Contract (see tests/fixtures/allegro/create-commands-request.json):
           - order_id is sent as ``referenceNumber`` (there is no ``orderId`` field).
           - ``sender`` / ``receiver`` are required address blocks (name, company,
             street, postalCode, city, state, countryCode, email, phone, point?).
