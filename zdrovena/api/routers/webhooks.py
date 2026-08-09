@@ -73,6 +73,7 @@ from zdrovena.common.shipping_store import (
     ShippingStore,
 )
 from zdrovena.common.shopify_dedup_store import DedupStoreError
+from zdrovena.shipping.application import drafts as draft_application
 from zdrovena.shipping.domain.planning import (
     calc_packages,
     package_fit_warnings,
@@ -405,10 +406,13 @@ def _sync_shopify_orders_from_api(
         order_id = str(order.get("id", ""))
         try:
             existing = existing_by_order_id.get(order_id)
-            changed = _sync_draft_from_order(
+            changed = draft_application.sync_draft_from_order(
                 order,
                 shipping_store,
-                storage,
+                build_draft_record=_build_draft_record,
+                emit_tracking_assigned=_emit_tracking_assigned,
+                record_event=log_event,
+                send_new_order_sms=_maybe_send_new_order_sms,
                 source="shopify",
                 existing=existing,
             )
@@ -1604,7 +1608,7 @@ def _create_draft_safely(
     source: str = "shopify",
     correlation_id: str = "-",
 ) -> None:
-    """Wrapper around ``_create_draft`` that DLQs any exception (P1-9).
+    """Run draft creation and DLQ any exception (P1-9).
 
     ``BackgroundTasks`` provides no persistence — an exception here would be
     silently swallowed and the order would be lost. Instead we capture the
@@ -1618,7 +1622,15 @@ def _create_draft_safely(
     """
     with correlation_scope(correlation_id):
         try:
-            _create_draft(order, shipping_store, storage, source=source)
+            draft_application.create_draft(
+                order,
+                shipping_store,
+                build_draft_record=_build_draft_record,
+                emit_tracking_assigned=_emit_tracking_assigned,
+                record_event=log_event,
+                send_new_order_sms=_maybe_send_new_order_sms,
+                source=source,
+            )
         except Exception as exc:
             logger.exception(
                 "Draft creation failed for order %s (source=%s) — enqueueing to DLQ",
@@ -1645,86 +1657,6 @@ def _create_draft_safely(
                     "DLQ enqueue itself failed for order %s",
                     order.get("id") or order.get("order_number"),
                 )
-
-
-_SYNC_PRESERVED_FIELDS = {
-    "id",
-    "created_at",
-    "shipment_origin",
-    "courier_draft_id",
-    "courier_shipments",
-    "dispatch_order_id",
-    "allegro_shipment_id",
-    "allegro_dispatch_id",
-    "pickup_ordered",
-    "fakturownia_invoice_id",
-    "fakturownia_invoice_number",
-    "fakturownia_invoice_error",
-    "fakturownia_invoice_attempts",
-    "fakturownia_invoice_attempted_at",
-    "allegro_fulfillment_status",
-}
-
-_SYNC_TERMINAL_STATUSES = {"created", "cancelled"}
-_SYNC_BUSY_STATUSES = {"executing", "pending_confirmation"}
-
-
-def _source_fulfillment_status(order: dict[str, Any], *, source: str) -> str | None:
-    raw = str(order.get("fulfillment_status") or "").strip().lower()
-    if source == "allegro":
-        if raw in {"sent", "picked_up"}:
-            return "fulfilled"
-        if raw in {"processing", "ready_for_shipment"}:
-            return "processing"
-        if raw:
-            return raw
-        return None
-    if raw == "fulfilled":
-        return "fulfilled"
-    if raw == "partial":
-        return "partial"
-    if raw:
-        return raw
-    fulfillments = order.get("fulfillments") or []
-    if fulfillments:
-        return "fulfilled"
-    return None
-
-
-def _source_cancelled(order: dict[str, Any]) -> bool:
-    return bool(order.get("cancelled_at") or order.get("cancelled") is True)
-
-
-def _source_fulfillment_details(order: dict[str, Any]) -> dict[str, Any]:
-    fulfillments = order.get("fulfillments") or []
-    if not isinstance(fulfillments, list):
-        return {}
-    for fulfillment in fulfillments:
-        if not isinstance(fulfillment, dict):
-            continue
-        tracking_number = fulfillment.get("tracking_number")
-        tracking_numbers = fulfillment.get("tracking_numbers")
-        if not tracking_number and isinstance(tracking_numbers, list) and tracking_numbers:
-            tracking_number = tracking_numbers[0]
-        if tracking_number:
-            return {
-                "tracking_number": tracking_number,
-                "tracking_company": fulfillment.get("tracking_company"),
-                "fulfilled_at": fulfillment.get("updated_at") or fulfillment.get("created_at"),
-                "shopify_fulfillment_id": str(fulfillment.get("id", "")) or None,
-            }
-    return {}
-
-
-def _status_from_source(order: dict[str, Any], fallback: str, *, source: str) -> str:
-    source_fulfillment = _source_fulfillment_status(order, source=source)
-    if _source_cancelled(order):
-        return "cancelled"
-    if source_fulfillment == "cancelled":
-        return "cancelled"
-    if source_fulfillment == "fulfilled":
-        return "created"
-    return fallback
 
 
 def _build_draft_record(
@@ -1836,10 +1768,12 @@ def _build_draft_record(
     ):
         needs_review = True
 
-    source_fulfillment = _source_fulfillment_status(order, source=source)
+    source_fulfillment = draft_application.source_fulfillment_status(order, source=source)
     now = datetime.now(timezone.utc).isoformat()
     base_status = "needs_review" if needs_review else "pending"
-    fulfillment_details = _source_fulfillment_details(order) if source == "shopify" else {}
+    fulfillment_details = (
+        draft_application.source_fulfillment_details(order) if source == "shopify" else {}
+    )
     record: dict[str, Any] = {
         "id": draft_id or str(uuid.uuid4()),
         "created_at": created_at or now,
@@ -1867,7 +1801,7 @@ def _build_draft_record(
         "courier_draft_id": None,
         "courier_shipments": [],
         "dispatch_order_id": None,  # fix #6: field exists from creation
-        "status": _status_from_source(order, base_status, source=source),
+        "status": draft_application.status_from_source(order, base_status, source=source),
         "packages_count": packages_count,
         "packages_breakdown": packages_breakdown,
         "total_qty": total_qty,
@@ -1915,146 +1849,6 @@ def _build_draft_record(
     return record
 
 
-def _merge_synced_draft(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-    merged = {**existing, **incoming}
-    for field in _SYNC_PRESERVED_FIELDS:
-        if field in existing:
-            merged[field] = existing[field]
-    if existing.get("fulfilled_at") and not incoming.get("fulfilled_at"):
-        merged["fulfilled_at"] = existing["fulfilled_at"]
-
-    # A tracking number we did not produce means the parcel was dispatched by
-    # hand in a carrier portal. Recorded once and then preserved above, so a
-    # later sync can never rewrite history.
-    if merged.get("tracking_number") and not merged.get("shipment_origin"):
-        merged["shipment_origin"] = (
-            SHIPMENT_ORIGIN_SYSTEM if merged.get("courier_draft_id") else SHIPMENT_ORIGIN_EXTERNAL
-        )
-        _emit_tracking_assigned(
-            merged.get("id"),
-            merged.get("shopify_order_number"),
-            merged["shipment_origin"],
-        )
-
-    existing_status = existing.get("status")
-    incoming_status = incoming.get("status")
-
-    if (
-        existing_status == "pending_confirmation"
-        and str(merged.get("tracking_number") or "").strip()
-    ):
-        # The shop is the source of truth for shipments today: the operator
-        # creates them in Shopify or Apaczka and the portal follows. A tracking
-        # number arriving from there is proof the parcel exists, so the draft
-        # must stop saying "czeka na kuriera" — otherwise it waits forever on an
-        # InPost confirmation that is never coming, for a parcel already sent.
-        merged["status"] = "created"
-    elif existing_status in _SYNC_TERMINAL_STATUSES or existing_status in _SYNC_BUSY_STATUSES:
-        merged["status"] = existing_status
-    elif incoming_status == "created":
-        merged["status"] = "created"
-        if not merged.get("fulfilled_at"):
-            merged["fulfilled_at"] = incoming.get("source_updated_at") or incoming.get("updated_at")
-    elif incoming_status == "cancelled":
-        merged["status"] = "cancelled"
-    elif existing_status == "error":
-        # Source synchronization may refresh addresses/items, but an API failure
-        # remains actionable on the same row until the operator retries it.
-        merged["status"] = "error"
-        merged["error"] = existing.get("error")
-    elif existing_status == "pending" and incoming_status == "needs_review":
-        merged["status"] = "pending"
-    else:
-        merged["status"] = incoming_status or existing_status
-
-    if (
-        existing.get("fulfillment_status") == "fulfilled"
-        or incoming.get("fulfillment_status") == "fulfilled"
-    ):
-        merged["fulfillment_status"] = "fulfilled"
-
-    if existing.get("apaczka_service_id") and incoming.get("courier") == existing.get("courier"):
-        merged["apaczka_service_id"] = existing["apaczka_service_id"]
-        if existing.get("shipping_service_match_status") == _MATCH_MANUAL:
-            for field in _MATCH_FIELDS:
-                if field in existing:
-                    merged[field] = existing[field]
-    if existing.get("service") and existing_status in _SYNC_BUSY_STATUSES | _SYNC_TERMINAL_STATUSES:
-        merged["service"] = existing["service"]
-        merged["courier"] = existing.get("courier", merged.get("courier"))
-    if existing.get("tracking_number"):
-        merged["tracking_number"] = existing["tracking_number"]
-        merged["tracking_company"] = existing.get("tracking_company")
-
-    return merged
-
-
-def _meaningful_draft_diff(before: dict[str, Any], after: dict[str, Any]) -> bool:
-    ignored = {"updated_at"}
-    keys = (set(before) | set(after)) - ignored
-    return any(before.get(key) != after.get(key) for key in keys)
-
-
-def _persist_draft_from_order(
-    order: dict[str, Any],
-    shipping_store: ShippingStore,
-    storage: Any,
-    *,
-    source: str = "shopify",
-    existing: dict[str, Any] | None = None,
-) -> tuple[bool, dict[str, Any]]:
-    record = _build_draft_record(
-        order,
-        source=source,
-        draft_id=existing.get("id") if existing else None,
-        created_at=existing.get("created_at") if existing else None,
-    )
-    if existing is not None:
-        record = _merge_synced_draft(existing, record)
-    changed = existing is None or _meaningful_draft_diff(existing, record)
-    if changed:
-        shipping_store.upsert_draft(record)
-    if existing is None:
-        log_event(
-            "draft.created",
-            order_number=record["shopify_order_number"],
-            draft_id=record["id"],
-            source=source,
-            courier=record["courier"],
-            status=record["status"],
-            packages_count=record["packages_count"],
-        )
-        _maybe_send_new_order_sms(record)
-    elif changed:
-        log_event(
-            "draft.updated_from_sync",
-            order_number=record["shopify_order_number"],
-            draft_id=record["id"],
-            source=source,
-            status=record["status"],
-            fulfillment_status=record.get("fulfillment_status"),
-        )
-    return changed, record
-
-
-def _sync_draft_from_order(
-    order: dict[str, Any],
-    shipping_store: ShippingStore,
-    storage: Any,
-    *,
-    source: str = "shopify",
-    existing: dict[str, Any] | None = None,
-) -> bool:
-    changed, _ = _persist_draft_from_order(
-        order,
-        shipping_store,
-        storage,
-        source=source,
-        existing=existing,
-    )
-    return changed
-
-
 def _create_draft(
     order: dict[str, Any],
     shipping_store: ShippingStore,
@@ -2062,8 +1856,16 @@ def _create_draft(
     *,
     source: str = "shopify",
 ) -> dict[str, Any]:
-    _, record = _persist_draft_from_order(order, shipping_store, storage, source=source)
-    return record
+    del storage
+    return draft_application.create_draft(
+        order,
+        shipping_store,
+        build_draft_record=_build_draft_record,
+        emit_tracking_assigned=_emit_tracking_assigned,
+        record_event=log_event,
+        send_new_order_sms=_maybe_send_new_order_sms,
+        source=source,
+    )
 
 
 # ── Webhook endpoint ──────────────────────────────────────────────────────────
