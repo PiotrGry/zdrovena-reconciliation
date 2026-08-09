@@ -42,6 +42,31 @@ EXCEPTIONS: set[tuple[str, str]] = {
     ("month_closing/commands/close_cmd.py", "zdrovena.api"),
 }
 
+SHIPPING_FORBIDDEN_IMPORTS = (
+    "fastapi",
+    "zdrovena.api.routers",
+    "zdrovena.common.allegro",
+    "zdrovena.common.apaczka",
+    "zdrovena.common.damage_store",
+    "zdrovena.common.inpost",
+    "zdrovena.common.shipping_store",
+    "zdrovena.common.shopify_dedup_store",
+    "zdrovena.common.storage",
+    "zdrovena.fake_providers",
+    "azure.storage",
+)
+
+LEGACY_PARCEL_WRAPPERS = frozenset(
+    {
+        "_assert_packages_fit_locker",
+        "_calc_packages",
+        "_parcel_weight_and_dims",
+        "_physical_parcels",
+        "_shipment_reference",
+    }
+)
+WEBHOOKS_MODULE = "zdrovena.api.routers.webhooks"
+
 
 def _get_imports(filepath: pathlib.Path) -> list[str]:
     """Zwraca listę modułów zdrovena importowanych w pliku."""
@@ -57,6 +82,22 @@ def _get_imports(filepath: pathlib.Path) -> list[str]:
             # Normalizuj do zdrovena.X (top-level module)
             target = ".".join(parts[:2])
             imports.append(target)
+    return imports
+
+
+def _get_full_imports(filepath: pathlib.Path) -> list[str]:
+    """Return full module paths for both ``from`` and plain imports."""
+    try:
+        tree = ast.parse(filepath.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+
+    imports = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imports.append(node.module)
+        elif isinstance(node, ast.Import):
+            imports.extend(alias.name for alias in node.names)
     return imports
 
 
@@ -111,6 +152,54 @@ class TestModuleBoundaries:
             "\n\naudit/ importuje month_closing/ — to tworzy cykl:\n"
             + "\n".join(violations)
             + "\n\nPrzenieś współdzielone stałe do zdrovena.common"
+        )
+
+    def test_shipping_package_stays_pure(self) -> None:
+        """shipping/ does not depend on API, persistence, or provider clients."""
+        violations: list[str] = []
+        for filepath in ROOT.glob("shipping/**/*.py"):
+            imports = _get_full_imports(filepath)
+            bad = sorted(
+                {
+                    imported
+                    for imported in imports
+                    for forbidden in SHIPPING_FORBIDDEN_IMPORTS
+                    if imported == forbidden or imported.startswith(f"{forbidden}.")
+                }
+            )
+            if bad:
+                violations.append(f"  {_relative(filepath)} → {bad}")
+
+        assert not violations, (
+            "\n\nshipping/ musi pozostać czystą domeną bez API, storage i klientów providerów:\n"
+            + "\n".join(violations)
+        )
+
+    def test_production_does_not_use_legacy_parcel_wrappers(self) -> None:
+        """Production callers use shipping.domain rather than webhooks compatibility."""
+        violations: list[str] = []
+        for filepath in ROOT.rglob("*.py"):
+            tree = ast.parse(filepath.read_text(encoding="utf-8"))
+            rel = _relative(filepath)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == WEBHOOKS_MODULE:
+                    imported = LEGACY_PARCEL_WRAPPERS.intersection(
+                        alias.name for alias in node.names
+                    )
+                    for symbol in sorted(imported):
+                        violations.append(f"  {rel}:{node.lineno} imports {symbol}")
+                elif isinstance(node, ast.Call):
+                    called_name = None
+                    if isinstance(node.func, ast.Name):
+                        called_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        called_name = node.func.attr
+                    if called_name in LEGACY_PARCEL_WRAPPERS:
+                        violations.append(f"  {rel}:{node.lineno} calls {called_name}")
+
+        assert not violations, (
+            "\n\nKod produkcyjny nie może używać parcelowych wrapperów z webhooks.py:\n"
+            + "\n".join(violations)
         )
 
     def test_documented_exceptions_still_needed(self) -> None:
