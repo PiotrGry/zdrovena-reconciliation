@@ -65,6 +65,15 @@ LEGACY_PARCEL_WRAPPERS = frozenset(
         "_shipment_reference",
     }
 )
+LEGACY_DRAFT_LIFECYCLE_WRAPPERS = frozenset(
+    {
+        "_create_draft",
+        "_meaningful_draft_diff",
+        "_merge_synced_draft",
+        "_persist_draft_from_order",
+        "_sync_draft_from_order",
+    }
+)
 WEBHOOKS_MODULE = "zdrovena.api.routers.webhooks"
 
 
@@ -200,6 +209,26 @@ class TestModuleBoundaries:
         assert not violations, (
             "\n\nKod produkcyjny nie może używać parcelowych wrapperów z webhooks.py:\n"
             + "\n".join(violations)
+        )
+
+    def test_production_does_not_import_draft_lifecycle_wrappers(self) -> None:
+        """Production modules import the draft application API, not router wrappers."""
+        violations: list[str] = []
+        for filepath in ROOT.rglob("*.py"):
+            tree = ast.parse(filepath.read_text(encoding="utf-8"))
+            rel = _relative(filepath)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom) or node.module != WEBHOOKS_MODULE:
+                    continue
+                imported = LEGACY_DRAFT_LIFECYCLE_WRAPPERS.intersection(
+                    alias.name for alias in node.names
+                )
+                for symbol in sorted(imported):
+                    violations.append(f"  {rel}:{node.lineno} imports {symbol}")
+
+        assert not violations, (
+            "\n\nKod produkcyjny musi importować lifecycle draftów z "
+            "zdrovena.shipping.application.drafts, nie z webhooks.py:\n" + "\n".join(violations)
         )
 
     def test_documented_exceptions_still_needed(self) -> None:

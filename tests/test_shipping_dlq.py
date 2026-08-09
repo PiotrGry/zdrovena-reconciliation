@@ -190,7 +190,7 @@ class TestDlqEndpoints:
     def test_retry_failure_bumps_retries_and_returns_502(self, client, store):
         entry = _seed_dlq(store)
         with patch(
-            "zdrovena.api.routers.webhooks._create_draft",
+            "zdrovena.shipping.application.drafts.create_draft",
             side_effect=RuntimeError("still broken"),
         ):
             resp = client.post(f"/api/shipping/drafts/dlq/{entry['id']}/retry")
@@ -272,7 +272,7 @@ class TestDlqEntryKind:
             kind="draft_execution",
             draft_id="draft-abc",
         )
-        with patch("zdrovena.api.routers.webhooks._create_draft") as mock_create:
+        with patch("zdrovena.shipping.application.drafts.create_draft") as mock_create:
             with patch("zdrovena.api.routers.webhooks._execute_draft_impl") as mock_exec:
                 mock_exec.return_value = {"id": "draft-abc", "status": "created"}
                 resp = client.post(f"/api/shipping/drafts/dlq/{entry['id']}/retry")
@@ -284,7 +284,7 @@ class TestDlqEntryKind:
 
     def test_retry_of_creation_entry_still_creates(self, client, store):
         entry = _seed_dlq(store)
-        with patch("zdrovena.api.routers.webhooks._create_draft") as mock_create:
+        with patch("zdrovena.shipping.application.drafts.create_draft") as mock_create:
             with patch("zdrovena.api.routers.webhooks._execute_draft_impl") as mock_exec:
                 resp = client.post(f"/api/shipping/drafts/dlq/{entry['id']}/retry")
 
