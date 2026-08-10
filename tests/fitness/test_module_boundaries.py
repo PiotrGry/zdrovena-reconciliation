@@ -47,8 +47,10 @@ SHIPPING_FORBIDDEN_IMPORTS = (
     "zdrovena.api.routers",
     "zdrovena.common.allegro",
     "zdrovena.common.apaczka",
+    "zdrovena.common.config",
     "zdrovena.common.damage_store",
     "zdrovena.common.inpost",
+    "zdrovena.common.secrets",
     "zdrovena.common.shipping_store",
     "zdrovena.common.shopify_dedup_store",
     "zdrovena.common.storage",
@@ -88,6 +90,12 @@ LEGACY_INPOST_PROVIDER_WRAPPERS = frozenset(
         "_is_resumable_inpost_draft",
         "_pending_inpost_call_specs",
         "_resume_inpost_shipment",
+    }
+)
+LEGACY_APACZKA_PLANNING_WRAPPERS = frozenset(
+    {
+        "_apaczka_call_specs",
+        "_apaczka_payload_plan",
     }
 )
 WEBHOOKS_MODULE = "zdrovena.api.routers.webhooks"
@@ -298,6 +306,33 @@ class TestModuleBoundaries:
 
         assert not violations, (
             "\n\nKod produkcyjny musi używać zdrovena.shipping.providers.inpost zamiast "
+            "wrapperów z webhooks.py:\n" + "\n".join(violations)
+        )
+
+    def test_production_does_not_use_legacy_apaczka_planning_wrappers(self) -> None:
+        """Production callers use the Apaczka provider planning API directly."""
+        violations: list[str] = []
+        for filepath in ROOT.rglob("*.py"):
+            tree = ast.parse(filepath.read_text(encoding="utf-8"))
+            rel = _relative(filepath)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == WEBHOOKS_MODULE:
+                    imported = LEGACY_APACZKA_PLANNING_WRAPPERS.intersection(
+                        alias.name for alias in node.names
+                    )
+                    for symbol in sorted(imported):
+                        violations.append(f"  {rel}:{node.lineno} imports {symbol}")
+                elif isinstance(node, ast.Call):
+                    called_name = None
+                    if isinstance(node.func, ast.Name):
+                        called_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        called_name = node.func.attr
+                    if called_name in LEGACY_APACZKA_PLANNING_WRAPPERS:
+                        violations.append(f"  {rel}:{node.lineno} calls {called_name}")
+
+        assert not violations, (
+            "\n\nKod produkcyjny musi używać zdrovena.shipping.providers.apaczka zamiast "
             "wrapperów z webhooks.py:\n" + "\n".join(violations)
         )
 
