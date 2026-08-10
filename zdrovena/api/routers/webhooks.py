@@ -82,6 +82,7 @@ from zdrovena.shipping.domain.planning import (
     physical_parcels,
     shipment_reference,
 )
+from zdrovena.shipping.providers import inpost as inpost_provider
 
 # Who actually dispatched the parcel. Shipping is largely done by hand in the
 # carrier portals, and the Shopify sync writes the resulting tracking number
@@ -913,151 +914,48 @@ def _shipment_patch(shipments: list[dict[str, str]]) -> dict[str, Any]:
 def _inpost_call_specs(
     draft: dict[str, Any], sender: dict[str, str]
 ) -> list[tuple[str, str, int, str, dict[str, Any]]]:
-    """Expand a draft into the exact builder arguments for each physical parcel.
-
-    Both the preview and the real send read this list, so there is one place
-    where draft fields become ShipX arguments and no second copy to keep in sync.
-    Returns (inpost_service, package_type, package_number, reference, kwargs).
-    """
-    from zdrovena.common.inpost import PARCEL_SPECS
-
-    receiver = draft.get("receiver") or {}
-    addr = draft.get("shipping_address") or {}
-    order_number = str(draft.get("shopify_order_number", ""))
-    inpost_service = "paczkomat" if draft.get("service") == "inpost_locker_standard" else "kurier"
-
-    specs: list[tuple[str, str, int, str, dict[str, Any]]] = []
-    for parcel in physical_parcels(draft):
-        package_type = parcel.package_type
-        package_number = parcel.position
-        package_count = parcel.count_for_type
-        spec = PARCEL_SPECS.get(package_type, PARCEL_SPECS["1-pak"])
-        reference = shipment_reference(order_number, package_type, package_number, package_count)
-        if inpost_service == "paczkomat":
-            kwargs: dict[str, Any] = {
-                "receiver_first_name": receiver.get("first_name", ""),
-                "receiver_last_name": receiver.get("last_name", ""),
-                "receiver_email": receiver.get("email", ""),
-                "receiver_phone": receiver.get("phone", ""),
-                "target_point": receiver.get("locker_id", ""),
-                "reference": reference,
-                "template": spec.get("paczkomat_template") or "large",
-            }
-        else:
-            kwargs = {
-                "receiver_first_name": receiver.get("first_name", ""),
-                "receiver_last_name": receiver.get("last_name", ""),
-                "receiver_email": receiver.get("email", ""),
-                "receiver_phone": receiver.get("phone", ""),
-                "receiver_street": addr.get("street", ""),
-                "receiver_building_number": "/".join(
-                    filter(None, [addr.get("building_number", "1"), addr.get("flat_number", "")])
-                ),
-                "receiver_city": addr.get("city", ""),
-                "receiver_post_code": addr.get("post_code", ""),
-                "sender": sender,
-                "reference": reference,
-                "weight_kg": spec["weight_kg"],
-                "dimensions": spec,
-            }
-        specs.append((inpost_service, package_type, package_number, reference, kwargs))
-    return specs
+    """Compatibility wrapper for provider-specific InPost planning."""
+    return inpost_provider.inpost_call_specs(draft, sender)
 
 
 def _pending_inpost_call_specs(
     draft: dict[str, Any], sender: dict[str, str]
 ) -> list[tuple[str, str, int, str, dict[str, Any]]]:
-    """Return only parcel calls that have not already been persisted.
-
-    A failed multi-parcel execution can leave a subset of shipments on the
-    draft. Preview and execution must filter that subset identically: showing a
-    parcel that the retry will skip would make the confirmation misleading.
-    """
-    existing_keys = {
-        (str(item.get("package_type")), int(item.get("package_number") or 1))
-        for item in draft.get("courier_shipments") or []
-    }
-    return [
-        spec
-        for spec in _inpost_call_specs(draft, sender)
-        if (spec[1], spec[2]) not in existing_keys
-    ]
+    """Compatibility wrapper for filtering persisted InPost parcels."""
+    return inpost_provider.pending_inpost_call_specs(
+        draft,
+        sender,
+        build_call_specs=_inpost_call_specs,
+    )
 
 
 def _inpost_payload_plan(draft: dict[str, Any], sender: dict[str, str]) -> list[dict[str, Any]]:
-    """Return the exact ShipX payloads this draft would produce, without sending.
-
-    _run_inpost feeds the same arguments to the same builders, so a preview
-    cannot drift from what the courier is actually asked to create.
-    """
+    """Compatibility wrapper retaining preview-client construction in the router."""
     from zdrovena.common.inpost import InPostClient
 
     # The builders read nothing off the instance, so preview credentials are
     # never used for anything — no request leaves this function.
     client = InPostClient("preview", "preview")
-
-    plan: list[dict[str, Any]] = []
-    for (
-        inpost_service,
-        package_type,
-        package_number,
-        reference,
-        kwargs,
-    ) in _pending_inpost_call_specs(draft, sender):
-        if inpost_service == "paczkomat":
-            payload = client.build_paczkomat_payload(**kwargs)
-        else:
-            payload = client.build_kurier_payload(**kwargs)
-        plan.append(
-            {
-                "service": draft.get("service"),
-                "package_type": package_type,
-                "package_number": package_number,
-                "reference": reference,
-                "payload": payload,
-            }
-        )
-    return plan
-
-
-def _is_resumable_inpost_draft(draft: dict[str, Any]) -> bool:
-    """True when the draft already has a ShipX shipment waiting on confirmation."""
-    return bool(
-        draft.get("status") == "pending_confirmation"
-        and str(draft.get("courier_draft_id") or "").strip()
+    return inpost_provider.inpost_payload_plan(
+        draft,
+        sender,
+        client,
+        build_pending_call_specs=_pending_inpost_call_specs,
     )
 
 
+def _is_resumable_inpost_draft(draft: dict[str, Any]) -> bool:
+    """Compatibility wrapper for the provider resume predicate."""
+    return inpost_provider.is_resumable_inpost_draft(draft)
+
+
 def _resume_inpost_shipment(client: Any, draft: dict[str, Any]) -> dict[str, Any]:
-    """Ask ShipX about a shipment this draft already created, and never POST again.
-
-    A draft left at ``pending_confirmation`` with a ShipX id is a shipment that
-    exists at InPost and is only missing its tracking number. The per-parcel
-    filter in ``_pending_inpost_call_specs`` cannot see it, because that keys on
-    ``courier_shipments``, which single-parcel drafts from before that field
-    existed never populated. Without this path a retry POSTs a second real
-    shipment: two labels, two pickups, double cost.
-
-    Shared by ``_run_inpost`` (operator clicked "wyślij" again) and the
-    ``confirm`` endpoint (the 5s UI poll), so both resolve tracking identically.
-    """
-    existing = list(draft.get("courier_shipments") or [])
-    shipment_id = str(draft.get("courier_draft_id") or "").strip()
-
-    result = client.get_shipment(shipment_id)
-    if not result.get("tracking_number"):
-        result = client.wait_for_shipment_confirmation(
-            shipment_id,
-            max_attempts=3,
-            interval_s=1.0,
-        )
-    resumed = {
-        "id": str(result.get("id") or shipment_id),
-        "tracking_number": str(result.get("tracking_number") or ""),
-        "package_type": str(existing[0].get("package_type") if existing else "1-pak"),
-        "package_number": str(existing[0].get("package_number") if existing else 1),
-    }
-    return _shipment_patch([resumed, *existing[1:]])
+    """Compatibility wrapper retaining the legacy shipment-patch boundary."""
+    return inpost_provider.resume_inpost_shipment(
+        client,
+        draft,
+        build_patch=_shipment_patch,
+    )
 
 
 def _run_inpost(
