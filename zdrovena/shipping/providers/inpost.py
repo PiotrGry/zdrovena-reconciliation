@@ -16,9 +16,34 @@ ShipmentPatchBuilder = Callable[[list[dict[str, str]]], dict[str, Any]]
 class InPostPayloadBuilder(Protocol):
     """Payload-builder capabilities used by preview planning."""
 
-    def build_paczkomat_payload(self, **kwargs: Any) -> dict[str, Any]: ...
+    def build_paczkomat_payload(
+        self,
+        *,
+        receiver_first_name: str,
+        receiver_last_name: str,
+        receiver_email: str,
+        receiver_phone: str,
+        target_point: str,
+        reference: str,
+        template: str = "small",
+    ) -> dict[str, Any]: ...
 
-    def build_kurier_payload(self, **kwargs: Any) -> dict[str, Any]: ...
+    def build_kurier_payload(
+        self,
+        *,
+        receiver_first_name: str,
+        receiver_last_name: str,
+        receiver_email: str,
+        receiver_phone: str,
+        receiver_street: str,
+        receiver_building_number: str,
+        receiver_city: str,
+        receiver_post_code: str,
+        sender: dict[str, str],
+        reference: str,
+        weight_kg: float = 1.0,
+        dimensions: dict[str, float] | None = None,
+    ) -> dict[str, Any]: ...
 
 
 def inpost_call_specs(draft: dict[str, Any], sender: dict[str, str]) -> list[InPostCallSpec]:
