@@ -284,3 +284,253 @@ def test_resume_waits_three_times_and_preserves_pending_patch_without_tracking()
     )
     client.create_kurier_shipment.assert_not_called()
     client.create_paczkomat_shipment.assert_not_called()
+
+
+def test_resume_refreshes_each_unconfirmed_parcel_without_reordering_or_losing_state() -> None:
+    client = MagicMock()
+
+    def get_shipment(shipment_id: str) -> dict[str, str]:
+        assert shipment_id == "ship-2"
+        return {"id": "ship-2", "tracking_number": "TRACK-2"}
+
+    client.get_shipment.side_effect = get_shipment
+    draft = _draft(
+        status="pending_confirmation",
+        courier_draft_id="ship-1",
+        dispatch_order_id="dispatch-123",
+        pickup_ordered=True,
+        courier_shipments=[
+            {
+                "id": "ship-1",
+                "tracking_number": "TRACK-1",
+                "package_type": "1-pak",
+                "package_number": "1",
+                "label_format": "A6",
+            },
+            {
+                "id": "ship-2",
+                "tracking_number": "",
+                "package_type": "1-pak",
+                "package_number": "2",
+                "label_format": "A6",
+            },
+        ],
+    )
+
+    patch = resume_inpost_shipment(client, draft, build_patch=_shipment_patch)
+
+    assert patch["courier_shipments"] == [
+        {
+            "id": "ship-1",
+            "tracking_number": "TRACK-1",
+            "package_type": "1-pak",
+            "package_number": "1",
+            "label_format": "A6",
+        },
+        {
+            "id": "ship-2",
+            "tracking_number": "TRACK-2",
+            "package_type": "1-pak",
+            "package_number": "2",
+            "label_format": "A6",
+        },
+    ]
+    assert patch["status"] == "created"
+    assert patch["dispatch_order_id"] == "dispatch-123"
+    assert patch["pickup_ordered"] is True
+    client.get_shipment.assert_called_once_with("ship-2")
+    client.wait_for_shipment_confirmation.assert_not_called()
+    client.create_kurier_shipment.assert_not_called()
+    client.create_paczkomat_shipment.assert_not_called()
+
+
+def test_resume_waits_only_for_the_unconfirmed_parcel_with_existing_policy() -> None:
+    client = MagicMock()
+    client.get_shipment.return_value = {"id": "ship-2", "tracking_number": None}
+    client.wait_for_shipment_confirmation.return_value = {
+        "id": "ship-2",
+        "tracking_number": "TRACK-2",
+    }
+    draft = _draft(
+        status="pending_confirmation",
+        courier_draft_id="ship-1",
+        courier_shipments=[
+            {
+                "id": "ship-1",
+                "tracking_number": "TRACK-1",
+                "package_type": "2-pak",
+                "package_number": "1",
+            },
+            {
+                "id": "ship-2",
+                "tracking_number": "",
+                "package_type": "2-pak",
+                "package_number": "2",
+            },
+        ],
+    )
+
+    patch = resume_inpost_shipment(client, draft, build_patch=_shipment_patch)
+
+    client.get_shipment.assert_called_once_with("ship-2")
+    client.wait_for_shipment_confirmation.assert_called_once_with(
+        "ship-2",
+        max_attempts=3,
+        interval_s=1.0,
+    )
+    assert [shipment["tracking_number"] for shipment in patch["courier_shipments"]] == [
+        "TRACK-1",
+        "TRACK-2",
+    ]
+    assert patch["status"] == "created"
+
+
+def test_resume_keeps_complete_collection_when_one_parcel_stays_pending() -> None:
+    client = MagicMock()
+    client.get_shipment.return_value = {"id": "ship-2", "tracking_number": None}
+    client.wait_for_shipment_confirmation.return_value = {
+        "id": "ship-2",
+        "tracking_number": None,
+    }
+    draft = _draft(
+        status="pending_confirmation",
+        courier_draft_id="ship-1",
+        courier_shipments=[
+            {
+                "id": "ship-1",
+                "tracking_number": "TRACK-1",
+                "package_type": "szkło",
+                "package_number": "1",
+                "custom_metadata": "first",
+            },
+            {
+                "id": "ship-2",
+                "tracking_number": "",
+                "package_type": "szkło",
+                "package_number": "2",
+                "custom_metadata": "second",
+            },
+        ],
+    )
+
+    patch = resume_inpost_shipment(client, draft, build_patch=_shipment_patch)
+
+    assert patch["courier_shipments"] == draft["courier_shipments"]
+    assert patch["status"] == "pending_confirmation"
+    client.get_shipment.assert_called_once_with("ship-2")
+    client.wait_for_shipment_confirmation.assert_called_once_with(
+        "ship-2",
+        max_attempts=3,
+        interval_s=1.0,
+    )
+    client.create_kurier_shipment.assert_not_called()
+    client.create_paczkomat_shipment.assert_not_called()
+
+
+def test_historical_resume_preserves_existing_pickup_state() -> None:
+    client = MagicMock()
+    client.get_shipment.return_value = {"id": "legacy-ship", "tracking_number": "TRACK-1"}
+    draft = _draft(
+        status="pending_confirmation",
+        courier_draft_id="legacy-ship",
+        courier_shipments=[],
+        dispatch_order_id="dispatch-legacy",
+        pickup_ordered=True,
+    )
+
+    patch = resume_inpost_shipment(client, draft, build_patch=_shipment_patch)
+
+    assert patch["courier_shipments"] == [
+        {
+            "id": "legacy-ship",
+            "tracking_number": "TRACK-1",
+            "package_type": "1-pak",
+            "package_number": "1",
+        }
+    ]
+    assert patch["dispatch_order_id"] == "dispatch-legacy"
+    assert patch["pickup_ordered"] is True
+    client.get_shipment.assert_called_once_with("legacy-ship")
+    client.wait_for_shipment_confirmation.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("courier_draft_id", "courier_shipments", "remote_tracking"),
+    [
+        ("legacy-ship", [], {"legacy-ship": "TRACK-1"}),
+        (
+            "ship-1",
+            [
+                {
+                    "id": "ship-1",
+                    "tracking_number": "",
+                    "package_type": "1-pak",
+                    "package_number": "1",
+                }
+            ],
+            {"ship-1": "TRACK-1"},
+        ),
+        (
+            "ship-1",
+            [
+                {
+                    "id": "ship-1",
+                    "tracking_number": "TRACK-1",
+                    "package_type": "1-pak",
+                    "package_number": "1",
+                },
+                {
+                    "id": "ship-2",
+                    "tracking_number": "",
+                    "package_type": "1-pak",
+                    "package_number": "2",
+                },
+            ],
+            {"ship-2": "TRACK-2"},
+        ),
+        (
+            "ship-1",
+            [
+                {
+                    "id": "ship-1",
+                    "tracking_number": "TRACK-1",
+                    "package_type": "1-pak",
+                    "package_number": "1",
+                },
+                {
+                    "id": "ship-2",
+                    "tracking_number": "TRACK-2",
+                    "package_type": "1-pak",
+                    "package_number": "2",
+                },
+            ],
+            {},
+        ),
+    ],
+    ids=("historical", "single", "partially-confirmed", "fully-confirmed"),
+)
+def test_resume_never_posts_another_paid_shipment(
+    courier_draft_id: str,
+    courier_shipments: list[dict[str, str]],
+    remote_tracking: dict[str, str],
+) -> None:
+    client = MagicMock()
+    client.get_shipment.side_effect = lambda shipment_id: {
+        "id": shipment_id,
+        "tracking_number": remote_tracking.get(shipment_id),
+    }
+    client.wait_for_shipment_confirmation.side_effect = lambda shipment_id, **kwargs: {
+        "id": shipment_id,
+        "tracking_number": remote_tracking.get(shipment_id),
+    }
+    draft = _draft(
+        status="pending_confirmation",
+        courier_draft_id=courier_draft_id,
+        courier_shipments=courier_shipments,
+    )
+
+    resume_inpost_shipment(client, draft, build_patch=_shipment_patch)
+
+    client.create_kurier_shipment.assert_not_called()
+    client.create_paczkomat_shipment.assert_not_called()
+    client._post_shipment.assert_not_called()

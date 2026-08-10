@@ -375,7 +375,7 @@ describe('ShippingView', () => {
     })
 
     it('polls pending confirmation and refreshes after it reaches a terminal state', async () => {
-        const pending = draft({ id: 'pending-1', status: 'pending_confirmation' })
+        const pending = draft({ id: 'pending-1', status: 'pending_confirmation', pickup_ordered: true })
         const created = draft({ id: 'pending-1', status: 'created' })
         const { getConfirmCalls } = installShippingFetch({
             drafts: [pending],
@@ -383,7 +383,8 @@ describe('ShippingView', () => {
         })
 
         renderWithProviders(<ShippingView />)
-        await screen.findByText('czeka na kuriera')
+        await screen.findByText('oczekuje na potwierdzenie')
+        expect(screen.getByText('podjazd ✓')).toBeInTheDocument()
 
         await act(async () => {
             await new Promise(resolve => setTimeout(resolve, 5100))

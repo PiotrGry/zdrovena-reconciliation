@@ -805,7 +805,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                             {draft.status === 'pending' ? (T.sh_status_pending ?? 'oczekujące')
                                 : draft.status === 'created' ? (T.sh_status_created ?? 'nadane')
                                     : draft.status === 'needs_review' ? (T.sh_status_needs_review ?? 'do sprawdzenia')
-                                        : draft.status === 'pending_confirmation' ? (T.sh_status_pending_confirmation ?? 'czeka na kuriera')
+                                        : draft.status === 'pending_confirmation' ? (T.sh_status_pending_confirmation ?? 'oczekuje na potwierdzenie')
                                             : (T.sh_status_error ?? 'błąd')}
                         </Pill>
                     </span>
@@ -1630,7 +1630,7 @@ export default function ShippingView() {
                             <option value="pending">{T.sh_status_pending ?? 'oczekujące'}</option>
                             <option value="needs_review">{T.sh_status_needs_review ?? 'do sprawdzenia'}</option>
                             <option value="created">{T.sh_status_created ?? 'nadane'}</option>
-                            <option value="pending_confirmation">{T.sh_status_pending_confirmation ?? 'czeka na kuriera'}</option>
+                            <option value="pending_confirmation">{T.sh_status_pending_confirmation ?? 'oczekuje na potwierdzenie'}</option>
                             <option value="error">{T.sh_status_error ?? 'błąd'}</option>
                         </select>
                         <select value={filterCourier} onChange={e => setFilterCourier(e.target.value)}

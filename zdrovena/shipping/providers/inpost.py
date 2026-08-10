@@ -153,24 +153,50 @@ def resume_inpost_shipment(
     *,
     build_patch: ShipmentPatchBuilder,
 ) -> dict[str, Any]:
-    """Resume an existing ShipX shipment and never create a second one."""
+    """Refresh every existing ShipX shipment without creating another one."""
     existing = list(draft.get("courier_shipments") or [])
-    shipment_id = str(draft.get("courier_draft_id") or "").strip()
+    refreshed_shipments: list[dict[str, str]] = []
 
-    result = client.get_shipment(shipment_id)
-    if not result.get("tracking_number"):
-        result = client.wait_for_shipment_confirmation(
-            shipment_id,
-            max_attempts=3,
-            interval_s=1.0,
+    if existing:
+        for shipment in existing:
+            refreshed = dict(shipment)
+            shipment_id = str(shipment.get("id") or "").strip()
+            tracking_number = str(shipment.get("tracking_number") or "").strip()
+            if shipment_id and not tracking_number:
+                result = client.get_shipment(shipment_id)
+                if not result.get("tracking_number"):
+                    result = client.wait_for_shipment_confirmation(
+                        shipment_id,
+                        max_attempts=3,
+                        interval_s=1.0,
+                    )
+                refreshed["tracking_number"] = str(result.get("tracking_number") or "")
+            refreshed_shipments.append(refreshed)
+    else:
+        # Historical drafts predate courier_shipments and only carry the first
+        # ShipX id in courier_draft_id. Preserve their legacy patch shape.
+        shipment_id = str(draft.get("courier_draft_id") or "").strip()
+        result = client.get_shipment(shipment_id)
+        if not result.get("tracking_number"):
+            result = client.wait_for_shipment_confirmation(
+                shipment_id,
+                max_attempts=3,
+                interval_s=1.0,
+            )
+        refreshed_shipments.append(
+            {
+                "id": str(result.get("id") or shipment_id),
+                "tracking_number": str(result.get("tracking_number") or ""),
+                "package_type": "1-pak",
+                "package_number": "1",
+            }
         )
-    resumed = {
-        "id": str(result.get("id") or shipment_id),
-        "tracking_number": str(result.get("tracking_number") or ""),
-        "package_type": str(existing[0].get("package_type") if existing else "1-pak"),
-        "package_number": str(existing[0].get("package_number") if existing else 1),
-    }
-    return build_patch([resumed, *existing[1:]])
+
+    patch = build_patch(refreshed_shipments)
+    for field in ("dispatch_order_id", "pickup_ordered"):
+        if field in draft:
+            patch[field] = draft[field]
+    return patch
 
 
 __all__ = [

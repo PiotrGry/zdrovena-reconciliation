@@ -1945,6 +1945,48 @@ class TestRunInpost:
         assert result["courier_draft_id"] == "ship-existing"
         assert result["tracking_number"] == "620EXISTING"
 
+    def test_pending_retry_refreshes_every_unconfirmed_parcel_through_shared_resume(self):
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        draft = {
+            **_KURIER_DRAFT,
+            "status": "pending_confirmation",
+            "courier_draft_id": "ship-1",
+            "dispatch_order_id": "dispatch-123",
+            "pickup_ordered": True,
+            "courier_shipments": [
+                {
+                    "id": "ship-1",
+                    "tracking_number": "TRACK-1",
+                    "package_type": "1-pak",
+                    "package_number": "1",
+                },
+                {
+                    "id": "ship-2",
+                    "tracking_number": "",
+                    "package_type": "1-pak",
+                    "package_number": "2",
+                },
+            ],
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as create:
+                with patch(
+                    "zdrovena.common.inpost.InPostClient.get_shipment",
+                    return_value={"id": "ship-2", "tracking_number": "TRACK-2"},
+                ) as get:
+                    result = _run_inpost(draft, _SENDER)
+
+        create.assert_not_called()
+        get.assert_called_once_with("ship-2")
+        assert [shipment["tracking_number"] for shipment in result["courier_shipments"]] == [
+            "TRACK-1",
+            "TRACK-2",
+        ]
+        assert result["status"] == "created"
+        assert result["dispatch_order_id"] == "dispatch-123"
+        assert result["pickup_ordered"] is True
+
     def test_paczkomat_creates_shipment(self):
         from zdrovena.api.routers.webhooks import _run_inpost
 
@@ -4407,6 +4449,55 @@ class TestTrackingAssignedCoversEveryPath:
         assert updated["status"] == "created"
         assert updated["tracking_number"] == "620DONE"
         assert updated["shipment_origin"] == "system"
+
+    def test_inpost_confirm_refreshes_all_parcels_and_preserves_pickup(self, client, store):
+        draft = _seed_origin_draft(store)
+        store.update_draft(
+            draft["id"],
+            {
+                "status": "pending_confirmation",
+                "courier_draft_id": "ship-1",
+                "dispatch_order_id": "dispatch-123",
+                "pickup_ordered": True,
+                "courier_shipments": [
+                    {
+                        "id": "ship-1",
+                        "tracking_number": "TRACK-1",
+                        "package_type": "1-pak",
+                        "package_number": "1",
+                    },
+                    {
+                        "id": "ship-2",
+                        "tracking_number": "",
+                        "package_type": "1-pak",
+                        "package_number": "2",
+                    },
+                ],
+            },
+        )
+
+        def get_shipment(shipment_id: str) -> dict[str, str]:
+            assert shipment_id == "ship-2"
+            return {"id": "ship-2", "tracking_number": "TRACK-2"}
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.get_shipment",
+                side_effect=get_shipment,
+            ):
+                with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as create:
+                    resp = client.post(f"/api/shipping/drafts/{draft['id']}/confirm")
+
+        assert resp.status_code == 200, resp.text
+        create.assert_not_called()
+        updated = store.get_draft(draft["id"])
+        assert [item["tracking_number"] for item in updated["courier_shipments"]] == [
+            "TRACK-1",
+            "TRACK-2",
+        ]
+        assert updated["status"] == "created"
+        assert updated["dispatch_order_id"] == "dispatch-123"
+        assert updated["pickup_ordered"] is True
 
     def test_inpost_confirm_stays_202_while_shipx_has_no_tracking(self, client, store):
         """Still waiting is not an error and must not flip the draft to created."""
