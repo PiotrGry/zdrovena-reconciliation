@@ -24,6 +24,7 @@ from zdrovena.api.routers.webhooks import (
     _pick_courier,
     _verify_shopify_hmac,
 )
+from zdrovena.common.apaczka import ApaczkaClient
 from zdrovena.common.inpost import InPostClient
 from zdrovena.common.shipping_store import ShippingStore
 from zdrovena.common.shopify_dedup_store import ShopifyDedupStore
@@ -35,6 +36,7 @@ from zdrovena.shipping.domain.planning import (
     physical_parcels,
     shipment_reference,
 )
+from zdrovena.shipping.providers.apaczka import apaczka_payload_plan
 from zdrovena.shipping.providers.inpost import inpost_call_specs, inpost_payload_plan
 
 _FIXTURES = Path(__file__).parent / "fixtures"
@@ -50,6 +52,17 @@ def _provider_inpost_payload_plan(
     draft: dict[str, Any], sender: dict[str, str]
 ) -> list[dict[str, Any]]:
     return inpost_payload_plan(draft, sender, InPostClient("preview", "preview"))
+
+
+def _provider_apaczka_payload_plan(
+    draft: dict[str, Any], pickup_address: dict[str, str]
+) -> list[dict[str, Any]]:
+    service_id = str(draft.get("apaczka_service_id") or "")
+    return apaczka_payload_plan(
+        draft,
+        pickup_address,
+        ApaczkaClient("preview", "preview", service_id, None),
+    )
 
 
 def _draft_application_kwargs() -> dict[str, Any]:
@@ -4560,26 +4573,21 @@ class TestApaczkaPayloadPlan:
     be as trustworthy as InPost's — same identity guarantee, same boundary."""
 
     def test_plan_lists_one_payload_per_parcel_and_sends_nothing(self):
-        from zdrovena.api.routers import webhooks as wh
-
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="x"):
-            with patch("zdrovena.common.apaczka.ApaczkaClient._call") as mock_call:
-                plan = wh._apaczka_payload_plan(_APACZKA_DRAFT, _PICKUP)
+        with patch("zdrovena.common.apaczka.ApaczkaClient._call") as mock_call:
+            plan = _provider_apaczka_payload_plan(_APACZKA_DRAFT, _PICKUP)
 
         assert len(plan) >= 1
         assert "payload" in plan[0]
         mock_call.assert_not_called()
 
     def test_fixed_payload_plan_matches_golden(self):
-        from zdrovena.api.routers import webhooks as wh
-
         draft = {
             **_APACZKA_DRAFT,
             "packages_breakdown": [{"type": "pół-pak", "qty": 1}],
             "order_items": [{"name": "HUMIO 500 ml", "quantity": 2}],
         }
 
-        assert wh._apaczka_payload_plan(draft, _PICKUP) == [
+        assert _provider_apaczka_payload_plan(draft, _PICKUP) == [
             {
                 "service": "apaczka",
                 "package_type": "pół-pak",
@@ -4633,7 +4641,7 @@ class TestApaczkaPayloadPlan:
         from zdrovena.api.routers import webhooks as wh
 
         with patch("zdrovena.api.routers.webhooks.get_secret", return_value="x"):
-            plan = wh._apaczka_payload_plan(_APACZKA_DRAFT, _PICKUP)
+            plan = _provider_apaczka_payload_plan(_APACZKA_DRAFT, _PICKUP)
 
             with patch(
                 "zdrovena.common.apaczka.ApaczkaClient._call",
@@ -4646,10 +4654,7 @@ class TestApaczkaPayloadPlan:
 
     def test_sender_on_the_payload_is_the_pickup_address(self):
         """Deliberate asymmetry with InPost — Naściszowa, not Kraków."""
-        from zdrovena.api.routers import webhooks as wh
-
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="x"):
-            plan = wh._apaczka_payload_plan(_APACZKA_DRAFT, _PICKUP)
+        plan = _provider_apaczka_payload_plan(_APACZKA_DRAFT, _PICKUP)
 
         sender = plan[0]["payload"]["address"]["sender"]
         assert sender["city"] == "Naściszowa"
