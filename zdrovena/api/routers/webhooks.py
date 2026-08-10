@@ -80,6 +80,7 @@ from zdrovena.shipping.domain.planning import (
     package_fit_warnings,
     parcel_weight_and_dims,
 )
+from zdrovena.shipping.providers import allegro_delivery as allegro_delivery_provider
 from zdrovena.shipping.providers import apaczka as apaczka_provider
 from zdrovena.shipping.providers import inpost as inpost_provider
 
@@ -1103,99 +1104,6 @@ def _run_apaczka(
     return _shipment_patch(existing)
 
 
-# Allegro create-commands enum for the InPost sending mode. Contract per Allegro
-# issue #9915: parcel_locker | dispatch_order | pop | any_point. Only sent for
-# InPost drafts; other carriers derive the field from the order.
-_ALLEGRO_INPOST_SENDING_METHODS = frozenset({"parcel_locker", "dispatch_order", "pop", "any_point"})
-
-
-def _allegro_call_spec(draft: dict[str, Any], proposal: dict[str, Any]) -> dict[str, Any]:
-    """Build the create-commands arguments from a draft and Allegro's proposal.
-
-    Everything except ``command_id``, which is a fresh idempotency key minted per
-    send and therefore cannot be previewed. Both the preview and the real send
-    consume this, so the two cannot drift.
-    """
-    # FLAT dimensions, each a {"value", "unit"} object; weight unit is the
-    # plural "KILOGRAMS"; type is required.
-    weight_kg, dims = parcel_weight_and_dims(draft)
-    packages = [
-        {
-            "type": "PACKAGE",
-            "length": {"value": dims["length"], "unit": "CENTIMETER"},
-            "width": {"value": dims["width"], "unit": "CENTIMETER"},
-            "height": {"value": dims["height"], "unit": "CENTIMETER"},
-            "weight": {"value": round(weight_kg, 2), "unit": "KILOGRAMS"},
-        }
-    ]
-
-    # sender/receiver are required by the API and come prefilled with the
-    # buyer's address by Allegro — which is exactly why the preview has to ask.
-    # They live under `suggestedInput`; there is no senderData/receiverData in
-    # the documented response. Reading the wrong keys silently produced empty
-    # address blocks instead of failing, so both shapes are checked explicitly.
-    suggested_input = proposal.get("suggestedInput")
-    if not isinstance(suggested_input, dict):
-        raise AllegroBusinessError(
-            detail="Allegro delivery proposal has no suggestedInput object",
-            action="get_delivery_proposal",
-        )
-    sender = suggested_input.get("sender") or {}
-    receiver = dict(suggested_input.get("receiver") or {})
-    if not sender or not receiver:
-        raise AllegroBusinessError(
-            detail="Allegro delivery proposal has no suggestedInput.sender or receiver",
-            action="get_delivery_proposal",
-        )
-
-    # Pickup-point / locker code lives inside the receiver block as `point`.
-    pickup_point_id = (draft.get("receiver") or {}).get("locker_id") or None
-    if pickup_point_id:
-        receiver["point"] = pickup_point_id
-
-    additional_properties: dict[str, Any] | None = None
-    sending_method = draft.get("allegro_sending_method")
-    if sending_method and sending_method in _ALLEGRO_INPOST_SENDING_METHODS:
-        additional_properties = {"inpost#sendingMethod": sending_method}
-
-    return {
-        "order_id": str(draft.get("external_order_id") or ""),
-        # Optional since 2026-07-01 — Allegro auto-derives it from the order.
-        "delivery_method_id": draft.get("allegro_delivery_method_id") or None,
-        "credentials_id": draft.get("allegro_credentials_id"),
-        "packages": packages,
-        "sender": sender,
-        "receiver": receiver,
-        "additional_properties": additional_properties,
-    }
-
-
-def _allegro_payload_plan(draft: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return the exact create-command Allegro would receive, without sending.
-
-    Costs one read-only GET to Allegro. The execute path calls the same
-    endpoint, so a failure here would have failed there too — letting it
-    propagate is what keeps the operator from confirming a shipment that could
-    never have been created.
-    """
-    order_id = str(draft.get("external_order_id") or "")
-    if not order_id:
-        raise RuntimeError("Ship with Allegro requires external_order_id")
-    client = _get_allegro_client()
-    if client is None:
-        raise RuntimeError("Allegro client is not configured")
-    proposal = client.get_delivery_proposal(order_id)
-    return [
-        {
-            "service": draft.get("service"),
-            "package_type": "allegro",
-            "package_number": 1,
-            "reference": order_id,
-            "payload": _allegro_call_spec(draft, proposal),
-        }
-    ]
-
-
 def _run_allegro_delivery(
     draft: dict[str, Any],
     storage: Any,
@@ -1260,7 +1168,7 @@ def _run_allegro_delivery(
     if not order_id:
         raise RuntimeError("Ship with Allegro requires external_order_id")
     proposal = client.get_delivery_proposal(order_id)
-    call_spec = _allegro_call_spec(draft, proposal)
+    call_spec = allegro_delivery_provider.allegro_call_spec(draft, proposal)
     command_id = str(_uuid.uuid4())
 
     client.create_ship_with_allegro_shipment(command_id=command_id, **call_spec)
@@ -2039,7 +1947,13 @@ def _execution_preview(draft: dict[str, Any]) -> dict[str, Any]:
         # Allegro fills the sender and the buyer's address itself, so the payload
         # is only knowable after asking. One read-only GET.
         try:
-            parcels = _allegro_payload_plan(draft)
+            order_id = str(draft.get("external_order_id") or "")
+            if not order_id:
+                raise RuntimeError("Ship with Allegro requires external_order_id")
+            allegro_client = _get_allegro_client()
+            if allegro_client is None:
+                raise RuntimeError("Allegro client is not configured")
+            parcels = allegro_delivery_provider.allegro_payload_plan(draft, allegro_client)
         except Exception as exc:
             # Fail closed. The execute path calls the same endpoint, so this
             # request would have failed there too — refusing to confirm costs

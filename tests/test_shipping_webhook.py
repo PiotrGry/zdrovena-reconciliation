@@ -36,6 +36,9 @@ from zdrovena.shipping.domain.planning import (
     physical_parcels,
     shipment_reference,
 )
+from zdrovena.shipping.providers.allegro_delivery import (
+    allegro_payload_plan as allegro_delivery_payload_plan,
+)
 from zdrovena.shipping.providers.apaczka import apaczka_payload_plan
 from zdrovena.shipping.providers.inpost import inpost_call_specs, inpost_payload_plan
 
@@ -4753,11 +4756,8 @@ class TestAllegroPayloadPlan:
         return c
 
     def test_plan_fetches_the_proposal_and_creates_nothing(self):
-        from zdrovena.api.routers import webhooks as wh
-
         client = self._client()
-        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=client):
-            plan = wh._allegro_payload_plan(_ALLEGRO_DRAFT)
+        plan = allegro_delivery_payload_plan(_ALLEGRO_DRAFT, client)
 
         client.get_delivery_proposal.assert_called_once_with("allegro-order-9")
         client.create_ship_with_allegro_shipment.assert_not_called()
@@ -4765,8 +4765,6 @@ class TestAllegroPayloadPlan:
         assert plan[0]["payload"]["receiver"]["name"] == "Ola Wisniewska"
 
     def test_fixed_proposal_payload_matches_golden(self):
-        from zdrovena.api.routers import webhooks as wh
-
         draft = {
             **_ALLEGRO_DRAFT,
             "packages_breakdown": [
@@ -4775,9 +4773,7 @@ class TestAllegroPayloadPlan:
             ],
         }
         client = self._client()
-
-        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=client):
-            plan = wh._allegro_payload_plan(draft)
+        plan = allegro_delivery_payload_plan(draft, client)
 
         assert plan == [
             {
@@ -4820,8 +4816,8 @@ class TestAllegroPayloadPlan:
         from zdrovena.api.routers import webhooks as wh
 
         client = self._client()
+        plan = allegro_delivery_payload_plan(_ALLEGRO_DRAFT, client)
         with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=client):
-            plan = wh._allegro_payload_plan(_ALLEGRO_DRAFT)
             client.wait_for_ship_with_allegro_shipment.return_value = "ship-9"
             client.get_ship_with_allegro_shipment.return_value = {}
             client.extract_shipment_waybill.return_value = ("c", "AWB-9")
@@ -4832,13 +4828,11 @@ class TestAllegroPayloadPlan:
         assert sent == plan[0]["payload"]
 
     def test_plan_surfaces_an_allegro_outage_instead_of_guessing(self):
-        from zdrovena.api.routers import webhooks as wh
         from zdrovena.common.shipping_exceptions import CourierTransientError
 
         client = self._client()
         client.get_delivery_proposal.side_effect = CourierTransientError(
             "Allegro down", courier="allegro", action="delivery_proposal"
         )
-        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=client):
-            with pytest.raises(CourierTransientError):
-                wh._allegro_payload_plan(_ALLEGRO_DRAFT)
+        with pytest.raises(CourierTransientError):
+            allegro_delivery_payload_plan(_ALLEGRO_DRAFT, client)
