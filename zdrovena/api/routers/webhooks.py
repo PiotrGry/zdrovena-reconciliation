@@ -930,53 +930,6 @@ def _dispatch_shipment_ids(record: dict[str, Any]) -> list[str]:
     return [legacy] if legacy else []
 
 
-def _inpost_call_specs(
-    draft: dict[str, Any], sender: dict[str, str]
-) -> list[tuple[str, str, int, str, dict[str, Any]]]:
-    """Compatibility wrapper for provider-specific InPost planning."""
-    return inpost_provider.inpost_call_specs(draft, sender)
-
-
-def _pending_inpost_call_specs(
-    draft: dict[str, Any], sender: dict[str, str]
-) -> list[tuple[str, str, int, str, dict[str, Any]]]:
-    """Compatibility wrapper for filtering persisted InPost parcels."""
-    return inpost_provider.pending_inpost_call_specs(
-        draft,
-        sender,
-        build_call_specs=_inpost_call_specs,
-    )
-
-
-def _inpost_payload_plan(draft: dict[str, Any], sender: dict[str, str]) -> list[dict[str, Any]]:
-    """Compatibility wrapper retaining preview-client construction in the router."""
-    from zdrovena.common.inpost import InPostClient
-
-    # The builders read nothing off the instance, so preview credentials are
-    # never used for anything — no request leaves this function.
-    client = InPostClient("preview", "preview")
-    return inpost_provider.inpost_payload_plan(
-        draft,
-        sender,
-        client,
-        build_pending_call_specs=_pending_inpost_call_specs,
-    )
-
-
-def _is_resumable_inpost_draft(draft: dict[str, Any]) -> bool:
-    """Compatibility wrapper for the provider resume predicate."""
-    return inpost_provider.is_resumable_inpost_draft(draft)
-
-
-def _resume_inpost_shipment(client: Any, draft: dict[str, Any]) -> dict[str, Any]:
-    """Compatibility wrapper retaining the legacy shipment-patch boundary."""
-    return inpost_provider.resume_inpost_shipment(
-        client,
-        draft,
-        build_patch=_shipment_patch,
-    )
-
-
 def _run_inpost(
     draft: dict[str, Any],
     sender: dict[str, str],
@@ -1012,9 +965,14 @@ def _run_inpost(
 
     existing = list(draft.get("courier_shipments") or [])
 
-    # Resume, do not re-create. See _resume_inpost_shipment.
-    if _is_resumable_inpost_draft(draft):
-        return _resume_inpost_shipment(client, draft)
+    # Resume, do not re-create. The provider helper refreshes existing ShipX
+    # resources and never sends a second shipment POST.
+    if inpost_provider.is_resumable_inpost_draft(draft):
+        return inpost_provider.resume_inpost_shipment(
+            client,
+            draft,
+            build_patch=_shipment_patch,
+        )
 
     for (
         inpost_service,
@@ -1022,7 +980,7 @@ def _run_inpost(
         package_number,
         _reference,
         kwargs,
-    ) in _pending_inpost_call_specs(draft, sender):
+    ) in inpost_provider.pending_inpost_call_specs(draft, sender):
         if inpost_service == "paczkomat":
             result = client.create_paczkomat_shipment(**kwargs)
         else:
@@ -2164,11 +2122,16 @@ def _execution_preview(draft: dict[str, Any]) -> dict[str, Any]:
     """Build a courier preview and a fingerprint of the reviewed snapshot."""
     courier = draft.get("courier", "apaczka")
     if courier == "inpost":
+        from zdrovena.common.inpost import InPostClient
+
         sender = _get_sender()
+        # Payload builders read no instance state, so these placeholder
+        # credentials cannot trigger authentication or an external request.
+        preview_client = InPostClient("preview", "preview")
         preview: dict[str, Any] = {
             "courier": courier,
             "sender": sender,
-            "parcels": _inpost_payload_plan(draft, sender),
+            "parcels": inpost_provider.inpost_payload_plan(draft, sender, preview_client),
             "preview_available": True,
         }
     elif courier == "apaczka":
@@ -2318,7 +2281,7 @@ def _confirm_pending_inpost(draft_id: str, draft: dict[str, Any], shipping_store
     Returns 202 while the tracking number is still missing, so the UI poll and a
     cron worker can both keep asking without the draft ever claiming to be sent.
     """
-    if not _is_resumable_inpost_draft(draft):
+    if not inpost_provider.is_resumable_inpost_draft(draft):
         raise HTTPException(
             status_code=409,
             detail="Draft has no courier_draft_id to confirm",
@@ -2337,7 +2300,11 @@ def _confirm_pending_inpost(draft_id: str, draft: dict[str, Any], shipping_store
 
     client = InPostClient(get_secret("inpost_api_token"), get_secret("inpost_organization_id"))
     try:
-        patch = _resume_inpost_shipment(client, draft)
+        patch = inpost_provider.resume_inpost_shipment(
+            client,
+            draft,
+            build_patch=_shipment_patch,
+        )
     except (InPostBusinessError, CourierTransientError) as exc:
         logger.exception("InPost confirm poll failed for draft %s", draft_id)
         raise HTTPException(status_code=502, detail=f"InPost API error: {exc}") from exc

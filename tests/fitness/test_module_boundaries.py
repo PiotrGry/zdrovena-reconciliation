@@ -81,6 +81,15 @@ LEGACY_EXECUTION_WRAPPERS = frozenset(
         "_release_execution_claim",
     }
 )
+LEGACY_INPOST_PROVIDER_WRAPPERS = frozenset(
+    {
+        "_inpost_call_specs",
+        "_inpost_payload_plan",
+        "_is_resumable_inpost_draft",
+        "_pending_inpost_call_specs",
+        "_resume_inpost_shipment",
+    }
+)
 WEBHOOKS_MODULE = "zdrovena.api.routers.webhooks"
 
 
@@ -262,6 +271,33 @@ class TestModuleBoundaries:
 
         assert not violations, (
             "\n\nKod produkcyjny musi używać execution application API zamiast "
+            "wrapperów z webhooks.py:\n" + "\n".join(violations)
+        )
+
+    def test_production_does_not_use_legacy_inpost_provider_wrappers(self) -> None:
+        """Production callers use the provider module rather than router wrappers."""
+        violations: list[str] = []
+        for filepath in ROOT.rglob("*.py"):
+            tree = ast.parse(filepath.read_text(encoding="utf-8"))
+            rel = _relative(filepath)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == WEBHOOKS_MODULE:
+                    imported = LEGACY_INPOST_PROVIDER_WRAPPERS.intersection(
+                        alias.name for alias in node.names
+                    )
+                    for symbol in sorted(imported):
+                        violations.append(f"  {rel}:{node.lineno} imports {symbol}")
+                elif isinstance(node, ast.Call):
+                    called_name = None
+                    if isinstance(node.func, ast.Name):
+                        called_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        called_name = node.func.attr
+                    if called_name in LEGACY_INPOST_PROVIDER_WRAPPERS:
+                        violations.append(f"  {rel}:{node.lineno} calls {called_name}")
+
+        assert not violations, (
+            "\n\nKod produkcyjny musi używać zdrovena.shipping.providers.inpost zamiast "
             "wrapperów z webhooks.py:\n" + "\n".join(violations)
         )
 
