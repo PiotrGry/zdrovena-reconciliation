@@ -126,21 +126,31 @@ def test_pending_specs_filter_by_package_type_and_number() -> None:
     assert [(spec[1], spec[2]) for spec in specs] == [("1-pak", 2)]
 
 
-def test_legacy_pending_wrapper_honors_monkeypatched_call_specs(monkeypatch) -> None:
-    from zdrovena.api.routers import webhooks
-
+def test_pending_specs_accept_injected_call_specs() -> None:
     sentinel = [("kurier", "custom-box", 7, "patched", {"patched": True})]
-    monkeypatch.setattr(webhooks, "_inpost_call_specs", lambda draft, sender: sentinel)
 
-    assert webhooks._pending_inpost_call_specs(_draft(), _SENDER) == sentinel
+    assert (
+        pending_inpost_call_specs(
+            _draft(),
+            _SENDER,
+            build_call_specs=lambda draft, sender: sentinel,
+        )
+        == sentinel
+    )
 
 
-def test_legacy_payload_wrapper_honors_monkeypatched_pending_specs(monkeypatch) -> None:
-    from zdrovena.api.routers import webhooks
+def test_payload_plan_accepts_injected_pending_specs() -> None:
+    builder = _RecordingPayloadBuilder()
 
-    monkeypatch.setattr(webhooks, "_pending_inpost_call_specs", lambda draft, sender: [])
-
-    assert webhooks._inpost_payload_plan(_draft(), _SENDER) == []
+    assert (
+        inpost_payload_plan(
+            _draft(),
+            _SENDER,
+            builder,
+            build_pending_call_specs=lambda draft, sender: [],
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize(

@@ -24,6 +24,7 @@ from zdrovena.api.routers.webhooks import (
     _pick_courier,
     _verify_shopify_hmac,
 )
+from zdrovena.common.inpost import InPostClient
 from zdrovena.common.shipping_store import ShippingStore
 from zdrovena.common.shopify_dedup_store import ShopifyDedupStore
 from zdrovena.shipping.application import drafts as draft_application
@@ -34,6 +35,7 @@ from zdrovena.shipping.domain.planning import (
     physical_parcels,
     shipment_reference,
 )
+from zdrovena.shipping.providers.inpost import inpost_call_specs, inpost_payload_plan
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -42,6 +44,12 @@ _WEBHOOK_SECRET = "test-webhook-secret"
 
 def _load_fixture(name: str) -> dict:
     return json.loads((_FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def _provider_inpost_payload_plan(
+    draft: dict[str, Any], sender: dict[str, str]
+) -> list[dict[str, Any]]:
+    return inpost_payload_plan(draft, sender, InPostClient("preview", "preview"))
 
 
 def _draft_application_kwargs() -> dict[str, Any]:
@@ -1683,14 +1691,13 @@ class TestParcelDomainShapes:
 
 class TestParcelCatalogCompatibility:
     def test_existing_catalog_entry_is_the_same_mutable_object_used_by_planning(self):
-        from zdrovena.api.routers.webhooks import _inpost_call_specs
         from zdrovena.common.inpost import _DEFAULT_DIMS, PARCEL_SPECS
 
         draft = {
             **_KURIER_DRAFT,
             "packages_breakdown": [{"type": "2-pak", "qty": 1}],
         }
-        call_specs = _inpost_call_specs(draft, _SENDER)
+        call_specs = inpost_call_specs(draft, _SENDER)
         _weight, dimensions = parcel_weight_and_dims(draft)
 
         assert _DEFAULT_DIMS is PARCEL_SPECS["1-pak"]
@@ -1698,7 +1705,6 @@ class TestParcelCatalogCompatibility:
         assert call_specs[0][4]["dimensions"] is PARCEL_SPECS["2-pak"]
 
     def test_monkeypatching_existing_catalog_path_changes_current_planning_paths(self, monkeypatch):
-        from zdrovena.api.routers import webhooks as wh
         from zdrovena.common import inpost
 
         patched_spec = {
@@ -1715,7 +1721,7 @@ class TestParcelCatalogCompatibility:
         }
 
         weight, dimensions = parcel_weight_and_dims(draft)
-        plan = wh._inpost_payload_plan(draft, _SENDER)
+        plan = _provider_inpost_payload_plan(draft, _SENDER)
 
         assert weight == 9.0
         assert dimensions is patched_spec
@@ -2075,8 +2081,6 @@ class TestRunInpost:
 
 class TestInPostPayloadPlan:
     def test_plan_lists_one_payload_per_parcel(self, store):
-        from zdrovena.api.routers import webhooks as wh
-
         draft = {
             "id": "d1",
             "shopify_order_number": "1700",
@@ -2097,21 +2101,19 @@ class TestInPostPayloadPlan:
             "packages": [{"type": "1-pak", "count": 1}],
         }
         sender = {"name": "Zdrovena", "street": "Cieszynska"}
-        plan = wh._inpost_payload_plan(draft, sender)
+        plan = _provider_inpost_payload_plan(draft, sender)
 
         assert len(plan) >= 1
         assert plan[0]["service"] == "inpost_courier_standard"
         assert "payload" in plan[0]
 
     def test_fixed_kurier_preview_payload_matches_golden(self):
-        from zdrovena.api.routers import webhooks as wh
-
         draft = {
             **_KURIER_DRAFT,
             "packages_breakdown": [{"type": "2-pak", "qty": 1}],
         }
 
-        assert wh._inpost_payload_plan(draft, _SENDER) == [
+        assert _provider_inpost_payload_plan(draft, _SENDER) == [
             {
                 "service": "inpost_courier_standard",
                 "package_type": "2-pak",
@@ -2164,11 +2166,9 @@ class TestInPostPayloadPlan:
         ]
 
     def test_plan_expands_a_multi_box_breakdown(self):
-        from zdrovena.api.routers import webhooks as wh
-
         draft = dict(_KURIER_DRAFT)
         draft["packages_breakdown"] = [{"type": "3-pak", "qty": 2}, {"type": "szkło", "qty": 1}]
-        plan = wh._inpost_payload_plan(draft, _SENDER)
+        plan = _provider_inpost_payload_plan(draft, _SENDER)
 
         assert [entry["package_type"] for entry in plan] == ["3-pak", "3-pak", "szkło"]
         assert [entry["package_number"] for entry in plan] == [1, 2, 1]
@@ -2183,7 +2183,7 @@ class TestInPostPayloadPlan:
         from zdrovena.api.routers import webhooks as wh
 
         for draft in (_KURIER_DRAFT, _PACZKOMAT_DRAFT):
-            plan = wh._inpost_payload_plan(draft, _SENDER)
+            plan = _provider_inpost_payload_plan(draft, _SENDER)
             with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
                 with patch(
                     "zdrovena.common.inpost.InPostClient._post_shipment",
@@ -2209,7 +2209,7 @@ class TestInPostPayloadPlan:
                 }
             ],
         }
-        plan = wh._inpost_payload_plan(draft, _SENDER)
+        plan = _provider_inpost_payload_plan(draft, _SENDER)
 
         assert [(item["package_type"], item["package_number"]) for item in plan] == [("1-pak", 2)]
         with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
