@@ -74,6 +74,13 @@ LEGACY_DRAFT_LIFECYCLE_WRAPPERS = frozenset(
         "_sync_draft_from_order",
     }
 )
+LEGACY_EXECUTION_WRAPPERS = frozenset(
+    {
+        "_dlq_failed_execution",
+        "_execute_draft_impl",
+        "_release_execution_claim",
+    }
+)
 WEBHOOKS_MODULE = "zdrovena.api.routers.webhooks"
 
 
@@ -229,6 +236,33 @@ class TestModuleBoundaries:
         assert not violations, (
             "\n\nKod produkcyjny musi importować lifecycle draftów z "
             "zdrovena.shipping.application.drafts, nie z webhooks.py:\n" + "\n".join(violations)
+        )
+
+    def test_production_does_not_use_legacy_execution_wrappers(self) -> None:
+        """Production callers use the execution application API directly."""
+        violations: list[str] = []
+        for filepath in ROOT.rglob("*.py"):
+            tree = ast.parse(filepath.read_text(encoding="utf-8"))
+            rel = _relative(filepath)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == WEBHOOKS_MODULE:
+                    imported = LEGACY_EXECUTION_WRAPPERS.intersection(
+                        alias.name for alias in node.names
+                    )
+                    for symbol in sorted(imported):
+                        violations.append(f"  {rel}:{node.lineno} imports {symbol}")
+                elif isinstance(node, ast.Call):
+                    called_name = None
+                    if isinstance(node.func, ast.Name):
+                        called_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        called_name = node.func.attr
+                    if called_name in LEGACY_EXECUTION_WRAPPERS:
+                        violations.append(f"  {rel}:{node.lineno} calls {called_name}")
+
+        assert not violations, (
+            "\n\nKod produkcyjny musi używać execution application API zamiast "
+            "wrapperów z webhooks.py:\n" + "\n".join(violations)
         )
 
     def test_documented_exceptions_still_needed(self) -> None:

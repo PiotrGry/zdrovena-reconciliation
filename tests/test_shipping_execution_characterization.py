@@ -9,7 +9,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
@@ -19,6 +18,7 @@ from zdrovena.api.routers import webhooks
 from zdrovena.common.shipping_exceptions import InPostBusinessError
 from zdrovena.common.shipping_store import DLQ_KIND_EXECUTION, ShippingStore
 from zdrovena.shipping.application.execution import fingerprint as execution_fingerprint
+from zdrovena.shipping.application.execution import workflow as execution_workflow
 
 _SENDER = {
     "name": "Zdrovena",
@@ -86,6 +86,20 @@ def client(store):
     with patch("zdrovena.api.deps._shipping_store_singleton", return_value=store):
         with TestClient(app, raise_server_exceptions=False) as test_client:
             yield test_client
+
+
+def _execute_application(
+    draft_id: str,
+    repository: Any,
+    storage: Any,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    return execution_workflow.execute_draft(
+        draft_id,
+        repository,
+        **webhooks._execution_collaborators(storage),
+        **kwargs,
+    )
 
 
 class TestExecutionFingerprintCharacterization:
@@ -182,18 +196,17 @@ class TestExecutionFingerprintCharacterization:
                 return_value={"fingerprint": "current", "sender": _SENDER},
             ),
             patch.object(webhooks, "_run_inpost") as run_inpost,
-            pytest.raises(HTTPException) as caught,
+            pytest.raises(execution_workflow.PreviewFingerprintMismatchError) as caught,
         ):
-            webhooks._execute_draft_impl(
+            _execute_application(
                 draft["id"],
                 repository,
                 object(),
                 preview_fingerprint="reviewed",
             )
 
-        assert caught.value.status_code == 409
-        assert caught.value.detail == (
-            "Draft changed after preview — review the courier payload again."
+        assert (
+            str(caught.value) == "Draft changed after preview — review the courier payload again."
         )
         repository.try_claim_execution.assert_not_called()
         run_inpost.assert_not_called()
@@ -213,7 +226,7 @@ class TestExecutionFingerprintCharacterization:
             patch.object(webhooks, "_get_sender", return_value=_SENDER),
             patch.object(webhooks, "_run_inpost", return_value=provider_patch) as run_inpost,
         ):
-            result = webhooks._execute_draft_impl(draft["id"], store, object())
+            result = _execute_application(draft["id"], store, object())
 
         assert result["status"] == "created"
         run_inpost.assert_called_once()
@@ -254,7 +267,7 @@ class TestExecutionClaimCharacterization:
             patch.object(webhooks, "_emit_tracking_assigned"),
             patch.object(webhooks, "_maybe_push_tracking_to_allegro"),
         ):
-            webhooks._execute_draft_impl(draft["id"], repository, object())
+            _execute_application(draft["id"], repository, object())
 
         assert calls == ["claim", "provider"]
         repository.try_claim_execution.assert_called_once_with(draft["id"])
@@ -267,12 +280,11 @@ class TestExecutionClaimCharacterization:
 
         with (
             patch.object(webhooks, "_run_inpost") as run_inpost,
-            pytest.raises(HTTPException) as caught,
+            pytest.raises(execution_workflow.ExecutionClaimConflictError) as caught,
         ):
-            webhooks._execute_draft_impl(draft["id"], repository, object())
+            _execute_application(draft["id"], repository, object())
 
-        assert caught.value.status_code == 409
-        assert caught.value.detail == (
+        assert str(caught.value) == (
             "Draft already executed or in progress — nie realizuj ponownie."
         )
         run_inpost.assert_not_called()
@@ -287,7 +299,12 @@ class TestExecutionClaimCharacterization:
         repository = MagicMock()
         repository.get_draft.return_value = {"id": "release-claim", "status": current_status}
 
-        webhooks._release_execution_claim(repository, "release-claim", "provider failed")
+        execution_workflow.release_execution_claim(
+            repository,
+            "release-claim",
+            "provider failed",
+            log_exception=MagicMock(),
+        )
 
         assert repository.update_draft.call_count == updates
         if updates:
@@ -316,11 +333,11 @@ class TestPartialShipmentPersistenceCharacterization:
                     RuntimeError("second parcel failed"),
                 ],
             ) as first_attempt,
-            pytest.raises(HTTPException) as caught,
+            pytest.raises(execution_workflow.ExecutionCommunicationError) as caught,
         ):
-            webhooks._execute_draft_impl(draft["id"], store, object())
+            _execute_application(draft["id"], store, object())
 
-        assert caught.value.status_code == 502
+        assert str(caught.value.original) == "second parcel failed"
         assert first_attempt.call_count == 2
         after_failure = store.get_draft(draft["id"])
         assert after_failure is not None
@@ -342,7 +359,7 @@ class TestPartialShipmentPersistenceCharacterization:
                 return_value={"id": "shipment-second", "tracking_number": "TRACK-2"},
             ) as retry_create,
         ):
-            result = webhooks._execute_draft_impl(draft["id"], store, object())
+            result = _execute_application(draft["id"], store, object())
 
         retry_create.assert_called_once()
         assert retry_create.call_args.kwargs["reference"].endswith("2/2")
@@ -415,9 +432,9 @@ class TestExecutionFailureAndDlqCharacterization:
         with (
             patch.object(webhooks, "_get_sender", return_value=_SENDER),
             patch.object(webhooks, "_run_inpost", side_effect=RuntimeError("retry failed")),
-            pytest.raises(HTTPException),
+            pytest.raises(execution_workflow.ExecutionCommunicationError),
         ):
-            webhooks._execute_draft_impl(
+            _execute_application(
                 draft["id"],
                 store,
                 object(),
@@ -445,7 +462,7 @@ class TestExecutionFailureAndDlqCharacterization:
             patch.object(store, "enqueue_dlq", side_effect=RuntimeError("DLQ unavailable")),
             pytest.raises(InPostBusinessError) as caught,
         ):
-            webhooks._execute_draft_impl(draft["id"], store, object())
+            _execute_application(draft["id"], store, object())
 
         assert caught.value is provider_error
         assert store.get_draft(draft["id"])["status"] == "error"
@@ -484,7 +501,7 @@ class TestProviderDispatchCharacterization:
             patch.object(webhooks, "_run_apaczka", return_value=provider_patch) as apaczka,
             patch.object(webhooks, "_run_allegro_delivery", return_value=provider_patch) as allegro,
         ):
-            webhooks._execute_draft_impl(draft["id"], store, object())
+            _execute_application(draft["id"], store, object())
 
         calls = {
             "inpost": inpost.call_count,
@@ -517,7 +534,7 @@ class TestPendingExecutionCharacterization:
             patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as create_kurier,
             patch("zdrovena.common.inpost.InPostClient.create_paczkomat_shipment") as create_locker,
         ):
-            result = webhooks._execute_draft_impl(draft["id"], store, object())
+            result = _execute_application(draft["id"], store, object())
 
         create_kurier.assert_not_called()
         create_locker.assert_not_called()
@@ -537,7 +554,7 @@ class TestPendingExecutionCharacterization:
             patch.object(webhooks, "_get_sender", return_value=_SENDER),
             patch.object(webhooks, "_get_allegro_client") as get_client,
         ):
-            result = webhooks._execute_draft_impl(draft["id"], store, object())
+            result = _execute_application(draft["id"], store, object())
 
         get_client.assert_not_called()
         assert result["status"] == "pending_confirmation"
@@ -641,7 +658,7 @@ class TestExecutionFinalizationCharacterization:
                 side_effect=lambda _draft: events.append("allegro-sync"),
             ),
         ):
-            webhooks._execute_draft_impl(draft["id"], repository, object())
+            _execute_application(draft["id"], repository, object())
 
         assert events == expected
 
@@ -669,7 +686,7 @@ class TestExecutionFinalizationCharacterization:
             ),
             patch.object(webhooks, "_get_allegro_client", return_value=allegro),
         ):
-            result = webhooks._execute_draft_impl(draft["id"], store, object())
+            result = _execute_application(draft["id"], store, object())
 
         assert result["status"] == "created"
         assert store.get_draft(draft["id"])["tracking_number"] == "TRACK-LOCAL-SUCCESS"

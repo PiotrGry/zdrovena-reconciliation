@@ -395,7 +395,8 @@ az monitor metrics alert create --name test-alert --resource-group zdrovena-rg \
 - **Priority:** ~~P2~~
 - **Status:** ✅ DONE — exactly the proposed fix. `ShippingStore.try_claim_execution()`
   moves the draft to `executing` under ETag `IfNotModified`, so only one caller wins
-  the claim (R5-A). `_execute_draft_impl` refuses to call the courier without it.
+  the claim (R5-A). `execution_workflow.execute_draft` refuses to call the courier
+  without it.
 
 ### ShippingStore _deserialize type coercion
 - **What:** Every string from Table Storage is speculatively JSON-parsed. `"null"` → `None`, `"1234567890"` → int. Can corrupt customer names or tracking numbers.

@@ -29,6 +29,7 @@ from zdrovena.common.config import KEYCHAIN_SERVICE_ZOHO_SMTP
 from zdrovena.common.secrets import get_secret
 from zdrovena.month_closing.config import ZOHO_EMAIL
 from zdrovena.month_closing.email_service import EmailService
+from zdrovena.shipping.application.execution import workflow as execution_workflow
 
 logger = logging.getLogger("zdrovena.api.routers.damage")
 
@@ -361,16 +362,22 @@ def create_replacement(
     if draft.get("status") == "needs_review":
         shipping_store.update_draft(str(replacement_id), {"status": "pending"})
 
-    from zdrovena.api.routers.webhooks import _execute_draft_impl
+    # Provider runners still live in the shipping router. Bind them lazily to
+    # avoid a router import cycle while calling the application workflow itself
+    # directly.
+    from zdrovena.api.routers import webhooks as shipping_webhooks
 
-    result = _execute_draft_impl(
-        str(replacement_id),
-        shipping_store,
-        storage,
-        pickup_date=None,
-        pickup_from=None,
-        pickup_to=None,
-    )
+    try:
+        result = execution_workflow.execute_draft(
+            str(replacement_id),
+            shipping_store,
+            **shipping_webhooks._execution_collaborators(storage),
+            pickup_date=None,
+            pickup_from=None,
+            pickup_to=None,
+        )
+    except shipping_webhooks._EXECUTION_APPLICATION_HTTP_ERRORS as exc:
+        shipping_webhooks._raise_execution_http_exception(exc)
     draft_status = result.get("status")
     case_status = "replacement_created" if draft_status == "created" else "replacement_pending"
     updated = _save_case(
