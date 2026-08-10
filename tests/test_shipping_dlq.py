@@ -273,7 +273,9 @@ class TestDlqEntryKind:
             draft_id="draft-abc",
         )
         with patch("zdrovena.shipping.application.drafts.create_draft") as mock_create:
-            with patch("zdrovena.api.routers.webhooks._execute_draft_impl") as mock_exec:
+            with patch(
+                "zdrovena.shipping.application.execution.workflow.execute_draft"
+            ) as mock_exec:
                 mock_exec.return_value = {"id": "draft-abc", "status": "created"}
                 resp = client.post(f"/api/shipping/drafts/dlq/{entry['id']}/retry")
 
@@ -285,7 +287,9 @@ class TestDlqEntryKind:
     def test_retry_of_creation_entry_still_creates(self, client, store):
         entry = _seed_dlq(store)
         with patch("zdrovena.shipping.application.drafts.create_draft") as mock_create:
-            with patch("zdrovena.api.routers.webhooks._execute_draft_impl") as mock_exec:
+            with patch(
+                "zdrovena.shipping.application.execution.workflow.execute_draft"
+            ) as mock_exec:
                 resp = client.post(f"/api/shipping/drafts/dlq/{entry['id']}/retry")
 
         assert resp.status_code == 200, resp.text

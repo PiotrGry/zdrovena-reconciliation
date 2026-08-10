@@ -132,7 +132,8 @@ def test_create_email_edit_and_send_are_separate_actions(client, stores):
         return shipping_store.get_draft(draft_id)
 
     with patch(
-        "zdrovena.api.routers.webhooks._execute_draft_impl", side_effect=execute_side_effect
+        "zdrovena.shipping.application.execution.workflow.execute_draft",
+        side_effect=execute_side_effect,
     ):
         created = client.post("/api/damage-cases/case-1648/create-replacement")
     assert created.status_code == 200

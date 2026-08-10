@@ -27,7 +27,7 @@ import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
 from functools import lru_cache
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 
 from fastapi import (
     APIRouter,
@@ -66,7 +66,6 @@ from zdrovena.common.shipping_format import (
     normalize_pl_phone,
     parse_pl_address,
 )
-from zdrovena.common.shipping_state import EXECUTING
 from zdrovena.common.shipping_store import (
     DLQ_KIND_CREATION,
     DLQ_KIND_EXECUTION,
@@ -74,6 +73,8 @@ from zdrovena.common.shipping_store import (
 )
 from zdrovena.common.shopify_dedup_store import DedupStoreError
 from zdrovena.shipping.application import drafts as draft_application
+from zdrovena.shipping.application.execution import fingerprint as execution_fingerprint
+from zdrovena.shipping.application.execution import workflow as execution_workflow
 from zdrovena.shipping.domain.planning import (
     calc_packages,
     package_fit_warnings,
@@ -2058,19 +2059,22 @@ def retry_dlq_entry(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="DLQ entry has kind=draft_execution but no draft_id",
                 )
-            _execute_draft_impl(
-                target_draft_id,
-                shipping_store,
-                storage,
-                failure_dlq_entry_id=entry_id,
-            )
+            try:
+                execution_workflow.execute_draft(
+                    target_draft_id,
+                    shipping_store,
+                    **_execution_collaborators(storage),
+                    failure_dlq_entry_id=entry_id,
+                )
+            except _EXECUTION_APPLICATION_HTTP_ERRORS as exc:
+                _raise_execution_http_exception(exc)
         else:
             _create_draft(payload, shipping_store, storage, source=source)
     except HTTPException:
         raise
     except ZdrovenaShippingError as exc:
         # Execution retries update their original DLQ entry inside
-        # _execute_draft_impl before the domain exception is re-raised. Do not
+        # the application workflow before the domain exception is re-raised. Do not
         # increment the same entry a second time here.
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -2210,63 +2214,6 @@ def seed_e2e_dlq_entry(
 # ── Execute draft ─────────────────────────────────────────────────────────────
 
 
-def _dlq_failed_execution(
-    shipping_store: ShippingStore,
-    draft: dict[str, Any],
-    error: str,
-    *,
-    entry_id: str | None = None,
-) -> None:
-    """Queue a failed execution so the shipment is recoverable, not lost.
-
-    Best-effort by design: this is bookkeeping around an exception that is
-    already on its way to the caller, so a storage failure here must never
-    replace the real courier error.
-    """
-    draft_id = str(draft.get("id") or "")
-    try:
-        entry = shipping_store.enqueue_dlq(
-            payload=draft,
-            error=error,
-            source=str(draft.get("source") or "shopify"),
-            kind=DLQ_KIND_EXECUTION,
-            draft_id=draft_id,
-            entry_id=entry_id,
-        )
-        log_event(
-            "dlq.enqueued",
-            level=logging.ERROR,
-            entry_id=entry["id"],
-            order_number=draft.get("shopify_order_number") or draft.get("order_number"),
-            source=entry["source"],
-            error_type=error.split(":", 1)[0],
-            kind=DLQ_KIND_EXECUTION,
-            draft_id=draft_id,
-        )
-    except Exception:
-        logger.exception("Failed to enqueue execution failure for draft %s", draft_id)
-
-
-def _release_execution_claim(shipping_store: ShippingStore, draft_id: str, error: str) -> None:
-    """Conditionally return a claimed draft to ``error`` (R5-A/#136).
-
-    Only acts when the draft is still ``executing`` — i.e. the claim was taken
-    but no legitimate final state was reached. If the happy path already wrote a
-    later state (``created``), or a concurrent actor changed it, this is a no-op,
-    so cleanup never clobbers a good state. ``error`` is an executable state, so a
-    subsequent retry can re-claim the draft.
-
-    Best-effort: a failure to write the cleanup is logged, not raised, so it
-    cannot mask the original exception being handled.
-    """
-    try:
-        current = shipping_store.get_draft(draft_id)
-        if current and current.get("status") == EXECUTING:
-            shipping_store.update_draft(draft_id, {"status": "error", "error": error})
-    except Exception:
-        logger.exception("Failed to release execution claim for draft %s (left as-is)", draft_id)
-
-
 @router.get(
     "/shipping/drafts/{draft_id}/execute/preview",
     summary="Show exactly what would be sent to the courier, without sending it",
@@ -2284,6 +2231,16 @@ def preview_execute_draft(
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
     return _execution_preview(draft)
+
+
+def _preview_fingerprint(draft: dict[str, Any], preview: dict[str, Any]) -> str:
+    """Compatibility wrapper for the execution application helper."""
+    return execution_fingerprint.preview_fingerprint(draft, preview)
+
+
+def _fingerprints_match(current: str, reviewed: str) -> bool:
+    """Compatibility wrapper for constant-time fingerprint verification."""
+    return execution_fingerprint.fingerprints_match(current, reviewed)
 
 
 def _execution_preview(draft: dict[str, Any]) -> dict[str, Any]:
@@ -2348,14 +2305,61 @@ def _execution_preview(draft: dict[str, Any]) -> dict[str, Any]:
     # Bind the confirmation to both what was displayed and the complete draft
     # snapshot used to derive it. The latter also protects couriers whose exact
     # payload preview is not implemented yet.
-    fingerprint_input = json.dumps(
-        {"draft": draft, "preview": preview},
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        default=str,
-    ).encode()
-    return {**preview, "fingerprint": hashlib.sha256(fingerprint_input).hexdigest()}
+    return {**preview, "fingerprint": _preview_fingerprint(draft, preview)}
+
+
+_EXECUTION_APPLICATION_HTTP_ERRORS = (
+    execution_workflow.DraftNotFoundError,
+    execution_workflow.DraftRequiresReviewError,
+    execution_workflow.PreviewFingerprintMismatchError,
+    execution_workflow.ExecutionClaimConflictError,
+    execution_workflow.ExecutionCommunicationError,
+)
+
+
+def _execution_collaborators(storage: Any) -> dict[str, Any]:
+    """Bind router/provider collaborators required by the application workflow."""
+
+    def run_apaczka(draft: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        return _run_apaczka(draft, None, storage, **kwargs)
+
+    def run_allegro_delivery(draft: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        return _run_allegro_delivery(draft, storage, **kwargs)
+
+    return {
+        "build_preview": _execution_preview,
+        "resolve_sender": _get_sender,
+        "run_inpost": _run_inpost,
+        "run_apaczka": run_apaczka,
+        "run_allegro_delivery": run_allegro_delivery,
+        "record_event": log_event,
+        "emit_tracking_assigned": _emit_tracking_assigned,
+        "push_tracking": _maybe_push_tracking_to_allegro,
+        "log_exception": logger.exception,
+        "execution_dlq_kind": DLQ_KIND_EXECUTION,
+        "system_shipment_origin": SHIPMENT_ORIGIN_SYSTEM,
+    }
+
+
+def _raise_execution_http_exception(exc: Exception) -> NoReturn:
+    """Translate application execution errors at the HTTP boundary."""
+    if isinstance(exc, execution_workflow.DraftNotFoundError):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(
+        exc,
+        (
+            execution_workflow.DraftRequiresReviewError,
+            execution_workflow.PreviewFingerprintMismatchError,
+            execution_workflow.ExecutionClaimConflictError,
+        ),
+    ):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if isinstance(exc, execution_workflow.ExecutionCommunicationError):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Błąd komunikacji z przewoźnikiem — spróbuj ponownie za chwilę.",
+        ) from exc.original
+    raise exc
 
 
 @router.post(
@@ -2377,150 +2381,18 @@ def execute_draft(
     pickup_to: str | None = Body(None),
     preview_fingerprint: str | None = Body(None),
 ) -> dict[str, Any]:
-    return _execute_draft_impl(
-        draft_id,
-        shipping_store,
-        storage,
-        pickup_date=pickup_date,
-        pickup_from=pickup_from,
-        pickup_to=pickup_to,
-        preview_fingerprint=preview_fingerprint,
-    )
-
-
-def _execute_draft_impl(
-    draft_id: str,
-    shipping_store: ShippingStore,
-    storage: Any,
-    *,
-    pickup_date: str | None = None,
-    pickup_from: str | None = None,
-    pickup_to: str | None = None,
-    preview_fingerprint: str | None = None,
-    failure_dlq_entry_id: str | None = None,
-) -> dict[str, Any]:
-    """Execute a draft, optionally requiring the exact reviewed snapshot."""
-    draft = shipping_store.get_draft(draft_id)
-    if not draft:
-        raise HTTPException(status_code=404, detail="Draft not found")
-    if draft.get("status") == "needs_review":
-        raise HTTPException(
-            status_code=409,
-            detail="Draft requires review (multi-package) — use PATCH to override",
-        )
-    reviewed_preview: dict[str, Any] | None = None
-    if preview_fingerprint is not None:
-        reviewed_preview = _execution_preview(draft)
-        if not hmac.compare_digest(reviewed_preview["fingerprint"], preview_fingerprint):
-            raise HTTPException(
-                status_code=409,
-                detail="Draft changed after preview — review the courier payload again.",
-            )
-    # Atomic execution claim (R5-A): move the draft to `executing` under
-    # optimistic concurrency. If the claim fails the draft is already
-    # executing/created/cancelled or a concurrent request won the race — either
-    # way we must not call the courier again (that would duplicate the shipment).
-    if not shipping_store.try_claim_execution(draft_id):
-        raise HTTPException(
-            status_code=409,
-            detail="Draft already executed or in progress — nie realizuj ponownie.",
-        )
-
-    # From here on the draft is claimed (status=executing). EVERY path to the end
-    # of the endpoint must be guarded so an exception before a legitimate final
-    # state cannot leave the draft stuck in `executing` (R5-A/#136). Cleanup is
-    # conditional — see _release_execution_claim — so it never clobbers a state
-    # the happy path already wrote (e.g. `created`).
     try:
-        pickup_schedule = {
-            "pickup_date": pickup_date,
-            "pickup_from": pickup_from,
-            "pickup_to": pickup_to,
-        }
-        sender = (
-            reviewed_preview["sender"]
-            if reviewed_preview is not None and draft.get("courier") == "inpost"
-            else _get_sender()
-        )
-        persisted_shipments = list(draft.get("courier_shipments") or [])
-
-        def persist_shipment(shipment: dict[str, str]) -> None:
-            persisted_shipments.append(shipment)
-            shipping_store.update_draft(draft_id, {"courier_shipments": persisted_shipments})
-
-        courier = draft.get("courier", "apaczka")
-        if courier == "allegro_delivery":
-            patch = _run_allegro_delivery(draft, storage, **pickup_schedule)
-        elif courier == "inpost":
-            patch = _run_inpost(
-                draft,
-                sender,
-                **pickup_schedule,
-                on_shipment_created=persist_shipment,
-            )
-        else:
-            patch = _run_apaczka(
-                draft,
-                None,
-                storage,
-                **pickup_schedule,
-                on_shipment_created=persist_shipment,
-            )
-
-        # A shipment we created ourselves — record it before the write, so the
-        # sync cannot later mistake it for one dispatched by hand.
-        if patch.get("courier_draft_id"):
-            patch["shipment_origin"] = SHIPMENT_ORIGIN_SYSTEM
-
-        # Success write moves executing → created. If THIS fails, the draft is
-        # still `executing`, and the except-block cleanup returns it to `error`.
-        shipping_store.update_draft(draft_id, patch)
-        updated = shipping_store.get_draft(draft_id)
-        log_event(
-            "shipment.created",
-            draft_id=draft_id,
-            order_number=draft.get("shopify_order_number"),
-            courier=draft.get("courier"),
-            tracking_number=patch.get("tracking_number"),
-            status=patch.get("status"),
-        )
-        if patch.get("tracking_number"):
-            _emit_tracking_assigned(
-                draft_id,
-                draft.get("shopify_order_number"),
-                patch.get("shipment_origin") or SHIPMENT_ORIGIN_SYSTEM,
-            )
-        if updated:
-            # Never re-raises (see its docstring) — safe inside the guarded block.
-            _maybe_push_tracking_to_allegro(updated)
-        return updated or patch
-    except ZdrovenaShippingError as exc:
-        logger.exception("execute_draft failed for %s: %s", draft_id, exc)
-        _dlq_failed_execution(
+        return execution_workflow.execute_draft(
+            draft_id,
             shipping_store,
-            draft,
-            f"{type(exc).__name__}: {exc}",
-            entry_id=failure_dlq_entry_id,
+            **_execution_collaborators(storage),
+            pickup_date=pickup_date,
+            pickup_from=pickup_from,
+            pickup_to=pickup_to,
+            preview_fingerprint=preview_fingerprint,
         )
-        _release_execution_claim(shipping_store, draft_id, str(exc))
-        # Wyjątek domenowy przesyłki → koperta błędu (zdrovena.api.errors)
-        # mapuje go na właściwy status i polski komunikat dla operatora.
-        raise
-    except Exception as exc:
-        logger.exception("execute_draft failed for %s: %s", draft_id, exc)
-        _dlq_failed_execution(
-            shipping_store,
-            draft,
-            f"{type(exc).__name__}: {exc}",
-            entry_id=failure_dlq_entry_id,
-        )
-        _release_execution_claim(shipping_store, draft_id, str(exc))
-        # Ogólny błąd komunikacji z przewoźnikiem → 502 z polskim komunikatem,
-        # bez wyciekania surowego (angielskiego) str(exc) do operatora.
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Błąd komunikacji z przewoźnikiem — spróbuj ponownie za chwilę.",
-        ) from exc
+    except _EXECUTION_APPLICATION_HTTP_ERRORS as exc:
+        _raise_execution_http_exception(exc)
 
 
 def _confirm_pending_inpost(draft_id: str, draft: dict[str, Any], shipping_store: Any) -> Any:
