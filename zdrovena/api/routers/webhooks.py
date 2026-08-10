@@ -911,6 +911,25 @@ def _shipment_patch(shipments: list[dict[str, str]]) -> dict[str, Any]:
     }
 
 
+def _dispatch_shipment_ids(record: dict[str, Any]) -> list[str]:
+    """Every ShipX shipment one dispatch order has to collect.
+
+    A multi-parcel order is one collection, so the courier is handed the whole
+    list in a single dispatch. ``courier_draft_id`` is only the *first* parcel —
+    building the dispatch from it left parcels 2..N labelled but uncollected —
+    so it serves only as the fallback for drafts created before
+    ``courier_shipments`` existed.
+    """
+    ids = [
+        str(shipment.get("id") or "").strip() for shipment in record.get("courier_shipments") or []
+    ]
+    ids = [shipment_id for shipment_id in ids if shipment_id]
+    if ids:
+        return ids
+    legacy = str(record.get("courier_draft_id") or "").strip()
+    return [legacy] if legacy else []
+
+
 def _inpost_call_specs(
     draft: dict[str, Any], sender: dict[str, str]
 ) -> list[tuple[str, str, int, str, dict[str, Any]]]:
@@ -1027,10 +1046,10 @@ def _run_inpost(
     # here. Apaczka and Allegro already did; InPost is the one that ignored the
     # window and left the parcel sitting uncollected.
     if pickup_date:
-        shipment_id = str(patch.get("courier_draft_id") or "")
+        shipment_ids = _dispatch_shipment_ids(patch)
         try:
             dispatch = client.create_dispatch_order(
-                shipment_id,
+                shipment_ids,
                 _get_pickup_address(),
                 pickup_date=pickup_date,
                 pickup_from=pickup_from,
@@ -1042,7 +1061,7 @@ def _run_inpost(
             # Best-effort, the same way Allegro treats it: the shipment already
             # exists, so a failed pickup must not fail the execute. pickup_ordered
             # stays False, which is what keeps "Zamów podjazd" available to retry.
-            logger.exception("InPost dispatch order failed for shipment %s", shipment_id)
+            logger.exception("InPost dispatch order failed for shipments %s", shipment_ids)
 
     return patch
 
@@ -2550,8 +2569,8 @@ def order_pickup(
             org_id = get_secret("inpost_organization_id")
             client = InPostClient(token, org_id)
             pickup_address = _get_pickup_address()
-            client.create_dispatch_order(
-                courier_draft_id,
+            dispatch = client.create_dispatch_order(
+                _dispatch_shipment_ids(draft),
                 pickup_address,
                 pickup_date=pickup_date,
                 pickup_from=pickup_from,
@@ -2561,6 +2580,13 @@ def order_pickup(
             logger.exception("order_pickup failed for draft %s", draft_id)
             shipping_store.update_draft(draft_id, {"pickup_ordered": False})
             raise HTTPException(status_code=502, detail=f"InPost dispatch error: {exc}") from exc
+        # Recorded after the rollback boundary above: the dispatch already exists
+        # at this point, so a storage hiccup must not release the pickup claim
+        # and invite a duplicate collection. Without the id there is nothing to
+        # DELETE, so the pickup could never be cancelled.
+        shipping_store.update_draft(
+            draft_id, {"dispatch_order_id": str(dispatch.get("id") or "") or None}
+        )
 
     return {"status": "pickup_ordered", "draft_id": draft_id}
 

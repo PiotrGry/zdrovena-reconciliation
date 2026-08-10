@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Sequence
 from http import HTTPStatus
 from typing import Any
 
@@ -538,7 +539,7 @@ class InPostClient:
 
     def create_dispatch_order(
         self,
-        shipment_id: str,
+        shipment_ids: str | Sequence[str],
         sender: dict[str, str],
         *,
         pickup_date: str | None = None,
@@ -547,12 +548,18 @@ class InPostClient:
     ) -> dict[str, Any]:
         """Create a dispatch order (courier pickup).
 
+        Takes every ShipX shipment the courier should collect in one visit, so a
+        multi-parcel order books a single collection with a single time window
+        instead of one dispatch per box. A bare string is still accepted, which
+        is what single-parcel callers pass.
+
         pickup_date: YYYY-MM-DD, pickup_from/pickup_to: HH:MM (min 2h window).
         If omitted, InPost picks the next available slot.
         """
+        shipments = [shipment_ids] if isinstance(shipment_ids, str) else list(shipment_ids)
         url = f"{_BASE}/v1/organizations/{self._org_id}/dispatch_orders"
         payload: dict[str, Any] = {
-            "shipments": [shipment_id],
+            "shipments": shipments,
             "address": {
                 "name": sender.get("name", ""),
                 "phone": sender.get("phone", ""),

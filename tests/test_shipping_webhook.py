@@ -1062,6 +1062,75 @@ class TestOrderPickup:
         updated = store.get_draft(draft["id"])
         assert updated["pickup_ordered"] is True
 
+    def test_manual_pickup_collects_every_parcel_in_one_dispatch(self, client, store):
+        """Same defect as the execute path: the standalone "Zamów podjazd"
+        button dispatched ``courier_draft_id`` alone, so parcels 2..N were never
+        collected."""
+        draft = self._seed_created_kurier(store)
+        store.update_draft(
+            draft["id"],
+            {
+                "courier_shipments": [
+                    {
+                        "id": "ship-a",
+                        "tracking_number": "620A",
+                        "package_type": "1-pak",
+                        "package_number": "1",
+                    },
+                    {
+                        "id": "ship-b",
+                        "tracking_number": "620B",
+                        "package_type": "1-pak",
+                        "package_number": "2",
+                    },
+                ]
+            },
+        )
+        with patch(
+            "zdrovena.common.inpost.InPostClient.create_dispatch_order",
+            return_value={"id": "disp-multi"},
+        ) as mock_disp:
+            with patch("zdrovena.api.routers.webhooks.get_secret", return_value="test-value"):
+                resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+
+        assert resp.status_code == 200, resp.text
+        mock_disp.assert_called_once()
+        assert mock_disp.call_args.args[0] == ["ship-a", "ship-b"]
+
+    def test_manual_pickup_persists_the_dispatch_order_id(self, client, store):
+        """Without the id there is nothing to DELETE, so the pickup can never be
+        cancelled again."""
+        draft = self._seed_created_kurier(store)
+        with patch(
+            "zdrovena.common.inpost.InPostClient.create_dispatch_order",
+            return_value={"id": "disp-77"},
+        ):
+            with patch("zdrovena.api.routers.webhooks.get_secret", return_value="test-value"):
+                resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+
+        assert resp.status_code == 200, resp.text
+        updated = store.get_draft(draft["id"])
+        assert updated["dispatch_order_id"] == "disp-77"
+        assert updated["pickup_ordered"] is True
+
+    def test_manual_pickup_falls_back_to_courier_draft_id_for_historical_drafts(
+        self, client, store
+    ):
+        """Drafts created before ``courier_shipments`` existed carry only the
+        single legacy id, and must still be collectable."""
+        draft = self._seed_created_kurier(store)
+        store.update_draft(draft["id"], {"courier_shipments": []})
+        with patch(
+            "zdrovena.common.inpost.InPostClient.create_dispatch_order",
+            return_value={"id": "disp-legacy"},
+        ) as mock_disp:
+            with patch("zdrovena.api.routers.webhooks.get_secret", return_value="test-value"):
+                resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+
+        assert resp.status_code == 200, resp.text
+        mock_disp.assert_called_once()
+        assert mock_disp.call_args.args[0] == ["ship-id-1"]
+
     def test_409_when_claim_lost_to_concurrent_request(self, client, store):
         """A second request that races in after the claim but before the
         courier call must be rejected, not silently dispatch a duplicate.
@@ -1719,12 +1788,51 @@ class TestRunInpost:
                     )
 
         mock_disp.assert_called_once()
-        assert mock_disp.call_args.args[0] == "ship-1"
+        assert mock_disp.call_args.args[0] == ["ship-1"]
         assert mock_disp.call_args.kwargs["pickup_date"] == "2026-08-08"
         assert mock_disp.call_args.kwargs["pickup_from"] == "09:00"
         assert mock_disp.call_args.kwargs["pickup_to"] == "13:00"
         assert result["pickup_ordered"] is True
         assert result["dispatch_order_id"] == "disp-9"
+
+    def test_pickup_collects_every_physical_parcel_in_one_dispatch(self):
+        """Production incident: a two-parcel order created both shipments and
+        both labels, but the dispatch was built from ``courier_draft_id`` — the
+        first parcel only — so the courier collected one box and the second sat
+        in the warehouse with a valid waybill on it."""
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        draft = {
+            **_KURIER_DRAFT,
+            "packages_breakdown": [{"type": "1-pak", "qty": 2}],
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_ship:
+                with patch(
+                    "zdrovena.common.inpost.InPostClient.create_dispatch_order"
+                ) as mock_disp:
+                    mock_ship.side_effect = [
+                        {"id": "ship-a", "tracking_number": "620A"},
+                        {"id": "ship-b", "tracking_number": "620B"},
+                    ]
+                    mock_disp.return_value = {"id": "disp-multi"}
+                    result = _run_inpost(
+                        draft,
+                        _SENDER,
+                        pickup_date="2026-08-08",
+                        pickup_from="09:00",
+                        pickup_to="13:00",
+                    )
+
+        assert [shipment["id"] for shipment in result["courier_shipments"]] == [
+            "ship-a",
+            "ship-b",
+        ]
+        # One collection, one time window — not one dispatch per box.
+        mock_disp.assert_called_once()
+        assert mock_disp.call_args.args[0] == ["ship-a", "ship-b"]
+        assert result["dispatch_order_id"] == "disp-multi"
+        assert result["pickup_ordered"] is True
 
     def test_failed_dispatch_does_not_fail_the_execute(self):
         """The shipment already exists, so a pickup failure must not undo it.
@@ -1836,6 +1944,48 @@ class TestRunInpost:
         get.assert_called_once_with("ship-existing")
         assert result["courier_draft_id"] == "ship-existing"
         assert result["tracking_number"] == "620EXISTING"
+
+    def test_pending_retry_refreshes_every_unconfirmed_parcel_through_shared_resume(self):
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        draft = {
+            **_KURIER_DRAFT,
+            "status": "pending_confirmation",
+            "courier_draft_id": "ship-1",
+            "dispatch_order_id": "dispatch-123",
+            "pickup_ordered": True,
+            "courier_shipments": [
+                {
+                    "id": "ship-1",
+                    "tracking_number": "TRACK-1",
+                    "package_type": "1-pak",
+                    "package_number": "1",
+                },
+                {
+                    "id": "ship-2",
+                    "tracking_number": "",
+                    "package_type": "1-pak",
+                    "package_number": "2",
+                },
+            ],
+        }
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as create:
+                with patch(
+                    "zdrovena.common.inpost.InPostClient.get_shipment",
+                    return_value={"id": "ship-2", "tracking_number": "TRACK-2"},
+                ) as get:
+                    result = _run_inpost(draft, _SENDER)
+
+        create.assert_not_called()
+        get.assert_called_once_with("ship-2")
+        assert [shipment["tracking_number"] for shipment in result["courier_shipments"]] == [
+            "TRACK-1",
+            "TRACK-2",
+        ]
+        assert result["status"] == "created"
+        assert result["dispatch_order_id"] == "dispatch-123"
+        assert result["pickup_ordered"] is True
 
     def test_paczkomat_creates_shipment(self):
         from zdrovena.api.routers.webhooks import _run_inpost
@@ -4299,6 +4449,55 @@ class TestTrackingAssignedCoversEveryPath:
         assert updated["status"] == "created"
         assert updated["tracking_number"] == "620DONE"
         assert updated["shipment_origin"] == "system"
+
+    def test_inpost_confirm_refreshes_all_parcels_and_preserves_pickup(self, client, store):
+        draft = _seed_origin_draft(store)
+        store.update_draft(
+            draft["id"],
+            {
+                "status": "pending_confirmation",
+                "courier_draft_id": "ship-1",
+                "dispatch_order_id": "dispatch-123",
+                "pickup_ordered": True,
+                "courier_shipments": [
+                    {
+                        "id": "ship-1",
+                        "tracking_number": "TRACK-1",
+                        "package_type": "1-pak",
+                        "package_number": "1",
+                    },
+                    {
+                        "id": "ship-2",
+                        "tracking_number": "",
+                        "package_type": "1-pak",
+                        "package_number": "2",
+                    },
+                ],
+            },
+        )
+
+        def get_shipment(shipment_id: str) -> dict[str, str]:
+            assert shipment_id == "ship-2"
+            return {"id": "ship-2", "tracking_number": "TRACK-2"}
+
+        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.get_shipment",
+                side_effect=get_shipment,
+            ):
+                with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as create:
+                    resp = client.post(f"/api/shipping/drafts/{draft['id']}/confirm")
+
+        assert resp.status_code == 200, resp.text
+        create.assert_not_called()
+        updated = store.get_draft(draft["id"])
+        assert [item["tracking_number"] for item in updated["courier_shipments"]] == [
+            "TRACK-1",
+            "TRACK-2",
+        ]
+        assert updated["status"] == "created"
+        assert updated["dispatch_order_id"] == "dispatch-123"
+        assert updated["pickup_ordered"] is True
 
     def test_inpost_confirm_stays_202_while_shipx_has_no_tracking(self, client, store):
         """Still waiting is not an error and must not flip the draft to created."""

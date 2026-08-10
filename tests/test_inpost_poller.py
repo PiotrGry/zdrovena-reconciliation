@@ -47,6 +47,97 @@ class TestResolvePendingInpostOnce:
         assert patch_written["tracking_number"] == "620DONE"
         assert patch_written["shipment_origin"] == "system"
 
+    def test_resolves_missing_second_parcel_without_losing_pickup_state(self):
+        draft = {
+            **_pending_draft(),
+            "dispatch_order_id": "dispatch-123",
+            "pickup_ordered": True,
+            "courier_shipments": [
+                {
+                    "id": "ship-1",
+                    "tracking_number": "TRACK-1",
+                    "package_type": "1-pak",
+                    "package_number": "1",
+                },
+                {
+                    "id": "ship-2",
+                    "tracking_number": "",
+                    "package_type": "1-pak",
+                    "package_number": "2",
+                },
+            ],
+        }
+        store = MagicMock()
+        store.list_drafts.return_value = [draft]
+        client = MagicMock()
+
+        def get_shipment(shipment_id: str) -> dict[str, str]:
+            assert shipment_id == "ship-2"
+            return {"id": "ship-2", "tracking_number": "TRACK-2"}
+
+        client.get_shipment.side_effect = get_shipment
+
+        stats = resolve_pending_inpost_once(shipping_store=store, client=client)
+
+        assert stats == {"scanned": 1, "resolved": 1, "still_pending": 0, "errors": 0}
+        patch_written = store.update_draft.call_args.args[1]
+        assert [item["tracking_number"] for item in patch_written["courier_shipments"]] == [
+            "TRACK-1",
+            "TRACK-2",
+        ]
+        assert patch_written["dispatch_order_id"] == "dispatch-123"
+        assert patch_written["pickup_ordered"] is True
+        assert patch_written["status"] == "created"
+        client.create_kurier_shipment.assert_not_called()
+        client.create_paczkomat_shipment.assert_not_called()
+
+    def test_multi_parcel_draft_stays_pending_when_second_waybill_is_still_missing(self):
+        draft = {
+            **_pending_draft(),
+            "dispatch_order_id": "dispatch-123",
+            "pickup_ordered": True,
+            "courier_shipments": [
+                {
+                    "id": "ship-1",
+                    "tracking_number": "TRACK-1",
+                    "package_type": "1-pak",
+                    "package_number": "1",
+                },
+                {
+                    "id": "ship-2",
+                    "tracking_number": "",
+                    "package_type": "1-pak",
+                    "package_number": "2",
+                },
+            ],
+        }
+        original_shipments = [dict(shipment) for shipment in draft["courier_shipments"]]
+        store = MagicMock()
+        store.list_drafts.return_value = [draft]
+        client = MagicMock()
+        client.get_shipment.return_value = {"id": "ship-2", "tracking_number": None}
+        client.wait_for_shipment_confirmation.return_value = {
+            "id": "ship-2",
+            "tracking_number": None,
+        }
+
+        stats = resolve_pending_inpost_once(shipping_store=store, client=client)
+
+        assert stats == {"scanned": 1, "resolved": 0, "still_pending": 1, "errors": 0}
+        client.get_shipment.assert_called_once_with("ship-2")
+        client.wait_for_shipment_confirmation.assert_called_once_with(
+            "ship-2",
+            max_attempts=3,
+            interval_s=1.0,
+        )
+        store.update_draft.assert_not_called()
+        assert draft["status"] == "pending_confirmation"
+        assert draft["courier_shipments"] == original_shipments
+        assert draft["dispatch_order_id"] == "dispatch-123"
+        assert draft["pickup_ordered"] is True
+        client.create_kurier_shipment.assert_not_called()
+        client.create_paczkomat_shipment.assert_not_called()
+
     def test_leaves_the_draft_pending_while_shipx_has_no_waybill(self):
         """Still waiting is the normal case, not an error — and the draft must
         not be promoted to created without a number behind it."""
