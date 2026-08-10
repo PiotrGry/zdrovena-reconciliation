@@ -460,6 +460,47 @@ class TestDispatchOrder:
             with pytest.raises(InPostError, match=r"422.*no-slot"):
                 client.create_dispatch_order("ship-1", _SENDER)
 
+    def test_every_shipment_id_travels_in_one_dispatch(self):
+        """A multi-parcel order is one collection, not one per box. ShipX takes
+        the whole list in a single dispatch order, so the courier is asked to
+        take every parcel in one visit."""
+        client = InPostClient(_TOKEN, _ORG)
+        resp = _ok_response({"id": "disp-multi"})
+        with patch.object(client._session, "post", return_value=resp) as mock_post:
+            client.create_dispatch_order(["ship-a", "ship-b"], _SENDER)
+
+        assert mock_post.call_args.kwargs["json"]["shipments"] == ["ship-a", "ship-b"]
+
+    def test_a_bare_shipment_id_is_still_accepted(self):
+        """Historical single-parcel callers pass one id as a plain string."""
+        client = InPostClient(_TOKEN, _ORG)
+        resp = _ok_response({"id": "disp-single"})
+        with patch.object(client._session, "post", return_value=resp) as mock_post:
+            client.create_dispatch_order("ship-a", _SENDER)
+
+        assert mock_post.call_args.kwargs["json"]["shipments"] == ["ship-a"]
+
+    def test_multi_id_dispatch_leaves_the_rest_of_the_payload_alone(self):
+        """Widening the id list must not disturb address or pickup window."""
+        client = InPostClient(_TOKEN, _ORG)
+        resp = _ok_response({"id": "disp-multi"})
+        with patch.object(client._session, "post", return_value=resp) as mock_post:
+            client.create_dispatch_order(
+                ["ship-a", "ship-b"],
+                _SENDER,
+                pickup_date="2026-07-01",
+                pickup_from="10:00",
+                pickup_to="14:00",
+            )
+
+        assert mock_post.call_args.args[0] == _DISPATCH_URL
+        sent = mock_post.call_args.kwargs["json"]
+        assert sent["address"]["name"] == _SENDER["name"]
+        assert sent["address"]["country_code"] == "PL"
+        assert sent["pickup_date"] == "2026-07-01"
+        assert sent["pickup_from"] == "10:00"
+        assert sent["pickup_to"] == "14:00"
+
 
 # ── get_label ────────────────────────────────────────────────────────────────
 
