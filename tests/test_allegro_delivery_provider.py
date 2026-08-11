@@ -128,6 +128,20 @@ def test_call_spec_matches_exact_legacy_shape() -> None:
     assert "point" not in proposal["suggestedInput"]["receiver"]
 
 
+def test_reference_number_source_is_external_order_id_not_local_or_display_id() -> None:
+    draft = _draft(
+        id="local-draft-uuid",
+        external_order_id="allegro-checkout-uuid",
+        shopify_order_number="operator-display-value",
+    )
+
+    result = allegro_call_spec(draft, _PROPOSAL)
+
+    assert result["order_id"] == "allegro-checkout-uuid"
+    assert result["order_id"] != draft["id"]
+    assert result["order_id"] != draft["shopify_order_number"]
+
+
 @pytest.mark.parametrize(
     "sending_method",
     sorted(ALLEGRO_INPOST_SENDING_METHODS),

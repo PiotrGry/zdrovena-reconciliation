@@ -414,12 +414,15 @@ async def pickup_proposals(
     request: Request,
     authorization: str | None = Header(default=None),
     accept: str | None = Header(default=None),
+    content_type: str | None = Header(default=None),
 ) -> list[dict[str, Any]]:
-    _require_headers(authorization, accept)
+    _require_headers(authorization, accept, content_type)
     body = await request.json()
-    shipment_ids = body.get("input", {}).get("shipmentIds") or []
-    if not shipment_ids:
-        raise HTTPException(status_code=422, detail="input.shipmentIds is required")
+    require_fields(body, ("shipmentIds", "address"))
+    shipment_ids = body["shipmentIds"]
+    if not isinstance(shipment_ids, list) or not shipment_ids:
+        raise HTTPException(status_code=422, detail="shipmentIds must not be empty")
+    _validate_address(body["address"], "address")
     return [
         {
             "proposals": [
@@ -439,13 +442,19 @@ async def create_pickup(
     request: Request,
     authorization: str | None = Header(default=None),
     accept: str | None = Header(default=None),
+    content_type: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    _require_headers(authorization, accept)
+    _require_headers(authorization, accept, content_type)
     body = await request.json()
     require_fields(body, ("commandId", "input"))
+    pickup_input = body["input"]
+    require_fields(pickup_input, ("shipmentIds", "address"), "input")
+    _validate_address(pickup_input["address"], "input.address")
+    if not pickup_input.get("pickupTime") and not pickup_input.get("pickupDateProposalId"):
+        raise HTTPException(status_code=422, detail="input pickup time is required")
     dispatch_id = STATE.next_id("allegro-dispatch")
-    STATE.allegro_dispatches[dispatch_id] = {"id": dispatch_id, **deepcopy(body["input"])}
-    return {"commandId": body["commandId"], "input": deepcopy(body["input"])}
+    STATE.allegro_dispatches[dispatch_id] = {"id": dispatch_id, **deepcopy(pickup_input)}
+    return {"commandId": body["commandId"], "input": deepcopy(pickup_input)}
 
 
 @router.post("/shipment-management/shipments/cancel-commands", status_code=201)

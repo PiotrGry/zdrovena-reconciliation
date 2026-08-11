@@ -969,7 +969,36 @@ class TestExecutePreviewEndpoint:
 # ── Order pickup ──────────────────────────────────────────────────────────────
 
 
+_ALLEGRO_PICKUP_ADDRESS = {
+    "name": "Zdrovena Magazyn",
+    "street": "Magazynowa 41",
+    "postalCode": "33-300",
+    "city": "Nowy Sacz",
+    "countryCode": "PL",
+    "email": "magazyn@example.com",
+    "phone": "600700800",
+}
+
+
 class TestOrderPickup:
+    def test_allegro_pickup_address_uses_configured_collection_address(self):
+        configured = {
+            "name": "Zdrovena Magazyn",
+            "firstname": "",
+            "lastname": "Zdrovena Magazyn",
+            "street": "Magazynowa",
+            "building_number": "41",
+            "city": "Nowy Sacz",
+            "post_code": "33-300",
+            "phone": "600700800",
+            "email": "magazyn@example.com",
+        }
+
+        with patch("zdrovena.api.routers.webhooks._get_pickup_address", return_value=configured):
+            result = webhooks_router._get_allegro_pickup_address()
+
+        assert result == _ALLEGRO_PICKUP_ADDRESS
+
     def _seed_created_kurier(self, store):
         draft = {
             "id": "draft-pickup-1",
@@ -1038,6 +1067,10 @@ class TestOrderPickup:
             patch.object(store, "try_claim_pickup", wraps=store.try_claim_pickup) as claim_pickup,
             patch.object(store, "update_draft", wraps=store.update_draft) as update_draft,
             patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+                return_value=_ALLEGRO_PICKUP_ADDRESS,
+            ),
         ):
             result = webhooks_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)
 
@@ -1051,6 +1084,10 @@ class TestOrderPickup:
         ] == []
         allegro.create_ship_with_allegro_pickup.assert_called_once()
         sent = allegro.create_ship_with_allegro_pickup.call_args.kwargs
+        allegro.get_ship_with_allegro_pickup_proposals.assert_called_once_with(
+            ["ship-id-1"], address=_ALLEGRO_PICKUP_ADDRESS
+        )
+        assert sent["address"] == _ALLEGRO_PICKUP_ADDRESS
         assert sent["pickup_time"] == {
             "date": "2026-08-07",
             "minTime": "09:00",
@@ -1112,6 +1149,10 @@ class TestOrderPickup:
         with (
             patch.object(store, "update_draft", wraps=store.update_draft) as update_draft,
             patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+                return_value=_ALLEGRO_PICKUP_ADDRESS,
+            ),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 webhooks_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)
@@ -1145,6 +1186,10 @@ class TestOrderPickup:
         with (
             patch.object(store, "update_draft", wraps=store.update_draft) as update_draft,
             patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+                return_value=_ALLEGRO_PICKUP_ADDRESS,
+            ),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 webhooks_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)

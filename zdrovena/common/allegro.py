@@ -706,7 +706,10 @@ class AllegroClient:
         return (carrier, waybill)
 
     def get_ship_with_allegro_pickup_proposals(
-        self, shipment_ids: list[str]
+        self,
+        shipment_ids: list[str],
+        *,
+        address: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """POST /shipment-management/pickup-proposals — available pickup slots.
 
@@ -737,7 +740,11 @@ class AllegroClient:
         """
         data = self._post(
             "/shipment-management/pickup-proposals",
-            {"input": {"shipmentIds": list(shipment_ids)}},
+            {
+                "shipmentIds": list(shipment_ids),
+                "address": dict(address),
+            },
+            extra_headers={"Content-Type": _ACCEPT_HEADER},
         )
         return _normalize_pickup_proposals(data)
 
@@ -746,6 +753,7 @@ class AllegroClient:
         *,
         command_id: str,
         shipment_ids: list[str],
+        address: dict[str, Any],
         pickup_time: dict[str, str] | None = None,
         proposal_item_id: str | None = None,
     ) -> dict[str, Any]:
@@ -765,7 +773,10 @@ class AllegroClient:
                 "create_ship_with_allegro_pickup requires either pickup_time "
                 "(new format) or proposal_item_id (legacy)."
             )
-        input_body: dict[str, Any] = {"shipmentIds": list(shipment_ids)}
+        input_body: dict[str, Any] = {
+            "shipmentIds": list(shipment_ids),
+            "address": dict(address),
+        }
         if pickup_time:
             input_body["pickupTime"] = dict(pickup_time)
         else:
@@ -774,6 +785,7 @@ class AllegroClient:
         return self._post(
             "/shipment-management/pickups/create-commands",
             {"commandId": command_id, "input": input_body},
+            extra_headers={"Content-Type": _ACCEPT_HEADER},
         )
 
     def cancel_ship_with_allegro_shipment(
