@@ -789,6 +789,10 @@ class AllegroClient:
             extra_headers={"Content-Type": _ACCEPT_HEADER},
         )
 
+    def get_ship_with_allegro_pickup_command_status(self, command_id: str) -> dict[str, Any]:
+        """Read the asynchronous pickup command status and resulting pickupId."""
+        return self._get(f"/shipment-management/pickups/create-commands/{command_id}")
+
     def cancel_ship_with_allegro_shipment(
         self, *, command_id: str, shipment_id: str
     ) -> dict[str, Any]:

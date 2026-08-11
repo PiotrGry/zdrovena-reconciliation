@@ -48,6 +48,7 @@ class FakeProviderState:
         self.allegro_orders: dict[str, dict[str, Any]] = {"fake-order-1": sample_allegro_order()}
         self.allegro_shipments: dict[str, dict[str, Any]] = {}
         self.allegro_commands: dict[str, dict[str, Any]] = {}
+        self.allegro_pickup_commands: dict[str, dict[str, Any]] = {}
         self.allegro_invoices: dict[str, dict[str, Any]] = {}
         self.allegro_dispatches: dict[str, dict[str, Any]] = {}
         self.inpost_shipments: dict[str, dict[str, Any]] = {}

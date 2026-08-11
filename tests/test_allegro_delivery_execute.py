@@ -14,7 +14,9 @@ import pytest
 from zdrovena.api.routers.webhooks import (
     _allegro_carrier_id_for_courier,
     _maybe_push_tracking_to_allegro,
+    _order_allegro_pickup,
     _run_allegro_delivery,
+    confirm_pending_command,
 )
 from zdrovena.common.exceptions import MissingSecretError
 from zdrovena.common.shipping_exceptions import AllegroBusinessError, CourierServerError
@@ -250,6 +252,13 @@ class TestRunAllegroDelivery:
                 "shipmentId": "ship-42",
             }
         ]
+        client.get_ship_with_allegro_pickup_command_status.return_value = {
+            "id": "pickup-command",
+            "status": "SUCCESS",
+            "pickupId": "pickup-42",
+            "carrierPickupId": "carrier-42",
+            "errors": [],
+        }
 
         with (
             patch(
@@ -282,6 +291,7 @@ class TestRunAllegroDelivery:
         # Legacy field must not be passed.
         assert "proposal_item_id" not in pickup_call.kwargs
         assert result["pickup_ordered"] is True
+        assert result["allegro_dispatch_id"] == "pickup-42"
 
     def test_creates_pickup_legacy_fallback(self):
         """Sandbox / older-server response with only proposal_item id — legacy path."""
@@ -296,6 +306,12 @@ class TestRunAllegroDelivery:
         client.get_ship_with_allegro_pickup_proposals.return_value = [
             {"id": "prop-1", "shipmentId": "ship-42"}
         ]
+        client.get_ship_with_allegro_pickup_command_status.return_value = {
+            "id": "pickup-command",
+            "status": "SUCCESS",
+            "pickupId": "pickup-legacy-42",
+            "errors": [],
+        }
 
         with (
             patch(
@@ -318,6 +334,7 @@ class TestRunAllegroDelivery:
         assert pickup_call.kwargs["address"] == _ALLEGRO_PICKUP_ADDRESS
         assert "pickup_time" not in pickup_call.kwargs
         assert result["pickup_ordered"] is True
+        assert result["allegro_dispatch_id"] == "pickup-legacy-42"
 
     def test_no_pickup_when_pickup_date_absent(self):
         client = MagicMock()
@@ -526,3 +543,191 @@ class TestPendingConfirmation:
             pytest.raises(AllegroBusinessError),
         ):
             _run_allegro_delivery(self._draft(), MagicMock())
+
+    def test_successful_post_is_checkpointed_before_poll_failure_and_retry_does_not_post(
+        self, tmp_path
+    ):
+        from zdrovena.common.shipping_store import ShippingStore
+        from zdrovena.shipping.application.execution import workflow
+
+        store = ShippingStore(local_root=tmp_path / "shipping")
+        draft = self._draft(
+            courier="allegro_delivery",
+            service="allegro_delivery",
+            status="pending",
+            created_at="2026-08-11T12:00:00Z",
+        )
+        store.upsert_draft(draft)
+
+        client = MagicMock()
+        client.get_delivery_proposal.return_value = _PROPOSAL
+        client.create_ship_with_allegro_shipment.return_value = {"commandId": "accepted"}
+        client.wait_for_ship_with_allegro_shipment.side_effect = CourierServerError(
+            courier="allegro",
+            status=503,
+        )
+
+        def execute_once():
+            return workflow.execute_draft(
+                draft["id"],
+                store,
+                build_preview=MagicMock(),
+                resolve_sender=lambda: {},
+                run_inpost=MagicMock(),
+                run_apaczka=MagicMock(),
+                run_allegro_delivery=lambda current, **kwargs: _run_allegro_delivery(
+                    current, MagicMock(), **kwargs
+                ),
+                record_event=MagicMock(),
+                emit_tracking_assigned=MagicMock(),
+                push_tracking=MagicMock(),
+                log_exception=MagicMock(),
+                execution_dlq_kind="draft_execution",
+                system_shipment_origin="system",
+            )
+
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_client",
+            return_value=client,
+        ):
+            with pytest.raises(CourierServerError):
+                execute_once()
+
+            accepted_command_id = client.create_ship_with_allegro_shipment.call_args.kwargs[
+                "command_id"
+            ]
+            checkpointed = store.get_draft(draft["id"])
+            assert checkpointed["allegro_command_id"] == accepted_command_id
+            assert checkpointed["status"] == "pending_confirmation"
+
+            retry = execute_once()
+
+            client.get_ship_with_allegro_command_status.return_value = {
+                "commandId": accepted_command_id,
+                "status": "SUCCESS",
+                "shipmentId": "ship-resumed-42",
+                "errors": [],
+            }
+            client.get_ship_with_allegro_shipment.return_value = {
+                "packages": [
+                    {"transportingInfo": [{"carrierId": "INPOST", "carrierWaybill": "RESUMED-42"}]}
+                ]
+            }
+            client.extract_shipment_waybill.return_value = ("INPOST", "RESUMED-42")
+            confirmed = confirm_pending_command(draft["id"], store, MagicMock())
+
+        assert retry["allegro_command_id"] == accepted_command_id
+        assert retry["status"] == "pending_confirmation"
+        assert confirmed["status"] == "created"
+        assert confirmed["tracking_number"] == "RESUMED-42"
+        client.get_ship_with_allegro_command_status.assert_called_once_with(accepted_command_id)
+        client.create_ship_with_allegro_shipment.assert_called_once()
+
+
+class TestAllegroPickupLifecycle:
+    def _client(self):
+        client = MagicMock()
+        client.get_ship_with_allegro_pickup_proposals.return_value = [
+            {"date": "2026-08-12", "minTime": "08:00", "maxTime": "12:00"}
+        ]
+        client.create_ship_with_allegro_pickup.return_value = {"commandId": "accepted"}
+        return client
+
+    def test_in_progress_is_not_completed_pickup(self):
+        client = self._client()
+        client.get_ship_with_allegro_pickup_command_status.return_value = {
+            "id": "pickup-command",
+            "status": "IN_PROGRESS",
+            "errors": [],
+        }
+        checkpoint = MagicMock()
+
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+            return_value=_ALLEGRO_PICKUP_ADDRESS,
+        ):
+            result = _order_allegro_pickup(
+                client,
+                "ship-42",
+                "2026-08-12",
+                on_command_created=checkpoint,
+            )
+
+        assert result["status"] == "IN_PROGRESS"
+        assert result["pickup_id"] is None
+        checkpoint.assert_called_once_with(result["command_id"])
+
+    def test_error_is_terminal_and_exposes_provider_message(self):
+        client = self._client()
+        client.get_ship_with_allegro_pickup_command_status.return_value = {
+            "id": "pickup-command",
+            "status": "ERROR",
+            "errors": [{"message": "pickup rejected"}],
+        }
+
+        with (
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+                return_value=_ALLEGRO_PICKUP_ADDRESS,
+            ),
+            pytest.raises(AllegroBusinessError, match="pickup rejected"),
+        ):
+            _order_allegro_pickup(client, "ship-42", "2026-08-12")
+
+    def test_success_returns_real_pickup_identifier(self):
+        client = self._client()
+        client.get_ship_with_allegro_pickup_command_status.return_value = {
+            "id": "pickup-command",
+            "status": "SUCCESS",
+            "pickupId": "pickup-9",
+            "carrierPickupId": "carrier-9",
+            "errors": [],
+        }
+
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+            return_value=_ALLEGRO_PICKUP_ADDRESS,
+        ):
+            result = _order_allegro_pickup(client, "ship-42", "2026-08-12")
+
+        assert result == {
+            "status": "SUCCESS",
+            "command_id": result["command_id"],
+            "pickup_id": "pickup-9",
+            "carrier_pickup_id": "carrier-9",
+        }
+
+    def test_retry_resumes_stable_command_without_second_post(self):
+        client = self._client()
+        client.get_ship_with_allegro_pickup_command_status.side_effect = [
+            {"id": "pickup-command", "status": "IN_PROGRESS", "errors": []},
+            {
+                "id": "pickup-command",
+                "status": "SUCCESS",
+                "pickupId": "pickup-9",
+                "errors": [],
+            },
+        ]
+        checkpointed: list[str] = []
+
+        with patch(
+            "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+            return_value=_ALLEGRO_PICKUP_ADDRESS,
+        ):
+            pending = _order_allegro_pickup(
+                client,
+                "ship-42",
+                "2026-08-12",
+                on_command_created=checkpointed.append,
+            )
+            completed = _order_allegro_pickup(
+                client,
+                "ship-42",
+                "2026-08-12",
+                command_id=pending["command_id"],
+            )
+
+        assert completed["pickup_id"] == "pickup-9"
+        assert completed["command_id"] == pending["command_id"]
+        client.create_ship_with_allegro_pickup.assert_called_once()
+        client.get_ship_with_allegro_pickup_proposals.assert_called_once()

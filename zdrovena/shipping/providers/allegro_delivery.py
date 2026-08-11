@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from zdrovena.common.shipping_exceptions import AllegroBusinessError
+from zdrovena.common.shipping_parcels import PARCEL_SPECS
 from zdrovena.shipping.domain.planning import (
-    parcel_weight_and_dims,
     physical_parcels,
     shipment_reference,
 )
@@ -29,16 +29,19 @@ def allegro_call_spec(draft: dict[str, Any], proposal: dict[str, Any]) -> Allegr
     """Build create-command arguments from a draft and Allegro proposal."""
     # FLAT dimensions, each a {"value", "unit"} object; weight unit is the
     # plural "KILOGRAMS"; type is required.
-    weight_kg, dims = parcel_weight_and_dims(draft)
-    packages = [
-        {
-            "type": "PACKAGE",
-            "length": {"value": dims["length"], "unit": "CENTIMETER"},
-            "width": {"value": dims["width"], "unit": "CENTIMETER"},
-            "height": {"value": dims["height"], "unit": "CENTIMETER"},
-            "weight": {"value": round(weight_kg, 2), "unit": "KILOGRAMS"},
-        }
-    ]
+    parcels = physical_parcels(draft)
+    packages = []
+    for parcel in parcels:
+        spec = PARCEL_SPECS.get(parcel.package_type) or PARCEL_SPECS["1-pak"]
+        packages.append(
+            {
+                "type": "PACKAGE",
+                "length": {"value": spec["length"], "unit": "CENTIMETER"},
+                "width": {"value": spec["width"], "unit": "CENTIMETER"},
+                "height": {"value": spec["height"], "unit": "CENTIMETER"},
+                "weight": {"value": round(float(spec["weight_kg"]), 2), "unit": "KILOGRAMS"},
+            }
+        )
 
     # Allegro pre-fills both required address blocks under suggestedInput.
     suggested_input = proposal.get("suggestedInput")
@@ -65,12 +68,12 @@ def allegro_call_spec(draft: dict[str, Any], proposal: dict[str, Any]) -> Allegr
     if sending_method and sending_method in ALLEGRO_INPOST_SENDING_METHODS:
         additional_properties = {"inpost#sendingMethod": sending_method}
 
-    parcel = physical_parcels(draft)[0]
+    parcel = parcels[0]
     reference_number = shipment_reference(
         str(draft.get("shopify_order_number", "")),
         parcel.package_type,
-        parcel.position,
-        parcel.count_for_type,
+        1,
+        1,
     )
 
     return {

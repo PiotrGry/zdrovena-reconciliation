@@ -11,7 +11,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any, ClassVar
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -1063,6 +1063,12 @@ class TestOrderPickup:
         allegro.get_ship_with_allegro_pickup_proposals.return_value = [
             {"date": "2026-08-07", "minTime": "09:00", "maxTime": "13:00"}
         ]
+        allegro.get_ship_with_allegro_pickup_command_status.return_value = {
+            "id": "pickup-command",
+            "status": "SUCCESS",
+            "pickupId": "pickup-1",
+            "errors": [],
+        }
         with (
             patch.object(store, "try_claim_pickup", wraps=store.try_claim_pickup) as claim_pickup,
             patch.object(store, "update_draft", wraps=store.update_draft) as update_draft,
@@ -1076,6 +1082,7 @@ class TestOrderPickup:
 
         assert result == {"status": "pickup_ordered", "draft_id": draft["id"]}
         assert store.get_draft(draft["id"])["pickup_ordered"] is True
+        assert store.get_draft(draft["id"])["allegro_dispatch_id"] == "pickup-1"
         claim_pickup.assert_called_once_with(draft["id"])
         assert [
             call
@@ -1094,6 +1101,66 @@ class TestOrderPickup:
             "maxTime": "13:00",
         }
 
+    def test_allegro_pickup_resumes_command_persists_pickup_id_and_can_cancel(self, store):
+        draft = self._seed_created_kurier(store)
+        store.update_draft(
+            draft["id"], {"courier": "allegro_delivery", "service": "allegro_delivery"}
+        )
+        allegro = MagicMock()
+        allegro.get_ship_with_allegro_pickup_proposals.return_value = [
+            {"date": "2026-08-07", "minTime": "09:00", "maxTime": "13:00"}
+        ]
+        allegro.create_ship_with_allegro_pickup.return_value = {"commandId": "accepted"}
+        allegro.get_ship_with_allegro_pickup_command_status.side_effect = [
+            {"id": "cmd-pickup", "status": "IN_PROGRESS", "errors": []},
+            {
+                "id": "cmd-pickup",
+                "status": "SUCCESS",
+                "pickupId": "pickup-real-9",
+                "carrierPickupId": "carrier-9",
+                "errors": [],
+            },
+        ]
+
+        with (
+            patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+                return_value=_ALLEGRO_PICKUP_ADDRESS,
+            ),
+        ):
+            pending = webhooks_router.order_pickup(
+                draft["id"], store, MagicMock(), None, None, None
+            )
+            assert pending.status_code == 202
+            pending_draft = store.get_draft(draft["id"])
+            command_id = pending_draft["allegro_dispatch_id"]
+            assert command_id
+            assert pending_draft["pickup_ordered"] is False
+
+            completed = webhooks_router.order_pickup(
+                draft["id"], store, MagicMock(), None, None, None
+            )
+            assert completed == {"status": "pickup_ordered", "draft_id": draft["id"]}
+            completed_draft = store.get_draft(draft["id"])
+            assert completed_draft["pickup_ordered"] is True
+            assert completed_draft["allegro_dispatch_id"] == "pickup-real-9"
+
+            cancelled = webhooks_router.cancel_dispatch(draft["id"], store, MagicMock())
+
+        assert cancelled["status"] == "dispatch_cancelled"
+        allegro.create_ship_with_allegro_pickup.assert_called_once()
+        assert [
+            call.args[0]
+            for call in allegro.get_ship_with_allegro_pickup_command_status.call_args_list
+        ] == [
+            command_id,
+            command_id,
+        ]
+        assert allegro.cancel_ship_with_allegro_dispatch.call_args.kwargs["dispatch_id"] == (
+            "pickup-real-9"
+        )
+
     def test_missing_allegro_credentials_releases_claim_and_allows_retry(self, client, store):
         draft = self._seed_created_kurier(store)
         store.update_draft(
@@ -1110,7 +1177,12 @@ class TestOrderPickup:
             ),
             patch(
                 "zdrovena.api.routers.webhooks._order_allegro_pickup",
-                return_value=True,
+                return_value={
+                    "status": "SUCCESS",
+                    "command_id": "pickup-command",
+                    "pickup_id": "pickup-1",
+                    "carrier_pickup_id": None,
+                },
             ) as order_allegro_pickup,
         ):
             failed = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
@@ -1125,7 +1197,13 @@ class TestOrderPickup:
         assert retried.status_code == 200, retried.text
         assert retried.json() == {"status": "pickup_ordered", "draft_id": draft["id"]}
         assert claim_pickup.call_count == 2
-        order_allegro_pickup.assert_called_once_with(allegro, "ship-id-1", None)
+        order_allegro_pickup.assert_called_once_with(
+            allegro,
+            "ship-id-1",
+            None,
+            command_id=None,
+            on_command_created=ANY,
+        )
         assert (
             len(
                 [
@@ -2059,6 +2137,60 @@ class TestRunInpost:
         assert result["status"] == "pending_confirmation"
         assert not result["tracking_number"]
 
+    def test_async_create_with_pickup_does_not_dispatch_before_confirmation(self):
+        """ShipX rejects dispatches for shipments whose waybill is not ready."""
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        with (
+            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.inpost.InPostClient.create_kurier_shipment",
+                return_value={"id": "ship-async", "tracking_number": None},
+            ),
+            patch("zdrovena.common.inpost.InPostClient.create_dispatch_order") as create_dispatch,
+        ):
+            result = _run_inpost(
+                _KURIER_DRAFT,
+                _SENDER,
+                pickup_date="2026-08-08",
+                pickup_from="09:00",
+                pickup_to="13:00",
+            )
+
+        create_dispatch.assert_not_called()
+        assert result["status"] == "pending_confirmation"
+        assert result["pickup_ordered"] is False
+        assert result["dispatch_order_id"] is None
+
+    def test_partial_multi_parcel_confirmation_does_not_dispatch(self):
+        from zdrovena.api.routers.webhooks import _run_inpost
+
+        draft = {
+            **_KURIER_DRAFT,
+            "packages_breakdown": [{"type": "1-pak", "qty": 2}],
+        }
+        with (
+            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.inpost.InPostClient.create_kurier_shipment",
+                side_effect=[
+                    {"id": "ship-confirmed", "tracking_number": "620A"},
+                    {"id": "ship-pending", "tracking_number": None},
+                ],
+            ),
+            patch("zdrovena.common.inpost.InPostClient.create_dispatch_order") as create_dispatch,
+        ):
+            result = _run_inpost(draft, _SENDER, pickup_date="2026-08-08")
+
+        create_dispatch.assert_not_called()
+        assert [shipment["id"] for shipment in result["courier_shipments"]] == [
+            "ship-confirmed",
+            "ship-pending",
+        ]
+        assert result["status"] == "pending_confirmation"
+        assert result["pickup_ordered"] is False
+        assert result["dispatch_order_id"] is None
+
     def test_create_with_tracking_is_immediately_created(self):
         """The other half of the contract: when ShipX answers with a tracking
         number straight away there is nothing to wait for."""
@@ -2894,6 +3026,41 @@ class TestGetLabel:
                 resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/pdf"
+
+    @pytest.mark.parametrize(
+        "order_number",
+        [
+            "5000",
+            "50\rInjected: yes",
+            "50\nInjected: yes",
+            '50"evil',
+            "50/evil\\path",
+            "Żółć 5000",
+        ],
+    )
+    def test_label_content_disposition_uses_safe_ascii_filename(self, store, order_number):
+        draft = self._seed_created_draft(store, courier="inpost")
+        store.update_draft(draft["id"], {"shopify_order_number": order_number})
+
+        with (
+            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                return_value=b"%PDF-1.4 fake",
+            ),
+        ):
+            response = webhooks_router.get_label(draft["id"], store, MagicMock(), MagicMock(), None)
+
+        assert response.status_code == 200
+        disposition = response.headers["content-disposition"]
+        disposition.encode("ascii")
+        assert "\r" not in disposition
+        assert "\n" not in disposition
+        assert "/" not in disposition
+        assert "\\" not in disposition
+        assert disposition.count('"') == 2
+        if order_number == "5000":
+            assert disposition == 'inline; filename="label_inpost_5000.pdf"'
 
     def test_inpost_multiple_box_labels_are_merged(self, client, store):
         draft = self._seed_created_draft(store, courier="inpost")
@@ -4939,9 +5106,9 @@ class TestAllegroPayloadPlan:
                 "service": "allegro_delivery",
                 "package_type": "allegro",
                 "package_number": 1,
-                "reference": "1053 | plastik | 2-pak 1/2",
+                "reference": "1053 | plastik | 2-pak",
                 "payload": {
-                    "reference_number": "1053 | plastik | 2-pak 1/2",
+                    "reference_number": "1053 | plastik | 2-pak",
                     "delivery_method_id": None,
                     "credentials_id": None,
                     "packages": [
@@ -4950,8 +5117,22 @@ class TestAllegroPayloadPlan:
                             "length": {"value": 40, "unit": "CENTIMETER"},
                             "width": {"value": 30, "unit": "CENTIMETER"},
                             "height": {"value": 20, "unit": "CENTIMETER"},
-                            "weight": {"value": 27.0, "unit": "KILOGRAMS"},
-                        }
+                            "weight": {"value": 12.0, "unit": "KILOGRAMS"},
+                        },
+                        {
+                            "type": "PACKAGE",
+                            "length": {"value": 40, "unit": "CENTIMETER"},
+                            "width": {"value": 30, "unit": "CENTIMETER"},
+                            "height": {"value": 20, "unit": "CENTIMETER"},
+                            "weight": {"value": 12.0, "unit": "KILOGRAMS"},
+                        },
+                        {
+                            "type": "PACKAGE",
+                            "length": {"value": 20, "unit": "CENTIMETER"},
+                            "width": {"value": 15, "unit": "CENTIMETER"},
+                            "height": {"value": 20, "unit": "CENTIMETER"},
+                            "weight": {"value": 3.0, "unit": "KILOGRAMS"},
+                        },
                     ],
                     "sender": {
                         "name": "Maria Gryzło ZDROVENA",

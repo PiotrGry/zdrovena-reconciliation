@@ -156,11 +156,11 @@ def poll_orders_once(
         # duplicates on the next cycle — a self-sustaining loop.
         drafts = shipping_store.list_drafts(limit=10_000)
     except Exception:
-        # Resilience boundary: store read failure degrades to "no known drafts"
-        # (dedup best-effort) rather than aborting the whole cycle.
+        # Without the snapshot there is no idempotency decision. Keep the
+        # scheduler healthy, but fail this cycle closed before any order effect.
         logger.exception("shipping_store.list_drafts failed")
         stats["errors"] += 1
-        drafts = []
+        return stats
 
     for form in forms:
         allegro_id = str(form.get("id", ""))
