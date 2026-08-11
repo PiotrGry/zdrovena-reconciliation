@@ -13,6 +13,7 @@ from zdrovena.shipping.providers.allegro_delivery import (
     allegro_call_spec,
     allegro_payload_plan,
 )
+from zdrovena.shipping.providers.inpost import inpost_call_specs
 
 _DRAFT: dict[str, Any] = {
     "id": "allegro-provider-test",
@@ -84,7 +85,7 @@ def _draft(**overrides: Any) -> dict[str, Any]:
     return draft
 
 
-def test_call_spec_matches_exact_legacy_shape() -> None:
+def test_call_spec_matches_exact_payload_builder_shape() -> None:
     proposal = {
         "suggestedInput": {
             "sender": dict(_PROPOSAL["suggestedInput"]["sender"]),
@@ -95,7 +96,7 @@ def test_call_spec_matches_exact_legacy_shape() -> None:
     result = allegro_call_spec(_draft(), proposal)
 
     assert result == {
-        "order_id": "allegro-order-9",
+        "reference_number": "1053 | plastik | 2-pak 1/2",
         "delivery_method_id": "method-inpost-locker",
         "credentials_id": None,
         "packages": [
@@ -128,18 +129,33 @@ def test_call_spec_matches_exact_legacy_shape() -> None:
     assert "point" not in proposal["suggestedInput"]["receiver"]
 
 
-def test_reference_number_source_is_external_order_id_not_local_or_display_id() -> None:
+def test_reference_number_uses_canonical_business_reference_not_checkout_id() -> None:
     draft = _draft(
         id="local-draft-uuid",
         external_order_id="allegro-checkout-uuid",
-        shopify_order_number="operator-display-value",
+        shopify_order_number="1700",
+        packages_breakdown=[{"type": "1-pak", "qty": 1}],
     )
 
     result = allegro_call_spec(draft, _PROPOSAL)
 
-    assert result["order_id"] == "allegro-checkout-uuid"
-    assert result["order_id"] != draft["id"]
-    assert result["order_id"] != draft["shopify_order_number"]
+    assert result["reference_number"] == "1700 | plastik | 1-pak"
+    assert result["reference_number"] != draft["external_order_id"]
+    assert result["reference_number"] != draft["id"]
+
+
+def test_equivalent_inpost_and_allegro_drafts_use_same_canonical_reference() -> None:
+    draft = _draft(
+        external_order_id="1c5e0b30-94db-11f1-82ad-f5cfa7ea889b",
+        shopify_order_number="1700",
+        packages_breakdown=[{"type": "1-pak", "qty": 1}],
+    )
+
+    inpost_reference = inpost_call_specs(draft, sender={})[0][3]
+    allegro_reference = allegro_call_spec(draft, _PROPOSAL)["reference_number"]
+
+    assert inpost_reference == "1700 | plastik | 1-pak"
+    assert allegro_reference == inpost_reference
 
 
 @pytest.mark.parametrize(
@@ -206,10 +222,21 @@ def test_payload_plan_reads_proposal_once_and_performs_no_writes_or_uuid_generat
             "service": "allegro_delivery",
             "package_type": "allegro",
             "package_number": 1,
-            "reference": "allegro-order-9",
+            "reference": "1053 | plastik | 2-pak 1/2",
             "payload": allegro_call_spec(_draft(), _PROPOSAL),
         }
     ]
+
+
+def test_payload_plan_preserves_external_order_id_for_proposal_correlation() -> None:
+    draft = _draft(external_order_id="allegro-checkout-uuid")
+    client = _ReadOnlyProposalClient(_PROPOSAL)
+
+    plan = allegro_payload_plan(draft, client)
+
+    assert client.proposal_order_ids == ["allegro-checkout-uuid"]
+    assert draft["external_order_id"] == "allegro-checkout-uuid"
+    assert plan[0]["payload"]["reference_number"] == "1053 | plastik | 2-pak 1/2"
 
 
 def test_payload_plan_validates_external_order_id_before_provider_lookup() -> None:

@@ -4939,9 +4939,9 @@ class TestAllegroPayloadPlan:
                 "service": "allegro_delivery",
                 "package_type": "allegro",
                 "package_number": 1,
-                "reference": "allegro-order-9",
+                "reference": "1053 | plastik | 2-pak 1/2",
                 "payload": {
-                    "order_id": "allegro-order-9",
+                    "reference_number": "1053 | plastik | 2-pak 1/2",
                     "delivery_method_id": None,
                     "credentials_id": None,
                     "packages": [

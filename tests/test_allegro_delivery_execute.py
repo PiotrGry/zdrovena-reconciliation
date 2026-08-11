@@ -144,7 +144,7 @@ class TestRunAllegroDelivery:
         call = client.create_ship_with_allegro_shipment.call_args
         assert call.kwargs["delivery_method_id"] == "svc-dpd"
         assert call.kwargs["credentials_id"] == "own-agreement-42"
-        assert call.kwargs["order_id"] == "ORD-1"
+        assert call.kwargs["reference_number"] == "ALG-1 | plastik | 1-pak"
         # sender/receiver blocks come from the delivery proposal.
         assert call.kwargs["sender"] == _PROPOSAL["suggestedInput"]["sender"]
         assert call.kwargs["receiver"]["name"] == _PROPOSAL["suggestedInput"]["receiver"]["name"]

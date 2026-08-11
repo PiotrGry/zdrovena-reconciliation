@@ -173,7 +173,7 @@ class TestCreateShipmentCommand:
         ) as m:
             result = c.create_ship_with_allegro_shipment(
                 command_id="cmd-uuid-1",
-                order_id="ORDER-123",
+                reference_number="ORDER-123",
                 delivery_method_id="svc-inpost-locker",
                 credentials_id=None,
                 sender=_SENDER,
@@ -186,7 +186,7 @@ class TestCreateShipmentCommand:
         body = kwargs["json"]
         assert kwargs["headers"]["Content-Type"] == ("application/vnd.allegro.public.v1+json")
         assert body["commandId"] == "cmd-uuid-1"
-        # order_id is sent as referenceNumber; there is no top-level orderId.
+        # reference_number is sent as referenceNumber; there is no top-level orderId.
         assert body["input"]["referenceNumber"] == "ORDER-123"
         assert "orderId" not in body["input"]
         assert body["input"]["deliveryMethodId"] == "svc-inpost-locker"
@@ -210,7 +210,7 @@ class TestCreateShipmentCommand:
         c = _mock_client()
         kwargs = {
             "command_id": "x",
-            "order_id": "O1",
+            "reference_number": "O1",
             "credentials_id": None,
             "sender": _SENDER,
             "receiver": _RECEIVER,
@@ -236,7 +236,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 credentials_id=None,
                 sender=_SENDER,
                 receiver=_RECEIVER,
@@ -255,7 +255,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 delivery_method_id="own-agreement-method",
                 credentials_id="creds-1",
                 sender=_SENDER,
@@ -274,7 +274,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 delivery_method_id="svc-inpost",
                 credentials_id=None,
                 sender=_SENDER,
@@ -294,7 +294,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 delivery_method_id="svc-inpost",
                 credentials_id=None,
                 sender=_SENDER,
@@ -314,7 +314,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 credentials_id=None,
                 sender=_SENDER,
                 receiver=_RECEIVER,
@@ -334,7 +334,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 credentials_id=None,
                 sender=_SENDER,
                 receiver=_RECEIVER,
@@ -353,7 +353,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 credentials_id=None,
                 sender=_SENDER,
                 receiver=_RECEIVER,
@@ -372,7 +372,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 delivery_method_id="svc-dpd",
                 credentials_id="cred-abc",
                 sender=_SENDER,
@@ -391,7 +391,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 delivery_method_id="svc",
                 credentials_id=None,
                 sender=_SENDER,
@@ -416,7 +416,7 @@ class TestCreateShipmentCommand:
             with pytest.raises(AllegroBusinessError):
                 c.create_ship_with_allegro_shipment(
                     command_id="x",
-                    order_id="O1",
+                    reference_number="O1",
                     delivery_method_id="svc",
                     credentials_id=None,
                     sender=_SENDER,

@@ -115,7 +115,7 @@ def test_allegro_client_uses_fake_provider_over_http(
     client.mark_order_processed("fake-order-1", "PROCESSING")
     command = client.create_ship_with_allegro_shipment(
         command_id="cmd-1",
-        order_id="fake-order-1",
+        reference_number="fake-order-1",
         credentials_id=None,
         sender={
             "name": "Zdrovena",

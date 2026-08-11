@@ -557,7 +557,7 @@ class AllegroClient:
         self,
         *,
         command_id: str,
-        order_id: str,
+        reference_number: str,
         credentials_id: str | None,
         packages: list[dict[str, Any]],
         sender: dict[str, Any],
@@ -569,7 +569,8 @@ class AllegroClient:
         """POST /shipment-management/shipments/create-commands.
 
         Contract (see tests/fixtures/allegro/create-commands-request.json):
-          - order_id is sent as ``referenceNumber`` (there is no ``orderId`` field).
+          - reference_number is sent as ``referenceNumber`` (there is no
+            ``orderId`` field).
           - ``sender`` / ``receiver`` are required address blocks (name, company,
             street, postalCode, city, state, countryCode, email, phone, point?).
             For pickup-point / locker deliveries put the point code in
@@ -595,7 +596,7 @@ class AllegroClient:
         input_body: dict[str, Any] = {
             "sender": sender,
             "receiver": receiver,
-            "referenceNumber": order_id,
+            "referenceNumber": reference_number,
             "packages": packages,
         }
         if delivery_method_id:
