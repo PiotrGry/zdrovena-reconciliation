@@ -182,9 +182,27 @@ def execute_draft(
             persisted_shipments.append(shipment)
             repository.update_draft(draft_id, {"courier_shipments": persisted_shipments})
 
+        def persist_allegro_command(command_id: str) -> None:
+            repository.update_draft(
+                draft_id,
+                {
+                    "allegro_command_id": command_id,
+                    "status": "pending_confirmation",
+                    "error": None,
+                },
+            )
+
+        def persist_allegro_pickup_command(command_id: str) -> None:
+            repository.update_draft(draft_id, {"allegro_dispatch_id": command_id})
+
         courier = draft.get("courier", "apaczka")
         if courier == "allegro_delivery":
-            patch = run_allegro_delivery(draft, **pickup_schedule)
+            patch = run_allegro_delivery(
+                draft,
+                **pickup_schedule,
+                on_command_created=persist_allegro_command,
+                on_pickup_command_created=persist_allegro_pickup_command,
+            )
         elif courier == "inpost":
             patch = run_inpost(
                 draft,

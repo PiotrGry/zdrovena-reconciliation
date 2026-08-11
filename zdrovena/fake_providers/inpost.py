@@ -291,15 +291,14 @@ async def create_dispatch(
     return JSONResponse(status_code=201, content=dispatch)
 
 
-@router.delete("/v1/organizations/{org_id}/dispatch_orders/{dispatch_id}", status_code=204)
+@router.delete("/v1/dispatch_orders/{dispatch_id}", status_code=204)
 def cancel_dispatch(
-    org_id: str,
     dispatch_id: str,
     authorization: str | None = Header(default=None),
 ) -> Response:
     require_bearer(authorization)
     dispatch = STATE.inpost_dispatches.get(dispatch_id)
-    if not dispatch or dispatch["organization_id"] != org_id:
+    if not dispatch:
         raise HTTPException(status_code=404, detail="dispatch not found")
     dispatch["status"] = "canceled"
     return Response(status_code=204)

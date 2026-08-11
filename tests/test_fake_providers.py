@@ -184,6 +184,16 @@ def test_allegro_client_uses_fake_provider_over_http(
     )
     assert pickup["input"]["address"] == pickup_address
     assert pickup["input"]["shipmentIds"] == [status["shipmentId"]]
+    pickup_status = client.get_ship_with_allegro_pickup_command_status("pickup-cmd-1")
+    assert pickup_status["status"] == "IN_PROGRESS"
+    pickup_status = client.get_ship_with_allegro_pickup_command_status("pickup-cmd-1")
+    assert pickup_status["status"] == "SUCCESS"
+    assert pickup_status["pickupId"].startswith("allegro-pickup-")
+    cancelled_pickup = client.cancel_ship_with_allegro_dispatch(
+        command_id="pickup-cancel-1",
+        dispatch_id=pickup_status["pickupId"],
+    )
+    assert cancelled_pickup["commandId"] == "pickup-cancel-1"
 
     invoice = client.create_invoice_declaration(order_id="fake-order-1", invoice_number="FV/1/2026")
     client.upload_invoice_file(
@@ -255,6 +265,12 @@ def test_inpost_client_stateful_success_and_label_not_ready(
 
     dispatch = client.create_dispatch_order(shipment["id"], {"name": "Zdrovena"})
     assert dispatch["status"] == "created"
+    cancel = requests.delete(
+        f"{fake_provider_url}/inpost/v1/dispatch_orders/{dispatch['id']}",
+        headers={"Authorization": "Bearer fake-token"},
+        timeout=2,
+    )
+    assert cancel.status_code == 204
     assert client.get_label(shipment["id"]).startswith(b"%PDF")
 
     _set_scenario(fake_provider_url, "inpost", "get_label", "label_not_ready")

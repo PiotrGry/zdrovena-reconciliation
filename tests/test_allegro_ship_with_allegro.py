@@ -786,6 +786,29 @@ class TestCreatePickupCommand:
         assert "pickupTime" in body["input"]
         assert "pickupDateProposalId" not in body["input"]
 
+    @pytest.mark.parametrize("status", ["IN_PROGRESS", "SUCCESS", "ERROR"])
+    def test_reads_pickup_command_status_from_official_resource(self, status):
+        c = _mock_client()
+        payload = {
+            "id": "pu-cmd-1",
+            "status": status,
+            "pickupId": "pickup-9" if status == "SUCCESS" else None,
+            "carrierPickupId": "carrier-9" if status == "SUCCESS" else None,
+            "errors": [{"message": "slot rejected"}] if status == "ERROR" else [],
+        }
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(200, payload),
+        ) as request:
+            result = c.get_ship_with_allegro_pickup_command_status("pu-cmd-1")
+
+        assert result == payload
+        assert request.call_args.args[0] == "GET"
+        assert request.call_args.args[1].endswith(
+            "/shipment-management/pickups/create-commands/pu-cmd-1"
+        )
+
 
 # ── cancel shipment / dispatch ────────────────────────────────────────────────
 

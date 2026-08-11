@@ -96,7 +96,7 @@ def test_call_spec_matches_exact_payload_builder_shape() -> None:
     result = allegro_call_spec(_draft(), proposal)
 
     assert result == {
-        "reference_number": "1053 | plastik | 2-pak 1/2",
+        "reference_number": "1053 | plastik | 2-pak",
         "delivery_method_id": "method-inpost-locker",
         "credentials_id": None,
         "packages": [
@@ -105,8 +105,22 @@ def test_call_spec_matches_exact_payload_builder_shape() -> None:
                 "length": {"value": 40, "unit": "CENTIMETER"},
                 "width": {"value": 30, "unit": "CENTIMETER"},
                 "height": {"value": 20, "unit": "CENTIMETER"},
-                "weight": {"value": 27.0, "unit": "KILOGRAMS"},
-            }
+                "weight": {"value": 12.0, "unit": "KILOGRAMS"},
+            },
+            {
+                "type": "PACKAGE",
+                "length": {"value": 40, "unit": "CENTIMETER"},
+                "width": {"value": 30, "unit": "CENTIMETER"},
+                "height": {"value": 20, "unit": "CENTIMETER"},
+                "weight": {"value": 12.0, "unit": "KILOGRAMS"},
+            },
+            {
+                "type": "PACKAGE",
+                "length": {"value": 20, "unit": "CENTIMETER"},
+                "width": {"value": 15, "unit": "CENTIMETER"},
+                "height": {"value": 20, "unit": "CENTIMETER"},
+                "weight": {"value": 3.0, "unit": "KILOGRAMS"},
+            },
         ],
         "sender": {
             "name": "Maria Gryzło ZDROVENA",
@@ -127,6 +141,9 @@ def test_call_spec_matches_exact_payload_builder_shape() -> None:
     }
     assert result["sender"] is proposal["suggestedInput"]["sender"]
     assert "point" not in proposal["suggestedInput"]["receiver"]
+    assert len(result["packages"]) == 3
+    assert "1/2" not in result["reference_number"]
+    assert "2/2" not in result["reference_number"]
 
 
 def test_reference_number_uses_canonical_business_reference_not_checkout_id() -> None:
@@ -222,7 +239,7 @@ def test_payload_plan_reads_proposal_once_and_performs_no_writes_or_uuid_generat
             "service": "allegro_delivery",
             "package_type": "allegro",
             "package_number": 1,
-            "reference": "1053 | plastik | 2-pak 1/2",
+            "reference": "1053 | plastik | 2-pak",
             "payload": allegro_call_spec(_draft(), _PROPOSAL),
         }
     ]
@@ -236,7 +253,7 @@ def test_payload_plan_preserves_external_order_id_for_proposal_correlation() -> 
 
     assert client.proposal_order_ids == ["allegro-checkout-uuid"]
     assert draft["external_order_id"] == "allegro-checkout-uuid"
-    assert plan[0]["payload"]["reference_number"] == "1053 | plastik | 2-pak 1/2"
+    assert plan[0]["payload"]["reference_number"] == "1053 | plastik | 2-pak"
 
 
 def test_payload_plan_validates_external_order_id_before_provider_lookup() -> None:
@@ -276,6 +293,7 @@ def test_router_preview_composes_get_client_with_provider_planner(monkeypatch) -
     assert preview["preview_available"] is True
     assert preview["sender"] == _PROPOSAL["suggestedInput"]["sender"]
     assert preview["parcels"][0]["payload"]["receiver"]["point"] == "LOD01A"
+    assert preview["parcels"][0]["payload"] == allegro_call_spec(_draft(), _PROPOSAL)
 
 
 def test_router_preview_preserves_fail_closed_provider_error_handling(monkeypatch) -> None:

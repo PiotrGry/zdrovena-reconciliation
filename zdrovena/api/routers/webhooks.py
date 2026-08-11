@@ -23,6 +23,8 @@ import io
 import json
 import logging
 import os
+import re
+import unicodedata
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -1004,7 +1006,7 @@ def _run_inpost(
     # operator's one pickup control work the same for all three means doing it
     # here. Apaczka and Allegro already did; InPost is the one that ignored the
     # window and left the parcel sitting uncollected.
-    if pickup_date:
+    if pickup_date and patch.get("status") == "created":
         shipment_ids = _dispatch_shipment_ids(patch)
         try:
             dispatch = client.create_dispatch_order(
@@ -1112,6 +1114,8 @@ def _run_allegro_delivery(
     pickup_date: str | None = None,
     pickup_from: str | None = None,
     pickup_to: str | None = None,
+    on_command_created: Callable[[str], None] | None = None,
+    on_pickup_command_created: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Create shipment via Wysyłam z Allegro (Ship with Allegro).
 
@@ -1173,6 +1177,8 @@ def _run_allegro_delivery(
     command_id = str(_uuid.uuid4())
 
     client.create_ship_with_allegro_shipment(command_id=command_id, **call_spec)
+    if on_command_created:
+        on_command_created(command_id)
 
     # Non-blocking: krótki polling ~3s. Jeśli create-command jeszcze IN_PROGRESS — zwracamy
     # status='pending_confirmation' i zostawiamy dopytanie o waybill oddzielnemu workerowi.
@@ -1201,19 +1207,42 @@ def _run_allegro_delivery(
     _carrier_id, waybill = client.extract_shipment_waybill(shipment)
 
     pickup_ordered = False
+    allegro_dispatch_id: str | None = None
     if pickup_date:
+        pickup_command_id = (
+            str(draft.get("allegro_dispatch_id") or "") if not draft.get("pickup_ordered") else ""
+        ) or None
+
+        def checkpoint_pickup_command(command_id: str) -> None:
+            nonlocal pickup_command_id
+            pickup_command_id = command_id
+            if on_pickup_command_created:
+                on_pickup_command_created(command_id)
+
         try:
-            pickup_ordered = _order_allegro_pickup(client, shipment_id, pickup_date)
+            pickup_result = _order_allegro_pickup(
+                client,
+                shipment_id,
+                pickup_date,
+                command_id=pickup_command_id,
+                on_command_created=checkpoint_pickup_command,
+            )
+            pickup_ordered = pickup_result["status"] == "SUCCESS"
+            allegro_dispatch_id = (
+                pickup_result["pickup_id"] if pickup_ordered else pickup_result["command_id"]
+            )
         except (
             AllegroBusinessError,
             AllegroAuthError,
             CourierTransientError,
             MissingSecretError,
-        ):
+        ) as exc:
             # Pickup is best-effort here: the shipment is already created, so a
             # pickup failure must not abort the flow — the operator can retry it
             # from the "Zamów podjazd" button, which raises instead of swallowing.
             logger.exception("Allegro Delivery pickup failed for %s", shipment_id)
+            if not isinstance(exc, _AllegroPickupTerminalError):
+                allegro_dispatch_id = pickup_command_id
 
     return {
         "courier_draft_id": shipment_id,
@@ -1221,6 +1250,7 @@ def _run_allegro_delivery(
         "tracking_number": waybill,
         "status": "created",
         "pickup_ordered": pickup_ordered,
+        "allegro_dispatch_id": allegro_dispatch_id,
         "allegro_command_id": command_id,
         "error": None,
     }
@@ -1248,51 +1278,104 @@ def _get_allegro_pickup_address() -> dict[str, str]:
     }
 
 
-def _order_allegro_pickup(client: Any, shipment_id: str, pickup_date: str | None) -> bool:
-    """Order a Ship-with-Allegro courier pickup. Returns False when Allegro
-    offers no slot.
+class _AllegroPickupTerminalError(AllegroBusinessError):
+    """A pickup command reached a provider terminal state and cannot resume."""
+
+
+def _order_allegro_pickup(
+    client: Any,
+    shipment_id: str,
+    pickup_date: str | None,
+    *,
+    command_id: str | None = None,
+    on_command_created: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Create or resume one asynchronous Ship-with-Allegro pickup command.
 
     Allegro does not take an arbitrary window: it returns proposals and you pick
-    one. Shared by the execute path and the "Zamów podjazd" button so both send
-    the same command.
+    one. The command-status resource is authoritative: command acceptance alone
+    is not a completed pickup.
     """
     import uuid as _pickup_uuid
 
-    pickup_address = _get_allegro_pickup_address()
-    proposals = client.get_ship_with_allegro_pickup_proposals([shipment_id], address=pickup_address)
-    # Prefer new-format entries (with `date`); fall back to legacy `id`
-    # (deprecated but still accepted by servers pre-2026-07-01).
-    new_format = next((p for p in proposals if p.get("date")), None)
-    legacy_format = next((p for p in proposals if p.get("id") and not p.get("date")), None)
-    selected = new_format or legacy_format
-    if not selected:
-        logger.warning(
-            "No pickup proposals available for shipment %s on %s", shipment_id, pickup_date
+    if command_id is None:
+        pickup_address = _get_allegro_pickup_address()
+        proposals = client.get_ship_with_allegro_pickup_proposals(
+            [shipment_id], address=pickup_address
         )
-        return False
+        # Prefer new-format entries (with `date`); fall back to legacy `id`
+        # (deprecated but still accepted by servers pre-2026-07-01).
+        new_format = next((p for p in proposals if p.get("date")), None)
+        legacy_format = next((p for p in proposals if p.get("id") and not p.get("date")), None)
+        selected = new_format or legacy_format
+        if not selected:
+            logger.warning(
+                "No pickup proposals available for shipment %s on %s",
+                shipment_id,
+                pickup_date,
+            )
+            return {
+                "status": "NO_SLOT",
+                "command_id": None,
+                "pickup_id": None,
+                "carrier_pickup_id": None,
+            }
 
-    command_id = str(_pickup_uuid.uuid4())
-    if selected.get("date"):
-        client.create_ship_with_allegro_pickup(
-            command_id=command_id,
-            shipment_ids=[shipment_id],
-            address=pickup_address,
-            pickup_time={
-                "date": selected["date"],
-                "minTime": selected.get("minTime", "08:00"),
-                "maxTime": selected.get("maxTime", "18:00"),
-            },
+        command_id = str(_pickup_uuid.uuid4())
+        if selected.get("date"):
+            client.create_ship_with_allegro_pickup(
+                command_id=command_id,
+                shipment_ids=[shipment_id],
+                address=pickup_address,
+                pickup_time={
+                    "date": selected["date"],
+                    "minTime": selected.get("minTime", "08:00"),
+                    "maxTime": selected.get("maxTime", "18:00"),
+                },
+            )
+        else:
+            client.create_ship_with_allegro_pickup(
+                command_id=command_id,
+                shipment_ids=[shipment_id],
+                address=pickup_address,
+                proposal_item_id=selected["id"],
+            )
+        if on_command_created:
+            on_command_created(command_id)
+
+    status_payload = client.get_ship_with_allegro_pickup_command_status(command_id)
+    command_status = str((status_payload or {}).get("status") or "")
+    if command_status == "IN_PROGRESS":
+        return {
+            "status": command_status,
+            "command_id": command_id,
+            "pickup_id": None,
+            "carrier_pickup_id": None,
+        }
+    if command_status == "ERROR":
+        errors = (status_payload or {}).get("errors") or []
+        detail = "; ".join(str(error.get("message") or error) for error in errors)
+        raise _AllegroPickupTerminalError(
+            detail=detail or f"pickup command {command_id} failed",
+            action="get_pickup_command_status",
         )
-    else:
-        # Legacy path (deprecated post-2026-07-01) — kept for sandbox/older
-        # servers.
-        client.create_ship_with_allegro_pickup(
-            command_id=command_id,
-            shipment_ids=[shipment_id],
-            address=pickup_address,
-            proposal_item_id=selected["id"],
+    if command_status != "SUCCESS":
+        raise AllegroBusinessError(
+            detail=f"unexpected pickup command status: {command_status!r}",
+            action="get_pickup_command_status",
         )
-    return True
+    pickup_id = str((status_payload or {}).get("pickupId") or "")
+    if not pickup_id:
+        raise _AllegroPickupTerminalError(
+            detail=f"pickup command {command_id} succeeded without pickupId",
+            action="get_pickup_command_status",
+        )
+    return {
+        "status": command_status,
+        "command_id": command_id,
+        "pickup_id": pickup_id,
+        "carrier_pickup_id": (status_payload or {}).get("carrierPickupId"),
+    }
 
 
 # ── Background task: create draft on Shopify webhook ─────────────────────────
@@ -2315,7 +2398,7 @@ def order_pickup(
     pickup_date: str | None = Body(None),
     pickup_from: str | None = Body(None),
     pickup_to: str | None = Body(None),
-) -> dict[str, Any]:
+) -> Any:
     draft = shipping_store.get_draft(draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
@@ -2346,27 +2429,65 @@ def order_pickup(
         ref = draft.get("shopify_order_number", "mock")
         logger.info("MOCK_COURIER: skipping %s pickup for draft %s", courier, ref)
     elif courier == "allegro_delivery":
-        provider_pickup_succeeded = False
+        existing_command_id = str(draft.get("allegro_dispatch_id") or "") or None
+
+        def persist_pickup_command(command_id: str) -> None:
+            shipping_store.update_draft(
+                draft_id,
+                {
+                    "allegro_dispatch_id": command_id,
+                    "pickup_ordered": False,
+                },
+            )
+
         try:
             allegro = _get_allegro_client()
             if allegro is None:
                 raise HTTPException(status_code=502, detail="Allegro credentials missing")
-            provider_pickup_succeeded = _order_allegro_pickup(
-                allegro, str(courier_draft_id), pickup_date
+            pickup_result = _order_allegro_pickup(
+                allegro,
+                str(courier_draft_id),
+                pickup_date,
+                command_id=existing_command_id,
+                on_command_created=persist_pickup_command,
             )
-            if not provider_pickup_succeeded:
+            if pickup_result["status"] == "NO_SLOT":
                 raise HTTPException(
                     status_code=409,
                     detail="Allegro has no pickup slot available for this shipment",
                 )
+            if pickup_result["status"] == "IN_PROGRESS":
+                shipping_store.update_draft(
+                    draft_id,
+                    {
+                        "pickup_ordered": False,
+                        "allegro_dispatch_id": pickup_result["command_id"],
+                    },
+                )
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "status": "pickup_pending",
+                        "draft_id": draft_id,
+                        "allegro_command_id": pickup_result["command_id"],
+                    },
+                )
+            shipping_store.update_draft(
+                draft_id,
+                {
+                    "pickup_ordered": True,
+                    "allegro_dispatch_id": pickup_result["pickup_id"],
+                },
+            )
         except HTTPException:
-            if not provider_pickup_succeeded:
-                shipping_store.update_draft(draft_id, {"pickup_ordered": False})
+            shipping_store.update_draft(draft_id, {"pickup_ordered": False})
             raise
         except Exception as exc:
             logger.exception("order_pickup failed for draft %s", draft_id)
-            if not provider_pickup_succeeded:
-                shipping_store.update_draft(draft_id, {"pickup_ordered": False})
+            patch: dict[str, Any] = {"pickup_ordered": False}
+            if isinstance(exc, _AllegroPickupTerminalError):
+                patch["allegro_dispatch_id"] = None
+            shipping_store.update_draft(draft_id, patch)
             raise HTTPException(status_code=502, detail=f"Allegro pickup error: {exc}") from exc
     else:
         try:
@@ -2798,6 +2919,15 @@ _SUPPORTED_LABEL_COURIERS = ("inpost", "apaczka", "allegro_delivery")
 _MAX_BATCH_LABELS = 100  # provider-agnostic safety cap on one batch print
 
 
+def _safe_label_filename(courier: str, order_number: Any) -> str:
+    """Return an ASCII-only filename safe for a quoted response header."""
+    normalized = unicodedata.normalize("NFKD", str(order_number).lstrip("#"))
+    ascii_order = normalized.encode("ascii", "ignore").decode("ascii")
+    safe_order = re.sub(r"[^A-Za-z0-9._-]+", "_", ascii_order).strip("._-")
+    safe_order = safe_order[:80] or "order"
+    return f"label_{courier}_{safe_order}.pdf"
+
+
 def _fetch_label_pdf(draft: dict[str, Any], courier: str, storage: Any) -> bytes:
     """Fetch one label PDF for a draft. Shared by the single-label and batch
     endpoints (R5-B).
@@ -2978,8 +3108,7 @@ def get_label(
 
     pdf_bytes = _fetch_label_pdf(draft, courier, storage)
 
-    order_num = draft.get("shopify_order_number", draft_id).lstrip("#")
-    filename = f"label_{courier}_{order_num}.pdf"
+    filename = _safe_label_filename(courier, draft.get("shopify_order_number", draft_id))
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",

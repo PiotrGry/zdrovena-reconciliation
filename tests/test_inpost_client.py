@@ -29,6 +29,7 @@ _TOKEN = "tok-test-123"
 _ORG = "org-9"
 _SHIPMENTS_URL = "https://api-shipx-pl.easypack24.net/v1/organizations/org-9/shipments"
 _DISPATCH_URL = "https://api-shipx-pl.easypack24.net/v1/organizations/org-9/dispatch_orders"
+_CANCEL_DISPATCH_URL = "https://api-shipx-pl.easypack24.net/v1/dispatch_orders/disp-42"
 
 
 def _ok_response(json_payload: dict, status: int = 201) -> MagicMock:
@@ -689,6 +690,21 @@ class TestCancelShipment:
                 # which the method catches and falls through to DELETE.
                 client.cancel_shipment("ship-42")
         mock_delete.assert_called_once()
+
+
+class TestCancelDispatchOrder:
+    def test_success_uses_global_dispatch_order_endpoint(self):
+        client = InPostClient(_TOKEN, _ORG)
+        response = MagicMock(spec=requests.Response)
+        response.ok = True
+        response.status_code = 204
+
+        with patch.object(client._session, "delete", return_value=response) as delete:
+            result = client.cancel_dispatch_order("disp-42")
+
+        delete.assert_called_once()
+        assert delete.call_args.args[0] == _CANCEL_DISPATCH_URL
+        assert result is None
 
 
 class TestOrganizationErrorSurfacing:

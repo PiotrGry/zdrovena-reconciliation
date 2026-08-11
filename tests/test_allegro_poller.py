@@ -285,6 +285,35 @@ class TestPollOrdersOnce:
         assert stats["errors"] >= 1
         assert stats["created"] == 0
 
+    def test_dedup_snapshot_failure_fails_closed_without_per_order_effects(self):
+        client = MagicMock()
+        client.list_orders.return_value = [_form("af1")]
+        store = MagicMock()
+        store.list_drafts.side_effect = RuntimeError("dedup store unavailable")
+        fakturownia = MagicMock()
+
+        with (
+            patch("zdrovena.api.routers.allegro_poller.create_invoice_for_order") as create_invoice,
+            patch("zdrovena.api.routers.allegro_poller._maybe_send_new_order_sms") as send_sms,
+            patch("zdrovena.api.routers.allegro_poller._emit_tracking_assigned") as emit_tracking,
+        ):
+            stats = poll_orders_once(
+                client=client,
+                shipping_store=store,
+                storage=MagicMock(),
+                fakturownia_client=fakturownia,
+            )
+
+        assert stats["fetched"] == 1
+        assert stats["created"] == 0
+        assert stats["errors"] == 1
+        store.upsert_draft.assert_not_called()
+        store.update_draft.assert_not_called()
+        create_invoice.assert_not_called()
+        send_sms.assert_not_called()
+        emit_tracking.assert_not_called()
+        client.mark_order_processed.assert_not_called()
+
     def test_pagination_stops_when_no_more(self):
         client = MagicMock()
         # single page — poller invokes once for the default cycle

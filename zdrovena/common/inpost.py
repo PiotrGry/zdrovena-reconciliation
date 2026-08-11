@@ -653,7 +653,7 @@ class InPostClient:
 
         A 422 (already accepted) surfaces as InPostBusinessError via _request.
         """
-        url = f"{_BASE}/v1/organizations/{self._org_id}/dispatch_orders/{dispatch_order_id}"
+        url = f"{_BASE}/v1/dispatch_orders/{dispatch_order_id}"
         self._request("DELETE", url, action="cancel_dispatch_order")
         logger.info("InPost dispatch order cancelled: id=%s", dispatch_order_id)
 

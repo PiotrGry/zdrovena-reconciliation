@@ -452,9 +452,48 @@ async def create_pickup(
     _validate_address(pickup_input["address"], "input.address")
     if not pickup_input.get("pickupTime") and not pickup_input.get("pickupDateProposalId"):
         raise HTTPException(status_code=422, detail="input pickup time is required")
-    dispatch_id = STATE.next_id("allegro-dispatch")
-    STATE.allegro_dispatches[dispatch_id] = {"id": dispatch_id, **deepcopy(pickup_input)}
-    return {"commandId": body["commandId"], "input": deepcopy(pickup_input)}
+    command_id = str(body["commandId"])
+    if command_id not in STATE.allegro_pickup_commands:
+        STATE.allegro_pickup_commands[command_id] = {
+            "id": command_id,
+            "input": deepcopy(pickup_input),
+            "status": "IN_PROGRESS",
+            "polls": 0,
+        }
+    return {"commandId": command_id, "input": deepcopy(pickup_input)}
+
+
+@router.get("/shipment-management/pickups/create-commands/{command_id}")
+def pickup_command_status(
+    command_id: str,
+    response: Response,
+    authorization: str | None = Header(default=None),
+    accept: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_headers(authorization, accept)
+    command = STATE.allegro_pickup_commands.get(command_id)
+    if not command:
+        raise HTTPException(status_code=404, detail="pickup command not found")
+    command["polls"] += 1
+    if command["polls"] < 2:
+        response.headers["Retry-After"] = "1"
+        return {"id": command_id, "status": "IN_PROGRESS", "errors": []}
+    pickup_id = command.get("pickupId")
+    if not pickup_id:
+        pickup_id = STATE.next_id("allegro-pickup")
+        command["pickupId"] = pickup_id
+        STATE.allegro_dispatches[pickup_id] = {
+            "id": pickup_id,
+            **deepcopy(command["input"]),
+        }
+    command["status"] = "SUCCESS"
+    return {
+        "id": command_id,
+        "status": "SUCCESS",
+        "pickupId": pickup_id,
+        "carrierPickupId": f"carrier-{pickup_id}",
+        "errors": [],
+    }
 
 
 @router.post("/shipment-management/shipments/cancel-commands", status_code=201)
