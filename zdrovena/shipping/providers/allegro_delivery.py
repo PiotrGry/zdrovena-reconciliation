@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from zdrovena.common.shipping_exceptions import AllegroBusinessError
-from zdrovena.shipping.domain.planning import parcel_weight_and_dims
+from zdrovena.shipping.domain.planning import (
+    parcel_weight_and_dims,
+    physical_parcels,
+    shipment_reference,
+)
 
 AllegroCallSpec = dict[str, Any]
 
@@ -61,8 +65,16 @@ def allegro_call_spec(draft: dict[str, Any], proposal: dict[str, Any]) -> Allegr
     if sending_method and sending_method in ALLEGRO_INPOST_SENDING_METHODS:
         additional_properties = {"inpost#sendingMethod": sending_method}
 
+    parcel = physical_parcels(draft)[0]
+    reference_number = shipment_reference(
+        str(draft.get("shopify_order_number", "")),
+        parcel.package_type,
+        parcel.position,
+        parcel.count_for_type,
+    )
+
     return {
-        "order_id": str(draft.get("external_order_id") or ""),
+        "reference_number": reference_number,
         # Optional since 2026-07-01 — Allegro auto-derives it from the order.
         "delivery_method_id": draft.get("allegro_delivery_method_id") or None,
         "credentials_id": draft.get("allegro_credentials_id"),
@@ -82,13 +94,14 @@ def allegro_payload_plan(
     if not order_id:
         raise RuntimeError("Ship with Allegro requires external_order_id")
     proposal = client.get_delivery_proposal(order_id)
+    call_spec = allegro_call_spec(draft, proposal)
     return [
         {
             "service": draft.get("service"),
             "package_type": "allegro",
             "package_number": 1,
-            "reference": order_id,
-            "payload": allegro_call_spec(draft, proposal),
+            "reference": call_spec["reference_number"],
+            "payload": call_spec,
         }
     ]
 

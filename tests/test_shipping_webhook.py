@@ -14,6 +14,7 @@ from typing import Any, ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
@@ -968,7 +969,36 @@ class TestExecutePreviewEndpoint:
 # ── Order pickup ──────────────────────────────────────────────────────────────
 
 
+_ALLEGRO_PICKUP_ADDRESS = {
+    "name": "Zdrovena Magazyn",
+    "street": "Magazynowa 41",
+    "postalCode": "33-300",
+    "city": "Nowy Sacz",
+    "countryCode": "PL",
+    "email": "magazyn@example.com",
+    "phone": "600700800",
+}
+
+
 class TestOrderPickup:
+    def test_allegro_pickup_address_uses_configured_collection_address(self):
+        configured = {
+            "name": "Zdrovena Magazyn",
+            "firstname": "",
+            "lastname": "Zdrovena Magazyn",
+            "street": "Magazynowa",
+            "building_number": "41",
+            "city": "Nowy Sacz",
+            "post_code": "33-300",
+            "phone": "600700800",
+            "email": "magazyn@example.com",
+        }
+
+        with patch("zdrovena.api.routers.webhooks._get_pickup_address", return_value=configured):
+            result = webhooks_router._get_allegro_pickup_address()
+
+        assert result == _ALLEGRO_PICKUP_ADDRESS
+
     def _seed_created_kurier(self, store):
         draft = {
             "id": "draft-pickup-1",
@@ -1022,7 +1052,7 @@ class TestOrderPickup:
         resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
         assert resp.status_code == 400
 
-    def test_pickup_ordered_for_allegro_draft(self, client, store):
+    def test_pickup_ordered_for_allegro_draft(self, store):
         """Ship-with-Allegro exposes pickup-proposals + pickups/create-commands,
         so the same button works there."""
         draft = self._seed_created_kurier(store)
@@ -1033,19 +1063,81 @@ class TestOrderPickup:
         allegro.get_ship_with_allegro_pickup_proposals.return_value = [
             {"date": "2026-08-07", "minTime": "09:00", "maxTime": "13:00"}
         ]
-        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
-            resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+        with (
+            patch.object(store, "try_claim_pickup", wraps=store.try_claim_pickup) as claim_pickup,
+            patch.object(store, "update_draft", wraps=store.update_draft) as update_draft,
+            patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+                return_value=_ALLEGRO_PICKUP_ADDRESS,
+            ),
+        ):
+            result = webhooks_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)
 
-        assert resp.status_code == 200, resp.text
+        assert result == {"status": "pickup_ordered", "draft_id": draft["id"]}
         assert store.get_draft(draft["id"])["pickup_ordered"] is True
+        claim_pickup.assert_called_once_with(draft["id"])
+        assert [
+            call
+            for call in update_draft.call_args_list
+            if call.args == (draft["id"], {"pickup_ordered": False})
+        ] == []
+        allegro.create_ship_with_allegro_pickup.assert_called_once()
         sent = allegro.create_ship_with_allegro_pickup.call_args.kwargs
+        allegro.get_ship_with_allegro_pickup_proposals.assert_called_once_with(
+            ["ship-id-1"], address=_ALLEGRO_PICKUP_ADDRESS
+        )
+        assert sent["address"] == _ALLEGRO_PICKUP_ADDRESS
         assert sent["pickup_time"] == {
             "date": "2026-08-07",
             "minTime": "09:00",
             "maxTime": "13:00",
         }
 
-    def test_allegro_pickup_with_no_slot_releases_the_claim(self, client, store):
+    def test_missing_allegro_credentials_releases_claim_and_allows_retry(self, client, store):
+        draft = self._seed_created_kurier(store)
+        store.update_draft(
+            draft["id"], {"courier": "allegro_delivery", "service": "allegro_delivery"}
+        )
+        allegro = MagicMock()
+
+        with (
+            patch.object(store, "try_claim_pickup", wraps=store.try_claim_pickup) as claim_pickup,
+            patch.object(store, "update_draft", wraps=store.update_draft) as update_draft,
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_client",
+                side_effect=[None, allegro],
+            ),
+            patch(
+                "zdrovena.api.routers.webhooks._order_allegro_pickup",
+                return_value=True,
+            ) as order_allegro_pickup,
+        ):
+            failed = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+
+            assert failed.status_code == 502
+            assert failed.json() == {"detail": "Allegro credentials missing"}
+            assert store.get_draft(draft["id"])["pickup_ordered"] is False
+            order_allegro_pickup.assert_not_called()
+
+            retried = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+
+        assert retried.status_code == 200, retried.text
+        assert retried.json() == {"status": "pickup_ordered", "draft_id": draft["id"]}
+        assert claim_pickup.call_count == 2
+        order_allegro_pickup.assert_called_once_with(allegro, "ship-id-1", None)
+        assert (
+            len(
+                [
+                    call
+                    for call in update_draft.call_args_list
+                    if call.args == (draft["id"], {"pickup_ordered": False})
+                ]
+            )
+            == 1
+        )
+
+    def test_allegro_pickup_with_no_slot_releases_the_claim(self, store):
         """No slot is not a silent success: the flag must stay false so the
         operator can try another day."""
         draft = self._seed_created_kurier(store)
@@ -1054,12 +1146,68 @@ class TestOrderPickup:
         )
         allegro = MagicMock()
         allegro.get_ship_with_allegro_pickup_proposals.return_value = []
-        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
-            resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
+        with (
+            patch.object(store, "update_draft", wraps=store.update_draft) as update_draft,
+            patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+                return_value=_ALLEGRO_PICKUP_ADDRESS,
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                webhooks_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)
 
-        assert resp.status_code == 409, resp.text
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == "Allegro has no pickup slot available for this shipment"
         assert store.get_draft(draft["id"])["pickup_ordered"] is False
+        assert (
+            len(
+                [
+                    call
+                    for call in update_draft.call_args_list
+                    if call.args == (draft["id"], {"pickup_ordered": False})
+                ]
+            )
+            == 1
+        )
         allegro.create_ship_with_allegro_pickup.assert_not_called()
+
+    def test_allegro_provider_failure_releases_the_claim_once(self, store):
+        draft = self._seed_created_kurier(store)
+        store.update_draft(
+            draft["id"], {"courier": "allegro_delivery", "service": "allegro_delivery"}
+        )
+        allegro = MagicMock()
+        allegro.get_ship_with_allegro_pickup_proposals.return_value = [
+            {"date": "2026-08-07", "minTime": "09:00", "maxTime": "13:00"}
+        ]
+        allegro.create_ship_with_allegro_pickup.side_effect = RuntimeError("provider write failed")
+
+        with (
+            patch.object(store, "update_draft", wraps=store.update_draft) as update_draft,
+            patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+                return_value=_ALLEGRO_PICKUP_ADDRESS,
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                webhooks_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)
+
+        assert exc_info.value.status_code == 502
+        assert exc_info.value.detail == "Allegro pickup error: provider write failed"
+        assert store.get_draft(draft["id"])["pickup_ordered"] is False
+        allegro.create_ship_with_allegro_pickup.assert_called_once()
+        assert (
+            len(
+                [
+                    call
+                    for call in update_draft.call_args_list
+                    if call.args == (draft["id"], {"pickup_ordered": False})
+                ]
+            )
+            == 1
+        )
 
     def test_409_when_pickup_already_ordered(self, client, store):
         draft = self._seed_created_kurier(store)
@@ -1073,18 +1221,29 @@ class TestOrderPickup:
         resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
         assert resp.status_code == 409
 
-    def test_successful_pickup_sets_flag(self, client, store):
+    def test_successful_pickup_sets_flag(self, store):
         draft = self._seed_created_kurier(store)
-        with patch(
-            "zdrovena.common.inpost.InPostClient.create_dispatch_order",
-            return_value={"id": "disp-1"},
+        with (
+            patch.object(store, "try_claim_pickup", wraps=store.try_claim_pickup) as claim_pickup,
+            patch.object(store, "update_draft", wraps=store.update_draft) as update_draft,
+            patch(
+                "zdrovena.common.inpost.InPostClient.create_dispatch_order",
+                return_value={"id": "disp-1"},
+            ) as create_dispatch,
+            patch("zdrovena.api.routers.webhooks.get_secret", return_value="test-value"),
         ):
-            with patch("zdrovena.api.routers.webhooks.get_secret", return_value="test-value"):
-                resp = client.post(f"/api/shipping/drafts/{draft['id']}/pickup")
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "pickup_ordered"
+            result = webhooks_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)
+        assert result == {"status": "pickup_ordered", "draft_id": draft["id"]}
         updated = store.get_draft(draft["id"])
         assert updated["pickup_ordered"] is True
+        assert updated["dispatch_order_id"] == "disp-1"
+        claim_pickup.assert_called_once_with(draft["id"])
+        create_dispatch.assert_called_once()
+        assert [
+            call
+            for call in update_draft.call_args_list
+            if call.args == (draft["id"], {"pickup_ordered": False})
+        ] == []
 
     def test_manual_pickup_collects_every_parcel_in_one_dispatch(self, client, store):
         """Same defect as the execute path: the standalone "Zamów podjazd"
@@ -4780,9 +4939,9 @@ class TestAllegroPayloadPlan:
                 "service": "allegro_delivery",
                 "package_type": "allegro",
                 "package_number": 1,
-                "reference": "allegro-order-9",
+                "reference": "1053 | plastik | 2-pak 1/2",
                 "payload": {
-                    "order_id": "allegro-order-9",
+                    "reference_number": "1053 | plastik | 2-pak 1/2",
                     "delivery_method_id": None,
                     "credentials_id": None,
                     "packages": [

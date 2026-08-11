@@ -115,7 +115,7 @@ def test_allegro_client_uses_fake_provider_over_http(
     client.mark_order_processed("fake-order-1", "PROCESSING")
     command = client.create_ship_with_allegro_shipment(
         command_id="cmd-1",
-        order_id="fake-order-1",
+        reference_number="fake-order-1",
         credentials_id=None,
         sender={
             "name": "Zdrovena",
@@ -158,6 +158,32 @@ def test_allegro_client_uses_fake_provider_over_http(
     shipment = client.get_ship_with_allegro_shipment(status["shipmentId"])
     assert shipment["status"] == "CREATED"
     assert client.get_ship_with_allegro_label(status["shipmentId"]).startswith(b"%PDF")
+
+    pickup_address = {
+        "name": "Zdrovena Magazyn",
+        "street": "Magazynowa 1",
+        "postalCode": "00-002",
+        "city": "Warszawa",
+        "countryCode": "PL",
+        "email": "sender@example.test",
+        "phone": "500500501",
+    }
+    proposals = client.get_ship_with_allegro_pickup_proposals(
+        [status["shipmentId"]], address=pickup_address
+    )
+    pickup_time = proposals[0]
+    pickup = client.create_ship_with_allegro_pickup(
+        command_id="pickup-cmd-1",
+        shipment_ids=[status["shipmentId"]],
+        address=pickup_address,
+        pickup_time={
+            "date": pickup_time["date"],
+            "minTime": pickup_time["minTime"],
+            "maxTime": pickup_time["maxTime"],
+        },
+    )
+    assert pickup["input"]["address"] == pickup_address
+    assert pickup["input"]["shipmentIds"] == [status["shipmentId"]]
 
     invoice = client.create_invoice_declaration(order_id="fake-order-1", invoice_number="FV/1/2026")
     client.upload_invoice_file(

@@ -16,6 +16,7 @@ from zdrovena.api.routers.webhooks import (
     _maybe_push_tracking_to_allegro,
     _run_allegro_delivery,
 )
+from zdrovena.common.exceptions import MissingSecretError
 from zdrovena.common.shipping_exceptions import AllegroBusinessError, CourierServerError
 
 _PROPOSAL = {
@@ -39,6 +40,15 @@ _PROPOSAL = {
             "phone": "600000000",
         },
     },
+}
+_ALLEGRO_PICKUP_ADDRESS = {
+    "name": "Zdrovena Magazyn",
+    "street": "Magazynowa 41",
+    "postalCode": "33-300",
+    "city": "Nowy Sacz",
+    "countryCode": "PL",
+    "email": "magazyn@example.com",
+    "phone": "600700800",
 }
 
 
@@ -134,7 +144,7 @@ class TestRunAllegroDelivery:
         call = client.create_ship_with_allegro_shipment.call_args
         assert call.kwargs["delivery_method_id"] == "svc-dpd"
         assert call.kwargs["credentials_id"] == "own-agreement-42"
-        assert call.kwargs["order_id"] == "ORD-1"
+        assert call.kwargs["reference_number"] == "ALG-1 | plastik | 1-pak"
         # sender/receiver blocks come from the delivery proposal.
         assert call.kwargs["sender"] == _PROPOSAL["suggestedInput"]["sender"]
         assert call.kwargs["receiver"]["name"] == _PROPOSAL["suggestedInput"]["receiver"]["name"]
@@ -241,9 +251,15 @@ class TestRunAllegroDelivery:
             }
         ]
 
-        with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
-            return_value=client,
+        with (
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_client",
+                return_value=client,
+            ),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+                return_value=_ALLEGRO_PICKUP_ADDRESS,
+            ),
         ):
             result = _run_allegro_delivery(
                 self._draft(),
@@ -251,7 +267,9 @@ class TestRunAllegroDelivery:
                 pickup_date="2026-07-05",
             )
 
-        client.get_ship_with_allegro_pickup_proposals.assert_called_once_with(["ship-42"])
+        client.get_ship_with_allegro_pickup_proposals.assert_called_once_with(
+            ["ship-42"], address=_ALLEGRO_PICKUP_ADDRESS
+        )
         client.create_ship_with_allegro_pickup.assert_called_once()
         pickup_call = client.create_ship_with_allegro_pickup.call_args
         assert pickup_call.kwargs["pickup_time"] == {
@@ -260,6 +278,7 @@ class TestRunAllegroDelivery:
             "maxTime": "12:00",
         }
         assert pickup_call.kwargs["shipment_ids"] == ["ship-42"]
+        assert pickup_call.kwargs["address"] == _ALLEGRO_PICKUP_ADDRESS
         # Legacy field must not be passed.
         assert "proposal_item_id" not in pickup_call.kwargs
         assert result["pickup_ordered"] is True
@@ -278,9 +297,15 @@ class TestRunAllegroDelivery:
             {"id": "prop-1", "shipmentId": "ship-42"}
         ]
 
-        with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
-            return_value=client,
+        with (
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_client",
+                return_value=client,
+            ),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+                return_value=_ALLEGRO_PICKUP_ADDRESS,
+            ),
         ):
             result = _run_allegro_delivery(
                 self._draft(),
@@ -290,6 +315,7 @@ class TestRunAllegroDelivery:
 
         pickup_call = client.create_ship_with_allegro_pickup.call_args
         assert pickup_call.kwargs["proposal_item_id"] == "prop-1"
+        assert pickup_call.kwargs["address"] == _ALLEGRO_PICKUP_ADDRESS
         assert "pickup_time" not in pickup_call.kwargs
         assert result["pickup_ordered"] is True
 
@@ -327,9 +353,15 @@ class TestRunAllegroDelivery:
             courier="allegro", status=503
         )
 
-        with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
-            return_value=client,
+        with (
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_client",
+                return_value=client,
+            ),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+                return_value=_ALLEGRO_PICKUP_ADDRESS,
+            ),
         ):
             result = _run_allegro_delivery(
                 self._draft(),
@@ -340,6 +372,38 @@ class TestRunAllegroDelivery:
         assert result["status"] == "created"
         assert result["tracking_number"] == "W"
         assert result["pickup_ordered"] is False
+
+    def test_missing_pickup_address_does_not_abort_created_shipment(self):
+        client = MagicMock()
+        client.get_delivery_proposal.return_value = _PROPOSAL
+        client.create_ship_with_allegro_shipment.return_value = {"commandId": "cmd-1"}
+        client.wait_for_ship_with_allegro_shipment.return_value = "ship-42"
+        client.get_ship_with_allegro_shipment.return_value = {
+            "packages": [{"transportingInfo": [{"carrierId": "X", "carrierWaybill": "W"}]}]
+        }
+        client.extract_shipment_waybill = MagicMock(return_value=("X", "W"))
+
+        with (
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_client",
+                return_value=client,
+            ),
+            patch(
+                "zdrovena.api.routers.webhooks._get_allegro_pickup_address",
+                side_effect=MissingSecretError("pickup_name", "humio"),
+            ),
+        ):
+            result = _run_allegro_delivery(
+                self._draft(),
+                MagicMock(),
+                pickup_date="2026-07-02",
+            )
+
+        assert result["status"] == "created"
+        assert result["tracking_number"] == "W"
+        assert result["pickup_ordered"] is False
+        client.get_ship_with_allegro_pickup_proposals.assert_not_called()
+        client.create_ship_with_allegro_pickup.assert_not_called()
 
 
 # ── Update: allegro-sourced drafts should NOT push tracking back via /order/../shipments ──

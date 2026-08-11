@@ -6,7 +6,7 @@ Loads the real request contract captured in
 shape Allegro expects. This is the regression guard for the 4 contract bugs that
 made "Wysyłam z Allegro" return 400 Bad Request:
 
-  - order_id must be sent as ``referenceNumber`` (no top-level ``orderId``)
+  - reference_number must be sent as ``referenceNumber`` (no top-level ``orderId``)
   - packages use FLAT ``length``/``width``/``height`` (no ``dimensions`` wrapper)
   - weight uses ``.value`` and the plural unit ``KILOGRAMS``
   - each package carries ``type: "PACKAGE"``
@@ -56,7 +56,7 @@ def _capture_body() -> dict:
     ) as m:
         c.create_ship_with_allegro_shipment(
             command_id=fixture["commandId"],
-            order_id=fx_input["referenceNumber"],
+            reference_number=fx_input["referenceNumber"],
             delivery_method_id=fx_input["deliveryMethodId"],
             credentials_id=fx_input["credentialsId"],
             packages=fx_input["packages"],

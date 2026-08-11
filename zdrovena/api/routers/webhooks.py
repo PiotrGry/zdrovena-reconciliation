@@ -48,6 +48,7 @@ from zdrovena.api.observability import correlation_scope, get_correlation_id
 from zdrovena.audit.bottles import SKIP_RE
 from zdrovena.common.appenv import is_production_env
 from zdrovena.common.events import log_event
+from zdrovena.common.exceptions import MissingSecretError
 from zdrovena.common.secrets import get_secret
 from zdrovena.common.shipping_exceptions import (
     AllegroAuthError,
@@ -1203,7 +1204,12 @@ def _run_allegro_delivery(
     if pickup_date:
         try:
             pickup_ordered = _order_allegro_pickup(client, shipment_id, pickup_date)
-        except (AllegroBusinessError, AllegroAuthError, CourierTransientError):
+        except (
+            AllegroBusinessError,
+            AllegroAuthError,
+            CourierTransientError,
+            MissingSecretError,
+        ):
             # Pickup is best-effort here: the shipment is already created, so a
             # pickup failure must not abort the flow — the operator can retry it
             # from the "Zamów podjazd" button, which raises instead of swallowing.
@@ -1220,6 +1226,28 @@ def _run_allegro_delivery(
     }
 
 
+def _get_allegro_pickup_address() -> dict[str, str]:
+    """Map the configured collection address to Allegro's pickup contract."""
+    pickup = _get_pickup_address()
+    street = " ".join(
+        part
+        for part in (
+            str(pickup.get("street") or "").strip(),
+            str(pickup.get("building_number") or "").strip(),
+        )
+        if part
+    )
+    return {
+        "name": str(pickup.get("name") or ""),
+        "street": street,
+        "postalCode": str(pickup.get("post_code") or ""),
+        "city": str(pickup.get("city") or ""),
+        "countryCode": "PL",
+        "email": str(pickup.get("email") or ""),
+        "phone": str(pickup.get("phone") or ""),
+    }
+
+
 def _order_allegro_pickup(client: Any, shipment_id: str, pickup_date: str | None) -> bool:
     """Order a Ship-with-Allegro courier pickup. Returns False when Allegro
     offers no slot.
@@ -1230,7 +1258,8 @@ def _order_allegro_pickup(client: Any, shipment_id: str, pickup_date: str | None
     """
     import uuid as _pickup_uuid
 
-    proposals = client.get_ship_with_allegro_pickup_proposals([shipment_id])
+    pickup_address = _get_allegro_pickup_address()
+    proposals = client.get_ship_with_allegro_pickup_proposals([shipment_id], address=pickup_address)
     # Prefer new-format entries (with `date`); fall back to legacy `id`
     # (deprecated but still accepted by servers pre-2026-07-01).
     new_format = next((p for p in proposals if p.get("date")), None)
@@ -1247,6 +1276,7 @@ def _order_allegro_pickup(client: Any, shipment_id: str, pickup_date: str | None
         client.create_ship_with_allegro_pickup(
             command_id=command_id,
             shipment_ids=[shipment_id],
+            address=pickup_address,
             pickup_time={
                 "date": selected["date"],
                 "minTime": selected.get("minTime", "08:00"),
@@ -1259,6 +1289,7 @@ def _order_allegro_pickup(client: Any, shipment_id: str, pickup_date: str | None
         client.create_ship_with_allegro_pickup(
             command_id=command_id,
             shipment_ids=[shipment_id],
+            address=pickup_address,
             proposal_item_id=selected["id"],
         )
     return True
@@ -2315,23 +2346,27 @@ def order_pickup(
         ref = draft.get("shopify_order_number", "mock")
         logger.info("MOCK_COURIER: skipping %s pickup for draft %s", courier, ref)
     elif courier == "allegro_delivery":
+        provider_pickup_succeeded = False
         try:
             allegro = _get_allegro_client()
             if allegro is None:
                 raise HTTPException(status_code=502, detail="Allegro credentials missing")
-            if not _order_allegro_pickup(allegro, str(courier_draft_id), pickup_date):
-                # Release the claim: no pickup was ordered, so the operator must
-                # be able to try again on another date.
-                shipping_store.update_draft(draft_id, {"pickup_ordered": False})
+            provider_pickup_succeeded = _order_allegro_pickup(
+                allegro, str(courier_draft_id), pickup_date
+            )
+            if not provider_pickup_succeeded:
                 raise HTTPException(
                     status_code=409,
                     detail="Allegro has no pickup slot available for this shipment",
                 )
         except HTTPException:
+            if not provider_pickup_succeeded:
+                shipping_store.update_draft(draft_id, {"pickup_ordered": False})
             raise
         except Exception as exc:
             logger.exception("order_pickup failed for draft %s", draft_id)
-            shipping_store.update_draft(draft_id, {"pickup_ordered": False})
+            if not provider_pickup_succeeded:
+                shipping_store.update_draft(draft_id, {"pickup_ordered": False})
             raise HTTPException(status_code=502, detail=f"Allegro pickup error: {exc}") from exc
     else:
         try:
