@@ -2315,23 +2315,27 @@ def order_pickup(
         ref = draft.get("shopify_order_number", "mock")
         logger.info("MOCK_COURIER: skipping %s pickup for draft %s", courier, ref)
     elif courier == "allegro_delivery":
+        provider_pickup_succeeded = False
         try:
             allegro = _get_allegro_client()
             if allegro is None:
                 raise HTTPException(status_code=502, detail="Allegro credentials missing")
-            if not _order_allegro_pickup(allegro, str(courier_draft_id), pickup_date):
-                # Release the claim: no pickup was ordered, so the operator must
-                # be able to try again on another date.
-                shipping_store.update_draft(draft_id, {"pickup_ordered": False})
+            provider_pickup_succeeded = _order_allegro_pickup(
+                allegro, str(courier_draft_id), pickup_date
+            )
+            if not provider_pickup_succeeded:
                 raise HTTPException(
                     status_code=409,
                     detail="Allegro has no pickup slot available for this shipment",
                 )
         except HTTPException:
+            if not provider_pickup_succeeded:
+                shipping_store.update_draft(draft_id, {"pickup_ordered": False})
             raise
         except Exception as exc:
             logger.exception("order_pickup failed for draft %s", draft_id)
-            shipping_store.update_draft(draft_id, {"pickup_ordered": False})
+            if not provider_pickup_succeeded:
+                shipping_store.update_draft(draft_id, {"pickup_ordered": False})
             raise HTTPException(status_code=502, detail=f"Allegro pickup error: {exc}") from exc
     else:
         try:
