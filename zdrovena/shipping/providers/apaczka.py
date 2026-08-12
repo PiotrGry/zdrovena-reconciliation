@@ -15,14 +15,18 @@ APACZKA_PICKUP_WINDOWS = (
     ("11:00", "14:00"),
     ("14:00", "17:00"),
 )
+APACZKA_FIXED_WINDOW_SERVICE_IDS = frozenset({"23"})
 
 
 def validate_apaczka_pickup_window(
+    service_id: str,
     pickup_date: str | None,
     pickup_from: str | None,
     pickup_to: str | None,
 ) -> None:
-    """Reject collection windows that Apaczka's ``order_send`` will reject."""
+    """Reject windows known to be invalid for the verified incident service."""
+    if service_id not in APACZKA_FIXED_WINDOW_SERVICE_IDS:
+        return
     if pickup_date is None and pickup_from is None and pickup_to is None:
         return
     window = (pickup_from or "", pickup_to or "")
@@ -73,7 +77,12 @@ def apaczka_call_specs(
     pickup_to: str | None = None,
 ) -> list[ApaczkaCallSpec]:
     """Return builder arguments for physical parcels not already checkpointed."""
-    validate_apaczka_pickup_window(pickup_date, pickup_from, pickup_to)
+    validate_apaczka_pickup_window(
+        str(draft.get("apaczka_service_id") or ""),
+        pickup_date,
+        pickup_from,
+        pickup_to,
+    )
     receiver = draft.get("receiver") or {}
     pickup_point = draft.get("pickup_point") or {}
     receiver_point_id = str(pickup_point.get("id") or receiver.get("locker_id") or "").strip()
@@ -177,6 +186,7 @@ def apaczka_payload_plan(
 
 
 __all__ = [
+    "APACZKA_FIXED_WINDOW_SERVICE_IDS",
     "APACZKA_PICKUP_WINDOWS",
     "ApaczkaCallSpec",
     "ApaczkaPayloadBuilder",

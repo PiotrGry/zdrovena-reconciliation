@@ -28,7 +28,7 @@ def _draft(**overrides: Any) -> dict[str, Any]:
         "shopify_order_number": "1800",
         "courier": "apaczka",
         "service": "apaczka",
-        "apaczka_service_id": "42",
+        "apaczka_service_id": "23",
         "receiver": {
             "first_name": "Anna",
             "last_name": "Nowak",
@@ -205,6 +205,19 @@ def test_unsupported_production_like_window_is_rejected_before_payload_build() -
         )
 
     assert builder.calls == []
+
+
+def test_unverified_service_keeps_its_existing_pickup_window_semantics() -> None:
+    specs = apaczka_call_specs(
+        _draft(apaczka_service_id="21"),
+        _PICKUP_ADDRESS,
+        pickup_date="2026-08-12",
+        pickup_from="10:00",
+        pickup_to="13:00",
+    )
+
+    assert specs[0]["kwargs"]["pickup_from"] == "10:00"
+    assert specs[0]["kwargs"]["pickup_to"] == "13:00"
 
 
 def test_preview_payload_plan_matches_execute_time_pickup_schedule() -> None:

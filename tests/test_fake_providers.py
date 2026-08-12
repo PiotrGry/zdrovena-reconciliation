@@ -332,8 +332,14 @@ def test_apaczka_client_stateful_success_and_provider_validation_failure(
     assert duplicate["id"] != shipment["id"]
     assert client.get_label(shipment["id"]).startswith(b"%PDF")
 
+    dpd_pickup_client = ApaczkaClient(
+        app_id="fake",
+        app_secret="fake",
+        service_id="23",
+        storage=_MemoryStorage(),
+    )
     with pytest.raises(ApaczkaBusinessError, match="Dozwolone przedzialy"):
-        client.create_shipment(
+        dpd_pickup_client.create_shipment(
             receiver_name="Anna Nowak",
             receiver_firstname="Anna",
             receiver_lastname="Nowak",
@@ -342,6 +348,7 @@ def test_apaczka_client_stateful_success_and_provider_validation_failure(
             receiver_address="Prosta 1",
             receiver_city="Warszawa",
             receiver_zip="00-001",
+            receiver_point_id="PL55338",
             sender=sender,
             reference="order-invalid-window",
             content="Woda butelkowana",

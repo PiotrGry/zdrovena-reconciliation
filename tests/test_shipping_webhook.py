@@ -5125,7 +5125,12 @@ class TestApaczkaPayloadPlan:
 
 class TestApaczkaPreviewEndpoint:
     def _seed(self, store):
-        draft = dict(_APACZKA_DRAFT, id="draft-apz-preview", status="error")
+        draft = dict(
+            _APACZKA_DRAFT,
+            id="draft-apz-preview",
+            status="error",
+            apaczka_service_id="23",
+        )
         store.upsert_draft(draft)
         return draft
 
