@@ -156,7 +156,7 @@ class TestRunAllegroDelivery:
         assert [call.kwargs["reference_number"] for call in create_calls] == [
             "ALG-1 | plastik | 2-pak",
             "ALG-1 | plastik | 2-pak",
-            "ALG-1 | plastik | 2-pak",
+            "ALG-1 | plastik | pół-pak",
         ]
         assert [shipment["id"] for shipment in result["courier_shipments"]] == [
             "ship-1",

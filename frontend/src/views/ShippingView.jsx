@@ -443,14 +443,24 @@ function addHours(t, hrs) {
     return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 }
 
-function defaultPickupSchedule(fixedWindows = false) {
+function nextCalendarDate(dateString) {
+    const date = new Date(`${dateString}T00:00:00Z`)
+    date.setUTCDate(date.getUTCDate() + 1)
+    return date.toISOString().slice(0, 10)
+}
+
+export function defaultPickupSchedule(fixedWindows = false) {
     const now = new Date()
     const today = now.toISOString().slice(0, 10)
     const minFromToday = addHours(`${String(now.getHours()).padStart(2, '0')}:00`, 2)
     if (fixedWindows) {
-        const [from, to] = APACZKA_PICKUP_WINDOWS.find(([start]) => start >= minFromToday)
-            || APACZKA_PICKUP_WINDOWS[0]
-        return { pickup_date: today, pickup_from: from, pickup_to: to }
+        const remainingWindow = APACZKA_PICKUP_WINDOWS.find(([start]) => start >= minFromToday)
+        const [from, to] = remainingWindow || APACZKA_PICKUP_WINDOWS[0]
+        return {
+            pickup_date: remainingWindow ? today : nextCalendarDate(today),
+            pickup_from: from,
+            pickup_to: to,
+        }
     }
     const from = TIME_SLOTS.find(t => t >= minFromToday && t <= '16:00') || '09:00'
     return { pickup_date: today, pickup_from: from, pickup_to: addHours(from, 2) }

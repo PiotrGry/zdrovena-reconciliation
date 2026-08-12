@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import ShippingView, { printPdf } from './ShippingView'
+import ShippingView, { defaultPickupSchedule, printPdf } from './ShippingView'
 import { deferred, jsonResponse, mockFetch } from '../test/http'
 import { renderWithProviders } from '../test/render'
 
@@ -97,6 +97,7 @@ function installPrintSupport() {
 }
 
 afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
 })
 
@@ -489,6 +490,17 @@ describe('execute preview', () => {
             },
         }],
     }
+
+    it('defaults service 23 to tomorrow when today has no remaining fixed window', () => {
+        vi.useFakeTimers()
+        vi.setSystemTime(new Date(2026, 7, 12, 16, 30))
+
+        expect(defaultPickupSchedule(true)).toEqual({
+            pickup_date: '2026-08-13',
+            pickup_from: '09:00',
+            pickup_to: '17:00',
+        })
+    })
 
     it('renders an Apaczka payload, not an empty card', async () => {
         // Apaczka's order shape is nothing like ShipX's, and it is the courier

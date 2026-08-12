@@ -231,10 +231,22 @@ def test_payload_plan_creates_one_independent_shipment_per_physical_box() -> Non
     assert [entry["reference"] for entry in plan] == [
         "1053 | plastik | 2-pak",
         "1053 | plastik | 2-pak",
-        "1053 | plastik | 2-pak",
+        "1053 | plastik | pół-pak",
     ]
     assert all("1/2" not in entry["reference"] for entry in plan)
     assert all("2/2" not in entry["reference"] for entry in plan)
+
+
+def test_mixed_physical_parcels_use_their_own_canonical_reference() -> None:
+    client = _ReadOnlyProposalClient(_PROPOSAL)
+
+    plan = allegro_payload_plan(_draft(), client)
+
+    assert [entry["reference"] for entry in plan] == [
+        "1053 | plastik | 2-pak",
+        "1053 | plastik | 2-pak",
+        "1053 | plastik | pół-pak",
+    ]
 
 
 def test_removed_inpost_sending_method_is_never_emitted() -> None:
