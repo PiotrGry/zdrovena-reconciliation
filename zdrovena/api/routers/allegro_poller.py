@@ -21,10 +21,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from zdrovena.api.routers.allegro_invoicer import create_invoice_for_order
-from zdrovena.api.routers.webhooks import (
-    _build_draft_record,
-    _emit_tracking_assigned,
-    _maybe_send_new_order_sms,
+from zdrovena.api.shipping_draft_composition import (
+    build_draft_record,
+    emit_tracking_assigned,
+    maybe_send_new_order_sms,
 )
 from zdrovena.common.allegro_mapper import allegro_to_shopify_order
 from zdrovena.common.events import log_event
@@ -177,10 +177,10 @@ def poll_orders_once(
                 changed = draft_application.sync_draft_from_order(
                     shopify_like,
                     shipping_store,
-                    build_draft_record=_build_draft_record,
-                    emit_tracking_assigned=_emit_tracking_assigned,
+                    build_draft_record=build_draft_record,
+                    emit_tracking_assigned=emit_tracking_assigned,
                     record_event=log_event,
-                    send_new_order_sms=_maybe_send_new_order_sms,
+                    send_new_order_sms=maybe_send_new_order_sms,
                     source="allegro",
                     existing=existing,
                 )
@@ -194,10 +194,10 @@ def poll_orders_once(
                 draft = draft_application.create_draft(
                     shopify_like,
                     shipping_store,
-                    build_draft_record=_build_draft_record,
-                    emit_tracking_assigned=_emit_tracking_assigned,
+                    build_draft_record=build_draft_record,
+                    emit_tracking_assigned=emit_tracking_assigned,
                     record_event=log_event,
-                    send_new_order_sms=_maybe_send_new_order_sms,
+                    send_new_order_sms=maybe_send_new_order_sms,
                     source="allegro",
                 )
                 stats["created"] += 1

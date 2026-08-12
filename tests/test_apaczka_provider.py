@@ -227,7 +227,7 @@ def test_planning_uses_the_canonical_mutable_parcel_catalog(monkeypatch) -> None
 
 
 def test_router_preview_composes_apaczka_provider_planner(monkeypatch) -> None:
-    from zdrovena.api.routers import webhooks
+    from zdrovena.api import shipping_execution_composition as webhooks
     from zdrovena.common.apaczka import ApaczkaClient
 
     draft = _draft()
@@ -246,10 +246,10 @@ def test_router_preview_composes_apaczka_provider_planner(monkeypatch) -> None:
         )
         return parcels
 
-    monkeypatch.setattr(webhooks, "_get_pickup_address", lambda: _PICKUP_ADDRESS)
+    monkeypatch.setattr(webhooks, "get_pickup_address", lambda: _PICKUP_ADDRESS)
     monkeypatch.setattr(webhooks.apaczka_provider, "apaczka_payload_plan", fake_payload_plan)
 
-    preview = webhooks._execution_preview(draft)
+    preview = webhooks.execution_preview(draft)
 
     assert preview["courier"] == "apaczka"
     assert preview["sender"] is _PICKUP_ADDRESS

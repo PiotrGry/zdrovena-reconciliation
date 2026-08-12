@@ -22,10 +22,10 @@ import logging
 import os
 from typing import Any
 
-from zdrovena.api.routers.webhooks import (
+from zdrovena.api.shipping_draft_composition import emit_tracking_assigned
+from zdrovena.api.shipping_execution_composition import (
     SHIPMENT_ORIGIN_SYSTEM,
-    _emit_tracking_assigned,
-    _shipment_patch,
+    shipment_patch,
 )
 from zdrovena.common.secrets import get_secret
 from zdrovena.shipping.providers.inpost import (
@@ -97,7 +97,7 @@ def resolve_pending_inpost_once(
             patch = resume_inpost_shipment(
                 client,
                 draft,
-                build_patch=_shipment_patch,
+                build_patch=shipment_patch,
             )
         except Exception:
             # One unresolvable shipment must not stop the rest: a cancelled
@@ -119,7 +119,11 @@ def resolve_pending_inpost_once(
             stats["errors"] += 1
             continue
 
-        _emit_tracking_assigned(draft_id, draft.get("shopify_order_number"), SHIPMENT_ORIGIN_SYSTEM)
+        emit_tracking_assigned(
+            draft_id,
+            draft.get("shopify_order_number"),
+            SHIPMENT_ORIGIN_SYSTEM,
+        )
         stats["resolved"] += 1
 
     return stats

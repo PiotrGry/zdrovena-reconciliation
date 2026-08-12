@@ -294,8 +294,8 @@ class TestPollOrdersOnce:
 
         with (
             patch("zdrovena.api.routers.allegro_poller.create_invoice_for_order") as create_invoice,
-            patch("zdrovena.api.routers.allegro_poller._maybe_send_new_order_sms") as send_sms,
-            patch("zdrovena.api.routers.allegro_poller._emit_tracking_assigned") as emit_tracking,
+            patch("zdrovena.api.routers.allegro_poller.maybe_send_new_order_sms") as send_sms,
+            patch("zdrovena.api.routers.allegro_poller.emit_tracking_assigned") as emit_tracking,
         ):
             stats = poll_orders_once(
                 client=client,

@@ -13,9 +13,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from zdrovena.api.routers.webhooks import (
-    _allegro_carrier_id_for_courier,
-    _maybe_push_tracking_to_allegro,
+from zdrovena.api.shipping_execution_composition import (
+    allegro_carrier_id_for_courier as _allegro_carrier_id_for_courier,
+)
+from zdrovena.api.shipping_execution_composition import (
+    push_tracking_to_allegro as _maybe_push_tracking_to_allegro,
 )
 
 
@@ -44,7 +46,7 @@ class TestMaybePushTrackingToAllegro:
     def test_shopify_source_skipped(self):
         client = MagicMock()
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=client,
         ):
             _maybe_push_tracking_to_allegro(self._draft(source="shopify"))
@@ -53,7 +55,7 @@ class TestMaybePushTrackingToAllegro:
     def test_allegro_source_pushes_tracking(self):
         client = MagicMock()
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=client,
         ):
             _maybe_push_tracking_to_allegro(self._draft())
@@ -66,7 +68,7 @@ class TestMaybePushTrackingToAllegro:
     def test_no_tracking_number_skips_push(self):
         client = MagicMock()
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=client,
         ):
             _maybe_push_tracking_to_allegro(self._draft(tracking=None))
@@ -75,7 +77,7 @@ class TestMaybePushTrackingToAllegro:
     def test_apaczka_pushes_with_other_carrier(self):
         client = MagicMock()
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=client,
         ):
             _maybe_push_tracking_to_allegro(self._draft(courier="apaczka"))
@@ -89,7 +91,7 @@ class TestMaybePushTrackingToAllegro:
         client = MagicMock()
         client.create_shipment.side_effect = RuntimeError("boom")
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=client,
         ):
             # Must NOT raise — the draft is already saved, we log and move on
@@ -100,7 +102,7 @@ class TestMaybePushTrackingToAllegro:
         draft = self._draft()
         draft["external_order_id"] = ""
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=client,
         ):
             _maybe_push_tracking_to_allegro(draft)
@@ -109,7 +111,7 @@ class TestMaybePushTrackingToAllegro:
     def test_client_none_when_no_credentials(self):
         # If _get_allegro_client returns None (no secrets configured), no crash
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=None,
         ):
             _maybe_push_tracking_to_allegro(self._draft())  # no exception

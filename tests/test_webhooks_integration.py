@@ -136,7 +136,7 @@ class TestInPostKurierFullFlow:
         draft_id = store.list_drafts()[0]["id"]
 
         # Execute with the courier client stubbed at session level
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"):
             with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_ship:
                 with patch("zdrovena.common.inpost.InPostClient.create_dispatch_order"):
                     mock_ship.return_value = {"id": "ship-99", "tracking_number": "TRK99"}
@@ -169,7 +169,7 @@ class TestInPostKurierFullFlow:
         )
         draft_id = store.list_drafts()[0]["id"]
 
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"):
             with patch(
                 "zdrovena.common.inpost.InPostClient.create_kurier_shipment",
                 return_value={"id": "ship-1", "tracking_number": "T1"},
@@ -278,7 +278,7 @@ class TestExecuteFailurePersistsErrorOnStore:
         )
         draft_id = store.list_drafts()[0]["id"]
 
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"):
             with patch(
                 "zdrovena.common.inpost.InPostClient.create_kurier_shipment",
                 side_effect=Exception("upstream-down"),

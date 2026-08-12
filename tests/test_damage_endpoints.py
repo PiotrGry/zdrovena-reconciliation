@@ -8,9 +8,9 @@ from fastapi.testclient import TestClient
 
 os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 
+from zdrovena.api import shipping_execution_composition
 from zdrovena.api.main import app
 from zdrovena.api.routers import damage as damage_router
-from zdrovena.api.routers import webhooks as shipping_webhooks
 from zdrovena.common.damage_store import DamageStore
 from zdrovena.common.shipping_store import ShippingStore
 from zdrovena.common.storage import LocalStorageService
@@ -170,7 +170,7 @@ def test_replacement_clears_full_shipping_lifecycle_and_creates_new_parcels(stor
     shipping.upsert_draft(replacement)
 
     with (
-        patch("zdrovena.api.routers.webhooks.get_secret", return_value="test-value"),
+        patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="test-value"),
         patch(
             "zdrovena.common.inpost.InPostClient.create_kurier_shipment",
             side_effect=[
@@ -179,10 +179,10 @@ def test_replacement_clears_full_shipping_lifecycle_and_creates_new_parcels(stor
             ],
         ) as create_shipment,
     ):
-        created = shipping_webhooks.execution_workflow.execute_draft(
+        created = shipping_execution_composition.execute_shipping_draft(
             replacement["id"],
             shipping,
-            **shipping_webhooks._execution_collaborators(storage),
+            storage,
         )
 
     assert created["status"] == "created"
@@ -230,7 +230,7 @@ def test_create_email_edit_and_send_are_separate_actions(client, stores):
         return shipping_store.get_draft(draft_id)
 
     with patch(
-        "zdrovena.shipping.application.execution.workflow.execute_draft",
+        "zdrovena.api.shipping_execution_composition.execute_shipping_draft",
         side_effect=execute_side_effect,
     ):
         created = client.post("/api/damage-cases/case-1648/create-replacement")

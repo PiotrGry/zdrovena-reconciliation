@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from copy import deepcopy
@@ -12,6 +11,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from zdrovena.api import shipping_execution_composition as execution_composition
 from zdrovena.api.auth import (
     Principal,
     require_shipment_mgr_or_above,
@@ -29,7 +29,6 @@ from zdrovena.common.config import KEYCHAIN_SERVICE_ZOHO_SMTP
 from zdrovena.common.secrets import get_secret
 from zdrovena.month_closing.config import ZOHO_EMAIL
 from zdrovena.month_closing.email_service import EmailService
-from zdrovena.shipping.application.execution import workflow as execution_workflow
 
 logger = logging.getLogger("zdrovena.api.routers.damage")
 
@@ -233,9 +232,7 @@ def refresh_damage_cases(
         "zoho": {"skipped": "not_configured"},
     }
     try:
-        from zdrovena.api.routers.webhooks import _get_allegro_client
-
-        allegro = _get_allegro_client()
+        allegro = execution_composition.get_allegro_client()
         if allegro is not None:
             result["allegro"] = scan_allegro_damage_cases(
                 client=allegro,
@@ -372,22 +369,14 @@ def create_replacement(
     if draft.get("status") == "needs_review":
         shipping_store.update_draft(str(replacement_id), {"status": "pending"})
 
-    # Provider runners still live in the shipping router. Bind them lazily to
-    # avoid a router import cycle while calling the application workflow itself
-    # directly.
-    from zdrovena.api.routers import webhooks as shipping_webhooks
-
     try:
-        result = execution_workflow.execute_draft(
+        result = execution_composition.execute_shipping_draft(
             str(replacement_id),
             shipping_store,
-            **shipping_webhooks._execution_collaborators(storage),
-            pickup_date=None,
-            pickup_from=None,
-            pickup_to=None,
+            storage,
         )
-    except shipping_webhooks._EXECUTION_APPLICATION_HTTP_ERRORS as exc:
-        shipping_webhooks._raise_execution_http_exception(exc)
+    except execution_composition.EXECUTION_APPLICATION_HTTP_ERRORS as exc:
+        execution_composition.raise_execution_http_exception(exc)
     draft_status = result.get("status")
     case_status = "replacement_created" if draft_status == "created" else "replacement_pending"
     updated = _save_case(
@@ -416,12 +405,14 @@ def confirm_replacement(
     replacement_id = case.get("replacement_draft_id")
     if not replacement_id:
         raise HTTPException(status_code=409, detail="Replacement draft is missing")
-    from zdrovena.api.routers.webhooks import confirm_pending_command
-
-    result = confirm_pending_command(str(replacement_id), shipping_store, principal)
-    if not isinstance(result, dict):
-        response_body = getattr(result, "body", b"{}")
-        result = json.loads(response_body)
+    del principal
+    try:
+        confirmation = execution_composition.confirm_shipping_draft(
+            str(replacement_id), shipping_store
+        )
+    except execution_composition.ConfirmationError as exc:
+        execution_composition.raise_confirmation_http_exception(exc)
+    result = confirmation.payload
     draft_status = result.get("status")
     updated = _save_case(
         damage_store,

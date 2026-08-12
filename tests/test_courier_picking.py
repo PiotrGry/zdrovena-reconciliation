@@ -6,13 +6,21 @@ import logging
 
 import pytest
 
-from zdrovena.api.routers.webhooks import (
+from zdrovena.api.shipping_draft_composition import (
     _extract_shopify_pickup_point,
     _parse_title_map,
-    _pick_apaczka_service,
-    _pick_courier,
-    _pick_inpost_service,
-    _reset_courier_maps_cache,
+)
+from zdrovena.api.shipping_draft_composition import (
+    pick_apaczka_service as _pick_apaczka_service,
+)
+from zdrovena.api.shipping_draft_composition import (
+    pick_courier as _pick_courier,
+)
+from zdrovena.api.shipping_draft_composition import (
+    pick_inpost_service as _pick_inpost_service,
+)
+from zdrovena.api.shipping_draft_composition import (
+    reset_courier_maps_cache as _reset_courier_maps_cache,
 )
 
 

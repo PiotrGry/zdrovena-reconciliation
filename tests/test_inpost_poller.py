@@ -236,7 +236,7 @@ class TestResolvePendingInpostOnce:
         client = MagicMock()
         client.get_shipment.return_value = {"id": "ship-1", "tracking_number": "620DONE"}
 
-        with patch("zdrovena.api.routers.inpost_poller._emit_tracking_assigned") as emit:
+        with patch("zdrovena.api.routers.inpost_poller.emit_tracking_assigned") as emit:
             stats = resolve_pending_inpost_once(shipping_store=store, client=client)
 
         assert stats["resolved"] == 0

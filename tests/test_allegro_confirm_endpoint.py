@@ -67,7 +67,7 @@ class TestConfirmPendingCommand:
         allegro_client.extract_shipment_waybill = MagicMock(return_value=("INPOST", "W1"))
 
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=allegro_client,
         ):
             resp = client.post(f"/api/shipping/drafts/{draft_id}/confirm")
@@ -90,7 +90,7 @@ class TestConfirmPendingCommand:
         allegro_client.get_ship_with_allegro_command_status.return_value = {"status": "IN_PROGRESS"}
 
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=allegro_client,
         ):
             resp = client.post(f"/api/shipping/drafts/{draft_id}/confirm")
@@ -114,7 +114,7 @@ class TestConfirmPendingCommand:
         }
 
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=allegro_client,
         ):
             resp = client.post(f"/api/shipping/drafts/{draft_id}/confirm")
@@ -160,7 +160,7 @@ class TestConfirmPendingCommand:
         )
 
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=allegro_client,
         ):
             resp = client.post(f"/api/shipping/drafts/{draft_id}/confirm")
@@ -184,7 +184,7 @@ class TestConfirmPendingCommand:
         allegro_client.extract_shipment_waybill = MagicMock(return_value=("INPOST", "W"))
 
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=allegro_client,
         ):
             first = client.post(f"/api/shipping/drafts/{draft_id}/confirm")

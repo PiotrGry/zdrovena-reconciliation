@@ -107,6 +107,28 @@ LEGACY_ALLEGRO_DELIVERY_PLANNING_WRAPPERS = frozenset(
     }
 )
 WEBHOOKS_MODULE = "zdrovena.api.routers.webhooks"
+WEBHOOKS_COMPOSITION_SYMBOLS = frozenset(
+    {
+        "_build_draft_record",
+        "_confirm_pending_inpost",
+        "_create_draft",
+        "_create_draft_safely",
+        "_dispatch_shipment_ids",
+        "_emit_tracking_assigned",
+        "_execution_collaborators",
+        "_execution_preview",
+        "_get_allegro_client",
+        "_get_pickup_address",
+        "_get_sender",
+        "_maybe_push_tracking_to_allegro",
+        "_maybe_send_new_order_sms",
+        "_order_allegro_pickup",
+        "_run_allegro_delivery",
+        "_run_apaczka",
+        "_run_inpost",
+        "_shipment_patch",
+    }
+)
 
 
 def _get_imports(filepath: pathlib.Path) -> list[str]:
@@ -214,6 +236,49 @@ class TestModuleBoundaries:
         assert not violations, (
             "\n\nshipping/ musi pozostać czystą domeną bez API, storage i klientów providerów:\n"
             + "\n".join(violations)
+        )
+
+    def test_sibling_routers_do_not_import_webhooks(self) -> None:
+        """Sibling routers use public composition modules, never a decorated router."""
+        violations: list[str] = []
+        routers_root = ROOT / "api" / "routers"
+        for filepath in routers_root.glob("*.py"):
+            if filepath.name in {"__init__.py", "webhooks.py"}:
+                continue
+            tree = ast.parse(filepath.read_text(encoding="utf-8"))
+            rel = _relative(filepath)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    imports_webhooks = node.module == WEBHOOKS_MODULE or (
+                        node.module == "zdrovena.api.routers"
+                        and any(alias.name == "webhooks" for alias in node.names)
+                    )
+                    if imports_webhooks:
+                        violations.append(f"  {rel}:{node.lineno}")
+                elif isinstance(node, ast.Import) and any(
+                    alias.name == WEBHOOKS_MODULE for alias in node.names
+                ):
+                    violations.append(f"  {rel}:{node.lineno}")
+
+        assert not violations, (
+            "\n\nSibling routers cannot import webhooks.py or call its route handlers as services:\n"
+            + "\n".join(violations)
+        )
+
+    def test_webhooks_does_not_reclaim_shipping_composition(self) -> None:
+        """Draft and execution composition remain in their focused API modules."""
+        filepath = ROOT / "api" / "routers" / "webhooks.py"
+        tree = ast.parse(filepath.read_text(encoding="utf-8"))
+        defined = {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        violations = sorted(defined.intersection(WEBHOOKS_COMPOSITION_SYMBOLS))
+
+        assert not violations, (
+            "\n\nwebhooks.py ponownie przejął ownership shipping composition:\n  "
+            + "\n  ".join(violations)
         )
 
     def test_production_does_not_use_legacy_parcel_wrappers(self) -> None:

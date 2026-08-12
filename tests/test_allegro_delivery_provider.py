@@ -282,12 +282,12 @@ def test_payload_plan_propagates_provider_error_unchanged() -> None:
 
 
 def test_router_preview_composes_get_client_with_provider_planner(monkeypatch) -> None:
-    from zdrovena.api.routers import webhooks
+    from zdrovena.api import shipping_execution_composition as webhooks
 
     client = _ReadOnlyProposalClient(_PROPOSAL)
-    monkeypatch.setattr(webhooks, "_get_allegro_client", lambda: client)
+    monkeypatch.setattr(webhooks, "get_allegro_client", lambda: client)
 
-    preview = webhooks._execution_preview(_draft())
+    preview = webhooks.execution_preview(_draft())
 
     assert client.proposal_order_ids == ["allegro-order-9"]
     assert preview["preview_available"] is True
@@ -297,7 +297,7 @@ def test_router_preview_composes_get_client_with_provider_planner(monkeypatch) -
 
 
 def test_router_preview_preserves_fail_closed_provider_error_handling(monkeypatch) -> None:
-    from zdrovena.api.routers import webhooks
+    from zdrovena.api import shipping_execution_composition as webhooks
 
     client = MagicMock()
     client.get_delivery_proposal.side_effect = CourierTransientError(
@@ -305,9 +305,9 @@ def test_router_preview_preserves_fail_closed_provider_error_handling(monkeypatc
         courier="allegro",
         action="delivery_proposal",
     )
-    monkeypatch.setattr(webhooks, "_get_allegro_client", lambda: client)
+    monkeypatch.setattr(webhooks, "get_allegro_client", lambda: client)
 
-    preview = webhooks._execution_preview(_draft())
+    preview = webhooks.execution_preview(_draft())
 
     client.get_delivery_proposal.assert_called_once_with("allegro-order-9")
     assert preview["preview_available"] is False
