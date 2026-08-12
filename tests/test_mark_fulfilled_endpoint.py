@@ -68,9 +68,9 @@ class TestMarkFulfilledNonAllegro:
     def test_local_only_flip_for_shopify_draft(self, client, store):
         draft_id = _make_draft(store, source="shopify")
 
-        # We patch _get_allegro_client at the router level to make sure it is
-        # NEVER invoked for a non-Allegro source.
-        with patch("zdrovena.api.routers.webhooks._get_allegro_client") as get_client:
+        # Patch the composition-owned client factory to ensure it is never
+        # invoked for a non-Allegro source.
+        with patch("zdrovena.api.shipping_execution_composition.get_allegro_client") as get_client:
             resp = client.post(f"/api/shipping/drafts/{draft_id}/mark-fulfilled")
 
         assert resp.status_code == 200
@@ -110,7 +110,7 @@ class TestMarkFulfilledAllegro:
 
         fake_client = MagicMock()
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=fake_client,
         ):
             resp = client.post(f"/api/shipping/drafts/{draft_id}/mark-fulfilled")
@@ -151,7 +151,7 @@ class TestMarkFulfilledIdempotency:
 
         fake_client = MagicMock()
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=fake_client,
         ):
             first = client.post(f"/api/shipping/drafts/{draft_id}/mark-fulfilled")
@@ -185,7 +185,7 @@ class TestMarkFulfilledErrors:
     def test_409_when_cancelled_or_errored(self, client, store, state):
         # R5-A: a cancelled/errored draft was never shipped — refuse to fulfill.
         draft_id = _make_draft(store, id=f"draft-{state}", status=state)
-        with patch("zdrovena.api.routers.webhooks._get_allegro_client") as get_client:
+        with patch("zdrovena.api.shipping_execution_composition.get_allegro_client") as get_client:
             resp = client.post(f"/api/shipping/drafts/{draft_id}/mark-fulfilled")
         assert resp.status_code == 409
         get_client.assert_not_called()
@@ -200,7 +200,7 @@ class TestMarkFulfilledErrors:
             courier="allegro_delivery",
         )
         # Even without the external id we should NOT touch Allegro.
-        with patch("zdrovena.api.routers.webhooks._get_allegro_client") as get_client:
+        with patch("zdrovena.api.shipping_execution_composition.get_allegro_client") as get_client:
             resp = client.post(f"/api/shipping/drafts/{draft_id}/mark-fulfilled")
 
         assert resp.status_code == 409
@@ -225,7 +225,7 @@ class TestMarkFulfilledErrors:
         fake_client = MagicMock()
         fake_client.mark_order_processed.side_effect = AllegroBusinessError("order already SENT")
         with patch(
-            "zdrovena.api.routers.webhooks._get_allegro_client",
+            "zdrovena.api.shipping_execution_composition.get_allegro_client",
             return_value=fake_client,
         ):
             resp = client.post(f"/api/shipping/drafts/{draft_id}/mark-fulfilled")

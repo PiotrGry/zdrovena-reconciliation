@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from zdrovena.api.routers.webhooks import _build_draft_record
+from zdrovena.api.shipping_draft_composition import build_draft_record as _build_draft_record
 from zdrovena.shipping.domain.planning import calc_packages, package_fit_warnings
 
 # ── Package catalog snapshots ─────────────────────────────────────────────────────

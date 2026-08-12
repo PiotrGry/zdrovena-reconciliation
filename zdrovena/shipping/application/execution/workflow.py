@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from zdrovena.common.shipping_exceptions import ZdrovenaShippingError
@@ -39,6 +40,34 @@ RecordEvent = Callable[..., None]
 EmitTrackingAssigned = Callable[[Any, Any, str], None]
 PushTracking = Callable[[dict[str, Any]], None]
 LogException = Callable[..., None]
+
+
+@dataclass(frozen=True)
+class PickupWindow:
+    """Optional pickup schedule supplied with one execution command."""
+
+    date: str | None = None
+    from_time: str | None = None
+    to_time: str | None = None
+
+
+@dataclass(frozen=True)
+class ProviderRunners:
+    """Concrete provider runners selected by the execution workflow."""
+
+    inpost: ProviderRunner
+    apaczka: ProviderRunner
+    allegro_delivery: ProviderRunner
+
+
+@dataclass(frozen=True)
+class ExecutionEffects:
+    """Observable effects emitted after execution and during failure handling."""
+
+    record_event: RecordEvent
+    emit_tracking_assigned: EmitTrackingAssigned
+    push_tracking: PushTracking
+    log_exception: LogException
 
 
 class DraftNotFoundError(LookupError):
@@ -134,18 +163,11 @@ def execute_draft(
     *,
     build_preview: PreviewBuilder,
     resolve_sender: SenderResolver,
-    run_inpost: ProviderRunner,
-    run_apaczka: ProviderRunner,
-    run_allegro_delivery: ProviderRunner,
-    record_event: RecordEvent,
-    emit_tracking_assigned: EmitTrackingAssigned,
-    push_tracking: PushTracking,
-    log_exception: LogException,
+    providers: ProviderRunners,
+    effects: ExecutionEffects,
     execution_dlq_kind: str,
     system_shipment_origin: str,
-    pickup_date: str | None = None,
-    pickup_from: str | None = None,
-    pickup_to: str | None = None,
+    pickup_window: PickupWindow | None = None,
     preview_fingerprint: str | None = None,
     failure_dlq_entry_id: str | None = None,
 ) -> dict[str, Any]:
@@ -166,10 +188,11 @@ def execute_draft(
         raise ExecutionClaimConflictError
 
     try:
+        effective_pickup_window = pickup_window or PickupWindow()
         pickup_schedule = {
-            "pickup_date": pickup_date,
-            "pickup_from": pickup_from,
-            "pickup_to": pickup_to,
+            "pickup_date": effective_pickup_window.date,
+            "pickup_from": effective_pickup_window.from_time,
+            "pickup_to": effective_pickup_window.to_time,
         }
         sender = (
             reviewed_preview["sender"]
@@ -213,7 +236,7 @@ def execute_draft(
 
         courier = draft.get("courier", "apaczka")
         if courier == "allegro_delivery":
-            patch = run_allegro_delivery(
+            patch = providers.allegro_delivery(
                 draft,
                 **pickup_schedule,
                 on_command_created=persist_allegro_command,
@@ -221,14 +244,14 @@ def execute_draft(
                 on_shipment_checkpoint=persist_allegro_shipment,
             )
         elif courier == "inpost":
-            patch = run_inpost(
+            patch = providers.inpost(
                 draft,
                 sender,
                 **pickup_schedule,
                 on_shipment_created=persist_shipment,
             )
         else:
-            patch = run_apaczka(
+            patch = providers.apaczka(
                 draft,
                 **pickup_schedule,
                 on_shipment_created=persist_shipment,
@@ -239,7 +262,7 @@ def execute_draft(
 
         repository.update_draft(draft_id, patch)
         updated = repository.get_draft(draft_id)
-        record_event(
+        effects.record_event(
             "shipment.created",
             draft_id=draft_id,
             order_number=draft.get("shopify_order_number"),
@@ -248,47 +271,47 @@ def execute_draft(
             status=patch.get("status"),
         )
         if patch.get("tracking_number"):
-            emit_tracking_assigned(
+            effects.emit_tracking_assigned(
                 draft_id,
                 draft.get("shopify_order_number"),
                 patch.get("shipment_origin") or system_shipment_origin,
             )
         if updated:
-            push_tracking(updated)
+            effects.push_tracking(updated)
         return updated or patch
     except ZdrovenaShippingError as exc:
-        log_exception("execute_draft failed for %s: %s", draft_id, exc)
+        effects.log_exception("execute_draft failed for %s: %s", draft_id, exc)
         record_execution_failure(
             repository,
             draft,
             f"{type(exc).__name__}: {exc}",
             execution_dlq_kind=execution_dlq_kind,
-            record_event=record_event,
-            log_exception=log_exception,
+            record_event=effects.record_event,
+            log_exception=effects.log_exception,
             entry_id=failure_dlq_entry_id,
         )
         release_execution_claim(
             repository,
             draft_id,
             str(exc),
-            log_exception=log_exception,
+            log_exception=effects.log_exception,
         )
         raise
     except Exception as exc:
-        log_exception("execute_draft failed for %s: %s", draft_id, exc)
+        effects.log_exception("execute_draft failed for %s: %s", draft_id, exc)
         record_execution_failure(
             repository,
             draft,
             f"{type(exc).__name__}: {exc}",
             execution_dlq_kind=execution_dlq_kind,
-            record_event=record_event,
-            log_exception=log_exception,
+            record_event=effects.record_event,
+            log_exception=effects.log_exception,
             entry_id=failure_dlq_entry_id,
         )
         release_execution_claim(
             repository,
             draft_id,
             str(exc),
-            log_exception=log_exception,
+            log_exception=effects.log_exception,
         )
         raise ExecutionCommunicationError(exc) from exc

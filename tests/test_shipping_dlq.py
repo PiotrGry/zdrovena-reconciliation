@@ -18,7 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from zdrovena.api.main import app
-from zdrovena.api.routers.webhooks import _create_draft_safely
+from zdrovena.api.shipping_draft_composition import create_draft_safely as _create_draft_safely
 from zdrovena.common.shipping_store import ShippingStore
 
 
@@ -91,7 +91,7 @@ class TestCreateDraftSafely:
             "customer": {"first_name": "A", "last_name": "B", "email": "a@b.pl"},
             "line_items": [{"name": "Test", "quantity": 1}],
         }
-        _create_draft_safely(order, store, storage=MagicMock(), source="shopify")
+        _create_draft_safely(order, store, source="shopify")
         assert store.list_dlq() == []
         assert len(store.list_drafts()) == 1
 
@@ -109,8 +109,8 @@ class TestCreateDraftSafely:
             "customer": {"first_name": "A", "last_name": "B", "email": "a@b.pl"},
             "line_items": [{"name": "Test", "quantity": 1}],
         }
-        with patch("zdrovena.api.routers.webhooks.log_event") as event:
-            _create_draft_safely(order, broken_store, storage=MagicMock(), source="shopify")
+        with patch("zdrovena.api.shipping_draft_composition.log_event") as event:
+            _create_draft_safely(order, broken_store, source="shopify")
 
         entries = store.list_dlq()
         assert len(entries) == 1
@@ -136,7 +136,6 @@ class TestCreateDraftSafely:
         _create_draft_safely(
             {"id": 1, "shipping_lines": [{"title": "x"}], "line_items": []},
             broken_store,
-            storage=MagicMock(),
             source="shopify",
         )
 
@@ -274,7 +273,7 @@ class TestDlqEntryKind:
         )
         with patch("zdrovena.shipping.application.drafts.create_draft") as mock_create:
             with patch(
-                "zdrovena.shipping.application.execution.workflow.execute_draft"
+                "zdrovena.api.shipping_execution_composition.execute_shipping_draft"
             ) as mock_exec:
                 mock_exec.return_value = {"id": "draft-abc", "status": "created"}
                 resp = client.post(f"/api/shipping/drafts/dlq/{entry['id']}/retry")
@@ -288,7 +287,7 @@ class TestDlqEntryKind:
         entry = _seed_dlq(store)
         with patch("zdrovena.shipping.application.drafts.create_draft") as mock_create:
             with patch(
-                "zdrovena.shipping.application.execution.workflow.execute_draft"
+                "zdrovena.api.shipping_execution_composition.execute_shipping_draft"
             ) as mock_exec:
                 resp = client.post(f"/api/shipping/drafts/dlq/{entry['id']}/retry")
 
@@ -332,7 +331,7 @@ class TestDlqEntryKind:
         )
 
         with patch(
-            "zdrovena.api.routers.webhooks._run_inpost",
+            "zdrovena.api.shipping_execution_composition._run_inpost",
             side_effect=RuntimeError("courier still unavailable"),
         ):
             resp = client.post(f"/api/shipping/drafts/dlq/{entry['id']}/retry")
