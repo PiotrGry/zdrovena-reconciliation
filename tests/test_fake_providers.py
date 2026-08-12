@@ -527,6 +527,31 @@ def test_fake_providers_reject_documented_contract_violations(fake_provider_url:
     )
     assert wrong_allegro_media_type.status_code == 415
 
+    allegro_headers = {
+        "Authorization": "Bearer fake-token",
+        "Accept": "application/vnd.allegro.public.v1+json",
+        "Content-Type": "application/vnd.allegro.public.v1+json",
+    }
+    proposal = requests.get(
+        f"{fake_provider_url}/allegro/shipment-management/delivery-proposals/fake-order-1",
+        headers=allegro_headers,
+        timeout=2,
+    ).json()
+    removed_sending_method = requests.post(
+        f"{fake_provider_url}/allegro/shipment-management/shipments/create-commands",
+        headers=allegro_headers,
+        json={
+            "commandId": "removed-property",
+            "input": {
+                **proposal["suggestedInput"],
+                "additionalProperties": {"inpost#sendingMethod": "parcel_locker"},
+            },
+        },
+        timeout=2,
+    )
+    assert removed_sending_method.status_code == 400
+    assert "no longer supported" in removed_sending_method.text
+
     missing_locker_point = requests.post(
         f"{fake_provider_url}/inpost/v1/organizations/org-1/shipments",
         headers={"Authorization": "Bearer fake-token"},

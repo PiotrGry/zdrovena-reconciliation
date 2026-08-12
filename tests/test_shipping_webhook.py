@@ -1134,8 +1134,9 @@ class TestOrderPickup:
             )
             assert pending.status_code == 202
             pending_draft = store.get_draft(draft["id"])
-            command_id = pending_draft["allegro_dispatch_id"]
+            command_id = pending_draft["allegro_pickup_command_id"]
             assert command_id
+            assert pending_draft["allegro_dispatch_id"] is None
             assert pending_draft["pickup_ordered"] is False
 
             completed = webhooks_router.order_pickup(
@@ -1145,6 +1146,7 @@ class TestOrderPickup:
             completed_draft = store.get_draft(draft["id"])
             assert completed_draft["pickup_ordered"] is True
             assert completed_draft["allegro_dispatch_id"] == "pickup-real-9"
+            assert completed_draft["allegro_pickup_command_id"] is None
 
             cancelled = webhooks_router.cancel_dispatch(draft["id"], store, MagicMock())
 
@@ -1160,6 +1162,36 @@ class TestOrderPickup:
         assert allegro.cancel_ship_with_allegro_dispatch.call_args.kwargs["dispatch_id"] == (
             "pickup-real-9"
         )
+
+    def test_pending_allegro_pickup_command_cannot_be_sent_as_cancel_pickup_id(self, client, store):
+        draft = self._seed_created_kurier(store)
+        store.update_draft(
+            draft["id"],
+            {
+                "courier": "allegro_delivery",
+                "service": "allegro_delivery",
+                "allegro_dispatch_id": None,
+                "allegro_pickup_command_id": "pending-command-uuid",
+                "pickup_ordered": False,
+            },
+        )
+        allegro = MagicMock()
+
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            response = client.delete(f"/api/shipping/drafts/{draft['id']}/dispatch")
+
+        assert response.status_code == 409
+        allegro.cancel_ship_with_allegro_dispatch.assert_not_called()
+
+    def test_pickup_openapi_has_typed_success_and_pending_responses(self, client):
+        operation = client.get("/openapi.json").json()["paths"][
+            "/api/shipping/drafts/{draft_id}/pickup"
+        ]["post"]
+
+        success_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+        pending_schema = operation["responses"]["202"]["content"]["application/json"]["schema"]
+        assert success_schema.get("$ref", "").endswith("/PickupOrderedResponse")
+        assert pending_schema.get("$ref", "").endswith("/PickupPendingResponse")
 
     def test_missing_allegro_credentials_releases_claim_and_allows_retry(self, client, store):
         draft = self._seed_created_kurier(store)
@@ -1199,7 +1231,7 @@ class TestOrderPickup:
         assert claim_pickup.call_count == 2
         order_allegro_pickup.assert_called_once_with(
             allegro,
-            "ship-id-1",
+            ["ship-id-1"],
             None,
             command_id=None,
             on_command_created=ANY,
@@ -1472,6 +1504,24 @@ class TestCancelShipmentEndpoint:
             resp = client.delete(f"/api/shipping/drafts/{draft['id']}/shipment")
         assert resp.status_code == 200
         assert allegro.cancel_ship_with_allegro_shipment.call_args.kwargs["shipment_id"] == "cd-9"
+
+    def test_multi_parcel_cancel_cancels_every_independent_shipment(self, client, store):
+        draft = self._seed(
+            store,
+            courier_shipments=[
+                {"id": "ship-1", "package_type": "1-pak", "package_number": "1"},
+                {"id": "ship-2", "package_type": "1-pak", "package_number": "2"},
+            ],
+        )
+        allegro = MagicMock()
+        with patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro):
+            response = client.delete(f"/api/shipping/drafts/{draft['id']}/shipment")
+
+        assert response.status_code == 200
+        assert [
+            call.kwargs["shipment_id"]
+            for call in allegro.cancel_ship_with_allegro_shipment.call_args_list
+        ] == ["ship-1", "ship-2"]
 
     def test_502_on_allegro_error(self, client, store):
         from zdrovena.common.shipping_exceptions import AllegroBusinessError
@@ -3157,6 +3207,30 @@ class TestGetLabelAllegroDelivery:
         assert resp.content == b"%PDF-1.4 allegro"
         allegro.get_ship_with_allegro_label.assert_called_once_with("ship-lbl-777")
 
+    def test_allegro_delivery_merges_one_label_per_independent_shipment(self, client, store):
+        draft = self._seed(
+            store,
+            courier_shipments=[
+                {"id": "ship-1", "package_type": "1-pak", "package_number": "1"},
+                {"id": "ship-2", "package_type": "1-pak", "package_number": "2"},
+            ],
+        )
+        allegro = MagicMock()
+        allegro.get_ship_with_allegro_label.side_effect = [b"label-1", b"label-2"]
+        with (
+            patch("zdrovena.api.routers.webhooks._get_allegro_client", return_value=allegro),
+            patch("zdrovena.api.routers.webhooks._merge_pdfs", return_value=b"merged") as merge,
+        ):
+            response = client.get(f"/api/shipping/drafts/{draft['id']}/label")
+
+        assert response.status_code == 200
+        assert response.content == b"merged"
+        assert [call.args[0] for call in allegro.get_ship_with_allegro_label.call_args_list] == [
+            "ship-1",
+            "ship-2",
+        ]
+        merge.assert_called_once_with([b"label-1", b"label-2"])
+
     def test_allegro_delivery_falls_back_to_courier_draft_id(self, client, store):
         draft = self._seed(store, allegro_shipment_id=None, courier_draft_id="fallback-id-9")
         allegro = MagicMock()
@@ -4776,14 +4850,26 @@ class TestTrackingAssignedCoversEveryPath:
         arrives through /confirm, which bypasses the execute path entirely."""
         draft = _seed_origin_draft(store)
         store.update_draft(
-            draft["id"], {"status": "pending_confirmation", "allegro_command_id": "cmd-1"}
+            draft["id"],
+            {
+                "source": "allegro",
+                "courier": "allegro_delivery",
+                "service": "allegro_delivery",
+                "external_order_id": "allegro-order-1",
+                "packages_breakdown": [{"type": "1-pak", "qty": 1}],
+                "status": "pending_confirmation",
+                "allegro_command_id": "cmd-1",
+            },
         )
 
         allegro = MagicMock()
-        allegro.get_ship_with_allegro_command_status.return_value = {
-            "status": "SUCCESS",
-            "shipmentId": "allegro-ship-1",
+        allegro.get_delivery_proposal.return_value = {
+            "suggestedInput": {
+                "sender": {"name": "Sender"},
+                "receiver": {"name": "Test User"},
+            }
         }
+        allegro.wait_for_ship_with_allegro_shipment.return_value = "allegro-ship-1"
         allegro.get_ship_with_allegro_shipment.return_value = {"id": "allegro-ship-1"}
         allegro.extract_shipment_waybill.return_value = ("carrier-1", "AWB-1")
 
@@ -5188,52 +5274,24 @@ class TestAllegroPayloadPlan:
         client = self._client()
         plan = allegro_delivery_payload_plan(draft, client)
 
-        assert plan == [
-            {
-                "service": "allegro_delivery",
-                "package_type": "allegro",
-                "package_number": 1,
-                "reference": "1053 | plastik | 2-pak",
-                "payload": {
-                    "reference_number": "1053 | plastik | 2-pak",
-                    "delivery_method_id": None,
-                    "credentials_id": None,
-                    "packages": [
-                        {
-                            "type": "PACKAGE",
-                            "length": {"value": 40, "unit": "CENTIMETER"},
-                            "width": {"value": 30, "unit": "CENTIMETER"},
-                            "height": {"value": 20, "unit": "CENTIMETER"},
-                            "weight": {"value": 12.0, "unit": "KILOGRAMS"},
-                        },
-                        {
-                            "type": "PACKAGE",
-                            "length": {"value": 40, "unit": "CENTIMETER"},
-                            "width": {"value": 30, "unit": "CENTIMETER"},
-                            "height": {"value": 20, "unit": "CENTIMETER"},
-                            "weight": {"value": 12.0, "unit": "KILOGRAMS"},
-                        },
-                        {
-                            "type": "PACKAGE",
-                            "length": {"value": 20, "unit": "CENTIMETER"},
-                            "width": {"value": 15, "unit": "CENTIMETER"},
-                            "height": {"value": 20, "unit": "CENTIMETER"},
-                            "weight": {"value": 3.0, "unit": "KILOGRAMS"},
-                        },
-                    ],
-                    "sender": {
-                        "name": "Maria Gryzło ZDROVENA",
-                        "street": "Cieszynska 6/12",
-                    },
-                    "receiver": {
-                        "name": "Ola Wisniewska",
-                        "street": "Lipowa 3",
-                        "city": "Lodz",
-                    },
-                    "additional_properties": None,
-                },
-            }
+        assert [(entry["package_type"], entry["package_number"]) for entry in plan] == [
+            ("2-pak", 1),
+            ("2-pak", 2),
+            ("pół-pak", 1),
         ]
+        assert [entry["reference"] for entry in plan] == [
+            "1053 | plastik | 2-pak",
+            "1053 | plastik | 2-pak",
+            "1053 | plastik | 2-pak",
+        ]
+        assert [entry["payload"]["packages"][0]["weight"]["value"] for entry in plan] == [
+            12.0,
+            12.0,
+            3.0,
+        ]
+        assert all(len(entry["payload"]["packages"]) == 1 for entry in plan)
+        assert all(entry["payload"]["additional_properties"] is None for entry in plan)
+        assert all(entry["payload"]["additional_services"] is None for entry in plan)
         client.get_delivery_proposal.assert_called_once_with("allegro-order-9")
         client.create_ship_with_allegro_shipment.assert_not_called()
 
