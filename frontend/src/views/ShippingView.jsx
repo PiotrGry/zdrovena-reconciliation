@@ -433,6 +433,10 @@ const APACZKA_PICKUP_WINDOWS = [
     ['14:00', '17:00'],
 ]
 
+function hasFixedApaczkaPickupWindows(draft) {
+    return draft.courier === 'apaczka' && draft.apaczka_service_id === '23'
+}
+
 function toMinutes(t) { const [h, m] = t.split(':').map(Number); return h * 60 + m }
 function addHours(t, hrs) {
     const m = toMinutes(t) + hrs * 60
@@ -806,7 +810,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
 
     /** Fetch what the courier would receive. Opens the panel first so the click always responds. */
     async function openExecutePreview() {
-        const schedule = defaultPickupSchedule(draft.courier === 'apaczka')
+        const schedule = defaultPickupSchedule(hasFixedApaczkaPickupWindows(draft))
         setExecuteSchedule(schedule)
         await loadExecutePreview(schedule)
     }
@@ -1219,7 +1223,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 confirmTestId="execute-preview-confirm"
                                 confirmLabel="Wyślij do kuriera"
                                 confirmDisabled={!executePreview.data || executePreview.data.preview_available === false}
-                                fixedWindows={draft.courier === 'apaczka'}
+                                fixedWindows={hasFixedApaczkaPickupWindows(draft)}
                                 initialSchedule={executeSchedule}
                                 onScheduleChange={draft.courier === 'apaczka' ? schedule => {
                                     setExecuteSchedule(schedule)
@@ -1922,7 +1926,7 @@ export default function ShippingView() {
                 return (
                     <PickupScheduleModal
                         title="Podjazd dla przesyłek Apaczka"
-                        fixedWindows={true}
+                        fixedWindows={bulkExecuteModal.drafts.some(hasFixedApaczkaPickupWindows)}
                         panelTestId="bulk-execute-pickup"
                         confirmTestId="bulk-execute-pickup-confirm"
                         confirmLabel="Realizuj zaznaczone"

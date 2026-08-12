@@ -1090,6 +1090,7 @@ def _run_apaczka(
             action="create_shipment",
         )
     apaczka_provider.validate_apaczka_pickup_window(
+        str(service_id),
         pickup_date,
         pickup_from,
         pickup_to,
@@ -2282,6 +2283,7 @@ def execute_draft(
     if draft and draft.get("courier") == "apaczka":
         try:
             apaczka_provider.validate_apaczka_pickup_window(
+                str(draft.get("apaczka_service_id") or ""),
                 pickup_date,
                 pickup_from,
                 pickup_to,

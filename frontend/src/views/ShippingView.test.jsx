@@ -495,7 +495,9 @@ describe('execute preview', () => {
         // that actually ships today.
         mockFetch((url, init = {}) => {
             if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
-            if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'apaczka' })] })
+            if (url === '/api/shipping/drafts') return jsonResponse({
+                drafts: [draft({ courier: 'apaczka', apaczka_service_id: '23' })],
+            })
             if (url.includes('/execute/preview')) return jsonResponse(apaczkaPreviewBody)
             throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
         })
@@ -512,7 +514,9 @@ describe('execute preview', () => {
     it('offers only provider-supported pickup windows for Apaczka execute', async () => {
         mockFetch((url, init = {}) => {
             if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
-            if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'apaczka' })] })
+            if (url === '/api/shipping/drafts') return jsonResponse({
+                drafts: [draft({ courier: 'apaczka', apaczka_service_id: '23' })],
+            })
             if (url.includes('/execute/preview')) return jsonResponse(apaczkaPreviewBody)
             throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
         })
@@ -526,6 +530,23 @@ describe('execute preview', () => {
             '11:00|14:00',
             '14:00|17:00',
         ])
+    })
+
+    it('does not impose the incident service window list on other Apaczka services', async () => {
+        mockFetch((url, init = {}) => {
+            if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
+            if (url === '/api/shipping/drafts') return jsonResponse({
+                drafts: [draft({ courier: 'apaczka', apaczka_service_id: '21' })],
+            })
+            if (url.includes('/execute/preview')) return jsonResponse(apaczkaPreviewBody)
+            throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
+        })
+        renderWithProviders(<ShippingView />)
+
+        await openExecute()
+
+        expect(screen.queryByTestId('apaczka-pickup-window')).toBeNull()
+        expect(screen.getByText('Minimalne okno: 2 godziny')).toBeTruthy()
     })
 
     it('refuses to confirm when the courier has no payload preview', async () => {
