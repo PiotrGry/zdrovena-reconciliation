@@ -15,7 +15,7 @@ os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 
 from zdrovena.api.main import app
 from zdrovena.api.routers import webhooks
-from zdrovena.common.shipping_exceptions import InPostBusinessError
+from zdrovena.common.shipping_exceptions import AllegroCommandPending, InPostBusinessError
 from zdrovena.common.shipping_store import DLQ_KIND_EXECUTION, ShippingStore
 from zdrovena.shipping.application.execution import fingerprint as execution_fingerprint
 from zdrovena.shipping.application.execution import workflow as execution_workflow
@@ -554,9 +554,20 @@ class TestPendingExecutionCharacterization:
             patch.object(webhooks, "_get_sender", return_value=_SENDER),
             patch.object(webhooks, "_get_allegro_client") as get_client,
         ):
+            allegro = get_client.return_value
+            allegro.get_delivery_proposal.return_value = {
+                "suggestedInput": {
+                    "sender": {"name": "Sender"},
+                    "receiver": {"name": "Anna Nowak"},
+                }
+            }
+            allegro.wait_for_ship_with_allegro_shipment.side_effect = AllegroCommandPending(
+                command_id="existing-command-id"
+            )
             result = _execute_application(draft["id"], store, object())
 
-        get_client.assert_not_called()
+        get_client.assert_called_once()
+        allegro.create_ship_with_allegro_shipment.assert_not_called()
         assert result["status"] == "pending_confirmation"
         assert result["allegro_command_id"] == "existing-command-id"
 
