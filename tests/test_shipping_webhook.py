@@ -5287,7 +5287,7 @@ class TestAllegroPayloadPlan:
         assert [entry["reference"] for entry in plan] == [
             "1053 | plastik | 2-pak",
             "1053 | plastik | 2-pak",
-            "1053 | plastik | 2-pak",
+            "1053 | plastik | pół-pak",
         ]
         assert [entry["payload"]["packages"][0]["weight"]["value"] for entry in plan] == [
             12.0,

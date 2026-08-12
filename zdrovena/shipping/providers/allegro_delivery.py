@@ -51,16 +51,14 @@ def allegro_call_specs(draft: dict[str, Any], proposal: dict[str, Any]) -> list[
     proposed_services = suggested_input.get("additionalServices") or []
     additional_services = ["sendingAtPoint"] if "sendingAtPoint" in proposed_services else None
 
-    first_parcel = parcels[0]
-    reference_number = shipment_reference(
-        str(draft.get("shopify_order_number", "")),
-        first_parcel.package_type,
-        1,
-        1,
-    )
-
     call_specs: list[AllegroCallSpec] = []
     for parcel in parcels:
+        reference_number = shipment_reference(
+            str(draft.get("shopify_order_number", "")),
+            parcel.package_type,
+            1,
+            1,
+        )
         parcel_spec = PARCEL_SPECS.get(parcel.package_type) or PARCEL_SPECS["1-pak"]
         package = {
             "type": "PACKAGE",
