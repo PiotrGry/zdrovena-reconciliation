@@ -3458,9 +3458,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Order Pickup Api Shipping Drafts  Draft Id  Pickup Post",
-                  "type": "object"
+                  "title": "Response Order Pickup Api Shipping Drafts  Draft Id  Pickup Post"
                 }
               }
             },
