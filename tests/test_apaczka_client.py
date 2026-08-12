@@ -395,21 +395,29 @@ class TestCreateShipment:
         data = json.loads(sent_form["request"])
         assert data["order"]["address"]["sender"]["line1"] == "Testowa 7"
 
-    def test_pickup_window_included_when_provided(self):
+    @pytest.mark.parametrize(
+        ("pickup_from", "pickup_to"),
+        [
+            ("09:00", "17:00"),
+            ("11:00", "14:00"),
+            ("14:00", "17:00"),
+        ],
+    )
+    def test_pickup_window_included_when_provided(self, pickup_from, pickup_to):
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
         api_response = _ok_response({"status": 200, "response": {"id": "ap-3"}})
         with patch.object(client._session, "post", return_value=api_response) as mock_post:
             client.create_shipment(
                 **self._kwargs(),
                 pickup_date="2026-07-01",
-                pickup_from="10:00",
-                pickup_to="14:00",
+                pickup_from=pickup_from,
+                pickup_to=pickup_to,
             )
         sent_form = mock_post.call_args.kwargs["data"]
         data = json.loads(sent_form["request"])
         assert data["order"]["pickup"]["date"] == "2026-07-01"
-        assert data["order"]["pickup"]["hours_from"] == "10:00"
-        assert data["order"]["pickup"]["hours_to"] == "14:00"
+        assert data["order"]["pickup"]["hours_from"] == pickup_from
+        assert data["order"]["pickup"]["hours_to"] == pickup_to
 
     def test_no_pickup_window_when_omitted(self):
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
@@ -485,12 +493,12 @@ class TestApaczkaPayloadBuilder:
     def test_builder_carries_the_pickup_window(self):
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
         built = client.build_shipment_order(
-            **self._kwargs(), pickup_date="2026-08-05", pickup_from="10:00", pickup_to="14:00"
+            **self._kwargs(), pickup_date="2026-08-05", pickup_from="11:00", pickup_to="14:00"
         )
         assert built["pickup"] == {
             "type": "COURIER",
             "date": "2026-08-05",
-            "hours_from": "10:00",
+            "hours_from": "11:00",
             "hours_to": "14:00",
         }
 

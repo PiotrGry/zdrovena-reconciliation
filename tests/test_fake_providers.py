@@ -332,6 +332,24 @@ def test_apaczka_client_stateful_success_and_provider_validation_failure(
     assert duplicate["id"] != shipment["id"]
     assert client.get_label(shipment["id"]).startswith(b"%PDF")
 
+    with pytest.raises(ApaczkaBusinessError, match="Dozwolone przedzialy"):
+        client.create_shipment(
+            receiver_name="Anna Nowak",
+            receiver_firstname="Anna",
+            receiver_lastname="Nowak",
+            receiver_email="anna@example.test",
+            receiver_phone="500500500",
+            receiver_address="Prosta 1",
+            receiver_city="Warszawa",
+            receiver_zip="00-001",
+            sender=sender,
+            reference="order-invalid-window",
+            content="Woda butelkowana",
+            pickup_date="2026-08-12",
+            pickup_from="11:00",
+            pickup_to="13:00",
+        )
+
     _set_scenario(fake_provider_url, "apaczka", "order_send", "provider_validation_failure")
     with pytest.raises(ApaczkaBusinessError):
         client.create_shipment(

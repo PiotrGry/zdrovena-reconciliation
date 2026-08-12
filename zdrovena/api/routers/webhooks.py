@@ -1051,8 +1051,6 @@ def _run_apaczka(
 
     from zdrovena.common.apaczka import ApaczkaClient
 
-    app_id = get_secret("apaczka_app_id")
-    app_secret = get_secret("apaczka_app_secret")
     service_id = draft.get("apaczka_service_id") or ""
     if not service_id:
         # Guard against silently sending an empty service_id to Apaczka's live,
@@ -1079,6 +1077,13 @@ def _run_apaczka(
             courier="apaczka",
             action="create_shipment",
         )
+    apaczka_provider.validate_apaczka_pickup_window(
+        pickup_date,
+        pickup_from,
+        pickup_to,
+    )
+    app_id = get_secret("apaczka_app_id")
+    app_secret = get_secret("apaczka_app_secret")
     client = ApaczkaClient(app_id, app_secret, service_id, storage)
     pickup_address = pickup_address or _get_pickup_address()
     existing = list(draft.get("courier_shipments") or [])
@@ -2006,11 +2011,22 @@ def preview_execute_draft(
     draft_id: str,
     shipping_store: ShippingStoreDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+    pickup_date: str | None = Query(None),
+    pickup_from: str | None = Query(None),
+    pickup_to: str | None = Query(None),
 ) -> dict[str, Any]:
     draft = shipping_store.get_draft(draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
-    return _execution_preview(draft)
+    try:
+        return _execution_preview(
+            draft,
+            pickup_date=pickup_date,
+            pickup_from=pickup_from,
+            pickup_to=pickup_to,
+        )
+    except ApaczkaBusinessError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _preview_fingerprint(draft: dict[str, Any], preview: dict[str, Any]) -> str:
@@ -2023,7 +2039,13 @@ def _fingerprints_match(current: str, reviewed: str) -> bool:
     return execution_fingerprint.fingerprints_match(current, reviewed)
 
 
-def _execution_preview(draft: dict[str, Any]) -> dict[str, Any]:
+def _execution_preview(
+    draft: dict[str, Any],
+    *,
+    pickup_date: str | None = None,
+    pickup_from: str | None = None,
+    pickup_to: str | None = None,
+) -> dict[str, Any]:
     """Build a courier preview and a fingerprint of the reviewed snapshot."""
     courier = draft.get("courier", "apaczka")
     if courier == "inpost":
@@ -2042,8 +2064,8 @@ def _execution_preview(draft: dict[str, Any]) -> dict[str, Any]:
     elif courier == "apaczka":
         from zdrovena.common.apaczka import ApaczkaClient
 
-        # Apaczka prints the pickup address as sender. Preview intentionally
-        # omits the execute-time pickup schedule.
+        # Apaczka prints the pickup address as sender and embeds collection in
+        # order_send, so its preview must include the selected window.
         pickup_address = _get_pickup_address()
         service_id = str(draft.get("apaczka_service_id") or "")
         preview_client = ApaczkaClient("preview", "preview", service_id, None)
@@ -2054,6 +2076,9 @@ def _execution_preview(draft: dict[str, Any]) -> dict[str, Any]:
                 draft,
                 pickup_address,
                 preview_client,
+                pickup_date=pickup_date,
+                pickup_from=pickup_from,
+                pickup_to=pickup_to,
             ),
             "preview_available": True,
         }
@@ -2116,7 +2141,13 @@ _EXECUTION_APPLICATION_HTTP_ERRORS = (
 )
 
 
-def _execution_collaborators(storage: Any) -> dict[str, Any]:
+def _execution_collaborators(
+    storage: Any,
+    *,
+    pickup_date: str | None = None,
+    pickup_from: str | None = None,
+    pickup_to: str | None = None,
+) -> dict[str, Any]:
     """Bind router/provider collaborators required by the application workflow."""
 
     def run_apaczka(draft: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
@@ -2125,8 +2156,16 @@ def _execution_collaborators(storage: Any) -> dict[str, Any]:
     def run_allegro_delivery(draft: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         return _run_allegro_delivery(draft, storage, **kwargs)
 
+    def build_preview(draft: dict[str, Any]) -> dict[str, Any]:
+        return _execution_preview(
+            draft,
+            pickup_date=pickup_date,
+            pickup_from=pickup_from,
+            pickup_to=pickup_to,
+        )
+
     return {
-        "build_preview": _execution_preview,
+        "build_preview": build_preview,
         "resolve_sender": _get_sender,
         "run_inpost": _run_inpost,
         "run_apaczka": run_apaczka,
@@ -2180,11 +2219,26 @@ def execute_draft(
     pickup_to: str | None = Body(None),
     preview_fingerprint: str | None = Body(None),
 ) -> dict[str, Any]:
+    draft = shipping_store.get_draft(draft_id)
+    if draft and draft.get("courier") == "apaczka":
+        try:
+            apaczka_provider.validate_apaczka_pickup_window(
+                pickup_date,
+                pickup_from,
+                pickup_to,
+            )
+        except ApaczkaBusinessError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
         return execution_workflow.execute_draft(
             draft_id,
             shipping_store,
-            **_execution_collaborators(storage),
+            **_execution_collaborators(
+                storage,
+                pickup_date=pickup_date,
+                pickup_from=pickup_from,
+                pickup_to=pickup_to,
+            ),
             pickup_date=pickup_date,
             pickup_from=pickup_from,
             pickup_to=pickup_to,

@@ -3205,6 +3205,54 @@
               "title": "Draft Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "pickup_date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pickup Date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pickup_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pickup From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pickup_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pickup To"
+            }
           }
         ],
         "responses": {

@@ -2530,6 +2530,36 @@ class TestInPostPayloadPlan:
 
 
 class TestRunApaczka:
+    def test_rejects_unsupported_pickup_window_before_provider_write(self):
+        from zdrovena.api.routers.webhooks import _run_apaczka
+        from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
+
+        draft = {
+            "id": "d-ap-invalid-window",
+            "shopify_order_number": "1701",
+            "courier": "apaczka",
+            "service": "apaczka",
+            "apaczka_service_id": "23",
+            "pickup_point": {"provider": "dpd", "id": "PL55338"},
+            "receiver": {"first_name": "A", "last_name": "N"},
+            "shipping_address": {"street": "Polna", "building_number": "1"},
+        }
+        with (
+            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as create_shipment,
+            pytest.raises(ApaczkaBusinessError, match=r"11:00.13:00"),
+        ):
+            _run_apaczka(
+                draft,
+                _SENDER,
+                object(),
+                pickup_date="2026-08-12",
+                pickup_from="11:00",
+                pickup_to="13:00",
+            )
+
+        create_shipment.assert_not_called()
+
     def test_creates_shipment_returns_patch(self):
         from zdrovena.api.routers.webhooks import _run_apaczka
 
@@ -4970,13 +5000,30 @@ class TestApaczkaPayloadPlan:
         from zdrovena.api.routers import webhooks as wh
 
         with patch("zdrovena.api.routers.webhooks.get_secret", return_value="x"):
-            plan = _provider_apaczka_payload_plan(_APACZKA_DRAFT, _PICKUP)
+            preview_client = ApaczkaClient(
+                "preview", "preview", str(_APACZKA_DRAFT["apaczka_service_id"]), None
+            )
+            plan = apaczka_payload_plan(
+                _APACZKA_DRAFT,
+                _PICKUP,
+                preview_client,
+                pickup_date="2026-08-13",
+                pickup_from="11:00",
+                pickup_to="14:00",
+            )
 
             with patch(
                 "zdrovena.common.apaczka.ApaczkaClient._call",
                 return_value={"response": {"order": {"id": "ap-1", "waybill_number": "W1"}}},
             ) as mock_call:
-                wh._run_apaczka(_APACZKA_DRAFT, _PICKUP, MagicMock())
+                wh._run_apaczka(
+                    _APACZKA_DRAFT,
+                    _PICKUP,
+                    MagicMock(),
+                    pickup_date="2026-08-13",
+                    pickup_from="11:00",
+                    pickup_to="14:00",
+                )
 
         sent = [c.args[1]["order"] for c in mock_call.call_args_list]
         assert sent == [entry["payload"] for entry in plan]
@@ -5012,6 +5059,46 @@ class TestApaczkaPreviewEndpoint:
         with patch("zdrovena.api.routers.webhooks._get_pickup_address", return_value=_PICKUP):
             body = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview").json()
         assert body["sender"]["city"] == "Naściszowa"
+
+    def test_apaczka_preview_contains_the_same_supported_window_as_execute(self, client, store):
+        draft = self._seed(store)
+        with patch("zdrovena.api.routers.webhooks._get_pickup_address", return_value=_PICKUP):
+            response = client.get(
+                f"/api/shipping/drafts/{draft['id']}/execute/preview",
+                params={
+                    "pickup_date": "2026-08-13",
+                    "pickup_from": "11:00",
+                    "pickup_to": "14:00",
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["parcels"][0]["payload"]["pickup"] == {
+            "type": "COURIER",
+            "date": "2026-08-13",
+            "hours_from": "11:00",
+            "hours_to": "14:00",
+        }
+
+    def test_invalid_apaczka_window_returns_actionable_422_without_provider_write(
+        self, client, store
+    ):
+        draft = self._seed(store)
+        with patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as create_shipment:
+            response = client.post(
+                f"/api/shipping/drafts/{draft['id']}/execute",
+                json={
+                    "pickup_date": "2026-08-12",
+                    "pickup_from": "11:00",
+                    "pickup_to": "13:00",
+                },
+            )
+
+        assert response.status_code == 422
+        assert "11:00" in response.json()["detail"]
+        assert "09:00" in response.json()["detail"]
+        create_shipment.assert_not_called()
+        assert store.get_draft(draft["id"])["status"] == "error"
 
     def test_allegro_preview_renders_the_fetched_payload(self, client, store):
         draft = dict(_ALLEGRO_DRAFT, id="draft-allegro-preview", status="error")
