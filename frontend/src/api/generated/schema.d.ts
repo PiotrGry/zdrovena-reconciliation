@@ -3082,9 +3082,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": unknown;
                 };
             };
             /** @description Courier does not support pickup (not InPost kurier) */
