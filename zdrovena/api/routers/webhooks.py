@@ -790,6 +790,16 @@ def confirm_pending_command(
     shipping_store: ShippingStoreDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
 ) -> Any:
+    """Poll an outstanding Allegro create-command and finalise the draft.
+
+    Ship-with-Allegro create-commands are asynchronous. ``execute_draft`` returns
+    ``pending_confirmation`` when the command is still IN_PROGRESS after the
+    short in-request polling window. This endpoint is the durable follow-up:
+    call it (via UI action or a cron/worker) to check the command status and
+    either promote the draft to ``created`` (SUCCESS) or ``error`` (ERROR).
+
+    Idempotent: safe to call multiple times. Returns the current draft.
+    """
     try:
         result = execution_composition.confirm_shipping_draft(draft_id, shipping_store)
     except execution_composition.ConfirmationError as exc:
