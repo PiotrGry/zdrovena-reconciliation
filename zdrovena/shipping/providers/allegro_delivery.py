@@ -13,11 +13,6 @@ from zdrovena.shipping.domain.planning import (
 
 AllegroCallSpec = dict[str, Any]
 
-# Allegro create-commands enum for the InPost sending mode. Contract per Allegro
-# issue #9915: parcel_locker | dispatch_order | pop | any_point. Only sent for
-# InPost drafts; other carriers derive the field from the order.
-ALLEGRO_INPOST_SENDING_METHODS = frozenset({"parcel_locker", "dispatch_order", "pop", "any_point"})
-
 
 class AllegroDeliveryProposalClient(Protocol):
     """Read-only Allegro capability required to plan a shipment preview."""
@@ -25,23 +20,9 @@ class AllegroDeliveryProposalClient(Protocol):
     def get_delivery_proposal(self, order_id: str) -> dict[str, Any]: ...
 
 
-def allegro_call_spec(draft: dict[str, Any], proposal: dict[str, Any]) -> AllegroCallSpec:
-    """Build create-command arguments from a draft and Allegro proposal."""
-    # FLAT dimensions, each a {"value", "unit"} object; weight unit is the
-    # plural "KILOGRAMS"; type is required.
+def allegro_call_specs(draft: dict[str, Any], proposal: dict[str, Any]) -> list[AllegroCallSpec]:
+    """Build one independent create-command for each physical parcel."""
     parcels = physical_parcels(draft)
-    packages = []
-    for parcel in parcels:
-        spec = PARCEL_SPECS.get(parcel.package_type) or PARCEL_SPECS["1-pak"]
-        packages.append(
-            {
-                "type": "PACKAGE",
-                "length": {"value": spec["length"], "unit": "CENTIMETER"},
-                "width": {"value": spec["width"], "unit": "CENTIMETER"},
-                "height": {"value": spec["height"], "unit": "CENTIMETER"},
-                "weight": {"value": round(float(spec["weight_kg"]), 2), "unit": "KILOGRAMS"},
-            }
-        )
 
     # Allegro pre-fills both required address blocks under suggestedInput.
     suggested_input = proposal.get("suggestedInput")
@@ -63,29 +44,55 @@ def allegro_call_spec(draft: dict[str, Any], proposal: dict[str, Any]) -> Allegr
     if pickup_point_id:
         receiver["point"] = pickup_point_id
 
-    additional_properties: dict[str, Any] | None = None
-    sending_method = draft.get("allegro_sending_method")
-    if sending_method and sending_method in ALLEGRO_INPOST_SENDING_METHODS:
-        additional_properties = {"inpost#sendingMethod": sending_method}
+    # Allegro stopped supporting ``inpost#sendingMethod`` on 1 March 2026.
+    # Point sending is now the ``sendingAtPoint`` service in the order-specific
+    # proposal, so only forward it when Allegro proposes it. Never infer it
+    # from the obsolete draft enum.
+    proposed_services = suggested_input.get("additionalServices") or []
+    additional_services = ["sendingAtPoint"] if "sendingAtPoint" in proposed_services else None
 
-    parcel = parcels[0]
-    reference_number = shipment_reference(
-        str(draft.get("shopify_order_number", "")),
-        parcel.package_type,
-        1,
-        1,
-    )
+    call_specs: list[AllegroCallSpec] = []
+    for parcel in parcels:
+        reference_number = shipment_reference(
+            str(draft.get("shopify_order_number", "")),
+            parcel.package_type,
+            1,
+            1,
+        )
+        parcel_spec = PARCEL_SPECS.get(parcel.package_type) or PARCEL_SPECS["1-pak"]
+        package = {
+            "type": "PACKAGE",
+            "length": {"value": parcel_spec["length"], "unit": "CENTIMETER"},
+            "width": {"value": parcel_spec["width"], "unit": "CENTIMETER"},
+            "height": {"value": parcel_spec["height"], "unit": "CENTIMETER"},
+            "weight": {
+                "value": round(float(parcel_spec["weight_kg"]), 2),
+                "unit": "KILOGRAMS",
+            },
+        }
+        call_specs.append(
+            {
+                "package_type": parcel.package_type,
+                "package_number": parcel.position,
+                "kwargs": {
+                    "reference_number": reference_number,
+                    # Optional since 2026-07-01 — Allegro derives it from the order.
+                    "delivery_method_id": draft.get("allegro_delivery_method_id") or None,
+                    "credentials_id": draft.get("allegro_credentials_id"),
+                    "packages": [package],
+                    "sender": sender,
+                    "receiver": dict(receiver),
+                    "additional_services": additional_services,
+                    "additional_properties": None,
+                },
+            }
+        )
+    return call_specs
 
-    return {
-        "reference_number": reference_number,
-        # Optional since 2026-07-01 — Allegro auto-derives it from the order.
-        "delivery_method_id": draft.get("allegro_delivery_method_id") or None,
-        "credentials_id": draft.get("allegro_credentials_id"),
-        "packages": packages,
-        "sender": sender,
-        "receiver": receiver,
-        "additional_properties": additional_properties,
-    }
+
+def allegro_call_spec(draft: dict[str, Any], proposal: dict[str, Any]) -> AllegroCallSpec:
+    """Return the first physical parcel's create-command arguments."""
+    return allegro_call_specs(draft, proposal)[0]["kwargs"]
 
 
 def allegro_payload_plan(
@@ -97,22 +104,23 @@ def allegro_payload_plan(
     if not order_id:
         raise RuntimeError("Ship with Allegro requires external_order_id")
     proposal = client.get_delivery_proposal(order_id)
-    call_spec = allegro_call_spec(draft, proposal)
+    call_specs = allegro_call_specs(draft, proposal)
     return [
         {
             "service": draft.get("service"),
-            "package_type": "allegro",
-            "package_number": 1,
-            "reference": call_spec["reference_number"],
-            "payload": call_spec,
+            "package_type": call_spec["package_type"],
+            "package_number": call_spec["package_number"],
+            "reference": call_spec["kwargs"]["reference_number"],
+            "payload": call_spec["kwargs"],
         }
+        for call_spec in call_specs
     ]
 
 
 __all__ = [
-    "ALLEGRO_INPOST_SENDING_METHODS",
     "AllegroCallSpec",
     "AllegroDeliveryProposalClient",
     "allegro_call_spec",
+    "allegro_call_specs",
     "allegro_payload_plan",
 ]

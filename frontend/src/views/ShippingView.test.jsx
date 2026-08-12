@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import ShippingView, { printPdf } from './ShippingView'
+import ShippingView, { defaultPickupSchedule, printPdf } from './ShippingView'
 import { deferred, jsonResponse, mockFetch } from '../test/http'
 import { renderWithProviders } from '../test/render'
 
@@ -97,6 +97,7 @@ function installPrintSupport() {
 }
 
 afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
 })
 
@@ -434,7 +435,7 @@ describe('execute preview', () => {
         const fetchMock = mockFetch((url, init = {}) => {
             if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
             if (url === '/api/shipping/drafts') return jsonResponse({ drafts })
-            if (url.endsWith('/execute/preview')) return jsonResponse(previewBody)
+            if (url.includes('/execute/preview')) return jsonResponse(previewBody)
             if (url.endsWith('/execute') && init.method === 'POST') {
                 executeCalls.push({ url, init })
                 return jsonResponse({ id: 'draft-1', status: 'created' })
@@ -490,13 +491,26 @@ describe('execute preview', () => {
         }],
     }
 
+    it('defaults service 23 to tomorrow when today has no remaining fixed window', () => {
+        vi.useFakeTimers()
+        vi.setSystemTime(new Date(2026, 7, 12, 16, 30))
+
+        expect(defaultPickupSchedule(true)).toEqual({
+            pickup_date: '2026-08-13',
+            pickup_from: '09:00',
+            pickup_to: '17:00',
+        })
+    })
+
     it('renders an Apaczka payload, not an empty card', async () => {
         // Apaczka's order shape is nothing like ShipX's, and it is the courier
         // that actually ships today.
         mockFetch((url, init = {}) => {
             if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
-            if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'apaczka' })] })
-            if (url.endsWith('/execute/preview')) return jsonResponse(apaczkaPreviewBody)
+            if (url === '/api/shipping/drafts') return jsonResponse({
+                drafts: [draft({ courier: 'apaczka', apaczka_service_id: '23' })],
+            })
+            if (url.includes('/execute/preview')) return jsonResponse(apaczkaPreviewBody)
             throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
         })
         renderWithProviders(<ShippingView />)
@@ -509,13 +523,51 @@ describe('execute preview', () => {
         expect(panel.textContent).toContain('6 kg')
     })
 
+    it('offers only provider-supported pickup windows for Apaczka execute', async () => {
+        mockFetch((url, init = {}) => {
+            if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
+            if (url === '/api/shipping/drafts') return jsonResponse({
+                drafts: [draft({ courier: 'apaczka', apaczka_service_id: '23' })],
+            })
+            if (url.includes('/execute/preview')) return jsonResponse(apaczkaPreviewBody)
+            throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
+        })
+        renderWithProviders(<ShippingView />)
+
+        await openExecute()
+        const windowSelect = await screen.findByTestId('apaczka-pickup-window')
+
+        expect([...windowSelect.options].map(option => option.value)).toEqual([
+            '09:00|17:00',
+            '11:00|14:00',
+            '14:00|17:00',
+        ])
+    })
+
+    it('does not impose the incident service window list on other Apaczka services', async () => {
+        mockFetch((url, init = {}) => {
+            if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
+            if (url === '/api/shipping/drafts') return jsonResponse({
+                drafts: [draft({ courier: 'apaczka', apaczka_service_id: '21' })],
+            })
+            if (url.includes('/execute/preview')) return jsonResponse(apaczkaPreviewBody)
+            throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
+        })
+        renderWithProviders(<ShippingView />)
+
+        await openExecute()
+
+        expect(screen.queryByTestId('apaczka-pickup-window')).toBeNull()
+        expect(screen.getByText('Minimalne okno: 2 godziny')).toBeTruthy()
+    })
+
     it('refuses to confirm when the courier has no payload preview', async () => {
         // An empty panel the operator can confirm is worse than no panel: it
         // invites them to certify having seen nothing.
         mockFetch((url, init = {}) => {
             if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
             if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'allegro_delivery' })] })
-            if (url.endsWith('/execute/preview')) return jsonResponse({
+            if (url.includes('/execute/preview')) return jsonResponse({
                 fingerprint: 'allegro-snapshot',
                 courier: 'allegro_delivery',
                 preview_available: false,
@@ -536,7 +588,7 @@ describe('execute preview', () => {
         mockFetch((url, init = {}) => {
             if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
             if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'allegro_delivery' })] })
-            if (url.endsWith('/execute/preview')) return jsonResponse({
+            if (url.includes('/execute/preview')) return jsonResponse({
                 fingerprint: 'allegro-ok',
                 courier: 'allegro_delivery',
                 preview_available: true,
@@ -575,7 +627,7 @@ describe('execute preview', () => {
         mockFetch((url, init = {}) => {
             if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
             if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'allegro_delivery' })] })
-            if (url.endsWith('/execute/preview')) return jsonResponse({
+            if (url.includes('/execute/preview')) return jsonResponse({
                 fingerprint: 'allegro-down',
                 courier: 'allegro_delivery',
                 preview_available: false,

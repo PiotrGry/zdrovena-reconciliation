@@ -1203,6 +1203,28 @@ export interface components {
              */
             status: "healthy" | "degraded" | "unavailable" | "not_configured";
         };
+        /** PickupOrderedResponse */
+        PickupOrderedResponse: {
+            /** Draft Id */
+            draft_id: string;
+            /**
+             * Status
+             * @constant
+             */
+            status: "pickup_ordered";
+        };
+        /** PickupPendingResponse */
+        PickupPendingResponse: {
+            /** Allegro Command Id */
+            allegro_command_id: string;
+            /** Draft Id */
+            draft_id: string;
+            /**
+             * Status
+             * @constant
+             */
+            status: "pickup_pending";
+        };
         /** ProductItem */
         ProductItem: {
             /** Active */
@@ -2853,7 +2875,11 @@ export interface operations {
     };
     preview_execute_draft_api_shipping_drafts__draft_id__execute_preview_get: {
         parameters: {
-            query?: never;
+            query?: {
+                pickup_date?: string | null;
+                pickup_from?: string | null;
+                pickup_to?: string | null;
+            };
             header?: never;
             path: {
                 draft_id: string;
@@ -3082,7 +3108,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PickupOrderedResponse"];
+                };
+            };
+            /** @description Allegro pickup still pending */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PickupPendingResponse"];
                 };
             };
             /** @description Courier does not support pickup (not InPost kurier) */

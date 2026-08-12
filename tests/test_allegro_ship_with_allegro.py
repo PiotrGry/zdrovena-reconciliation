@@ -58,7 +58,7 @@ class TestGetDeliveryServices:
                 "carrierId": "INPOST",
                 "owner": "ALLEGRO",
                 "name": "Allegro InPost Paczkomat",
-                "additionalProperties": {"inpost#sendingMethod": {"required": False}},
+                "additionalProperties": {"SENDING_CODE": {"required": False}},
             },
             {
                 "id": "svc-dpd",
@@ -304,7 +304,7 @@ class TestCreateShipmentCommand:
         body = m.call_args[1]["json"]
         assert "additionalServices" not in body["input"]
 
-    def test_additional_properties_inpost_sending_method_sent(self):
+    def test_additional_properties_returned_by_provider_are_sent(self):
         """P1-2: InPost sendingMethod goes to additionalProperties (issue #9915)."""
         c = _mock_client()
         with patch.object(
@@ -319,10 +319,10 @@ class TestCreateShipmentCommand:
                 sender=_SENDER,
                 receiver=_RECEIVER,
                 packages=[_PACKAGE],
-                additional_properties={"inpost#sendingMethod": "parcel_locker"},
+                additional_properties={"SENDING_CODE": "ABC123"},
             )
         body = m.call_args[1]["json"]
-        assert body["input"]["additionalProperties"] == {"inpost#sendingMethod": "parcel_locker"}
+        assert body["input"]["additionalProperties"] == {"SENDING_CODE": "ABC123"}
 
     def test_additional_properties_omitted_by_default(self):
         """P1-2: additionalProperties key must be absent when not provided."""

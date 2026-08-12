@@ -216,7 +216,23 @@ def execute_draft(
             )
 
         def persist_allegro_pickup_command(command_id: str) -> None:
-            repository.update_draft(draft_id, {"allegro_dispatch_id": command_id})
+            repository.update_draft(
+                draft_id,
+                {
+                    "allegro_pickup_command_id": command_id,
+                    "allegro_dispatch_id": None,
+                },
+            )
+
+        def persist_allegro_shipment(shipment: dict[str, str]) -> None:
+            key = (shipment.get("package_type"), shipment.get("package_number"))
+            for index, existing in enumerate(persisted_shipments):
+                if (existing.get("package_type"), existing.get("package_number")) == key:
+                    persisted_shipments[index] = shipment
+                    break
+            else:
+                persisted_shipments.append(shipment)
+            repository.update_draft(draft_id, {"courier_shipments": persisted_shipments})
 
         courier = draft.get("courier", "apaczka")
         if courier == "allegro_delivery":
@@ -225,6 +241,7 @@ def execute_draft(
                 **pickup_schedule,
                 on_command_created=persist_allegro_command,
                 on_pickup_command_created=persist_allegro_pickup_command,
+                on_shipment_checkpoint=persist_allegro_shipment,
             )
         elif courier == "inpost":
             patch = providers.inpost(

@@ -15,7 +15,7 @@ os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 
 from zdrovena.api import shipping_execution_composition as webhooks
 from zdrovena.api.main import app
-from zdrovena.common.shipping_exceptions import InPostBusinessError
+from zdrovena.common.shipping_exceptions import AllegroCommandPending, InPostBusinessError
 from zdrovena.common.shipping_store import DLQ_KIND_EXECUTION, ShippingStore
 from zdrovena.shipping.application.execution import fingerprint as execution_fingerprint
 from zdrovena.shipping.application.execution import workflow as execution_workflow
@@ -530,9 +530,20 @@ class TestPendingExecutionCharacterization:
             patch.object(webhooks, "get_sender", return_value=_SENDER),
             patch.object(webhooks, "get_allegro_client") as get_client,
         ):
+            allegro = get_client.return_value
+            allegro.get_delivery_proposal.return_value = {
+                "suggestedInput": {
+                    "sender": {"name": "Sender"},
+                    "receiver": {"name": "Anna Nowak"},
+                }
+            }
+            allegro.wait_for_ship_with_allegro_shipment.side_effect = AllegroCommandPending(
+                command_id="existing-command-id"
+            )
             result = _execute_application(draft["id"], store, object())
 
-        get_client.assert_not_called()
+        get_client.assert_called_once()
+        allegro.create_ship_with_allegro_shipment.assert_not_called()
         assert result["status"] == "pending_confirmation"
         assert result["allegro_command_id"] == "existing-command-id"
 
@@ -597,7 +608,9 @@ class TestExecutionFinalizationCharacterization:
         def get_draft(_draft_id: str) -> dict[str, Any]:
             nonlocal lookup_count
             lookup_count += 1
-            if lookup_count == 1:
+            # Composition performs one read-only courier validation lookup
+            # before the application workflow loads the execution snapshot.
+            if lookup_count <= 2:
                 return draft
             events.append("reload")
             return {**draft, **final_patch}

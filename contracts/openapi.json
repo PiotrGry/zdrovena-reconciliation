@@ -1023,6 +1023,49 @@
         "title": "OperationHealthItem",
         "type": "object"
       },
+      "PickupOrderedResponse": {
+        "properties": {
+          "draft_id": {
+            "title": "Draft Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "pickup_ordered",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "draft_id"
+        ],
+        "title": "PickupOrderedResponse",
+        "type": "object"
+      },
+      "PickupPendingResponse": {
+        "properties": {
+          "allegro_command_id": {
+            "title": "Allegro Command Id",
+            "type": "string"
+          },
+          "draft_id": {
+            "title": "Draft Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "pickup_pending",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "draft_id",
+          "allegro_command_id"
+        ],
+        "title": "PickupPendingResponse",
+        "type": "object"
+      },
       "ProductItem": {
         "properties": {
           "active": {
@@ -3205,6 +3248,54 @@
               "title": "Draft Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "pickup_date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pickup Date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pickup_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pickup From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pickup_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pickup To"
+            }
           }
         ],
         "responses": {
@@ -3458,11 +3549,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "title": "Response Order Pickup Api Shipping Drafts  Draft Id  Pickup Post"
+                  "$ref": "#/components/schemas/PickupOrderedResponse"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PickupPendingResponse"
+                }
+              }
+            },
+            "description": "Allegro pickup still pending"
           },
           "400": {
             "description": "Courier does not support pickup (not InPost kurier)"

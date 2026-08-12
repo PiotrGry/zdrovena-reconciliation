@@ -304,6 +304,12 @@ def _run_apaczka(
             courier="apaczka",
             action="create_shipment",
         )
+    apaczka_provider.validate_apaczka_pickup_window(
+        str(service_id),
+        pickup_date,
+        pickup_from,
+        pickup_to,
+    )
     client = ApaczkaClient(
         get_secret("apaczka_app_id"),
         get_secret("apaczka_app_secret"),
@@ -358,17 +364,22 @@ def get_allegro_pickup_address() -> dict[str, str]:
 
 def order_allegro_pickup(
     client: Any,
-    shipment_id: str,
+    shipment_ids: list[str],
     pickup_date: str | None,
     *,
     command_id: str | None = None,
     on_command_created: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Create or resume one asynchronous Ship-with-Allegro pickup command."""
+    if not shipment_ids:
+        raise AllegroBusinessError(
+            detail="pickup requires at least one shipmentId",
+            action="create_pickup_command",
+        )
     if command_id is None:
         pickup_address = get_allegro_pickup_address()
         proposals = client.get_ship_with_allegro_pickup_proposals(
-            [shipment_id], address=pickup_address
+            shipment_ids, address=pickup_address
         )
         new_format = next((proposal for proposal in proposals if proposal.get("date")), None)
         legacy_format = next(
@@ -379,7 +390,7 @@ def order_allegro_pickup(
         if not selected:
             logger.warning(
                 "No pickup proposals available for shipment %s on %s",
-                shipment_id,
+                ",".join(shipment_ids),
                 pickup_date,
             )
             return {
@@ -392,7 +403,7 @@ def order_allegro_pickup(
         if selected.get("date"):
             client.create_ship_with_allegro_pickup(
                 command_id=command_id,
-                shipment_ids=[shipment_id],
+                shipment_ids=shipment_ids,
                 address=pickup_address,
                 pickup_time={
                     "date": selected["date"],
@@ -403,7 +414,7 @@ def order_allegro_pickup(
         else:
             client.create_ship_with_allegro_pickup(
                 command_id=command_id,
-                shipment_ids=[shipment_id],
+                shipment_ids=shipment_ids,
                 address=pickup_address,
                 proposal_item_id=selected["id"],
             )
@@ -453,6 +464,7 @@ def _run_allegro_delivery(
     pickup_to: str | None = None,
     on_command_created: Callable[[str], None] | None = None,
     on_pickup_command_created: Callable[[str], None] | None = None,
+    on_shipment_checkpoint: Callable[[dict[str, str]], None] | None = None,
 ) -> dict[str, Any]:
     del pickup_from, pickup_to
     if MOCK_COURIER:
@@ -466,61 +478,112 @@ def _run_allegro_delivery(
             "error": None,
         }
 
-    existing_command = draft.get("allegro_command_id")
-    if existing_command and draft.get("status") == "pending_confirmation":
-        logger.info(
-            "Allegro command %s already pending for draft %s — skipping create",
-            existing_command,
-            draft.get("id"),
-        )
-        return {
-            "courier_draft_id": None,
-            "tracking_number": None,
-            "status": "pending_confirmation",
-            "pickup_ordered": False,
-            "allegro_command_id": existing_command,
-            "error": None,
-        }
-
     client = get_allegro_client()
     if client is None:
         raise RuntimeError("Allegro credentials missing — cannot use Ship with Allegro")
     order_id = str(draft.get("external_order_id") or "")
     if not order_id:
         raise RuntimeError("Ship with Allegro requires external_order_id")
-    call_spec = allegro_delivery_provider.allegro_call_spec(
-        draft, client.get_delivery_proposal(order_id)
+    proposal = client.get_delivery_proposal(order_id)
+    call_specs = allegro_delivery_provider.allegro_call_specs(draft, proposal)
+    existing_shipments = [dict(item) for item in draft.get("courier_shipments") or []]
+    shipments_by_key = {
+        (str(item.get("package_type") or ""), int(item.get("package_number") or 1)): item
+        for item in existing_shipments
+    }
+    legacy_command_id = (
+        str(draft.get("allegro_command_id") or "")
+        if draft.get("status") == "pending_confirmation"
+        else ""
     )
-    command_id = str(uuid.uuid4())
-    client.create_ship_with_allegro_shipment(command_id=command_id, **call_spec)
-    if on_command_created:
-        on_command_created(command_id)
-    try:
-        shipment_id = client.wait_for_ship_with_allegro_shipment(
-            command_id, max_attempts=3, interval_s=1.0
-        )
-    except AllegroCommandPending as exc:
-        logger.info(
-            "Allegro Delivery create-command %s pending — draft %s -> pending_confirmation",
-            exc.command_id or command_id,
-            draft.get("id"),
-        )
+    active_command_id: str | None = None
+
+    def ordered_shipments() -> list[dict[str, str]]:
+        return [
+            shipments_by_key[(str(spec["package_type"]), int(spec["package_number"]))]
+            for spec in call_specs
+            if (str(spec["package_type"]), int(spec["package_number"])) in shipments_by_key
+        ]
+
+    def shipment_result(status_value: str) -> dict[str, Any]:
+        shipments = ordered_shipments()
+        first = shipments[0] if shipments else {}
         return {
-            "courier_draft_id": None,
-            "tracking_number": None,
-            "status": "pending_confirmation",
+            "courier_draft_id": first.get("id") or None,
+            "allegro_shipment_id": first.get("id") or None,
+            "courier_shipments": shipments,
+            "tracking_number": first.get("tracking_number") or None,
+            "status": status_value,
             "pickup_ordered": False,
-            "allegro_command_id": exc.command_id or command_id,
+            "allegro_command_id": active_command_id,
             "error": None,
         }
 
-    shipment = client.get_ship_with_allegro_shipment(shipment_id)
-    _carrier_id, waybill = client.extract_shipment_waybill(shipment)
+    for index, call_spec in enumerate(call_specs):
+        key = (str(call_spec["package_type"]), int(call_spec["package_number"]))
+        shipment_checkpoint = shipments_by_key.get(key)
+        if shipment_checkpoint and shipment_checkpoint.get("id"):
+            continue
+
+        command_id = str((shipment_checkpoint or {}).get("allegro_command_id") or "")
+        if not command_id and index == 0:
+            command_id = legacy_command_id
+        if not command_id:
+            command_id = str(uuid.uuid4())
+            client.create_ship_with_allegro_shipment(
+                command_id=command_id,
+                **call_spec["kwargs"],
+            )
+            if on_command_created:
+                on_command_created(command_id)
+
+        active_command_id = command_id
+        shipment_checkpoint = {
+            **(shipment_checkpoint or {}),
+            "id": "",
+            "tracking_number": "",
+            "package_type": key[0],
+            "package_number": str(key[1]),
+            "allegro_command_id": command_id,
+        }
+        shipments_by_key[key] = shipment_checkpoint
+        if on_shipment_checkpoint:
+            on_shipment_checkpoint(dict(shipment_checkpoint))
+
+        try:
+            shipment_id = client.wait_for_ship_with_allegro_shipment(
+                command_id, max_attempts=3, interval_s=1.0
+            )
+        except AllegroCommandPending as exc:
+            active_command_id = exc.command_id or command_id
+            logger.info(
+                "Allegro Delivery create-command %s pending — draft %s",
+                active_command_id,
+                draft.get("id"),
+            )
+            return shipment_result("pending_confirmation")
+
+        shipment = client.get_ship_with_allegro_shipment(shipment_id)
+        _carrier_id, waybill = client.extract_shipment_waybill(shipment)
+        shipment_checkpoint.update(
+            {
+                "id": str(shipment_id),
+                "tracking_number": str(waybill or ""),
+            }
+        )
+        if on_shipment_checkpoint:
+            on_shipment_checkpoint(dict(shipment_checkpoint))
+
+    created_shipments = ordered_shipments()
+    shipment_ids = [str(shipment["id"]) for shipment in created_shipments if shipment.get("id")]
     pickup_ordered = False
     allegro_dispatch_id: str | None = None
+    allegro_pickup_command_id: str | None = None
     if pickup_date:
         pickup_command_id = (
-            str(draft.get("allegro_dispatch_id") or "") if not draft.get("pickup_ordered") else ""
+            str(draft.get("allegro_pickup_command_id") or "")
+            if not draft.get("pickup_ordered")
+            else ""
         ) or None
 
         def checkpoint_pickup(command_id: str) -> None:
@@ -532,38 +595,44 @@ def _run_allegro_delivery(
         try:
             pickup_result = order_allegro_pickup(
                 client,
-                shipment_id,
+                shipment_ids,
                 pickup_date,
                 command_id=pickup_command_id,
                 on_command_created=checkpoint_pickup,
             )
             pickup_ordered = pickup_result["status"] == "SUCCESS"
-            allegro_dispatch_id = (
-                pickup_result["pickup_id"] if pickup_ordered else pickup_result["command_id"]
-            )
+            if pickup_ordered:
+                allegro_dispatch_id = pickup_result["pickup_id"]
+            else:
+                allegro_pickup_command_id = pickup_result["command_id"]
         except (
             AllegroBusinessError,
             AllegroAuthError,
             CourierTransientError,
             MissingSecretError,
         ) as exc:
-            logger.exception("Allegro Delivery pickup failed for %s", shipment_id)
+            logger.exception("Allegro Delivery pickup failed for %s", ",".join(shipment_ids))
             if not isinstance(exc, AllegroPickupTerminalError):
-                allegro_dispatch_id = pickup_command_id
+                allegro_pickup_command_id = pickup_command_id
 
-    return {
-        "courier_draft_id": shipment_id,
-        "allegro_shipment_id": shipment_id,
-        "tracking_number": waybill,
-        "status": "created",
-        "pickup_ordered": pickup_ordered,
-        "allegro_dispatch_id": allegro_dispatch_id,
-        "allegro_command_id": command_id,
-        "error": None,
-    }
+    result = shipment_result("created")
+    result.update(
+        {
+            "pickup_ordered": pickup_ordered,
+            "allegro_dispatch_id": allegro_dispatch_id,
+            "allegro_pickup_command_id": allegro_pickup_command_id,
+        }
+    )
+    return result
 
 
-def execution_preview(draft: dict[str, Any]) -> dict[str, Any]:
+def execution_preview(
+    draft: dict[str, Any],
+    *,
+    pickup_date: str | None = None,
+    pickup_from: str | None = None,
+    pickup_to: str | None = None,
+) -> dict[str, Any]:
     """Build the exact provider preview and reviewed-snapshot fingerprint."""
     courier = draft.get("courier", "apaczka")
     if courier == "inpost":
@@ -594,6 +663,9 @@ def execution_preview(draft: dict[str, Any]) -> dict[str, Any]:
                     str(draft.get("apaczka_service_id") or ""),
                     None,
                 ),
+                pickup_date=pickup_date,
+                pickup_from=pickup_from,
+                pickup_to=pickup_to,
             ),
             "preview_available": True,
         }
@@ -700,16 +772,34 @@ def execute_shipping_draft(
     failure_dlq_entry_id: str | None = None,
 ) -> dict[str, Any]:
     """Execute one draft using the concrete API runtime composition."""
+    draft = repository.get_draft(draft_id)
+    effective_pickup_window = pickup_window or execution_workflow.PickupWindow()
+    if draft and draft.get("courier") == "apaczka":
+        apaczka_provider.validate_apaczka_pickup_window(
+            str(draft.get("apaczka_service_id") or ""),
+            effective_pickup_window.date,
+            effective_pickup_window.from_time,
+            effective_pickup_window.to_time,
+        )
+
+    def build_preview(current_draft: dict[str, Any]) -> dict[str, Any]:
+        return execution_preview(
+            current_draft,
+            pickup_date=effective_pickup_window.date,
+            pickup_from=effective_pickup_window.from_time,
+            pickup_to=effective_pickup_window.to_time,
+        )
+
     return execution_workflow.execute_draft(
         draft_id,
         repository,
-        build_preview=execution_preview,
+        build_preview=build_preview,
         resolve_sender=get_sender,
         providers=_provider_runners(storage),
         effects=_execution_effects(),
         execution_dlq_kind=DLQ_KIND_EXECUTION,
         system_shipment_origin=SHIPMENT_ORIGIN_SYSTEM,
-        pickup_window=pickup_window,
+        pickup_window=effective_pickup_window,
         preview_fingerprint=preview_fingerprint,
         failure_dlq_entry_id=failure_dlq_entry_id,
     )
@@ -795,7 +885,14 @@ def confirm_shipping_draft(
     if draft.get("status") != "pending_confirmation":
         raise ConfirmationError(409, "Draft is not pending confirmation")
 
-    command_id = draft.get("allegro_command_id")
+    command_id = draft.get("allegro_command_id") or next(
+        (
+            shipment.get("allegro_command_id")
+            for shipment in draft.get("courier_shipments") or []
+            if shipment.get("allegro_command_id") and not shipment.get("id")
+        ),
+        None,
+    )
     if not command_id:
         if draft.get("courier") == "inpost":
             return _confirm_pending_inpost(draft_id, draft, repository)
@@ -811,58 +908,60 @@ def confirm_shipping_draft(
         repository.update_draft(draft_id, patch)
         return ConfirmationResult(repository.get_draft(draft_id) or patch)
 
-    client = get_allegro_client()
-    if client is None:
-        raise ConfirmationError(502, "Allegro credentials missing")
+    persisted_shipments = [dict(item) for item in draft.get("courier_shipments") or []]
+
+    def persist_command(created_command_id: str) -> None:
+        repository.update_draft(
+            draft_id,
+            {
+                "allegro_command_id": created_command_id,
+                "status": "pending_confirmation",
+                "error": None,
+            },
+        )
+
+    def persist_shipment(shipment: dict[str, str]) -> None:
+        key = (shipment.get("package_type"), shipment.get("package_number"))
+        for index, existing in enumerate(persisted_shipments):
+            if (existing.get("package_type"), existing.get("package_number")) == key:
+                persisted_shipments[index] = shipment
+                break
+        else:
+            persisted_shipments.append(shipment)
+        repository.update_draft(draft_id, {"courier_shipments": persisted_shipments})
+
     try:
-        status_payload = client.get_ship_with_allegro_command_status(str(command_id))
+        patch = _run_allegro_delivery(
+            draft,
+            on_command_created=persist_command,
+            on_shipment_checkpoint=persist_shipment,
+        )
     except (AllegroAuthError, CourierTransientError) as exc:
         logger.exception("Confirm poll failed for draft %s", draft_id)
         raise ConfirmationError(502, f"Allegro API error: {exc}", original=exc) from exc
+    except AllegroBusinessError as exc:
+        logger.exception("Confirm poll failed for draft %s", draft_id)
+        error_patch = {
+            "status": "error",
+            "error": f"Allegro create-command {command_id} failed: {exc}",
+        }
+        repository.update_draft(draft_id, error_patch)
+        raise ConfirmationError(502, error_patch["error"], original=exc) from exc
 
-    command_status = (status_payload or {}).get("status")
-    if command_status == "IN_PROGRESS":
+    if patch.get("status") == "pending_confirmation":
+        repository.update_draft(draft_id, patch)
         return ConfirmationResult(
             {
                 "status": "pending_confirmation",
-                "allegro_command_id": str(command_id),
+                "allegro_command_id": str(patch.get("allegro_command_id") or command_id),
                 "draft_id": draft_id,
             },
             status_code=202,
         )
-    if command_status == "ERROR":
-        errors = status_payload.get("errors") or []
-        detail = "; ".join(str(error.get("message") or error) for error in errors)
-        patch = {
-            "status": "error",
-            "error": f"Allegro create-command {command_id} failed: "
-            f"{detail or 'Allegro command failed'}",
-        }
-        repository.update_draft(draft_id, patch)
-        raise ConfirmationError(502, patch["error"])
-    if command_status != "SUCCESS":
-        raise ConfirmationError(502, f"Unexpected Allegro command status: {command_status!r}")
 
-    shipment_id = status_payload.get("shipmentId")
-    if not shipment_id:
-        raise ConfirmationError(502, "Allegro command SUCCESS but no shipmentId returned")
-    try:
-        shipment = client.get_ship_with_allegro_shipment(str(shipment_id))
-        _carrier_id, waybill = client.extract_shipment_waybill(shipment)
-    except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
-        logger.exception("Fetching shipment %s failed", shipment_id)
-        raise ConfirmationError(502, f"Allegro API error: {exc}", original=exc) from exc
-
-    patch = {
-        "status": "created",
-        "courier_draft_id": str(shipment_id),
-        "allegro_shipment_id": str(shipment_id),
-        "tracking_number": waybill,
-        "error": None,
-        "shipment_origin": SHIPMENT_ORIGIN_SYSTEM,
-    }
+    patch["shipment_origin"] = SHIPMENT_ORIGIN_SYSTEM
     repository.update_draft(draft_id, patch)
-    if waybill:
+    if patch.get("tracking_number"):
         emit_tracking_assigned(
             draft_id,
             draft.get("shopify_order_number"),

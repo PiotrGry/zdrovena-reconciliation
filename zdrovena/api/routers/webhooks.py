@@ -27,7 +27,7 @@ import re
 import unicodedata
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -41,6 +41,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 from zdrovena.api import shipping_draft_composition as draft_composition
 from zdrovena.api import shipping_execution_composition as execution_composition
@@ -54,6 +55,7 @@ from zdrovena.common.secrets import get_secret
 from zdrovena.common.shipping_exceptions import (
     AllegroAuthError,
     AllegroBusinessError,
+    ApaczkaBusinessError,
     CourierAuthError,
     CourierBusinessError,
     CourierTransientError,
@@ -73,6 +75,17 @@ from zdrovena.shipping.application.execution import workflow as execution_workfl
 logger = logging.getLogger("zdrovena.api.routers.webhooks")
 
 router = APIRouter(tags=["shipping"])
+
+
+class PickupOrderedResponse(BaseModel):
+    status: Literal["pickup_ordered"]
+    draft_id: str
+
+
+class PickupPendingResponse(BaseModel):
+    status: Literal["pickup_pending"]
+    draft_id: str
+    allegro_command_id: str
 
 
 # ── HMAC helpers ──────────────────────────────────────────────────────────────
@@ -729,11 +742,22 @@ def preview_execute_draft(
     draft_id: str,
     shipping_store: ShippingStoreDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+    pickup_date: str | None = Query(None),
+    pickup_from: str | None = Query(None),
+    pickup_to: str | None = Query(None),
 ) -> dict[str, Any]:
     draft = shipping_store.get_draft(draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
-    return execution_composition.execution_preview(draft)
+    try:
+        return execution_composition.execution_preview(
+            draft,
+            pickup_date=pickup_date,
+            pickup_from=pickup_from,
+            pickup_to=pickup_to,
+        )
+    except ApaczkaBusinessError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post(
@@ -769,6 +793,8 @@ def execute_draft(
         )
     except execution_composition.EXECUTION_APPLICATION_HTTP_ERRORS as exc:
         execution_composition.raise_execution_http_exception(exc)
+    except ApaczkaBusinessError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 # ── Confirm pending Allegro create-command ───────────────────────────────────
@@ -815,7 +841,9 @@ def confirm_pending_command(
 @router.post(
     "/shipping/drafts/{draft_id}/pickup",
     summary="Order InPost kurier pickup for an executed draft",
+    response_model=PickupOrderedResponse,
     responses={
+        202: {"model": PickupPendingResponse, "description": "Allegro pickup still pending"},
         403: {"description": "Insufficient role"},
         404: {"description": "Draft not found"},
         409: {"description": "Pickup already ordered or draft not ready"},
@@ -829,7 +857,7 @@ def order_pickup(
     pickup_date: str | None = Body(None),
     pickup_from: str | None = Body(None),
     pickup_to: str | None = Body(None),
-) -> Any:
+) -> dict[str, str] | JSONResponse:
     draft = shipping_store.get_draft(draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
@@ -847,8 +875,16 @@ def order_pickup(
     if draft.get("pickup_ordered"):
         raise HTTPException(status_code=409, detail="Pickup already ordered")
 
-    courier_draft_id = draft.get("courier_draft_id")
-    if not courier_draft_id:
+    shipment_ids = [
+        str(shipment.get("id") or "").strip() for shipment in draft.get("courier_shipments") or []
+    ]
+    shipment_ids = [shipment_id for shipment_id in shipment_ids if shipment_id]
+    if not shipment_ids:
+        legacy_shipment_id = str(
+            draft.get("allegro_shipment_id") or draft.get("courier_draft_id") or ""
+        ).strip()
+        shipment_ids = [legacy_shipment_id] if legacy_shipment_id else []
+    if not shipment_ids:
         raise HTTPException(status_code=409, detail="No courier draft ID — execute first")
 
     # Claim before calling the courier (not after) so two concurrent requests
@@ -860,13 +896,14 @@ def order_pickup(
         ref = draft.get("shopify_order_number", "mock")
         logger.info("MOCK_COURIER: skipping %s pickup for draft %s", courier, ref)
     elif courier == "allegro_delivery":
-        existing_command_id = str(draft.get("allegro_dispatch_id") or "") or None
+        existing_command_id = str(draft.get("allegro_pickup_command_id") or "") or None
 
         def persist_pickup_command(command_id: str) -> None:
             shipping_store.update_draft(
                 draft_id,
                 {
-                    "allegro_dispatch_id": command_id,
+                    "allegro_pickup_command_id": command_id,
+                    "allegro_dispatch_id": None,
                     "pickup_ordered": False,
                 },
             )
@@ -877,7 +914,7 @@ def order_pickup(
                 raise HTTPException(status_code=502, detail="Allegro credentials missing")
             pickup_result = execution_composition.order_allegro_pickup(
                 allegro,
-                str(courier_draft_id),
+                shipment_ids,
                 pickup_date,
                 command_id=existing_command_id,
                 on_command_created=persist_pickup_command,
@@ -892,7 +929,8 @@ def order_pickup(
                     draft_id,
                     {
                         "pickup_ordered": False,
-                        "allegro_dispatch_id": pickup_result["command_id"],
+                        "allegro_pickup_command_id": pickup_result["command_id"],
+                        "allegro_dispatch_id": None,
                     },
                 )
                 return JSONResponse(
@@ -908,6 +946,7 @@ def order_pickup(
                 {
                     "pickup_ordered": True,
                     "allegro_dispatch_id": pickup_result["pickup_id"],
+                    "allegro_pickup_command_id": None,
                 },
             )
         except HTTPException:
@@ -917,7 +956,7 @@ def order_pickup(
             logger.exception("order_pickup failed for draft %s", draft_id)
             patch: dict[str, Any] = {"pickup_ordered": False}
             if isinstance(exc, execution_composition.AllegroPickupTerminalError):
-                patch["allegro_dispatch_id"] = None
+                patch["allegro_pickup_command_id"] = None
             shipping_store.update_draft(draft_id, patch)
             raise HTTPException(status_code=502, detail=f"Allegro pickup error: {exc}") from exc
     else:
@@ -966,8 +1005,16 @@ def cancel_shipment(
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
 
-    shipment_id = draft.get("allegro_shipment_id") or draft.get("courier_draft_id")
-    if not shipment_id:
+    shipment_ids = [
+        str(shipment.get("id") or "").strip() for shipment in draft.get("courier_shipments") or []
+    ]
+    shipment_ids = [shipment_id for shipment_id in shipment_ids if shipment_id]
+    if not shipment_ids:
+        legacy_shipment_id = str(
+            draft.get("allegro_shipment_id") or draft.get("courier_draft_id") or ""
+        ).strip()
+        shipment_ids = [legacy_shipment_id] if legacy_shipment_id else []
+    if not shipment_ids:
         raise HTTPException(status_code=409, detail="No Allegro shipment to cancel")
 
     if not execution_composition.MOCK_COURIER:
@@ -975,15 +1022,16 @@ def cancel_shipment(
         if client is None:
             raise HTTPException(status_code=502, detail="Allegro credentials missing")
         try:
-            client.cancel_ship_with_allegro_shipment(
-                command_id=str(uuid.uuid4()), shipment_id=str(shipment_id)
-            )
+            for shipment_id in shipment_ids:
+                client.cancel_ship_with_allegro_shipment(
+                    command_id=str(uuid.uuid4()), shipment_id=shipment_id
+                )
         except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
             logger.exception("Allegro cancel shipment failed for draft %s", draft_id)
             raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
 
     shipping_store.update_draft(draft_id, {"status": "cancelled", "allegro_shipment_id": None})
-    return {"status": "cancelled", "draft_id": draft_id, "shipment_id": str(shipment_id)}
+    return {"status": "cancelled", "draft_id": draft_id, "shipment_id": shipment_ids[0]}
 
 
 @router.delete(
@@ -1362,7 +1410,7 @@ def _fetch_label_pdf(draft: dict[str, Any], courier: str, storage: Any) -> bytes
     courier failures surface as HTTP 502.
     """
     if courier == "allegro_delivery":
-        label_ids = [draft.get("allegro_shipment_id") or draft.get("courier_draft_id")]
+        label_ids = execution_composition.dispatch_shipment_ids(draft)
     else:
         label_ids = [shipment.get("id") for shipment in draft.get("courier_shipments") or []]
         if not label_ids:
@@ -1398,7 +1446,8 @@ def _fetch_label_pdf(draft: dict[str, Any], courier: str, storage: Any) -> bytes
             if client is None:
                 raise HTTPException(status_code=502, detail="Allegro credentials missing")
             try:
-                return client.get_ship_with_allegro_label(label_ids[0])
+                pdfs = [client.get_ship_with_allegro_label(label_id) for label_id in label_ids]
+                return _merge_pdfs(pdfs) if len(pdfs) > 1 else pdfs[0]
             except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
                 logger.exception("Allegro label fetch failed for draft %s", draft.get("id"))
                 raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc

@@ -32,6 +32,7 @@ _SYNC_PRESERVED_FIELDS = {
     "dispatch_order_id",
     "allegro_shipment_id",
     "allegro_dispatch_id",
+    "allegro_pickup_command_id",
     "pickup_ordered",
     "fakturownia_invoice_id",
     "fakturownia_invoice_number",

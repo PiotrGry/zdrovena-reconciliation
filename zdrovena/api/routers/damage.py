@@ -95,6 +95,7 @@ def _clone_replacement_draft(original: dict[str, Any], case: dict[str, Any]) -> 
             "dispatch_order_id": None,
             "allegro_shipment_id": None,
             "allegro_dispatch_id": None,
+            "allegro_pickup_command_id": None,
             "allegro_command_id": None,
             "pickup_ordered": False,
             "shipment_origin": None,

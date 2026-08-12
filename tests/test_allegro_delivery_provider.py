@@ -9,7 +9,6 @@ import pytest
 
 from zdrovena.common.shipping_exceptions import AllegroBusinessError, CourierTransientError
 from zdrovena.shipping.providers.allegro_delivery import (
-    ALLEGRO_INPOST_SENDING_METHODS,
     allegro_call_spec,
     allegro_payload_plan,
 )
@@ -107,20 +106,6 @@ def test_call_spec_matches_exact_payload_builder_shape() -> None:
                 "height": {"value": 20, "unit": "CENTIMETER"},
                 "weight": {"value": 12.0, "unit": "KILOGRAMS"},
             },
-            {
-                "type": "PACKAGE",
-                "length": {"value": 40, "unit": "CENTIMETER"},
-                "width": {"value": 30, "unit": "CENTIMETER"},
-                "height": {"value": 20, "unit": "CENTIMETER"},
-                "weight": {"value": 12.0, "unit": "KILOGRAMS"},
-            },
-            {
-                "type": "PACKAGE",
-                "length": {"value": 20, "unit": "CENTIMETER"},
-                "width": {"value": 15, "unit": "CENTIMETER"},
-                "height": {"value": 20, "unit": "CENTIMETER"},
-                "weight": {"value": 3.0, "unit": "KILOGRAMS"},
-            },
         ],
         "sender": {
             "name": "Maria Gryzło ZDROVENA",
@@ -137,11 +122,12 @@ def test_call_spec_matches_exact_payload_builder_shape() -> None:
             "countryCode": "PL",
             "point": "LOD01A",
         },
-        "additional_properties": {"inpost#sendingMethod": "parcel_locker"},
+        "additional_services": None,
+        "additional_properties": None,
     }
     assert result["sender"] is proposal["suggestedInput"]["sender"]
     assert "point" not in proposal["suggestedInput"]["receiver"]
-    assert len(result["packages"]) == 3
+    assert len(result["packages"]) == 1
     assert "1/2" not in result["reference_number"]
     assert "2/2" not in result["reference_number"]
 
@@ -173,19 +159,6 @@ def test_equivalent_inpost_and_allegro_drafts_use_same_canonical_reference() -> 
 
     assert inpost_reference == "1700 | plastik | 1-pak"
     assert allegro_reference == inpost_reference
-
-
-@pytest.mark.parametrize(
-    "sending_method",
-    sorted(ALLEGRO_INPOST_SENDING_METHODS),
-)
-def test_call_spec_preserves_each_inpost_sending_method(sending_method: str) -> None:
-    result = allegro_call_spec(
-        _draft(allegro_sending_method=sending_method),
-        _PROPOSAL,
-    )
-
-    assert result["additional_properties"] == {"inpost#sendingMethod": sending_method}
 
 
 def test_call_spec_omits_point_and_ignores_unknown_sending_method() -> None:
@@ -234,15 +207,66 @@ def test_payload_plan_reads_proposal_once_and_performs_no_writes_or_uuid_generat
 
     assert client.proposal_order_ids == ["allegro-order-9"]
     assert client.provider_writes == []
-    assert plan == [
-        {
-            "service": "allegro_delivery",
-            "package_type": "allegro",
-            "package_number": 1,
-            "reference": "1053 | plastik | 2-pak",
-            "payload": allegro_call_spec(_draft(), _PROPOSAL),
-        }
+    assert len(plan) == 3
+    assert plan[0] == {
+        "service": "allegro_delivery",
+        "package_type": "2-pak",
+        "package_number": 1,
+        "reference": "1053 | plastik | 2-pak",
+        "payload": allegro_call_spec(_draft(), _PROPOSAL),
+    }
+
+
+def test_payload_plan_creates_one_independent_shipment_per_physical_box() -> None:
+    client = _ReadOnlyProposalClient(_PROPOSAL)
+
+    plan = allegro_payload_plan(_draft(), client)
+
+    assert [(entry["package_type"], entry["package_number"]) for entry in plan] == [
+        ("2-pak", 1),
+        ("2-pak", 2),
+        ("pół-pak", 1),
     ]
+    assert [len(entry["payload"]["packages"]) for entry in plan] == [1, 1, 1]
+    assert [entry["reference"] for entry in plan] == [
+        "1053 | plastik | 2-pak",
+        "1053 | plastik | 2-pak",
+        "1053 | plastik | pół-pak",
+    ]
+    assert all("1/2" not in entry["reference"] for entry in plan)
+    assert all("2/2" not in entry["reference"] for entry in plan)
+
+
+def test_mixed_physical_parcels_use_their_own_canonical_reference() -> None:
+    client = _ReadOnlyProposalClient(_PROPOSAL)
+
+    plan = allegro_payload_plan(_draft(), client)
+
+    assert [entry["reference"] for entry in plan] == [
+        "1053 | plastik | 2-pak",
+        "1053 | plastik | 2-pak",
+        "1053 | plastik | pół-pak",
+    ]
+
+
+def test_removed_inpost_sending_method_is_never_emitted() -> None:
+    result = allegro_call_spec(_draft(allegro_sending_method="parcel_locker"), _PROPOSAL)
+
+    assert result.get("additional_properties") is None
+
+
+def test_documented_sending_at_point_is_forwarded_only_from_delivery_proposal() -> None:
+    proposal = {
+        "suggestedInput": {
+            **_PROPOSAL["suggestedInput"],
+            "additionalServices": ["sendingAtPoint"],
+        }
+    }
+
+    result = allegro_call_spec(_draft(allegro_sending_method="parcel_locker"), proposal)
+
+    assert result["additional_services"] == ["sendingAtPoint"]
+    assert result.get("additional_properties") is None
 
 
 def test_payload_plan_preserves_external_order_id_for_proposal_correlation() -> None:

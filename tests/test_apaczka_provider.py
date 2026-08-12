@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
 from zdrovena.shipping.providers.apaczka import apaczka_call_specs, apaczka_payload_plan
 
 _PICKUP_ADDRESS = {
@@ -25,7 +28,7 @@ def _draft(**overrides: Any) -> dict[str, Any]:
         "shopify_order_number": "1800",
         "courier": "apaczka",
         "service": "apaczka",
-        "apaczka_service_id": "42",
+        "apaczka_service_id": "23",
         "receiver": {
             "first_name": "Anna",
             "last_name": "Nowak",
@@ -160,36 +163,87 @@ def test_payload_plan_uses_injected_builder_and_keeps_pickup_address_as_sender()
     assert plan[0]["payload"]["address"]["sender"] is _PICKUP_ADDRESS
 
 
-def test_execution_call_specs_preserve_pickup_schedule() -> None:
+@pytest.mark.parametrize(
+    ("pickup_from", "pickup_to"),
+    [
+        ("09:00", "17:00"),
+        ("11:00", "14:00"),
+        ("14:00", "17:00"),
+    ],
+)
+def test_execution_call_specs_preserve_supported_pickup_windows(
+    pickup_from: str, pickup_to: str
+) -> None:
     specs = apaczka_call_specs(
         _draft(),
         _PICKUP_ADDRESS,
         pickup_date="2026-08-12",
-        pickup_from="09:30",
-        pickup_to="13:45",
+        pickup_from=pickup_from,
+        pickup_to=pickup_to,
     )
 
     assert {
         field: specs[0]["kwargs"][field] for field in ("pickup_date", "pickup_from", "pickup_to")
     } == {
         "pickup_date": "2026-08-12",
-        "pickup_from": "09:30",
-        "pickup_to": "13:45",
+        "pickup_from": pickup_from,
+        "pickup_to": pickup_to,
     }
 
 
-def test_preview_payload_plan_omits_execute_time_pickup_schedule() -> None:
+def test_unsupported_production_like_window_is_rejected_before_payload_build() -> None:
     builder = _RecordingPayloadBuilder()
 
-    plan = apaczka_payload_plan(_draft(), _PICKUP_ADDRESS, builder)
+    with pytest.raises(ApaczkaBusinessError, match=r"09:00.17:00"):
+        apaczka_payload_plan(
+            _draft(),
+            _PICKUP_ADDRESS,
+            builder,
+            pickup_date="2026-08-12",
+            pickup_from="11:00",
+            pickup_to="13:00",
+        )
 
-    assert plan[0]["payload"]["pickup"] == {"type": "COURIER"}
+    assert builder.calls == []
+
+
+def test_unverified_service_keeps_its_existing_pickup_window_semantics() -> None:
+    specs = apaczka_call_specs(
+        _draft(apaczka_service_id="21"),
+        _PICKUP_ADDRESS,
+        pickup_date="2026-08-12",
+        pickup_from="10:00",
+        pickup_to="13:00",
+    )
+
+    assert specs[0]["kwargs"]["pickup_from"] == "10:00"
+    assert specs[0]["kwargs"]["pickup_to"] == "13:00"
+
+
+def test_preview_payload_plan_matches_execute_time_pickup_schedule() -> None:
+    builder = _RecordingPayloadBuilder()
+
+    plan = apaczka_payload_plan(
+        _draft(),
+        _PICKUP_ADDRESS,
+        builder,
+        pickup_date="2026-08-12",
+        pickup_from="11:00",
+        pickup_to="14:00",
+    )
+
+    assert plan[0]["payload"]["pickup"] == {
+        "type": "COURIER",
+        "date": "2026-08-12",
+        "hours_from": "11:00",
+        "hours_to": "14:00",
+    }
     assert {
         field: builder.calls[0][field] for field in ("pickup_date", "pickup_from", "pickup_to")
     } == {
-        "pickup_date": None,
-        "pickup_from": None,
-        "pickup_to": None,
+        "pickup_date": "2026-08-12",
+        "pickup_from": "11:00",
+        "pickup_to": "14:00",
     }
 
 
@@ -238,11 +292,13 @@ def test_router_preview_composes_apaczka_provider_planner(monkeypatch) -> None:
         planned_draft: dict[str, Any],
         pickup_address: dict[str, str],
         builder: Any,
+        **pickup_schedule: Any,
     ) -> list[dict[str, Any]]:
         captured.update(
             draft=planned_draft,
             pickup_address=pickup_address,
             builder=builder,
+            pickup_schedule=pickup_schedule,
         )
         return parcels
 

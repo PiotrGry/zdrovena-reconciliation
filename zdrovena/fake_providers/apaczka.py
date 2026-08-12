@@ -206,6 +206,24 @@ def _validate_order(value: Any) -> dict[str, Any] | None:
     for field in ("hours_from", "hours_to"):
         if pickup.get(field) and not TIME_RE.fullmatch(str(pickup[field])):
             return _failure(422, f"order.pickup.{field} is invalid", field=f"order.pickup.{field}")
+    if (
+        str(value.get("service_id") or "") == "23"
+        and pickup.get("date")
+        and (
+            str(pickup.get("hours_from") or ""),
+            str(pickup.get("hours_to") or ""),
+        )
+        not in {
+            ("09:00", "17:00"),
+            ("11:00", "14:00"),
+            ("14:00", "17:00"),
+        }
+    ):
+        return _failure(
+            400,
+            'Dozwolone przedzialy godzinowe: "[09:00|17:00,11:00|14:00,14:00|17:00]"',
+            field="order.pickup",
+        )
     return None
 
 

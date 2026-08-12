@@ -31,7 +31,6 @@ MEDIA_TYPE = "application/vnd.allegro.public.v1+json"
 PACKAGE_TYPES = frozenset({"PACKAGE", "DOX", "PALLET"})
 DIMENSION_UNITS = frozenset({"MILLIMETER", "CENTIMETER", "METER"})
 WEIGHT_UNITS = frozenset({"KILOGRAMS"})
-INPOST_SENDING_METHODS = frozenset({"parcel_locker", "dispatch_order", "pop", "any_point"})
 
 
 def _require_headers(
@@ -98,9 +97,17 @@ def _validate_create_input(value: Any) -> dict[str, Any]:
     if properties is not None:
         if not isinstance(properties, dict):
             raise HTTPException(status_code=422, detail="input.additionalProperties must be object")
-        method = properties.get("inpost#sendingMethod")
-        if method is not None and method not in INPOST_SENDING_METHODS:
-            raise HTTPException(status_code=422, detail="Invalid inpost#sendingMethod")
+        if "inpost#sendingMethod" in properties:
+            raise HTTPException(
+                status_code=400,
+                detail="The 'inpost#sendingMethod' parameter is no longer supported.",
+            )
+    additional_services = value.get("additionalServices")
+    if additional_services is not None and (
+        not isinstance(additional_services, list)
+        or any(not isinstance(service, str) for service in additional_services)
+    ):
+        raise HTTPException(status_code=422, detail="input.additionalServices must be strings")
     return value
 
 

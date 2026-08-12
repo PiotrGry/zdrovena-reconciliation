@@ -332,6 +332,31 @@ def test_apaczka_client_stateful_success_and_provider_validation_failure(
     assert duplicate["id"] != shipment["id"]
     assert client.get_label(shipment["id"]).startswith(b"%PDF")
 
+    dpd_pickup_client = ApaczkaClient(
+        app_id="fake",
+        app_secret="fake",
+        service_id="23",
+        storage=_MemoryStorage(),
+    )
+    with pytest.raises(ApaczkaBusinessError, match="Dozwolone przedzialy"):
+        dpd_pickup_client.create_shipment(
+            receiver_name="Anna Nowak",
+            receiver_firstname="Anna",
+            receiver_lastname="Nowak",
+            receiver_email="anna@example.test",
+            receiver_phone="500500500",
+            receiver_address="Prosta 1",
+            receiver_city="Warszawa",
+            receiver_zip="00-001",
+            receiver_point_id="PL55338",
+            sender=sender,
+            reference="order-invalid-window",
+            content="Woda butelkowana",
+            pickup_date="2026-08-12",
+            pickup_from="11:00",
+            pickup_to="13:00",
+        )
+
     _set_scenario(fake_provider_url, "apaczka", "order_send", "provider_validation_failure")
     with pytest.raises(ApaczkaBusinessError):
         client.create_shipment(
@@ -508,6 +533,31 @@ def test_fake_providers_reject_documented_contract_violations(fake_provider_url:
         timeout=2,
     )
     assert wrong_allegro_media_type.status_code == 415
+
+    allegro_headers = {
+        "Authorization": "Bearer fake-token",
+        "Accept": "application/vnd.allegro.public.v1+json",
+        "Content-Type": "application/vnd.allegro.public.v1+json",
+    }
+    proposal = requests.get(
+        f"{fake_provider_url}/allegro/shipment-management/delivery-proposals/fake-order-1",
+        headers=allegro_headers,
+        timeout=2,
+    ).json()
+    removed_sending_method = requests.post(
+        f"{fake_provider_url}/allegro/shipment-management/shipments/create-commands",
+        headers=allegro_headers,
+        json={
+            "commandId": "removed-property",
+            "input": {
+                **proposal["suggestedInput"],
+                "additionalProperties": {"inpost#sendingMethod": "parcel_locker"},
+            },
+        },
+        timeout=2,
+    )
+    assert removed_sending_method.status_code == 400
+    assert "no longer supported" in removed_sending_method.text
 
     missing_locker_point = requests.post(
         f"{fake_provider_url}/inpost/v1/organizations/org-1/shipments",

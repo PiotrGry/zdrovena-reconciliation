@@ -580,8 +580,8 @@ class AllegroClient:
             object — weight unit is the plural ``KILOGRAMS``).
           - ``additional_services`` is an Array of Allegro service strings.
           - ``additional_properties`` is a dict of carrier-specific extras
-            (e.g. ``{"inpost#sendingMethod": "parcel_locker"}`` — see Allegro
-            issue #9915). Keys are namespaced by carrier; only sent when set.
+            returned by Allegro for the selected delivery option. Only sent
+            when set; removed properties must not be inferred locally.
 
         For Allegro Standard: pass credentials_id=None.
         For own agreements: pass the credentialsId returned by get_delivery_services.
