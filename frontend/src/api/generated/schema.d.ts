@@ -2853,7 +2853,11 @@ export interface operations {
     };
     preview_execute_draft_api_shipping_drafts__draft_id__execute_preview_get: {
         parameters: {
-            query?: never;
+            query?: {
+                pickup_date?: string | null;
+                pickup_from?: string | null;
+                pickup_to?: string | null;
+            };
             header?: never;
             path: {
                 draft_id: string;

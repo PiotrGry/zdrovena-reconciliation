@@ -434,7 +434,7 @@ describe('execute preview', () => {
         const fetchMock = mockFetch((url, init = {}) => {
             if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
             if (url === '/api/shipping/drafts') return jsonResponse({ drafts })
-            if (url.endsWith('/execute/preview')) return jsonResponse(previewBody)
+            if (url.includes('/execute/preview')) return jsonResponse(previewBody)
             if (url.endsWith('/execute') && init.method === 'POST') {
                 executeCalls.push({ url, init })
                 return jsonResponse({ id: 'draft-1', status: 'created' })
@@ -496,7 +496,7 @@ describe('execute preview', () => {
         mockFetch((url, init = {}) => {
             if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
             if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'apaczka' })] })
-            if (url.endsWith('/execute/preview')) return jsonResponse(apaczkaPreviewBody)
+            if (url.includes('/execute/preview')) return jsonResponse(apaczkaPreviewBody)
             throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
         })
         renderWithProviders(<ShippingView />)
@@ -509,13 +509,32 @@ describe('execute preview', () => {
         expect(panel.textContent).toContain('6 kg')
     })
 
+    it('offers only provider-supported pickup windows for Apaczka execute', async () => {
+        mockFetch((url, init = {}) => {
+            if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
+            if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'apaczka' })] })
+            if (url.includes('/execute/preview')) return jsonResponse(apaczkaPreviewBody)
+            throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
+        })
+        renderWithProviders(<ShippingView />)
+
+        await openExecute()
+        const windowSelect = await screen.findByTestId('apaczka-pickup-window')
+
+        expect([...windowSelect.options].map(option => option.value)).toEqual([
+            '09:00|17:00',
+            '11:00|14:00',
+            '14:00|17:00',
+        ])
+    })
+
     it('refuses to confirm when the courier has no payload preview', async () => {
         // An empty panel the operator can confirm is worse than no panel: it
         // invites them to certify having seen nothing.
         mockFetch((url, init = {}) => {
             if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
             if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'allegro_delivery' })] })
-            if (url.endsWith('/execute/preview')) return jsonResponse({
+            if (url.includes('/execute/preview')) return jsonResponse({
                 fingerprint: 'allegro-snapshot',
                 courier: 'allegro_delivery',
                 preview_available: false,
@@ -536,7 +555,7 @@ describe('execute preview', () => {
         mockFetch((url, init = {}) => {
             if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
             if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'allegro_delivery' })] })
-            if (url.endsWith('/execute/preview')) return jsonResponse({
+            if (url.includes('/execute/preview')) return jsonResponse({
                 fingerprint: 'allegro-ok',
                 courier: 'allegro_delivery',
                 preview_available: true,
@@ -575,7 +594,7 @@ describe('execute preview', () => {
         mockFetch((url, init = {}) => {
             if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
             if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ courier: 'allegro_delivery' })] })
-            if (url.endsWith('/execute/preview')) return jsonResponse({
+            if (url.includes('/execute/preview')) return jsonResponse({
                 fingerprint: 'allegro-down',
                 courier: 'allegro_delivery',
                 preview_available: false,

@@ -4,10 +4,36 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
 from zdrovena.common.shipping_parcels import PARCEL_SPECS
 from zdrovena.shipping.domain.planning import physical_parcels, shipment_reference
 
 ApaczkaCallSpec = dict[str, Any]
+
+APACZKA_PICKUP_WINDOWS = (
+    ("09:00", "17:00"),
+    ("11:00", "14:00"),
+    ("14:00", "17:00"),
+)
+
+
+def validate_apaczka_pickup_window(
+    pickup_date: str | None,
+    pickup_from: str | None,
+    pickup_to: str | None,
+) -> None:
+    """Reject collection windows that Apaczka's ``order_send`` will reject."""
+    if pickup_date is None and pickup_from is None and pickup_to is None:
+        return
+    window = (pickup_from or "", pickup_to or "")
+    if not pickup_date or window not in APACZKA_PICKUP_WINDOWS:
+        allowed = ", ".join(f"{start}–{end}" for start, end in APACZKA_PICKUP_WINDOWS)
+        requested = f"{pickup_from or '?'}–{pickup_to or '?'}"
+        raise ApaczkaBusinessError(
+            f"Unsupported Apaczka pickup window {requested}. Allowed windows: {allowed}",
+            courier="apaczka",
+            action="validate_pickup_window",
+        )
 
 
 class ApaczkaPayloadBuilder(Protocol):
@@ -47,6 +73,7 @@ def apaczka_call_specs(
     pickup_to: str | None = None,
 ) -> list[ApaczkaCallSpec]:
     """Return builder arguments for physical parcels not already checkpointed."""
+    validate_apaczka_pickup_window(pickup_date, pickup_from, pickup_to)
     receiver = draft.get("receiver") or {}
     pickup_point = draft.get("pickup_point") or {}
     receiver_point_id = str(pickup_point.get("id") or receiver.get("locker_id") or "").strip()
@@ -124,9 +151,19 @@ def apaczka_payload_plan(
     draft: dict[str, Any],
     pickup_address: dict[str, str],
     builder: ApaczkaPayloadBuilder,
+    *,
+    pickup_date: str | None = None,
+    pickup_from: str | None = None,
+    pickup_to: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return exact Apaczka payloads without sending or adding a pickup schedule."""
-    call_specs = apaczka_call_specs(draft, pickup_address)
+    """Return the exact Apaczka payloads without sending them."""
+    call_specs = apaczka_call_specs(
+        draft,
+        pickup_address,
+        pickup_date=pickup_date,
+        pickup_from=pickup_from,
+        pickup_to=pickup_to,
+    )
     return [
         {
             "service": draft.get("service"),
@@ -140,8 +177,10 @@ def apaczka_payload_plan(
 
 
 __all__ = [
+    "APACZKA_PICKUP_WINDOWS",
     "ApaczkaCallSpec",
     "ApaczkaPayloadBuilder",
     "apaczka_call_specs",
     "apaczka_payload_plan",
+    "validate_apaczka_pickup_window",
 ]
