@@ -89,6 +89,12 @@ export function CloseHistoryTable({ refreshKey = 0 }) {
                             ? `${Number(h.sales_gross_total).toLocaleString('pl-PL')} PLN`
                             : '—'
                         const tip = cfg.desc + (h.error ? `\n\nBłąd: ${h.error}` : '')
+                        // Historia jest jedynym trwałym śladem po odstępstwach —
+                        // rekord runu zapomina je przy ponownym uruchomieniu etapu.
+                        const waived = h.waiver_count ?? 0
+                        const waivedTargets = (h.waivers ?? [])
+                            .map(w => `${w.target} (${w.user})`)
+                            .join('\n')
                         return (
                             <tr key={h.ts}>
                                 <td>
@@ -100,6 +106,14 @@ export function CloseHistoryTable({ refreshKey = 0 }) {
                                         <span className="dot" />
                                         {cfg.label}
                                     </span>
+                                    {waived > 0 && (
+                                        <span
+                                            className="badge-waived"
+                                            title={`Świadomie pominięto:\n${waivedTargets}`}
+                                        >
+                                            <Icon name="slash" size={10} /> {waived}
+                                        </span>
+                                    )}
                                 </td>
                                 <td className="mono" style={{ textAlign: 'right' }}>
                                     {(h.status === 'success' || h.status === 'partial')

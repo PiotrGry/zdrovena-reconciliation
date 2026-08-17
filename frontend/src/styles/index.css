@@ -2465,6 +2465,20 @@ table.files tbody tr:hover .row-actions {
 }
 
 /* History ──────────────────────────────────────────────────────── */
+.badge-waived {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 6px;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--warning);
+    background: var(--warn-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    vertical-align: middle;
+}
+
 .badge-dry {
     display: inline-block;
     margin-left: 6px;
@@ -2530,6 +2544,33 @@ table.files tbody tr:hover .row-actions {
 
 .workflow-step.is-failed {
     background: linear-gradient(90deg, var(--warn-bg), var(--surface) 42%);
+}
+
+.workflow-step.is-waived {
+    background: var(--surface);
+}
+
+.workflow-step.is-waived .workflow-step-body {
+    opacity: .62;
+}
+
+.workflow-step-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.btn-waive {
+    padding: 5px 9px;
+    font-size: 11.5px;
+    color: var(--text-3);
+}
+
+.btn-waive svg {
+    width: 12px;
+    height: 12px;
 }
 
 .workflow-step-number {
@@ -2611,10 +2652,21 @@ table.files tbody tr:hover .row-actions {
     border-color: #efd9b8;
 }
 
+.workflow-status.waived {
+    color: var(--text-3);
+    background: var(--bg);
+    border-style: dashed;
+}
+
 .workflow-step-message {
     margin-top: 7px;
     font-size: 11.5px;
     color: var(--text-2);
+}
+
+.workflow-step-message.is-waived {
+    color: var(--text-3);
+    font-style: italic;
 }
 
 .workflow-step-meta {
@@ -2663,7 +2715,8 @@ table.files tbody tr:hover .row-actions {
 
 .workflow-issues li {
     display: grid;
-    grid-template-columns: 82px 1fr;
+    grid-template-columns: 82px minmax(0, 1fr) auto;
+    align-items: center;
     gap: 8px;
     padding: 9px 10px;
     border-radius: var(--radius-sm);
@@ -2673,7 +2726,7 @@ table.files tbody tr:hover .row-actions {
     background: var(--bg);
 }
 
-.workflow-issues li > span {
+.workflow-issues li > span:first-child {
     font-size: 10px;
     font-weight: 700;
     letter-spacing: .04em;
@@ -2684,7 +2737,7 @@ table.files tbody tr:hover .row-actions {
     background: var(--warn-bg);
 }
 
-.workflow-issues li.is-warning > span {
+.workflow-issues li.is-warning > span:first-child {
     color: var(--warning);
 }
 
@@ -2693,9 +2746,23 @@ table.files tbody tr:hover .row-actions {
     background: var(--err-bg);
 }
 
-.workflow-issues li.is-blocker > span,
-.workflow-issues li.is-error > span {
+.workflow-issues li.is-blocker > span:first-child,
+.workflow-issues li.is-error > span:first-child {
     color: var(--error);
+}
+
+.workflow-issues li.is-waived {
+    background: var(--bg);
+    border: 1px dashed var(--border);
+}
+
+.workflow-issues li.is-waived > span:first-child,
+.workflow-issues li.is-waived .workflow-issue-text {
+    color: var(--text-3);
+}
+
+.workflow-issues li.is-waived .workflow-issue-text {
+    text-decoration: line-through;
 }
 
 .workflow-upload-zone {
@@ -2889,7 +2956,14 @@ table.files tbody tr:hover .row-actions {
     .workflow-step {
         grid-template-columns: 30px minmax(0, 1fr);
     }
-    .workflow-step > button {
+    .workflow-step-actions {
+        grid-column: 2;
+        justify-content: flex-start;
+    }
+    .workflow-issues li {
+        grid-template-columns: 82px minmax(0, 1fr);
+    }
+    .workflow-issues li > .btn-waive {
         grid-column: 2;
         justify-self: start;
     }

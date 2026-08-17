@@ -76,7 +76,7 @@ export default function CloseView() {
         if (action === 'send' && !window.confirm('Czy paczka została przejrzana i ma zostać wysłana do księgowości?')) {
             return
         }
-        if (action === 'send' && run?.issues?.some(issue => issue.severity === 'warning')) {
+        if (action === 'send' && run?.issues?.some(issue => !issue.waived && issue.severity === 'warning')) {
             overrideReason = window.prompt(
                 'Paczka ma ostrzeżenia. Podaj krótki powód świadomej wysyłki:'
             )
@@ -121,6 +121,32 @@ export default function CloseView() {
         }
     }, [getToken, loadRun, month, pushToast, run?.issues, year])
 
+    // Odstępstwa: jeden klik, bez pytania o powód. Backend zapisuje kto i kiedy,
+    // a ponowne uruchomienie etapu kasuje jego odstępstwa.
+    const setWaiver = useCallback(async (target, waived) => {
+        try {
+            const token = await getToken()
+            const data = waived
+                ? await fetchJson('/api/close/workflow/waivers', {
+                    method: 'POST',
+                    token,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ year, month, target }),
+                })
+                : await fetchJson(
+                    `/api/close/workflow/waivers?year=${year}&month=${month}`
+                    + `&target=${encodeURIComponent(target)}`,
+                    { method: 'DELETE', token }
+                )
+            setRun(data)
+        } catch (error) {
+            pushToast({ kind: 'error', msg: `Nie udało się zmienić odstępstwa: ${error.message}` })
+        }
+    }, [getToken, month, pushToast, year])
+
+    const waive = useCallback(target => setWaiver(target, true), [setWaiver])
+    const unwaive = useCallback(target => setWaiver(target, false), [setWaiver])
+
     const reset = async () => {
         if (!window.confirm('Rozpocząć nowy run dla tego miesiąca? Pobrane pliki nie zostaną usunięte.')) return
         try {
@@ -140,6 +166,7 @@ export default function CloseView() {
     const completedCount = run
         ? Object.values(run.steps ?? {}).filter(step => step.status === 'done').length
         : 0
+    const waivedCount = run?.issues?.filter(issue => issue.waived).length ?? 0
     const heroStatus = run?.active_action
         ? 'running'
         : run?.status === 'completed'
@@ -195,12 +222,34 @@ export default function CloseView() {
                         <span className="card-title">
                             <Icon name="alert-circle" size={14} /> Problemy i ostrzeżenia
                         </span>
+                        {waivedCount > 0 && (
+                            <span className="card-sub">{waivedCount} zignorowanych</span>
+                        )}
                     </div>
                     <ul>
                         {run.issues.map(issue => (
-                            <li key={issue.id} className={`is-${issue.severity}`}>
-                                <span>{issue.severity === 'warning' ? 'Ostrzeżenie' : 'Blokada'}</span>
-                                {issue.message}
+                            <li
+                                key={issue.id}
+                                className={`is-${issue.severity}${issue.waived ? ' is-waived' : ''}`}
+                            >
+                                <span>
+                                    {issue.waived
+                                        ? 'Zignorowane'
+                                        : issue.severity === 'warning' ? 'Ostrzeżenie' : 'Blokada'}
+                                </span>
+                                <span className="workflow-issue-text">{issue.message}</span>
+                                <button
+                                    type="button"
+                                    className="btn btn-ghost btn-waive"
+                                    disabled={Boolean(run.active_action)}
+                                    onClick={() => (issue.waived ? unwaive : waive)(`issue:${issue.id}`)}
+                                    title={issue.waived
+                                        ? `Zignorowane przez ${issue.waived_by ?? 'operatora'}`
+                                        : 'Przestanie blokować dalsze etapy'}
+                                >
+                                    <Icon name={issue.waived ? 'refresh' : 'slash'} size={12} />
+                                    {issue.waived ? 'Przywróć' : 'Zignoruj'}
+                                </button>
                             </li>
                         ))}
                     </ul>
@@ -211,7 +260,12 @@ export default function CloseView() {
 
             {run && (
                 <>
-                    <WorkflowBoard run={run} onAction={execute} />
+                    <WorkflowBoard
+                        run={run}
+                        onAction={execute}
+                        onWaive={waive}
+                        onUnwaive={unwaive}
+                    />
                     <WorkflowDocuments
                         year={year}
                         month={month}
