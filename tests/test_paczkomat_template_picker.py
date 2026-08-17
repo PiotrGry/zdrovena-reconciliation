@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from zdrovena.api.routers.webhooks import _parcel_template
+from zdrovena.api.shipping_execution_composition import _parcel_template
 from zdrovena.common.inpost import (
     PACZKOMAT_SLOTS,
     PARCEL_SPECS,

@@ -10,7 +10,7 @@ name: PR Validate — develop → main
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review, edited]
   workflow_dispatch:
 
 permissions:
@@ -73,10 +73,30 @@ jobs:
     needs: [release-source, quality-gate, full-test-suite]
     steps:
       - name: Check all jobs passed
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          RS: ${{ needs.release-source.result }}
+          QG: ${{ needs.quality-gate.result }}
+          FTS: ${{ needs.full-test-suite.result }}
         run: |
-          results='${{ toJSON(needs.*.result) }}'
-          echo "Job results: $results"
-          if echo "$results" | grep -qE '"failure"|"cancelled"'; then
+          failed=false
+          echo "base_ref=${BASE_REF} release-source=${RS} quality-gate=${QG} full-test-suite=${FTS}"
+          # release-source is only required when this workflow runs for a PR targeting main
+          if [[ "$BASE_REF" == "main" ]]; then
+            if [[ "$RS" == "failure" || "$RS" == "cancelled" ]]; then
+              echo "::error::Release source check failed — PRs to main must come from develop."
+              failed=true
+            fi
+          fi
+          if [[ "$QG" == "failure" || "$QG" == "cancelled" ]]; then
+            echo "::error::Quality gate failed."
+            failed=true
+          fi
+          if [[ "$FTS" == "failure" || "$FTS" == "cancelled" ]]; then
+            echo "::error::Full test suite failed."
+            failed=true
+          fi
+          if [[ "$failed" == "true" ]]; then
             echo "One or more CI jobs failed."
             exit 1
           fi

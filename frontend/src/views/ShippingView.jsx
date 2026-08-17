@@ -427,11 +427,43 @@ function MaterialTags({ draft }) {
 }
 
 const TIME_SLOTS = ['07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00']
+const APACZKA_PICKUP_WINDOWS = [
+    ['09:00', '17:00'],
+    ['11:00', '14:00'],
+    ['14:00', '17:00'],
+]
+
+function hasFixedApaczkaPickupWindows(draft) {
+    return draft.courier === 'apaczka' && draft.apaczka_service_id === '23'
+}
 
 function toMinutes(t) { const [h, m] = t.split(':').map(Number); return h * 60 + m }
 function addHours(t, hrs) {
     const m = toMinutes(t) + hrs * 60
     return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+}
+
+function nextCalendarDate(dateString) {
+    const date = new Date(`${dateString}T00:00:00Z`)
+    date.setUTCDate(date.getUTCDate() + 1)
+    return date.toISOString().slice(0, 10)
+}
+
+export function defaultPickupSchedule(fixedWindows = false) {
+    const now = new Date()
+    const today = now.toISOString().slice(0, 10)
+    const minFromToday = addHours(`${String(now.getHours()).padStart(2, '0')}:00`, 2)
+    if (fixedWindows) {
+        const remainingWindow = APACZKA_PICKUP_WINDOWS.find(([start]) => start >= minFromToday)
+        const [from, to] = remainingWindow || APACZKA_PICKUP_WINDOWS[0]
+        return {
+            pickup_date: remainingWindow ? today : nextCalendarDate(today),
+            pickup_from: from,
+            pickup_to: to,
+        }
+    }
+    const from = TIME_SLOTS.find(t => t >= minFromToday && t <= '16:00') || '09:00'
+    return { pickup_date: today, pickup_from: from, pickup_to: addHours(from, 2) }
 }
 
 
@@ -476,6 +508,9 @@ function ApaczkaPreviewParcel({ entry }) {
             {previewLine('Punkt odbioru', receiver.foreign_address_id)}
             {previewLine('Wymiary', dimsText)}
             {previewLine('Waga', box.weight != null ? `${box.weight} kg` : '')}
+            {previewLine('Pobranie (COD)', payload.cod?.amount != null
+                ? `${(Number(payload.cod.amount) / 100).toFixed(2)} ${payload.cod.currency}`
+                : '')}
         </div>
     )
 }
@@ -526,6 +561,9 @@ function ExecutePreviewParcel({ entry }) {
             {previewLine('Telefon', receiver.phone)}
             {previewLine('Wymiary', dimsText)}
             {previewLine('Waga', weight != null ? `${weight} kg` : '')}
+            {previewLine('Pobranie (COD)', payload.cod?.amount != null
+                ? `${Number(payload.cod.amount).toFixed(2)} ${payload.cod.currency}`
+                : '')}
         </div>
     )
 }
@@ -577,6 +615,9 @@ function PickupScheduleModal({
     confirmTestId,
     confirmLabel,
     confirmDisabled = false,
+    fixedWindows = false,
+    initialSchedule,
+    onScheduleChange,
 }) {
     const { t, lang } = useT()
     const T = t[lang]
@@ -588,31 +629,49 @@ function PickupScheduleModal({
         2
     )
 
-    const [date, setDate] = useState(today)
-    const [from, setFrom] = useState(() => {
-        const first = TIME_SLOTS.find(t => t >= minFromToday && t <= '16:00') || '09:00'
-        return first
-    })
-    const [to, setTo] = useState(() => addHours(
-        TIME_SLOTS.find(t => t >= minFromToday && t <= '16:00') || '09:00', 2
-    ))
+    const initial = initialSchedule || defaultPickupSchedule(fixedWindows)
+    const [date, setDate] = useState(initial.pickup_date)
+    const [from, setFrom] = useState(initial.pickup_from)
+    const [to, setTo] = useState(initial.pickup_to)
 
     const isToday = date === today
     const minFrom = isToday ? minFromToday : '07:00'
 
     function handleFromChange(val) {
         setFrom(val)
-        if (toMinutes(to) < toMinutes(val) + 120) setTo(addHours(val, 2))
+        const nextTo = toMinutes(to) < toMinutes(val) + 120 ? addHours(val, 2) : to
+        setTo(nextTo)
+        onScheduleChange?.({ pickup_date: date, pickup_from: val, pickup_to: nextTo })
     }
 
     function handleDateChange(val) {
         setDate(val)
+        if (fixedWindows) {
+            const [nextFrom, nextTo] = val === today
+                ? (APACZKA_PICKUP_WINDOWS.find(([start]) => start >= minFromToday)
+                    || APACZKA_PICKUP_WINDOWS[0])
+                : [from, to]
+            setFrom(nextFrom)
+            setTo(nextTo)
+            onScheduleChange?.({ pickup_date: val, pickup_from: nextFrom, pickup_to: nextTo })
+            return
+        }
         // When switching to today, ensure from is still valid
         if (val === today && from < minFromToday) {
             const first = TIME_SLOTS.find(t => t >= minFromToday && t <= '16:00') || '09:00'
             setFrom(first)
             setTo(addHours(first, 2))
+            onScheduleChange?.({ pickup_date: val, pickup_from: first, pickup_to: addHours(first, 2) })
+        } else {
+            onScheduleChange?.({ pickup_date: val, pickup_from: from, pickup_to: to })
         }
+    }
+
+    function handleFixedWindowChange(value) {
+        const [nextFrom, nextTo] = value.split('|')
+        setFrom(nextFrom)
+        setTo(nextTo)
+        onScheduleChange?.({ pickup_date: date, pickup_from: nextFrom, pickup_to: nextTo })
     }
 
     const sel = { padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.9em', cursor: 'pointer' }
@@ -636,7 +695,23 @@ function PickupScheduleModal({
                                 style={sel}
                             />
                         </div>
-                        <div style={{ display: 'flex', gap: 8 }}>
+                        {fixedWindows ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>Okno Apaczka</label>
+                                <select
+                                    data-testid="apaczka-pickup-window"
+                                    value={`${from}|${to}`}
+                                    onChange={e => handleFixedWindowChange(e.target.value)}
+                                    style={sel}
+                                >
+                                    {APACZKA_PICKUP_WINDOWS.map(([start, end]) => (
+                                        <option key={`${start}|${end}`} value={`${start}|${end}`}>
+                                            {start}–{end}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        ) : <div style={{ display: 'flex', gap: 8 }}>
                             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
                                 <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_time_from ?? 'Od'}</label>
                                 <select value={from} onChange={e => handleFromChange(e.target.value)} style={sel}>
@@ -645,12 +720,15 @@ function PickupScheduleModal({
                             </div>
                             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
                                 <label style={{ fontSize: '0.85em', color: 'var(--text-2)' }}>{T.sh_time_to ?? 'Do'}</label>
-                                <select value={to} onChange={e => setTo(e.target.value)} style={sel}>
+                                <select value={to} onChange={e => {
+                                    setTo(e.target.value)
+                                    onScheduleChange?.({ pickup_date: date, pickup_from: from, pickup_to: e.target.value })
+                                }} style={sel}>
                                     {TIME_SLOTS.filter(t => toMinutes(t) >= toMinutes(from) + 120).map(t => <option key={t} value={t}>{t}</option>)}
                                 </select>
                             </div>
-                        </div>
-                        <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>{T.sh_min_window ?? 'Minimalne okno: 2 godziny'}</div>
+                        </div>}
+                        {!fixedWindows && <div style={{ fontSize: '0.8em', color: 'var(--text-2)' }}>{T.sh_min_window ?? 'Minimalne okno: 2 godziny'}</div>}
                         {/* Say the window back in full. The date input renders per
                             locale and the hours live in two separate selects, so
                             without this the operator never sees the exact value
@@ -707,6 +785,8 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
     const [pickupModal, setPickupModal] = useState(null) // 'pickup' | null
     // { loading } | { error } | { data } — null while no preview is open.
     const [executePreview, setExecutePreview] = useState(null)
+    const [executeSchedule, setExecuteSchedule] = useState(null)
+    const executePreviewRequest = useRef(0)
     const isBusy = busy.has(draft.id)
     const matchedApaczkaService = apaczkaServices.find(
         service => service.service_id === draft.apaczka_service_id
@@ -725,19 +805,30 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
         !draft.pickup_ordered
     )
 
-    /** Fetch what the courier would receive. Opens the panel first so the click always responds. */
-    async function openExecutePreview() {
+    async function loadExecutePreview(schedule) {
+        const requestNumber = ++executePreviewRequest.current
         setExecutePreview({ loading: true })
         try {
             const token = await getToken()
-            const res = await fetch(`/api/shipping/drafts/${draft.id}/execute/preview`, {
+            const params = draft.courier === 'apaczka' && schedule
+                ? `?${new URLSearchParams(schedule).toString()}`
+                : ''
+            const res = await fetch(`/api/shipping/drafts/${draft.id}/execute/preview${params}`, {
                 headers: { Authorization: `Bearer ${token}` },
             })
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-            setExecutePreview({ data: await res.json() })
+            const data = await res.json()
+            if (requestNumber === executePreviewRequest.current) setExecutePreview({ data })
         } catch (e) {
-            setExecutePreview({ error: e.message })
+            if (requestNumber === executePreviewRequest.current) setExecutePreview({ error: e.message })
         }
+    }
+
+    /** Fetch what the courier would receive. Opens the panel first so the click always responds. */
+    async function openExecutePreview() {
+        const schedule = defaultPickupSchedule(hasFixedApaczkaPickupWindows(draft))
+        setExecuteSchedule(schedule)
+        await loadExecutePreview(schedule)
     }
 
     const isSelectable = onToggleSelect && (
@@ -805,7 +896,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                             {draft.status === 'pending' ? (T.sh_status_pending ?? 'oczekujące')
                                 : draft.status === 'created' ? (T.sh_status_created ?? 'nadane')
                                     : draft.status === 'needs_review' ? (T.sh_status_needs_review ?? 'do sprawdzenia')
-                                        : draft.status === 'pending_confirmation' ? (T.sh_status_pending_confirmation ?? 'czeka na kuriera')
+                                        : draft.status === 'pending_confirmation' ? (T.sh_status_pending_confirmation ?? 'oczekuje na potwierdzenie')
                                             : (T.sh_status_error ?? 'błąd')}
                         </Pill>
                     </span>
@@ -836,6 +927,19 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                     <div>
                                         {[draft.shipping_address?.street, draft.shipping_address?.building_number, draft.shipping_address?.flat_number].filter(Boolean).join(' ')}<br />
                                         {draft.shipping_address?.post_code} {draft.shipping_address?.city}
+                                    </div>
+                                )}
+                                {draft.cod && (
+                                    <>
+                                        <div className="detail-label" style={{ marginTop: 10 }}>Pobranie (COD)</div>
+                                        <div style={{ fontWeight: 600 }}>
+                                            {Number(draft.cod.amount).toFixed(2)} {draft.cod.currency}
+                                        </div>
+                                    </>
+                                )}
+                                {draft.cod_error && (
+                                    <div style={{ marginTop: 10, color: 'var(--error)', fontSize: '0.88em' }}>
+                                        COD: {draft.cod_error}
                                     </div>
                                 )}
                             </div>
@@ -1148,6 +1252,12 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 confirmTestId="execute-preview-confirm"
                                 confirmLabel="Wyślij do kuriera"
                                 confirmDisabled={!executePreview.data || executePreview.data.preview_available === false}
+                                fixedWindows={hasFixedApaczkaPickupWindows(draft)}
+                                initialSchedule={executeSchedule}
+                                onScheduleChange={draft.courier === 'apaczka' ? schedule => {
+                                    setExecuteSchedule(schedule)
+                                    loadExecutePreview(schedule)
+                                } : undefined}
                                 // One pickup control for every carrier. It has to live here
                                 // because Apaczka's API has no pickup resource — a collection
                                 // can only be requested inside order_send, at execute time. All
@@ -1155,10 +1265,14 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 // Allegro through _order_allegro_pickup, InPost through
                                 // create_dispatch_order.
                                 withSchedule={true}
-                                onCancel={() => setExecutePreview(null)}
+                                onCancel={() => {
+                                    setExecutePreview(null)
+                                    setExecuteSchedule(null)
+                                }}
                                 onConfirm={schedule => {
                                     const fingerprint = executePreview.data?.fingerprint
                                     setExecutePreview(null)
+                                    setExecuteSchedule(null)
                                     onExecute(draft, schedule, fingerprint)
                                 }}
                             >
@@ -1630,7 +1744,7 @@ export default function ShippingView() {
                             <option value="pending">{T.sh_status_pending ?? 'oczekujące'}</option>
                             <option value="needs_review">{T.sh_status_needs_review ?? 'do sprawdzenia'}</option>
                             <option value="created">{T.sh_status_created ?? 'nadane'}</option>
-                            <option value="pending_confirmation">{T.sh_status_pending_confirmation ?? 'czeka na kuriera'}</option>
+                            <option value="pending_confirmation">{T.sh_status_pending_confirmation ?? 'oczekuje na potwierdzenie'}</option>
                             <option value="error">{T.sh_status_error ?? 'błąd'}</option>
                         </select>
                         <select value={filterCourier} onChange={e => setFilterCourier(e.target.value)}
@@ -1841,6 +1955,7 @@ export default function ShippingView() {
                 return (
                     <PickupScheduleModal
                         title="Podjazd dla przesyłek Apaczka"
+                        fixedWindows={bulkExecuteModal.drafts.some(hasFixedApaczkaPickupWindows)}
                         panelTestId="bulk-execute-pickup"
                         confirmTestId="bulk-execute-pickup-confirm"
                         confirmLabel="Realizuj zaznaczone"

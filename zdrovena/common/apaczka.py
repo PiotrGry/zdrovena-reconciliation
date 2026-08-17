@@ -19,6 +19,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from http import HTTPStatus
 from typing import Any
 
@@ -50,6 +51,8 @@ _BASE = os.environ.get("APACZKA_BASE_URL", "https://www.apaczka.pl/api/v2").rstr
 _TIMEOUT = 15
 _SERVICE_CACHE_KEY = "apaczka/service_structure.json"
 _SERVICE_CACHE_TTL_H = 23
+_POINTS_CACHE_PREFIX = "apaczka/points"
+_POINTS_CACHE_TTL_H = 24
 # Apaczka signals in-body success with status == 200 (independent of the HTTP status).
 _APACZKA_BODY_OK = 200
 
@@ -208,6 +211,66 @@ class ApaczkaClient:
             logger.warning("Failed to cache Apaczka service_structure: %s", exc)
         return services  # type: ignore[return-value]
 
+    # ── Pickup points cache ──────────────────────────────────────────────────
+
+    def _get_points(self, point_type: str) -> list[dict[str, Any]]:
+        """Return Apaczka pickup points without exceeding its daily read limit."""
+        normalized_type = point_type.strip().upper()
+        if not normalized_type or not normalized_type.replace("_", "").isalnum():
+            raise ValueError(f"Invalid Apaczka point type: {point_type!r}")
+        cache_key = f"{_POINTS_CACHE_PREFIX}/{normalized_type}.json"
+        try:
+            cached_bytes = b"".join(self._storage.stream(cache_key))
+            cached = json.loads(cached_bytes)
+            fetched_at = datetime.fromisoformat(cached["fetched_at"])
+            age_h = (datetime.now(timezone.utc) - fetched_at).total_seconds() / 3600
+            if age_h < _POINTS_CACHE_TTL_H:
+                return cached["points"]  # type: ignore[return-value]
+        except Exception as exc:
+            logger.debug("Apaczka %s points cache miss/unreadable: %s", normalized_type, exc)
+
+        logger.info("Fetching Apaczka %s points (cache miss)", normalized_type)
+        result = self._call(f"points/{normalized_type}", {"country_code": "PL"})
+        raw_points = result.get("response", {}).get("points", {})
+        points: list[dict[str, Any]] = []
+        if isinstance(raw_points, dict):
+            for point_id, value in raw_points.items():
+                if not isinstance(value, dict):
+                    continue
+                point = dict(value)
+                point["foreign_address_id"] = str(point.get("foreign_address_id") or point_id)
+                points.append(point)
+        elif isinstance(raw_points, list):
+            points = [dict(value) for value in raw_points if isinstance(value, dict)]
+
+        cache_doc = {
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "points": points,
+        }
+        try:
+            self._storage.upload_stream(
+                io.BytesIO(json.dumps(cache_doc).encode()),
+                cache_key,
+                "application/json",
+            )
+        except Exception as exc:
+            logger.warning("Failed to cache Apaczka %s points: %s", normalized_type, exc)
+        return points
+
+    def get_point(self, point_type: str, foreign_address_id: str) -> dict[str, Any] | None:
+        """Find one point by the ID required in ``receiver.foreign_address_id``."""
+        selected_id = foreign_address_id.strip()
+        if not selected_id:
+            return None
+        return next(
+            (
+                point
+                for point in self._get_points(point_type)
+                if str(point.get("foreign_address_id") or "").strip() == selected_id
+            ),
+            None,
+        )
+
     # ── Shipment creation ─────────────────────────────────────────────────────
 
     def list_orders(self, *, page: int = 1, limit: int = 25) -> list[dict[str, Any]]:
@@ -242,6 +305,9 @@ class ApaczkaClient:
         pickup_date: str | None = None,
         pickup_from: str | None = None,
         pickup_to: str | None = None,
+        cod_amount: str | None = None,
+        cod_currency: str = "PLN",
+        cod_bank_account: str | None = None,
     ) -> dict[str, Any]:
         """pickup_date: YYYY-MM-DD, pickup_from/pickup_to: HH:MM.
         Available slots from Apaczka pickup_hours endpoint (today + 3 biz days).
@@ -311,6 +377,39 @@ class ApaczkaClient:
             "pickup": pickup,
             "content": shipment_content,
         }
+        if cod_amount is not None:
+            try:
+                amount = Decimal(str(cod_amount))
+            except (InvalidOperation, ValueError) as exc:
+                raise ApaczkaBusinessError(
+                    f"Invalid Apaczka COD amount: {cod_amount!r}",
+                    courier="apaczka",
+                    action="create_shipment",
+                ) from exc
+            currency = str(cod_currency or "").strip().upper()
+            bank_account = "".join(str(cod_bank_account or "").split())
+            if (
+                not amount.is_finite()
+                or amount <= 0
+                or amount != amount.quantize(Decimal("0.01"))
+                or currency != "PLN"
+            ):
+                raise ApaczkaBusinessError(
+                    f"Invalid Apaczka COD money: amount={cod_amount!r}, currency={cod_currency!r}",
+                    courier="apaczka",
+                    action="create_shipment",
+                )
+            if len(bank_account) != 26 or not bank_account.isdigit():
+                raise ApaczkaBusinessError(
+                    "Apaczka PLN COD requires APACZKA_COD_BANK_ACCOUNT as a 26-digit NRB",
+                    courier="apaczka",
+                    action="create_shipment",
+                )
+            order["cod"] = {
+                "amount": int(amount * 100),
+                "currency": currency,
+                "bankaccount": bank_account,
+            }
         return order
 
     def create_shipment(self, **kwargs: Any) -> dict[str, Any]:

@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import tempfile
+from datetime import datetime, timezone
 from fcntl import LOCK_EX, LOCK_UN, flock
 from pathlib import Path
 from typing import Any
@@ -267,6 +268,8 @@ class ShippingStore:
         """
         from zdrovena.common.shipping_state import EXECUTING, can_execute
 
+        execution_started_at = datetime.now(timezone.utc).isoformat()
+
         if self._use_table:
             client = self._table_client()
             try:
@@ -275,7 +278,12 @@ class ShippingStore:
                 return False
             if not can_execute(entity.get("status")):
                 return False
-            patch = {"PartitionKey": PARTITION_KEY, "RowKey": draft_id, "status": EXECUTING}
+            patch = {
+                "PartitionKey": PARTITION_KEY,
+                "RowKey": draft_id,
+                "status": EXECUTING,
+                "execution_started_at": entity.get("execution_started_at") or execution_started_at,
+            }
             try:
                 from azure.core import MatchConditions
 
@@ -297,6 +305,9 @@ class ShippingStore:
                 if record is None or not can_execute(record.get("status")):
                     return False
                 record["status"] = EXECUTING
+                record["execution_started_at"] = (
+                    record.get("execution_started_at") or execution_started_at
+                )
                 self._local_save(data)
                 return True
             finally:

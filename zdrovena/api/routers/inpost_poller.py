@@ -11,7 +11,7 @@ the tab, and those drafts sat unresolved until somebody opened the page again.
 This module is the server-side half, run from the same scheduled cycle as the
 Allegro poller so tracking resolves whether or not anyone is watching.
 
-Resolution goes through ``_resume_inpost_shipment``, the same path the operator's
+Resolution goes through ``resume_inpost_shipment``, the same path the operator's
 button and a retry use, so the three can never disagree about what the shipment
 is or send a second POST for it.
 """
@@ -22,13 +22,16 @@ import logging
 import os
 from typing import Any
 
-from zdrovena.api.routers.webhooks import (
+from zdrovena.api.shipping_draft_composition import emit_tracking_assigned
+from zdrovena.api.shipping_execution_composition import (
     SHIPMENT_ORIGIN_SYSTEM,
-    _emit_tracking_assigned,
-    _is_resumable_inpost_draft,
-    _resume_inpost_shipment,
+    shipment_patch,
 )
 from zdrovena.common.secrets import get_secret
+from zdrovena.shipping.providers.inpost import (
+    is_resumable_inpost_draft,
+    resume_inpost_shipment,
+)
 
 logger = logging.getLogger("zdrovena.api.routers.inpost_poller")
 
@@ -69,7 +72,7 @@ def resolve_pending_inpost_once(
     pending = [
         draft
         for draft in drafts
-        if draft.get("courier") == "inpost" and _is_resumable_inpost_draft(draft)
+        if draft.get("courier") == "inpost" and is_resumable_inpost_draft(draft)
     ]
     stats["scanned"] = len(pending)
     if not pending:
@@ -91,7 +94,11 @@ def resolve_pending_inpost_once(
     for draft in pending:
         draft_id = str(draft.get("id") or "")
         try:
-            patch = _resume_inpost_shipment(client, draft)
+            patch = resume_inpost_shipment(
+                client,
+                draft,
+                build_patch=shipment_patch,
+            )
         except Exception:
             # One unresolvable shipment must not stop the rest: a cancelled
             # parcel or a transient ShipX error is expected here, and the next
@@ -112,7 +119,11 @@ def resolve_pending_inpost_once(
             stats["errors"] += 1
             continue
 
-        _emit_tracking_assigned(draft_id, draft.get("shopify_order_number"), SHIPMENT_ORIGIN_SYSTEM)
+        emit_tracking_assigned(
+            draft_id,
+            draft.get("shopify_order_number"),
+            SHIPMENT_ORIGIN_SYSTEM,
+        )
         stats["resolved"] += 1
 
     return stats

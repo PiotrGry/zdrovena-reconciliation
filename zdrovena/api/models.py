@@ -91,11 +91,35 @@ class CloseWorkflowActionRequest(BaseModel):
         return self
 
 
+class CloseWorkflowWaiverRequest(BaseModel):
+    """Ask for one failed stage or one issue to stop gating the run."""
+
+    year: int
+    month: int
+    target: str = Field(..., min_length=6, max_length=300, pattern=r"^(step|issue):.+$")
+
+    @model_validator(mode="after")
+    def validate_date(self) -> CloseWorkflowWaiverRequest:
+        if not (1 <= self.month <= 12):
+            raise ValueError(f"Invalid month: {self.month}")
+        if self.year < 2020:
+            raise ValueError(f"Suspicious year: {self.year}")
+        return self
+
+
+class CloseWorkflowWaiver(BaseModel):
+    target: str
+    stage: str
+    user: str
+    at: str
+
+
 class CloseWorkflowStep(BaseModel):
     status: str
     started_at: str | None = None
     completed_at: str | None = None
     message: str | None = None
+    waived: bool = False
 
 
 class CloseWorkflowDocument(BaseModel):
@@ -114,6 +138,9 @@ class CloseWorkflowIssue(BaseModel):
     severity: str
     message: str
     stage: str
+    waived: bool = False
+    waived_by: str | None = None
+    waived_at: str | None = None
 
 
 class CloseWorkflowArtifact(BaseModel):
@@ -138,6 +165,7 @@ class CloseWorkflowRunResponse(BaseModel):
     artifacts: list[CloseWorkflowArtifact] = Field(default_factory=list)
     logs: list[str] = Field(default_factory=list)
     overrides: list[dict[str, Any]] = Field(default_factory=list)
+    waivers: list[CloseWorkflowWaiver] = Field(default_factory=list)
 
 
 class InvoiceItem(BaseModel):

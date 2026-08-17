@@ -492,6 +492,33 @@
           "stage": {
             "title": "Stage",
             "type": "string"
+          },
+          "waived": {
+            "default": false,
+            "title": "Waived",
+            "type": "boolean"
+          },
+          "waived_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waived At"
+          },
+          "waived_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waived By"
           }
         },
         "required": [
@@ -588,6 +615,13 @@
             "title": "Updated At",
             "type": "string"
           },
+          "waivers": {
+            "items": {
+              "$ref": "#/components/schemas/CloseWorkflowWaiver"
+            },
+            "title": "Waivers",
+            "type": "array"
+          },
           "year": {
             "title": "Year",
             "type": "integer"
@@ -644,12 +678,72 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "waived": {
+            "default": false,
+            "title": "Waived",
+            "type": "boolean"
           }
         },
         "required": [
           "status"
         ],
         "title": "CloseWorkflowStep",
+        "type": "object"
+      },
+      "CloseWorkflowWaiver": {
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "user": {
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "stage",
+          "user",
+          "at"
+        ],
+        "title": "CloseWorkflowWaiver",
+        "type": "object"
+      },
+      "CloseWorkflowWaiverRequest": {
+        "description": "Ask for one failed stage or one issue to stop gating the run.",
+        "properties": {
+          "month": {
+            "title": "Month",
+            "type": "integer"
+          },
+          "target": {
+            "maxLength": 300,
+            "minLength": 6,
+            "pattern": "^(step|issue):.+$",
+            "title": "Target",
+            "type": "string"
+          },
+          "year": {
+            "title": "Year",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "year",
+          "month",
+          "target"
+        ],
+        "title": "CloseWorkflowWaiverRequest",
         "type": "object"
       },
       "ConfirmDamageRequest": {
@@ -1021,6 +1115,49 @@
           "message"
         ],
         "title": "OperationHealthItem",
+        "type": "object"
+      },
+      "PickupOrderedResponse": {
+        "properties": {
+          "draft_id": {
+            "title": "Draft Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "pickup_ordered",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "draft_id"
+        ],
+        "title": "PickupOrderedResponse",
+        "type": "object"
+      },
+      "PickupPendingResponse": {
+        "properties": {
+          "allegro_command_id": {
+            "title": "Allegro Command Id",
+            "type": "string"
+          },
+          "draft_id": {
+            "title": "Draft Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "pickup_pending",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "draft_id",
+          "allegro_command_id"
+        ],
+        "title": "PickupPendingResponse",
         "type": "object"
       },
       "ProductItem": {
@@ -1573,6 +1710,130 @@
           }
         ],
         "summary": "Start a fresh month-close run for the selected period",
+        "tags": [
+          "close"
+        ]
+      }
+    },
+    "/api/close/workflow/waivers": {
+      "delete": {
+        "operationId": "remove_close_workflow_waiver_api_close_workflow_waivers_delete",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "year",
+            "required": true,
+            "schema": {
+              "minimum": 2020,
+              "title": "Year",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "month",
+            "required": true,
+            "schema": {
+              "maximum": 12,
+              "minimum": 1,
+              "title": "Month",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "target",
+            "required": true,
+            "schema": {
+              "maxLength": 300,
+              "minLength": 6,
+              "title": "Target",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloseWorkflowRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "Another action already owns this period"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Restore a waived stage or issue to full gating power",
+        "tags": [
+          "close"
+        ]
+      },
+      "post": {
+        "description": "Record an operator decision to proceed despite a failed stage or an issue.\n\n``target`` is ``step:<stage>`` or ``issue:<issue_id>``. The waiver is stored\nwith the operator's identity and timestamp, and is dropped automatically when\nthe owning stage is executed again.",
+        "operationId": "add_close_workflow_waiver_api_close_workflow_waivers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseWorkflowWaiverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloseWorkflowRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Target cannot be waived or does not exist"
+          },
+          "409": {
+            "description": "Another action already owns this period"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Wave one failed stage or one issue through so it stops gating the run",
         "tags": [
           "close"
         ]
@@ -3205,6 +3466,54 @@
               "title": "Draft Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "pickup_date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pickup Date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pickup_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pickup From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pickup_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pickup To"
+            }
           }
         ],
         "responses": {
@@ -3458,13 +3767,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Order Pickup Api Shipping Drafts  Draft Id  Pickup Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PickupOrderedResponse"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PickupPendingResponse"
+                }
+              }
+            },
+            "description": "Allegro pickup still pending"
           },
           "400": {
             "description": "Courier does not support pickup (not InPost kurier)"

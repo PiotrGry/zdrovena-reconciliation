@@ -58,7 +58,7 @@ class TestGetDeliveryServices:
                 "carrierId": "INPOST",
                 "owner": "ALLEGRO",
                 "name": "Allegro InPost Paczkomat",
-                "additionalProperties": {"inpost#sendingMethod": {"required": False}},
+                "additionalProperties": {"SENDING_CODE": {"required": False}},
             },
             {
                 "id": "svc-dpd",
@@ -149,6 +149,15 @@ _PACKAGE = {
     "height": {"value": 15, "unit": "CENTIMETER"},
     "weight": {"value": 5.0, "unit": "KILOGRAMS"},
 }
+_PICKUP_ADDRESS = {
+    "name": "Zdrovena Magazyn",
+    "street": "Magazynowa 41",
+    "postalCode": "33-300",
+    "city": "Nowy Sacz",
+    "countryCode": "PL",
+    "email": "magazyn@example.com",
+    "phone": "600700800",
+}
 
 
 class TestCreateShipmentCommand:
@@ -164,7 +173,7 @@ class TestCreateShipmentCommand:
         ) as m:
             result = c.create_ship_with_allegro_shipment(
                 command_id="cmd-uuid-1",
-                order_id="ORDER-123",
+                reference_number="ORDER-123",
                 delivery_method_id="svc-inpost-locker",
                 credentials_id=None,
                 sender=_SENDER,
@@ -177,7 +186,7 @@ class TestCreateShipmentCommand:
         body = kwargs["json"]
         assert kwargs["headers"]["Content-Type"] == ("application/vnd.allegro.public.v1+json")
         assert body["commandId"] == "cmd-uuid-1"
-        # order_id is sent as referenceNumber; there is no top-level orderId.
+        # reference_number is sent as referenceNumber; there is no top-level orderId.
         assert body["input"]["referenceNumber"] == "ORDER-123"
         assert "orderId" not in body["input"]
         assert body["input"]["deliveryMethodId"] == "svc-inpost-locker"
@@ -201,7 +210,7 @@ class TestCreateShipmentCommand:
         c = _mock_client()
         kwargs = {
             "command_id": "x",
-            "order_id": "O1",
+            "reference_number": "O1",
             "credentials_id": None,
             "sender": _SENDER,
             "receiver": _RECEIVER,
@@ -227,7 +236,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 credentials_id=None,
                 sender=_SENDER,
                 receiver=_RECEIVER,
@@ -246,7 +255,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 delivery_method_id="own-agreement-method",
                 credentials_id="creds-1",
                 sender=_SENDER,
@@ -265,7 +274,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 delivery_method_id="svc-inpost",
                 credentials_id=None,
                 sender=_SENDER,
@@ -285,7 +294,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 delivery_method_id="svc-inpost",
                 credentials_id=None,
                 sender=_SENDER,
@@ -295,7 +304,7 @@ class TestCreateShipmentCommand:
         body = m.call_args[1]["json"]
         assert "additionalServices" not in body["input"]
 
-    def test_additional_properties_inpost_sending_method_sent(self):
+    def test_additional_properties_returned_by_provider_are_sent(self):
         """P1-2: InPost sendingMethod goes to additionalProperties (issue #9915)."""
         c = _mock_client()
         with patch.object(
@@ -305,15 +314,15 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 credentials_id=None,
                 sender=_SENDER,
                 receiver=_RECEIVER,
                 packages=[_PACKAGE],
-                additional_properties={"inpost#sendingMethod": "parcel_locker"},
+                additional_properties={"SENDING_CODE": "ABC123"},
             )
         body = m.call_args[1]["json"]
-        assert body["input"]["additionalProperties"] == {"inpost#sendingMethod": "parcel_locker"}
+        assert body["input"]["additionalProperties"] == {"SENDING_CODE": "ABC123"}
 
     def test_additional_properties_omitted_by_default(self):
         """P1-2: additionalProperties key must be absent when not provided."""
@@ -325,7 +334,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 credentials_id=None,
                 sender=_SENDER,
                 receiver=_RECEIVER,
@@ -344,7 +353,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 credentials_id=None,
                 sender=_SENDER,
                 receiver=_RECEIVER,
@@ -363,7 +372,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 delivery_method_id="svc-dpd",
                 credentials_id="cred-abc",
                 sender=_SENDER,
@@ -382,7 +391,7 @@ class TestCreateShipmentCommand:
         ) as m:
             c.create_ship_with_allegro_shipment(
                 command_id="x",
-                order_id="O1",
+                reference_number="O1",
                 delivery_method_id="svc",
                 credentials_id=None,
                 sender=_SENDER,
@@ -407,7 +416,7 @@ class TestCreateShipmentCommand:
             with pytest.raises(AllegroBusinessError):
                 c.create_ship_with_allegro_shipment(
                     command_id="x",
-                    order_id="O1",
+                    reference_number="O1",
                     delivery_method_id="svc",
                     credentials_id=None,
                     sender=_SENDER,
@@ -578,10 +587,17 @@ class TestPickupProposals:
                 },
             ),
         ) as m:
-            proposals = c.get_ship_with_allegro_pickup_proposals(["ship-99"])
+            proposals = c.get_ship_with_allegro_pickup_proposals(
+                ["ship-99"], address=_PICKUP_ADDRESS
+            )
         assert proposals[0]["id"] == "prop-1"
-        body = m.call_args[1]["json"]
-        assert body["input"]["shipmentIds"] == ["ship-99"]
+        request = m.call_args[1]
+        assert request["headers"]["Accept"] == "application/vnd.allegro.public.v1+json"
+        assert request["headers"]["Content-Type"] == "application/vnd.allegro.public.v1+json"
+        assert request["json"] == {
+            "shipmentIds": ["ship-99"],
+            "address": _PICKUP_ADDRESS,
+        }
 
     def test_parses_new_nested_pickup_times(self):
         """Post-2026-07-01 shape: nested proposals[].pickupTimes[]."""
@@ -613,7 +629,9 @@ class TestPickupProposals:
             "request",
             return_value=_mock_response(200, payload),
         ):
-            proposals = c.get_ship_with_allegro_pickup_proposals(["ship-99"])
+            proposals = c.get_ship_with_allegro_pickup_proposals(
+                ["ship-99"], address=_PICKUP_ADDRESS
+            )
         assert len(proposals) == 2
         assert proposals[0]["date"] == "2026-07-05"
         assert proposals[0]["minTime"] == "08:00"
@@ -641,7 +659,9 @@ class TestPickupProposals:
             }
         ]
         with patch.object(c._session, "request", return_value=_mock_response(200, payload)):
-            proposals = c.get_ship_with_allegro_pickup_proposals(["ship-99"])
+            proposals = c.get_ship_with_allegro_pickup_proposals(
+                ["ship-99"], address=_PICKUP_ADDRESS
+            )
         assert len(proposals) == 1
         assert proposals[0]["id"] == "2023071210001300"
 
@@ -688,6 +708,7 @@ class TestCreatePickupCommand:
             result = c.create_ship_with_allegro_pickup(
                 command_id="pu-cmd-1",
                 shipment_ids=["ship-99"],
+                address=_PICKUP_ADDRESS,
                 pickup_time={
                     "date": "2026-07-05",
                     "minTime": "08:00",
@@ -695,7 +716,10 @@ class TestCreatePickupCommand:
                 },
             )
         assert result["commandId"] == "pu-cmd-1"
-        body = m.call_args[1]["json"]
+        request = m.call_args[1]
+        assert request["headers"]["Accept"] == "application/vnd.allegro.public.v1+json"
+        assert request["headers"]["Content-Type"] == "application/vnd.allegro.public.v1+json"
+        body = request["json"]
         assert body["commandId"] == "pu-cmd-1"
         assert body["input"]["pickupTime"] == {
             "date": "2026-07-05",
@@ -703,6 +727,7 @@ class TestCreatePickupCommand:
             "maxTime": "12:00",
         }
         assert body["input"]["shipmentIds"] == ["ship-99"]
+        assert body["input"]["address"] == _PICKUP_ADDRESS
         # New-format must NOT include legacy field.
         assert "pickupDateProposalId" not in body["input"]
         assert "proposalItemId" not in body["input"]
@@ -725,12 +750,14 @@ class TestCreatePickupCommand:
                 command_id="pu-cmd-1",
                 proposal_item_id="prop-1",
                 shipment_ids=["ship-99"],
+                address=_PICKUP_ADDRESS,
             )
         assert result["commandId"] == "pu-cmd-1"
         body = m.call_args[1]["json"]
         assert body["commandId"] == "pu-cmd-1"
         assert body["input"]["pickupDateProposalId"] == "prop-1"
         assert body["input"]["shipmentIds"] == ["ship-99"]
+        assert body["input"]["address"] == _PICKUP_ADDRESS
 
     def test_rejects_missing_pickup_selector(self):
         c = _mock_client()
@@ -738,6 +765,7 @@ class TestCreatePickupCommand:
             c.create_ship_with_allegro_pickup(
                 command_id="pu-cmd-1",
                 shipment_ids=["ship-99"],
+                address=_PICKUP_ADDRESS,
             )
 
     def test_pickup_time_wins_over_proposal_id_when_both(self):
@@ -750,12 +778,36 @@ class TestCreatePickupCommand:
             c.create_ship_with_allegro_pickup(
                 command_id="x",
                 shipment_ids=["s"],
+                address=_PICKUP_ADDRESS,
                 pickup_time={"date": "2026-07-05", "minTime": "08:00", "maxTime": "12:00"},
                 proposal_item_id="legacy-should-be-ignored",
             )
         body = m.call_args[1]["json"]
         assert "pickupTime" in body["input"]
         assert "pickupDateProposalId" not in body["input"]
+
+    @pytest.mark.parametrize("status", ["IN_PROGRESS", "SUCCESS", "ERROR"])
+    def test_reads_pickup_command_status_from_official_resource(self, status):
+        c = _mock_client()
+        payload = {
+            "id": "pu-cmd-1",
+            "status": status,
+            "pickupId": "pickup-9" if status == "SUCCESS" else None,
+            "carrierPickupId": "carrier-9" if status == "SUCCESS" else None,
+            "errors": [{"message": "slot rejected"}] if status == "ERROR" else [],
+        }
+        with patch.object(
+            c._session,
+            "request",
+            return_value=_mock_response(200, payload),
+        ) as request:
+            result = c.get_ship_with_allegro_pickup_command_status("pu-cmd-1")
+
+        assert result == payload
+        assert request.call_args.args[0] == "GET"
+        assert request.call_args.args[1].endswith(
+            "/shipment-management/pickups/create-commands/pu-cmd-1"
+        )
 
 
 # ── cancel shipment / dispatch ────────────────────────────────────────────────

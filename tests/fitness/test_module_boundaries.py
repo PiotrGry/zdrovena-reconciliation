@@ -42,6 +42,94 @@ EXCEPTIONS: set[tuple[str, str]] = {
     ("month_closing/commands/close_cmd.py", "zdrovena.api"),
 }
 
+SHIPPING_FORBIDDEN_IMPORTS = (
+    "fastapi",
+    "starlette",
+    "zdrovena.api",
+    "zdrovena.api.routers",
+    "zdrovena.common.allegro",
+    "zdrovena.common.apaczka",
+    "zdrovena.common.config",
+    "zdrovena.common.damage_store",
+    "zdrovena.common.inpost",
+    "zdrovena.common.secrets",
+    "zdrovena.common.shipping_store",
+    "zdrovena.common.shopify_dedup_store",
+    "zdrovena.common.storage",
+    "zdrovena.fake_providers",
+    "azure.storage",
+)
+
+LEGACY_PARCEL_WRAPPERS = frozenset(
+    {
+        "_assert_packages_fit_locker",
+        "_calc_packages",
+        "_parcel_weight_and_dims",
+        "_physical_parcels",
+        "_shipment_reference",
+    }
+)
+LEGACY_DRAFT_LIFECYCLE_WRAPPERS = frozenset(
+    {
+        "_create_draft",
+        "_meaningful_draft_diff",
+        "_merge_synced_draft",
+        "_persist_draft_from_order",
+        "_sync_draft_from_order",
+    }
+)
+LEGACY_EXECUTION_WRAPPERS = frozenset(
+    {
+        "_dlq_failed_execution",
+        "_execute_draft_impl",
+        "_release_execution_claim",
+    }
+)
+LEGACY_INPOST_PROVIDER_WRAPPERS = frozenset(
+    {
+        "_inpost_call_specs",
+        "_inpost_payload_plan",
+        "_is_resumable_inpost_draft",
+        "_pending_inpost_call_specs",
+        "_resume_inpost_shipment",
+    }
+)
+LEGACY_APACZKA_PLANNING_WRAPPERS = frozenset(
+    {
+        "_apaczka_call_specs",
+        "_apaczka_payload_plan",
+    }
+)
+LEGACY_ALLEGRO_DELIVERY_PLANNING_WRAPPERS = frozenset(
+    {
+        "_allegro_call_spec",
+        "_allegro_payload_plan",
+    }
+)
+WEBHOOKS_MODULE = "zdrovena.api.routers.webhooks"
+WEBHOOKS_COMPOSITION_SYMBOLS = frozenset(
+    {
+        "_build_draft_record",
+        "_confirm_pending_inpost",
+        "_create_draft",
+        "_create_draft_safely",
+        "_dispatch_shipment_ids",
+        "_emit_tracking_assigned",
+        "_execution_collaborators",
+        "_execution_preview",
+        "_get_allegro_client",
+        "_get_pickup_address",
+        "_get_sender",
+        "_maybe_push_tracking_to_allegro",
+        "_maybe_send_new_order_sms",
+        "_order_allegro_pickup",
+        "_run_allegro_delivery",
+        "_run_apaczka",
+        "_run_inpost",
+        "_shipment_patch",
+    }
+)
+
 
 def _get_imports(filepath: pathlib.Path) -> list[str]:
     """Zwraca listę modułów zdrovena importowanych w pliku."""
@@ -57,6 +145,22 @@ def _get_imports(filepath: pathlib.Path) -> list[str]:
             # Normalizuj do zdrovena.X (top-level module)
             target = ".".join(parts[:2])
             imports.append(target)
+    return imports
+
+
+def _get_full_imports(filepath: pathlib.Path) -> list[str]:
+    """Return full module paths for both ``from`` and plain imports."""
+    try:
+        tree = ast.parse(filepath.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+
+    imports = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imports.append(node.module)
+        elif isinstance(node, ast.Import):
+            imports.extend(alias.name for alias in node.names)
     return imports
 
 
@@ -111,6 +215,226 @@ class TestModuleBoundaries:
             "\n\naudit/ importuje month_closing/ — to tworzy cykl:\n"
             + "\n".join(violations)
             + "\n\nPrzenieś współdzielone stałe do zdrovena.common"
+        )
+
+    def test_shipping_package_stays_pure(self) -> None:
+        """shipping/ does not depend on API, persistence, or provider clients."""
+        violations: list[str] = []
+        for filepath in ROOT.glob("shipping/**/*.py"):
+            imports = _get_full_imports(filepath)
+            bad = sorted(
+                {
+                    imported
+                    for imported in imports
+                    for forbidden in SHIPPING_FORBIDDEN_IMPORTS
+                    if imported == forbidden or imported.startswith(f"{forbidden}.")
+                }
+            )
+            if bad:
+                violations.append(f"  {_relative(filepath)} → {bad}")
+
+        assert not violations, (
+            "\n\nshipping/ musi pozostać czystą domeną bez API, storage i klientów providerów:\n"
+            + "\n".join(violations)
+        )
+
+    def test_sibling_routers_do_not_import_webhooks(self) -> None:
+        """Sibling routers use public composition modules, never a decorated router."""
+        violations: list[str] = []
+        routers_root = ROOT / "api" / "routers"
+        for filepath in routers_root.glob("*.py"):
+            if filepath.name in {"__init__.py", "webhooks.py"}:
+                continue
+            tree = ast.parse(filepath.read_text(encoding="utf-8"))
+            rel = _relative(filepath)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    imports_webhooks = node.module == WEBHOOKS_MODULE or (
+                        node.module == "zdrovena.api.routers"
+                        and any(alias.name == "webhooks" for alias in node.names)
+                    )
+                    if imports_webhooks:
+                        violations.append(f"  {rel}:{node.lineno}")
+                elif isinstance(node, ast.Import) and any(
+                    alias.name == WEBHOOKS_MODULE for alias in node.names
+                ):
+                    violations.append(f"  {rel}:{node.lineno}")
+
+        assert not violations, (
+            "\n\nSibling routers cannot import webhooks.py or call its route handlers as services:\n"
+            + "\n".join(violations)
+        )
+
+    def test_webhooks_does_not_reclaim_shipping_composition(self) -> None:
+        """Draft and execution composition remain in their focused API modules."""
+        filepath = ROOT / "api" / "routers" / "webhooks.py"
+        tree = ast.parse(filepath.read_text(encoding="utf-8"))
+        defined = {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        violations = sorted(defined.intersection(WEBHOOKS_COMPOSITION_SYMBOLS))
+
+        assert not violations, (
+            "\n\nwebhooks.py ponownie przejął ownership shipping composition:\n  "
+            + "\n  ".join(violations)
+        )
+
+    def test_production_does_not_use_legacy_parcel_wrappers(self) -> None:
+        """Production callers use shipping.domain rather than webhooks compatibility."""
+        violations: list[str] = []
+        for filepath in ROOT.rglob("*.py"):
+            tree = ast.parse(filepath.read_text(encoding="utf-8"))
+            rel = _relative(filepath)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == WEBHOOKS_MODULE:
+                    imported = LEGACY_PARCEL_WRAPPERS.intersection(
+                        alias.name for alias in node.names
+                    )
+                    for symbol in sorted(imported):
+                        violations.append(f"  {rel}:{node.lineno} imports {symbol}")
+                elif isinstance(node, ast.Call):
+                    called_name = None
+                    if isinstance(node.func, ast.Name):
+                        called_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        called_name = node.func.attr
+                    if called_name in LEGACY_PARCEL_WRAPPERS:
+                        violations.append(f"  {rel}:{node.lineno} calls {called_name}")
+
+        assert not violations, (
+            "\n\nKod produkcyjny nie może używać parcelowych wrapperów z webhooks.py:\n"
+            + "\n".join(violations)
+        )
+
+    def test_production_does_not_import_draft_lifecycle_wrappers(self) -> None:
+        """Production modules import the draft application API, not router wrappers."""
+        violations: list[str] = []
+        for filepath in ROOT.rglob("*.py"):
+            tree = ast.parse(filepath.read_text(encoding="utf-8"))
+            rel = _relative(filepath)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom) or node.module != WEBHOOKS_MODULE:
+                    continue
+                imported = LEGACY_DRAFT_LIFECYCLE_WRAPPERS.intersection(
+                    alias.name for alias in node.names
+                )
+                for symbol in sorted(imported):
+                    violations.append(f"  {rel}:{node.lineno} imports {symbol}")
+
+        assert not violations, (
+            "\n\nKod produkcyjny musi importować lifecycle draftów z "
+            "zdrovena.shipping.application.drafts, nie z webhooks.py:\n" + "\n".join(violations)
+        )
+
+    def test_production_does_not_use_legacy_execution_wrappers(self) -> None:
+        """Production callers use the execution application API directly."""
+        violations: list[str] = []
+        for filepath in ROOT.rglob("*.py"):
+            tree = ast.parse(filepath.read_text(encoding="utf-8"))
+            rel = _relative(filepath)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == WEBHOOKS_MODULE:
+                    imported = LEGACY_EXECUTION_WRAPPERS.intersection(
+                        alias.name for alias in node.names
+                    )
+                    for symbol in sorted(imported):
+                        violations.append(f"  {rel}:{node.lineno} imports {symbol}")
+                elif isinstance(node, ast.Call):
+                    called_name = None
+                    if isinstance(node.func, ast.Name):
+                        called_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        called_name = node.func.attr
+                    if called_name in LEGACY_EXECUTION_WRAPPERS:
+                        violations.append(f"  {rel}:{node.lineno} calls {called_name}")
+
+        assert not violations, (
+            "\n\nKod produkcyjny musi używać execution application API zamiast "
+            "wrapperów z webhooks.py:\n" + "\n".join(violations)
+        )
+
+    def test_production_does_not_use_legacy_inpost_provider_wrappers(self) -> None:
+        """Production callers use the provider module rather than router wrappers."""
+        violations: list[str] = []
+        for filepath in ROOT.rglob("*.py"):
+            tree = ast.parse(filepath.read_text(encoding="utf-8"))
+            rel = _relative(filepath)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == WEBHOOKS_MODULE:
+                    imported = LEGACY_INPOST_PROVIDER_WRAPPERS.intersection(
+                        alias.name for alias in node.names
+                    )
+                    for symbol in sorted(imported):
+                        violations.append(f"  {rel}:{node.lineno} imports {symbol}")
+                elif isinstance(node, ast.Call):
+                    called_name = None
+                    if isinstance(node.func, ast.Name):
+                        called_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        called_name = node.func.attr
+                    if called_name in LEGACY_INPOST_PROVIDER_WRAPPERS:
+                        violations.append(f"  {rel}:{node.lineno} calls {called_name}")
+
+        assert not violations, (
+            "\n\nKod produkcyjny musi używać zdrovena.shipping.providers.inpost zamiast "
+            "wrapperów z webhooks.py:\n" + "\n".join(violations)
+        )
+
+    def test_production_does_not_use_legacy_apaczka_planning_wrappers(self) -> None:
+        """Production callers use the Apaczka provider planning API directly."""
+        violations: list[str] = []
+        for filepath in ROOT.rglob("*.py"):
+            tree = ast.parse(filepath.read_text(encoding="utf-8"))
+            rel = _relative(filepath)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == WEBHOOKS_MODULE:
+                    imported = LEGACY_APACZKA_PLANNING_WRAPPERS.intersection(
+                        alias.name for alias in node.names
+                    )
+                    for symbol in sorted(imported):
+                        violations.append(f"  {rel}:{node.lineno} imports {symbol}")
+                elif isinstance(node, ast.Call):
+                    called_name = None
+                    if isinstance(node.func, ast.Name):
+                        called_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        called_name = node.func.attr
+                    if called_name in LEGACY_APACZKA_PLANNING_WRAPPERS:
+                        violations.append(f"  {rel}:{node.lineno} calls {called_name}")
+
+        assert not violations, (
+            "\n\nKod produkcyjny musi używać zdrovena.shipping.providers.apaczka zamiast "
+            "wrapperów z webhooks.py:\n" + "\n".join(violations)
+        )
+
+    def test_production_does_not_use_legacy_allegro_delivery_planning_wrappers(self) -> None:
+        """Production callers use the Allegro Delivery provider planning API directly."""
+        violations: list[str] = []
+        for filepath in ROOT.rglob("*.py"):
+            tree = ast.parse(filepath.read_text(encoding="utf-8"))
+            rel = _relative(filepath)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == WEBHOOKS_MODULE:
+                    imported = LEGACY_ALLEGRO_DELIVERY_PLANNING_WRAPPERS.intersection(
+                        alias.name for alias in node.names
+                    )
+                    for symbol in sorted(imported):
+                        violations.append(f"  {rel}:{node.lineno} imports {symbol}")
+                elif isinstance(node, ast.Call):
+                    called_name = None
+                    if isinstance(node.func, ast.Name):
+                        called_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        called_name = node.func.attr
+                    if called_name in LEGACY_ALLEGRO_DELIVERY_PLANNING_WRAPPERS:
+                        violations.append(f"  {rel}:{node.lineno} calls {called_name}")
+
+        assert not violations, (
+            "\n\nKod produkcyjny musi używać "
+            "zdrovena.shipping.providers.allegro_delivery zamiast wrapperów z "
+            "webhooks.py:\n" + "\n".join(violations)
         )
 
     def test_documented_exceptions_still_needed(self) -> None:

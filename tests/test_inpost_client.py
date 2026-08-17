@@ -29,6 +29,7 @@ _TOKEN = "tok-test-123"
 _ORG = "org-9"
 _SHIPMENTS_URL = "https://api-shipx-pl.easypack24.net/v1/organizations/org-9/shipments"
 _DISPATCH_URL = "https://api-shipx-pl.easypack24.net/v1/organizations/org-9/dispatch_orders"
+_CANCEL_DISPATCH_URL = "https://api-shipx-pl.easypack24.net/v1/dispatch_orders/disp-42"
 
 
 def _ok_response(json_payload: dict, status: int = 201) -> MagicMock:
@@ -401,6 +402,15 @@ class TestPayloadBuilders:
             client.build_kurier_payload(**self._kwargs())
         mock_post.assert_not_called()
 
+    def test_kurier_builder_includes_cod_money(self):
+        client = InPostClient(_TOKEN, _ORG)
+
+        built = client.build_kurier_payload(
+            **self._kwargs(), cod_amount="200.30", cod_currency="PLN"
+        )
+
+        assert built["cod"] == {"amount": 200.3, "currency": "PLN"}
+
     def test_build_paczkomat_payload_matches_what_create_sends(self):
         client = InPostClient(_TOKEN, _ORG)
         built = client.build_paczkomat_payload(**self._locker_kwargs())
@@ -416,6 +426,24 @@ class TestPayloadBuilders:
         client = InPostClient(_TOKEN, _ORG)
         with patch.object(client._session, "post") as mock_post:
             client.build_paczkomat_payload(**self._locker_kwargs())
+        mock_post.assert_not_called()
+
+    def test_locker_builder_includes_cod_money(self):
+        client = InPostClient(_TOKEN, _ORG)
+
+        built = client.build_paczkomat_payload(
+            **self._locker_kwargs(), cod_amount="200.30", cod_currency="PLN"
+        )
+
+        assert built["cod"] == {"amount": 200.3, "currency": "PLN"}
+
+    def test_invalid_cod_currency_is_rejected_before_http(self):
+        client = InPostClient(_TOKEN, _ORG)
+        with patch.object(client._session, "post") as mock_post:
+            with pytest.raises(InPostBusinessError, match="Invalid InPost COD money"):
+                client.create_kurier_shipment(
+                    **self._kwargs(), cod_amount="200.30", cod_currency="EUR"
+                )
         mock_post.assert_not_called()
 
 
@@ -689,6 +717,21 @@ class TestCancelShipment:
                 # which the method catches and falls through to DELETE.
                 client.cancel_shipment("ship-42")
         mock_delete.assert_called_once()
+
+
+class TestCancelDispatchOrder:
+    def test_success_uses_global_dispatch_order_endpoint(self):
+        client = InPostClient(_TOKEN, _ORG)
+        response = MagicMock(spec=requests.Response)
+        response.ok = True
+        response.status_code = 204
+
+        with patch.object(client._session, "delete", return_value=response) as delete:
+            result = client.cancel_dispatch_order("disp-42")
+
+        delete.assert_called_once()
+        assert delete.call_args.args[0] == _CANCEL_DISPATCH_URL
+        assert result is None
 
 
 class TestOrganizationErrorSurfacing:

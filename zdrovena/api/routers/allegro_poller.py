@@ -2,7 +2,7 @@
 
 Allegro has no webhooks, so we periodically poll ``GET /order/checkout-forms``
 for orders in status ``READY_FOR_PROCESSING``. Each new order is mapped to a
-Shopify-like payload and pushed through the existing ``_create_draft`` pipeline
+Shopify-like payload and pushed through the shipping draft application service
 so shipping logic (package calc, courier picking, phone/address normalisation)
 is reused as-is.
 
@@ -21,8 +21,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from zdrovena.api.routers.allegro_invoicer import create_invoice_for_order
-from zdrovena.api.routers.webhooks import _create_draft, _sync_draft_from_order
+from zdrovena.api.shipping_draft_composition import (
+    build_draft_record,
+    emit_tracking_assigned,
+    maybe_send_new_order_sms,
+)
 from zdrovena.common.allegro_mapper import allegro_to_shopify_order
+from zdrovena.common.events import log_event
+from zdrovena.shipping.application import drafts as draft_application
 
 logger = logging.getLogger("zdrovena.api.routers.allegro_poller")
 
@@ -150,11 +156,11 @@ def poll_orders_once(
         # duplicates on the next cycle — a self-sustaining loop.
         drafts = shipping_store.list_drafts(limit=10_000)
     except Exception:
-        # Resilience boundary: store read failure degrades to "no known drafts"
-        # (dedup best-effort) rather than aborting the whole cycle.
+        # Without the snapshot there is no idempotency decision. Keep the
+        # scheduler healthy, but fail this cycle closed before any order effect.
         logger.exception("shipping_store.list_drafts failed")
         stats["errors"] += 1
-        drafts = []
+        return stats
 
     for form in forms:
         allegro_id = str(form.get("id", ""))
@@ -168,10 +174,13 @@ def poll_orders_once(
         try:
             shopify_like = allegro_to_shopify_order(form)
             if existing:
-                changed = _sync_draft_from_order(
+                changed = draft_application.sync_draft_from_order(
                     shopify_like,
                     shipping_store,
-                    storage,
+                    build_draft_record=build_draft_record,
+                    emit_tracking_assigned=emit_tracking_assigned,
+                    record_event=log_event,
+                    send_new_order_sms=maybe_send_new_order_sms,
                     source="allegro",
                     existing=existing,
                 )
@@ -182,10 +191,13 @@ def poll_orders_once(
                 stats["skipped_duplicate"] += 1
                 draft = existing
             else:
-                draft = _create_draft(
+                draft = draft_application.create_draft(
                     shopify_like,
                     shipping_store,
-                    storage,
+                    build_draft_record=build_draft_record,
+                    emit_tracking_assigned=emit_tracking_assigned,
+                    record_event=log_event,
+                    send_new_order_sms=maybe_send_new_order_sms,
                     source="allegro",
                 )
                 stats["created"] += 1

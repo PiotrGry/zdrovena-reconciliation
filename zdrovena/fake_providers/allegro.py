@@ -31,7 +31,6 @@ MEDIA_TYPE = "application/vnd.allegro.public.v1+json"
 PACKAGE_TYPES = frozenset({"PACKAGE", "DOX", "PALLET"})
 DIMENSION_UNITS = frozenset({"MILLIMETER", "CENTIMETER", "METER"})
 WEIGHT_UNITS = frozenset({"KILOGRAMS"})
-INPOST_SENDING_METHODS = frozenset({"parcel_locker", "dispatch_order", "pop", "any_point"})
 
 
 def _require_headers(
@@ -98,9 +97,17 @@ def _validate_create_input(value: Any) -> dict[str, Any]:
     if properties is not None:
         if not isinstance(properties, dict):
             raise HTTPException(status_code=422, detail="input.additionalProperties must be object")
-        method = properties.get("inpost#sendingMethod")
-        if method is not None and method not in INPOST_SENDING_METHODS:
-            raise HTTPException(status_code=422, detail="Invalid inpost#sendingMethod")
+        if "inpost#sendingMethod" in properties:
+            raise HTTPException(
+                status_code=400,
+                detail="The 'inpost#sendingMethod' parameter is no longer supported.",
+            )
+    additional_services = value.get("additionalServices")
+    if additional_services is not None and (
+        not isinstance(additional_services, list)
+        or any(not isinstance(service, str) for service in additional_services)
+    ):
+        raise HTTPException(status_code=422, detail="input.additionalServices must be strings")
     return value
 
 
@@ -414,12 +421,15 @@ async def pickup_proposals(
     request: Request,
     authorization: str | None = Header(default=None),
     accept: str | None = Header(default=None),
+    content_type: str | None = Header(default=None),
 ) -> list[dict[str, Any]]:
-    _require_headers(authorization, accept)
+    _require_headers(authorization, accept, content_type)
     body = await request.json()
-    shipment_ids = body.get("input", {}).get("shipmentIds") or []
-    if not shipment_ids:
-        raise HTTPException(status_code=422, detail="input.shipmentIds is required")
+    require_fields(body, ("shipmentIds", "address"))
+    shipment_ids = body["shipmentIds"]
+    if not isinstance(shipment_ids, list) or not shipment_ids:
+        raise HTTPException(status_code=422, detail="shipmentIds must not be empty")
+    _validate_address(body["address"], "address")
     return [
         {
             "proposals": [
@@ -439,13 +449,58 @@ async def create_pickup(
     request: Request,
     authorization: str | None = Header(default=None),
     accept: str | None = Header(default=None),
+    content_type: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    _require_headers(authorization, accept)
+    _require_headers(authorization, accept, content_type)
     body = await request.json()
     require_fields(body, ("commandId", "input"))
-    dispatch_id = STATE.next_id("allegro-dispatch")
-    STATE.allegro_dispatches[dispatch_id] = {"id": dispatch_id, **deepcopy(body["input"])}
-    return {"commandId": body["commandId"], "input": deepcopy(body["input"])}
+    pickup_input = body["input"]
+    require_fields(pickup_input, ("shipmentIds", "address"), "input")
+    _validate_address(pickup_input["address"], "input.address")
+    if not pickup_input.get("pickupTime") and not pickup_input.get("pickupDateProposalId"):
+        raise HTTPException(status_code=422, detail="input pickup time is required")
+    command_id = str(body["commandId"])
+    if command_id not in STATE.allegro_pickup_commands:
+        STATE.allegro_pickup_commands[command_id] = {
+            "id": command_id,
+            "input": deepcopy(pickup_input),
+            "status": "IN_PROGRESS",
+            "polls": 0,
+        }
+    return {"commandId": command_id, "input": deepcopy(pickup_input)}
+
+
+@router.get("/shipment-management/pickups/create-commands/{command_id}")
+def pickup_command_status(
+    command_id: str,
+    response: Response,
+    authorization: str | None = Header(default=None),
+    accept: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_headers(authorization, accept)
+    command = STATE.allegro_pickup_commands.get(command_id)
+    if not command:
+        raise HTTPException(status_code=404, detail="pickup command not found")
+    command["polls"] += 1
+    if command["polls"] < 2:
+        response.headers["Retry-After"] = "1"
+        return {"id": command_id, "status": "IN_PROGRESS", "errors": []}
+    pickup_id = command.get("pickupId")
+    if not pickup_id:
+        pickup_id = STATE.next_id("allegro-pickup")
+        command["pickupId"] = pickup_id
+        STATE.allegro_dispatches[pickup_id] = {
+            "id": pickup_id,
+            **deepcopy(command["input"]),
+        }
+    command["status"] = "SUCCESS"
+    return {
+        "id": command_id,
+        "status": "SUCCESS",
+        "pickupId": pickup_id,
+        "carrierPickupId": f"carrier-{pickup_id}",
+        "errors": [],
+    }
 
 
 @router.post("/shipment-management/shipments/cancel-commands", status_code=201)

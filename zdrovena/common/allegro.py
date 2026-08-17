@@ -557,7 +557,7 @@ class AllegroClient:
         self,
         *,
         command_id: str,
-        order_id: str,
+        reference_number: str,
         credentials_id: str | None,
         packages: list[dict[str, Any]],
         sender: dict[str, Any],
@@ -568,8 +568,9 @@ class AllegroClient:
     ) -> dict[str, Any]:
         """POST /shipment-management/shipments/create-commands.
 
-        Contract (see docs/audit/fixtures/allegro_create_commands_request.json):
-          - order_id is sent as ``referenceNumber`` (there is no ``orderId`` field).
+        Contract (see tests/fixtures/allegro/create-commands-request.json):
+          - reference_number is sent as ``referenceNumber`` (there is no
+            ``orderId`` field).
           - ``sender`` / ``receiver`` are required address blocks (name, company,
             street, postalCode, city, state, countryCode, email, phone, point?).
             For pickup-point / locker deliveries put the point code in
@@ -579,8 +580,8 @@ class AllegroClient:
             object — weight unit is the plural ``KILOGRAMS``).
           - ``additional_services`` is an Array of Allegro service strings.
           - ``additional_properties`` is a dict of carrier-specific extras
-            (e.g. ``{"inpost#sendingMethod": "parcel_locker"}`` — see Allegro
-            issue #9915). Keys are namespaced by carrier; only sent when set.
+            returned by Allegro for the selected delivery option. Only sent
+            when set; removed properties must not be inferred locally.
 
         For Allegro Standard: pass credentials_id=None.
         For own agreements: pass the credentialsId returned by get_delivery_services.
@@ -595,7 +596,7 @@ class AllegroClient:
         input_body: dict[str, Any] = {
             "sender": sender,
             "receiver": receiver,
-            "referenceNumber": order_id,
+            "referenceNumber": reference_number,
             "packages": packages,
         }
         if delivery_method_id:
@@ -706,7 +707,10 @@ class AllegroClient:
         return (carrier, waybill)
 
     def get_ship_with_allegro_pickup_proposals(
-        self, shipment_ids: list[str]
+        self,
+        shipment_ids: list[str],
+        *,
+        address: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """POST /shipment-management/pickup-proposals — available pickup slots.
 
@@ -737,7 +741,11 @@ class AllegroClient:
         """
         data = self._post(
             "/shipment-management/pickup-proposals",
-            {"input": {"shipmentIds": list(shipment_ids)}},
+            {
+                "shipmentIds": list(shipment_ids),
+                "address": dict(address),
+            },
+            extra_headers={"Content-Type": _ACCEPT_HEADER},
         )
         return _normalize_pickup_proposals(data)
 
@@ -746,6 +754,7 @@ class AllegroClient:
         *,
         command_id: str,
         shipment_ids: list[str],
+        address: dict[str, Any],
         pickup_time: dict[str, str] | None = None,
         proposal_item_id: str | None = None,
     ) -> dict[str, Any]:
@@ -765,7 +774,10 @@ class AllegroClient:
                 "create_ship_with_allegro_pickup requires either pickup_time "
                 "(new format) or proposal_item_id (legacy)."
             )
-        input_body: dict[str, Any] = {"shipmentIds": list(shipment_ids)}
+        input_body: dict[str, Any] = {
+            "shipmentIds": list(shipment_ids),
+            "address": dict(address),
+        }
         if pickup_time:
             input_body["pickupTime"] = dict(pickup_time)
         else:
@@ -774,7 +786,12 @@ class AllegroClient:
         return self._post(
             "/shipment-management/pickups/create-commands",
             {"commandId": command_id, "input": input_body},
+            extra_headers={"Content-Type": _ACCEPT_HEADER},
         )
+
+    def get_ship_with_allegro_pickup_command_status(self, command_id: str) -> dict[str, Any]:
+        """Read the asynchronous pickup command status and resulting pickupId."""
+        return self._get(f"/shipment-management/pickups/create-commands/{command_id}")
 
     def cancel_ship_with_allegro_shipment(
         self, *, command_id: str, shipment_id: str

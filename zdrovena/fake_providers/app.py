@@ -48,6 +48,7 @@ def state() -> dict[str, Any]:
         "allegro": {
             "orders": deepcopy(STATE.allegro_orders),
             "commands": deepcopy(STATE.allegro_commands),
+            "pickupCommands": deepcopy(STATE.allegro_pickup_commands),
             "shipments": deepcopy(STATE.allegro_shipments),
             "invoices": deepcopy(STATE.allegro_invoices),
             "dispatches": deepcopy(STATE.allegro_dispatches),

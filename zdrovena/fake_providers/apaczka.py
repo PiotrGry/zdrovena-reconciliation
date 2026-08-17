@@ -51,6 +51,20 @@ SUPPORTED_SERVICES = frozenset(
 POINT_SERVICES = frozenset(
     {"14", "15", "23", "26", "50", "53", "64", "66", "86", "203", "314", "317"}
 )
+POINTS_BY_TYPE: dict[str, dict[str, dict[str, Any]]] = {
+    "DPD": {
+        "PL55338": {"foreign_address_id": "PL55338", "option_cod": True},
+        "PL72095": {"foreign_address_id": "PL72095", "option_cod": True},
+        "PL-NO-COD": {"foreign_address_id": "PL-NO-COD", "option_cod": False},
+    },
+    "POCZTA": {
+        "318409": {"foreign_address_id": "318409", "option_cod": True},
+        "POCZTA-NO-COD": {
+            "foreign_address_id": "POCZTA-NO-COD",
+            "option_cod": False,
+        },
+    },
+}
 SHIPMENT_TYPES = frozenset({"PACZKA", "PALETA"})
 POST_CODE_RE = re.compile(r"^[0-9]{2}-[0-9]{3}$")
 DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
@@ -198,6 +212,25 @@ def _validate_order(value: Any) -> dict[str, Any] | None:
             )
         if shipment.get("is_nstd", 0) not in (0, 1):
             return _failure(422, f"{path}.is_nstd must be 0 or 1", field=f"{path}.is_nstd")
+    cod = value.get("cod")
+    if cod is not None:
+        if not isinstance(cod, dict):
+            return _failure(422, "order.cod must be an object", field="order.cod")
+        amount = cod.get("amount")
+        if type(amount) is not int or amount <= 0:
+            return _failure(
+                422,
+                "order.cod.amount must be a positive integer in grosze",
+                field="order.cod.amount",
+            )
+        if cod.get("currency") != "PLN":
+            return _failure(422, "order.cod.currency must be PLN", field="order.cod.currency")
+        if not re.fullmatch(r"[0-9]{26}", str(cod.get("bankaccount") or "")):
+            return _failure(
+                422,
+                "order.cod.bankaccount must be a 26-digit NRB",
+                field="order.cod.bankaccount",
+            )
     pickup = value["pickup"]
     if not isinstance(pickup, dict) or pickup.get("type") not in {"COURIER", "SELF"}:
         return _failure(422, "order.pickup.type is invalid", field="order.pickup.type")
@@ -206,6 +239,24 @@ def _validate_order(value: Any) -> dict[str, Any] | None:
     for field in ("hours_from", "hours_to"):
         if pickup.get(field) and not TIME_RE.fullmatch(str(pickup[field])):
             return _failure(422, f"order.pickup.{field} is invalid", field=f"order.pickup.{field}")
+    if (
+        str(value.get("service_id") or "") == "23"
+        and pickup.get("date")
+        and (
+            str(pickup.get("hours_from") or ""),
+            str(pickup.get("hours_to") or ""),
+        )
+        not in {
+            ("09:00", "17:00"),
+            ("11:00", "14:00"),
+            ("14:00", "17:00"),
+        }
+    ):
+        return _failure(
+            400,
+            'Dozwolone przedzialy godzinowe: "[09:00|17:00,11:00|14:00,14:00|17:00]"',
+            field="order.pickup",
+        )
     return None
 
 
@@ -232,6 +283,12 @@ async def call(endpoint: str, http_request: Request) -> dict[str, Any]:
             for service_id in sorted(SUPPORTED_SERVICES, key=int)
         ]
         return _ok({"services": services})
+    if endpoint.startswith("points/"):
+        point_type = endpoint.removeprefix("points/").upper()
+        points = POINTS_BY_TYPE.get(point_type)
+        if points is None:
+            return _failure(404, f"Unknown point type: {point_type}")
+        return _ok({"points": deepcopy(points)})
     if endpoint == "orders":
         return _ok({"orders": [deepcopy(order) for order in STATE.apaczka_orders.values()]})
     if endpoint == "order_send":

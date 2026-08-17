@@ -1,11 +1,11 @@
 """Map an Allegro checkout-form payload to a Shopify-like order dict.
 
-The Allegro poller reuses ``_create_draft()`` from the webhooks router which
+The Allegro poller reuses the shipping draft application service which
 was built for Shopify. Rather than duplicate that entire ~90-line function
 (package calc, address parse, phone normalisation, breakdown, etc.), we
 project the Allegro payload into the same shape.
 
-We produce only the fields ``_create_draft`` actually reads.
+We produce only the fields the draft record builder actually reads.
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ def allegro_to_shopify_order(form: dict[str, Any]) -> dict[str, Any]:
         if pickup.get("name"):
             note_attributes.append({"name": "PickupPointName", "value": pickup["name"]})
     if method_id:
-        # Consumed by _create_draft to enable Ship with Allegro (create-commands).
+        # Consumed by the draft record builder to enable Ship with Allegro.
         note_attributes.append({"name": "AllegroDeliveryMethodId", "value": method_id})
 
     order: dict[str, Any] = {

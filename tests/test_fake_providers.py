@@ -115,7 +115,7 @@ def test_allegro_client_uses_fake_provider_over_http(
     client.mark_order_processed("fake-order-1", "PROCESSING")
     command = client.create_ship_with_allegro_shipment(
         command_id="cmd-1",
-        order_id="fake-order-1",
+        reference_number="fake-order-1",
         credentials_id=None,
         sender={
             "name": "Zdrovena",
@@ -159,6 +159,42 @@ def test_allegro_client_uses_fake_provider_over_http(
     assert shipment["status"] == "CREATED"
     assert client.get_ship_with_allegro_label(status["shipmentId"]).startswith(b"%PDF")
 
+    pickup_address = {
+        "name": "Zdrovena Magazyn",
+        "street": "Magazynowa 1",
+        "postalCode": "00-002",
+        "city": "Warszawa",
+        "countryCode": "PL",
+        "email": "sender@example.test",
+        "phone": "500500501",
+    }
+    proposals = client.get_ship_with_allegro_pickup_proposals(
+        [status["shipmentId"]], address=pickup_address
+    )
+    pickup_time = proposals[0]
+    pickup = client.create_ship_with_allegro_pickup(
+        command_id="pickup-cmd-1",
+        shipment_ids=[status["shipmentId"]],
+        address=pickup_address,
+        pickup_time={
+            "date": pickup_time["date"],
+            "minTime": pickup_time["minTime"],
+            "maxTime": pickup_time["maxTime"],
+        },
+    )
+    assert pickup["input"]["address"] == pickup_address
+    assert pickup["input"]["shipmentIds"] == [status["shipmentId"]]
+    pickup_status = client.get_ship_with_allegro_pickup_command_status("pickup-cmd-1")
+    assert pickup_status["status"] == "IN_PROGRESS"
+    pickup_status = client.get_ship_with_allegro_pickup_command_status("pickup-cmd-1")
+    assert pickup_status["status"] == "SUCCESS"
+    assert pickup_status["pickupId"].startswith("allegro-pickup-")
+    cancelled_pickup = client.cancel_ship_with_allegro_dispatch(
+        command_id="pickup-cancel-1",
+        dispatch_id=pickup_status["pickupId"],
+    )
+    assert cancelled_pickup["commandId"] == "pickup-cancel-1"
+
     invoice = client.create_invoice_declaration(order_id="fake-order-1", invoice_number="FV/1/2026")
     client.upload_invoice_file(
         order_id="fake-order-1", invoice_id=invoice["id"], pdf_bytes=b"%PDF-1.4"
@@ -196,6 +232,8 @@ def test_inpost_client_stateful_success_and_label_not_ready(
             "post_code": "00-002",
         },
         reference="order-1576",
+        cod_amount="200.30",
+        cod_currency="PLN",
     )
     duplicate = client.create_kurier_shipment(
         receiver_first_name="Anna",
@@ -221,6 +259,7 @@ def test_inpost_client_stateful_success_and_label_not_ready(
     # independent paid writes and application code must prevent duplicates.
     assert shipment["status"] == "created"
     assert shipment["tracking_number"] is None
+    assert shipment["cod"] == {"amount": 200.3, "currency": "PLN"}
     assert duplicate["id"] != shipment["id"]
 
     confirmed = client.get_shipment(shipment["id"])
@@ -229,6 +268,12 @@ def test_inpost_client_stateful_success_and_label_not_ready(
 
     dispatch = client.create_dispatch_order(shipment["id"], {"name": "Zdrovena"})
     assert dispatch["status"] == "created"
+    cancel = requests.delete(
+        f"{fake_provider_url}/inpost/v1/dispatch_orders/{dispatch['id']}",
+        headers={"Authorization": "Bearer fake-token"},
+        timeout=2,
+    )
+    assert cancel.status_code == 204
     assert client.get_label(shipment["id"]).startswith(b"%PDF")
 
     _set_scenario(fake_provider_url, "inpost", "get_label", "label_not_ready")
@@ -272,6 +317,9 @@ def test_apaczka_client_stateful_success_and_provider_validation_failure(
         sender=sender,
         reference="order-1639",
         content="Woda butelkowana",
+        cod_amount="200.30",
+        cod_currency="PLN",
+        cod_bank_account="12345678901234567890123456",
     )
     duplicate = client.create_shipment(
         receiver_name="Anna Nowak",
@@ -289,6 +337,31 @@ def test_apaczka_client_stateful_success_and_provider_validation_failure(
     # externalId is business metadata, not a provider idempotency guarantee.
     assert duplicate["id"] != shipment["id"]
     assert client.get_label(shipment["id"]).startswith(b"%PDF")
+
+    dpd_pickup_client = ApaczkaClient(
+        app_id="fake",
+        app_secret="fake",
+        service_id="23",
+        storage=_MemoryStorage(),
+    )
+    with pytest.raises(ApaczkaBusinessError, match="Dozwolone przedzialy"):
+        dpd_pickup_client.create_shipment(
+            receiver_name="Anna Nowak",
+            receiver_firstname="Anna",
+            receiver_lastname="Nowak",
+            receiver_email="anna@example.test",
+            receiver_phone="500500500",
+            receiver_address="Prosta 1",
+            receiver_city="Warszawa",
+            receiver_zip="00-001",
+            receiver_point_id="PL55338",
+            sender=sender,
+            reference="order-invalid-window",
+            content="Woda butelkowana",
+            pickup_date="2026-08-12",
+            pickup_from="11:00",
+            pickup_to="13:00",
+        )
 
     _set_scenario(fake_provider_url, "apaczka", "order_send", "provider_validation_failure")
     with pytest.raises(ApaczkaBusinessError):
@@ -467,6 +540,31 @@ def test_fake_providers_reject_documented_contract_violations(fake_provider_url:
     )
     assert wrong_allegro_media_type.status_code == 415
 
+    allegro_headers = {
+        "Authorization": "Bearer fake-token",
+        "Accept": "application/vnd.allegro.public.v1+json",
+        "Content-Type": "application/vnd.allegro.public.v1+json",
+    }
+    proposal = requests.get(
+        f"{fake_provider_url}/allegro/shipment-management/delivery-proposals/fake-order-1",
+        headers=allegro_headers,
+        timeout=2,
+    ).json()
+    removed_sending_method = requests.post(
+        f"{fake_provider_url}/allegro/shipment-management/shipments/create-commands",
+        headers=allegro_headers,
+        json={
+            "commandId": "removed-property",
+            "input": {
+                **proposal["suggestedInput"],
+                "additionalProperties": {"inpost#sendingMethod": "parcel_locker"},
+            },
+        },
+        timeout=2,
+    )
+    assert removed_sending_method.status_code == 400
+    assert "no longer supported" in removed_sending_method.text
+
     missing_locker_point = requests.post(
         f"{fake_provider_url}/inpost/v1/organizations/org-1/shipments",
         headers={"Authorization": "Bearer fake-token"},
@@ -478,6 +576,21 @@ def test_fake_providers_reject_documented_contract_violations(fake_provider_url:
         timeout=2,
     )
     assert missing_locker_point.status_code == 422
+
+    invalid_inpost_cod = requests.post(
+        f"{fake_provider_url}/inpost/v1/organizations/org-1/shipments",
+        headers={"Authorization": "Bearer fake-token"},
+        json={
+            "service": "inpost_locker_standard",
+            "receiver": {"email": "buyer@example.test", "phone": "500500500"},
+            "parcels": [{"template": "small"}],
+            "custom_attributes": {"target_point": "WAW01"},
+            "cod": {"amount": 200.30, "currency": "EUR"},
+        },
+        timeout=2,
+    )
+    assert invalid_inpost_cod.status_code == 422
+    assert "cod.currency" in invalid_inpost_cod.text
 
     request_data = {
         "order": {
@@ -494,6 +607,47 @@ def test_fake_providers_reject_documented_contract_violations(fake_provider_url:
     )
     assert missing_apaczka_content.status_code == 200
     assert missing_apaczka_content.json()["status"] == 422
+
+    apaczka_client = ApaczkaClient(
+        app_id="fake",
+        app_secret="fake",
+        service_id="21",
+        storage=_MemoryStorage(),
+    )
+    invalid_apaczka_order = apaczka_client.build_shipment_order(
+        receiver_name="Anna Nowak",
+        receiver_firstname="Anna",
+        receiver_lastname="Nowak",
+        receiver_email="anna@example.test",
+        receiver_phone="500500500",
+        receiver_address="Prosta 1",
+        receiver_city="Warszawa",
+        receiver_zip="00-001",
+        sender={
+            "name": "Zdrovena",
+            "firstname": "Piotr",
+            "lastname": "Gryzlo",
+            "email": "sender@example.test",
+            "phone": "500500501",
+            "street": "Magazynowa",
+            "building_number": "2",
+            "city": "Warszawa",
+            "post_code": "00-002",
+        },
+        reference="order-invalid-cod",
+        content="Woda butelkowana",
+        cod_amount="200.30",
+        cod_bank_account="12345678901234567890123456",
+    )
+    invalid_apaczka_order["cod"]["bankaccount"] = "123"
+    invalid_apaczka_cod = requests.post(
+        f"{fake_provider_url}/apaczka/api/v2/order_send/",
+        data=_sign("fake", "fake", "order_send", {"order": invalid_apaczka_order}),
+        timeout=2,
+    )
+    assert invalid_apaczka_cod.status_code == 200
+    assert invalid_apaczka_cod.json()["status"] == 422
+    assert "order.cod.bankaccount" in invalid_apaczka_cod.text
 
 
 def test_fake_apaczka_rejects_wrong_hmac_even_for_valid_payload(fake_provider_url: str) -> None:

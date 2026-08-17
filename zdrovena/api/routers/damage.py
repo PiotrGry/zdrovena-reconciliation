@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from copy import deepcopy
@@ -12,6 +11,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from zdrovena.api import shipping_execution_composition as execution_composition
 from zdrovena.api.auth import (
     Principal,
     require_shipment_mgr_or_above,
@@ -91,11 +91,23 @@ def _clone_replacement_draft(original: dict[str, Any], case: dict[str, Any]) -> 
             "tracking_company": None,
             "tracking_carrier_id": None,
             "courier_draft_id": None,
+            "courier_shipments": [],
             "dispatch_order_id": None,
+            "allegro_shipment_id": None,
+            "allegro_dispatch_id": None,
+            "allegro_pickup_command_id": None,
+            "allegro_command_id": None,
             "pickup_ordered": False,
+            "shipment_origin": None,
             "error": None,
+            "fulfillment_status": None,
+            "source_fulfillment_status": None,
             "fulfilled_at": None,
+            "fulfilled_by": None,
             "shopify_fulfillment_id": None,
+            "allegro_fulfillment_status": None,
+            "allegro_marked_processed_at": None,
+            "allegro_marked_processed_by": None,
             "fakturownia_invoice_id": None,
             "fakturownia_invoice_number": None,
             "fakturownia_invoice_error": None,
@@ -108,7 +120,6 @@ def _clone_replacement_draft(original: dict[str, Any], case: dict[str, Any]) -> 
         }
     )
     for key in (
-        "allegro_command_id",
         "allegro_order_shipment_id",
         "shipment_id",
         "package_id",
@@ -222,9 +233,7 @@ def refresh_damage_cases(
         "zoho": {"skipped": "not_configured"},
     }
     try:
-        from zdrovena.api.routers.webhooks import _get_allegro_client
-
-        allegro = _get_allegro_client()
+        allegro = execution_composition.get_allegro_client()
         if allegro is not None:
             result["allegro"] = scan_allegro_damage_cases(
                 client=allegro,
@@ -361,16 +370,14 @@ def create_replacement(
     if draft.get("status") == "needs_review":
         shipping_store.update_draft(str(replacement_id), {"status": "pending"})
 
-    from zdrovena.api.routers.webhooks import _execute_draft_impl
-
-    result = _execute_draft_impl(
-        str(replacement_id),
-        shipping_store,
-        storage,
-        pickup_date=None,
-        pickup_from=None,
-        pickup_to=None,
-    )
+    try:
+        result = execution_composition.execute_shipping_draft(
+            str(replacement_id),
+            shipping_store,
+            storage,
+        )
+    except execution_composition.EXECUTION_APPLICATION_HTTP_ERRORS as exc:
+        execution_composition.raise_execution_http_exception(exc)
     draft_status = result.get("status")
     case_status = "replacement_created" if draft_status == "created" else "replacement_pending"
     updated = _save_case(
@@ -399,12 +406,14 @@ def confirm_replacement(
     replacement_id = case.get("replacement_draft_id")
     if not replacement_id:
         raise HTTPException(status_code=409, detail="Replacement draft is missing")
-    from zdrovena.api.routers.webhooks import confirm_pending_command
-
-    result = confirm_pending_command(str(replacement_id), shipping_store, principal)
-    if not isinstance(result, dict):
-        response_body = getattr(result, "body", b"{}")
-        result = json.loads(response_body)
+    del principal
+    try:
+        confirmation = execution_composition.confirm_shipping_draft(
+            str(replacement_id), shipping_store
+        )
+    except execution_composition.ConfirmationError as exc:
+        execution_composition.raise_confirmation_http_exception(exc)
+    result = confirmation.payload
     draft_status = result.get("status")
     updated = _save_case(
         damage_store,

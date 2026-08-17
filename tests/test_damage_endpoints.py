@@ -8,7 +8,9 @@ from fastapi.testclient import TestClient
 
 os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 
+from zdrovena.api import shipping_execution_composition
 from zdrovena.api.main import app
+from zdrovena.api.routers import damage as damage_router
 from zdrovena.common.damage_store import DamageStore
 from zdrovena.common.shipping_store import ShippingStore
 from zdrovena.common.storage import LocalStorageService
@@ -99,6 +101,104 @@ def test_manual_workflow_prepares_separate_draft(client, stores):
     assert damage.get_case("case-1648")["status"] == "replacement_prepared"
 
 
+def test_replacement_clears_full_shipping_lifecycle_and_creates_new_parcels(stores):
+    _seed_case_and_draft(stores)
+    damage, shipping, storage = stores
+    shipping.update_draft(
+        "original",
+        {
+            "courier": "inpost",
+            "service": "inpost_courier_standard",
+            "packages_breakdown": [{"type": "1-pak", "qty": 2}],
+            "courier_draft_id": "old-ship-1",
+            "courier_shipments": [
+                {
+                    "id": "old-ship-1",
+                    "tracking_number": "OLD-A",
+                    "package_type": "1-pak",
+                    "package_number": "1",
+                },
+                {
+                    "id": "old-ship-2",
+                    "tracking_number": "OLD-B",
+                    "package_type": "1-pak",
+                    "package_number": "2",
+                },
+            ],
+            "allegro_shipment_id": "old-allegro-shipment",
+            "allegro_dispatch_id": "old-allegro-pickup",
+            "allegro_pickup_command_id": "old-allegro-pickup-command",
+            "allegro_command_id": "old-allegro-command",
+            "dispatch_order_id": "old-dispatch",
+            "pickup_ordered": True,
+            "shipment_origin": "system",
+            "fulfillment_status": "fulfilled",
+            "fulfilled_by": "operator@example.test",
+            "fulfilled_at": "2026-07-14T09:00:00Z",
+            "shopify_fulfillment_id": "fulfillment-1",
+            "allegro_fulfillment_status": "SENT",
+            "allegro_marked_processed_at": "2026-07-14T09:00:00Z",
+            "allegro_marked_processed_by": "operator@example.test",
+        },
+    )
+
+    original = shipping.get_draft("original")
+    case = damage.get_case("case-1648")
+    assert original is not None
+    assert case is not None
+    replacement = damage_router._clone_replacement_draft(original, case)
+
+    for field in (
+        "courier_draft_id",
+        "courier_shipments",
+        "allegro_shipment_id",
+        "allegro_dispatch_id",
+        "allegro_pickup_command_id",
+        "allegro_command_id",
+        "dispatch_order_id",
+        "tracking_number",
+        "shipment_origin",
+        "fulfillment_status",
+        "fulfilled_by",
+        "fulfilled_at",
+        "shopify_fulfillment_id",
+        "allegro_fulfillment_status",
+        "allegro_marked_processed_at",
+        "allegro_marked_processed_by",
+    ):
+        assert not replacement.get(field), f"replacement retained {field}"
+    assert replacement["pickup_ordered"] is False
+    replacement["status"] = "pending"
+    shipping.upsert_draft(replacement)
+
+    with (
+        patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="test-value"),
+        patch(
+            "zdrovena.common.inpost.InPostClient.create_kurier_shipment",
+            side_effect=[
+                {"id": "new-ship-1", "tracking_number": "NEW-A"},
+                {"id": "new-ship-2", "tracking_number": "NEW-B"},
+            ],
+        ) as create_shipment,
+    ):
+        created = shipping_execution_composition.execute_shipping_draft(
+            replacement["id"],
+            shipping,
+            storage,
+        )
+
+    assert created["status"] == "created"
+    assert create_shipment.call_count == 2
+    saved = shipping.get_draft(replacement["id"])
+    assert [item["id"] for item in saved["courier_shipments"]] == [
+        "new-ship-1",
+        "new-ship-2",
+    ]
+    assert not ({"old-ship-1", "old-ship-2"} & {item["id"] for item in saved["courier_shipments"]})
+    assert saved.get("fulfillment_status") is None
+    assert saved.get("fulfilled_by") is None
+
+
 def test_damage_list_hides_legacy_non_damage_carrier_issue(client, stores):
     damage, _shipping, _storage = stores
     damage.upsert_case(
@@ -132,7 +232,8 @@ def test_create_email_edit_and_send_are_separate_actions(client, stores):
         return shipping_store.get_draft(draft_id)
 
     with patch(
-        "zdrovena.api.routers.webhooks._execute_draft_impl", side_effect=execute_side_effect
+        "zdrovena.api.shipping_execution_composition.execute_shipping_draft",
+        side_effect=execute_side_effect,
     ):
         created = client.post("/api/damage-cases/case-1648/create-replacement")
     assert created.status_code == 200

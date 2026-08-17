@@ -11,6 +11,7 @@ import json
 import os
 import tempfile
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from fcntl import LOCK_EX, LOCK_UN, flock
 from pathlib import Path
@@ -22,9 +23,16 @@ ACTIVE_ACTION_TTL = timedelta(minutes=30)
 
 STEP_IDS = ("check", "sales", "costs", "reports", "bank", "package", "send")
 
+#: How many times :meth:`CloseRunStore.update` replays a mutation that lost a race.
+UPDATE_RETRIES = 3
+
 
 class RunBusyError(RuntimeError):
     """Raised when another request already owns the period action."""
+
+
+class RunConflictError(RuntimeError):
+    """Raised when the stored run moved on while an update was in flight."""
 
 
 def _now() -> str:
@@ -65,7 +73,29 @@ def new_close_run(year: int, month: int, requested_by: str) -> dict[str, Any]:
         "artifacts": [],
         "logs": [],
         "overrides": [],
+        "waivers": [],
+        # Compare-and-swap revision. Every persisted write bumps it, so a writer
+        # that read an older copy is rejected instead of silently clobbering.
+        "rev": 0,
     }
+
+
+def ensure_schema(run: dict[str, Any]) -> dict[str, Any]:
+    """Backfill keys added after a run was first persisted."""
+    run.setdefault("waivers", [])
+    run.setdefault("rev", 0)
+    return run
+
+
+def _has_moved_on(stored: dict[str, Any], run: dict[str, Any], expect_rev: int) -> bool:
+    """True when the stored run is no longer the one ``run`` was derived from.
+
+    A bumped revision means someone else wrote; a different ``run_id`` means the
+    period was reset out from under us, which the counter alone cannot catch.
+    """
+    if int(stored.get("rev", 0)) != expect_rev:
+        return True
+    return stored.get("run_id") != run.get("run_id")
 
 
 def _is_active_stale(run: dict[str, Any]) -> bool:
@@ -186,7 +216,7 @@ class CloseRunStore:
         payload = entity.get("payload")
         if not isinstance(payload, str):
             raise ValueError("Month-close run entity has no JSON payload")
-        return json.loads(payload)
+        return ensure_schema(json.loads(payload))
 
     def get(self, year: int, month: int) -> dict[str, Any] | None:
         key = _period_key(year, month)
@@ -206,7 +236,7 @@ class CloseRunStore:
         lock_fd = self._acquire_lock()
         try:
             run = self._local_load().get(local_key)
-            return json.loads(json.dumps(run)) if run else None
+            return ensure_schema(json.loads(json.dumps(run))) if run else None
         finally:
             self._release_lock(lock_fd)
 
@@ -228,24 +258,113 @@ class CloseRunStore:
         return run
 
     def reset(self, year: int, month: int, requested_by: str) -> dict[str, Any]:
+        previous = self.get(year, month)
         run = new_close_run(year, month, requested_by)
+        if previous:
+            # Keep the revision sequence monotonic per period, otherwise a writer
+            # holding a pre-reset copy could match the restarted counter.
+            run["rev"] = int(previous.get("rev", 0))
         self.save(run)
         return run
 
-    def save(self, run: dict[str, Any]) -> None:
-        run["updated_at"] = _now()
+    def save(self, run: dict[str, Any], *, expect_rev: int | None = None) -> None:
+        """Persist ``run``.
+
+        ``expect_rev`` makes the write a compare-and-swap: the stored run must
+        still carry that revision, otherwise :class:`RunConflictError` is raised
+        and the caller must re-read. Pass ``None`` only to deliberately replace
+        whatever is stored (``reset``), never as a way around a conflict.
+        """
         key = _period_key(int(run["year"]), int(run["month"]))
-        local_key = f"{self._partition_key}:{key}"
         if self._use_table:
-            self._table_client().upsert_entity(self._entity(run))
+            self._save_table(run, key, expect_rev)
             return
+        self._save_local(run, f"{self._partition_key}:{key}", expect_rev)
+
+    def _save_local(self, run: dict[str, Any], local_key: str, expect_rev: int | None) -> None:
         lock_fd = self._acquire_lock()
         try:
             data = self._local_load()
+            if expect_rev is not None:
+                stored = data.get(local_key)
+                if stored is not None and _has_moved_on(stored, run, expect_rev):
+                    raise RunConflictError(
+                        f"Run {local_key} zmienił się w trakcie zapisu "
+                        f"(rev {stored.get('rev', 0)} != {expect_rev})."
+                    )
+            run["rev"] = int(run.get("rev", 0)) + 1
+            run["updated_at"] = _now()
             data[local_key] = run
             self._local_save(data)
         finally:
             self._release_lock(lock_fd)
+
+    def _save_table(self, run: dict[str, Any], key: str, expect_rev: int | None) -> None:
+        from azure.core import MatchConditions
+        from azure.core.exceptions import ResourceModifiedError, ResourceNotFoundError
+
+        client = self._table_client()
+        if expect_rev is None:
+            run["rev"] = int(run.get("rev", 0)) + 1
+            run["updated_at"] = _now()
+            client.upsert_entity(self._entity(run))
+            return
+
+        try:
+            entity = client.get_entity(partition_key=self._partition_key, row_key=key)
+        except ResourceNotFoundError:
+            entity = None
+        if entity is not None:
+            stored = self._run_from_entity(entity)
+            if _has_moved_on(stored, run, expect_rev):
+                raise RunConflictError(
+                    f"Run {key} zmienił się w trakcie zapisu "
+                    f"(rev {stored.get('rev', 0)} != {expect_rev})."
+                )
+        run["rev"] = expect_rev + 1
+        run["updated_at"] = _now()
+        if entity is None:
+            client.create_entity(self._entity(run))
+            return
+        try:
+            # If-Match closes the window between the read above and this write.
+            client.update_entity(
+                self._entity(run),
+                mode="replace",
+                etag=entity.metadata["etag"],
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except ResourceModifiedError as exc:
+            raise RunConflictError(f"Run {key} zmienił się w trakcie zapisu.") from exc
+
+    def update(
+        self,
+        year: int,
+        month: int,
+        mutate: Callable[[dict[str, Any]], None],
+        requested_by: str,
+        *,
+        retries: int = UPDATE_RETRIES,
+    ) -> dict[str, Any]:
+        """Read-modify-write one run under compare-and-swap, replaying on conflict.
+
+        ``mutate`` must be replayable: it is re-applied to a freshly read run
+        whenever another writer wins the race. Exceptions it raises (a busy run,
+        an invalid target) propagate untouched.
+        """
+        for _attempt in range(retries):
+            run = self.get_or_create(year, month, requested_by)
+            expect_rev = int(run.get("rev", 0))
+            mutate(run)
+            try:
+                self.save(run, expect_rev=expect_rev)
+            except RunConflictError:
+                continue
+            return run
+        raise RunConflictError(
+            f"Nie udało się zapisać zmiany dla okresu {_period_key(year, month)} — "
+            "run zmieniał się w trakcie."
+        )
 
     def try_claim(
         self,
@@ -265,12 +384,13 @@ class CloseRunStore:
         lock_fd = self._acquire_lock()
         try:
             data = self._local_load()
-            run = data.get(local_key) or new_close_run(year, month, requested_by)
+            run = ensure_schema(data.get(local_key) or new_close_run(year, month, requested_by))
             if run.get("active_action") and not _is_active_stale(run):
                 raise RunBusyError(
                     f"Etap {run['active_action']} jest już wykonywany dla okresu {key}."
                 )
             self._mark_claimed(run, action, requested_by)
+            run["rev"] = int(run.get("rev", 0)) + 1
             data[local_key] = run
             self._local_save(data)
             return json.loads(json.dumps(run))
@@ -316,6 +436,7 @@ class CloseRunStore:
                     f"Etap {run['active_action']} jest już wykonywany dla okresu {key}."
                 )
             self._mark_claimed(run, action, requested_by)
+            run["rev"] = int(run.get("rev", 0)) + 1
             try:
                 client.update_entity(
                     self._entity(run),
@@ -331,6 +452,13 @@ class CloseRunStore:
     @staticmethod
     def _mark_claimed(run: dict[str, Any], action: str, requested_by: str) -> None:
         now = _now()
+        # Re-running a stage invalidates every waiver granted for its previous
+        # result — the operator must judge the fresh outcome again.
+        run["waivers"] = [
+            waiver
+            for waiver in run.get("waivers", [])
+            if waiver.get("target") != f"step:{action}" and waiver.get("stage") != action
+        ]
         run["active_action"] = action
         run["status"] = "running"
         run["requested_by"] = requested_by
@@ -358,5 +486,7 @@ class CloseRunStore:
         step["status"] = "done" if success else "failed"
         step["completed_at"] = now
         step["message"] = message
-        self.save(run)
+        # CAS: if the run moved on since we claimed it, our claim was revoked
+        # (stale-action takeover) and this late result must not win.
+        self.save(run, expect_rev=int(run.get("rev", 0)))
         return run
