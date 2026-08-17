@@ -61,7 +61,7 @@ Dokumentacja punktów Apaczki udostępnia też flagę `option_cod`, która infor
 czy konkretny punkt obsługuje pobranie. Shopify zapisuje w drafcie identyfikator
 i dane opisowe punktu wybranego przez widget Octolize, ale nie zapisuje tej flagi.
 Dlatego preview i wykonanie COD pobierają właściwą listę z `points/:type`
-(cache 23 godziny, zgodnie z limitem jednego pobrania na dobę) i wymagają
+(cache 24 godziny, zgodnie z limitem jednego pobrania na dobę) i wymagają
 `option_cod === true` dla wybranego `foreign_address_id`. Brak punktu, brak flagi,
 wartość `false` albo nieznany typ punktu blokują operację przed `order_send`.
 Ścieżka krajowa nie wysyła też COD przy więcej niż jednej fizycznej paczce: jeden

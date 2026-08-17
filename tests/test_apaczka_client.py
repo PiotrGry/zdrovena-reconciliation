@@ -312,6 +312,21 @@ class TestPickupPointCache:
         assert point == {"foreign_address_id": "PL55338", "option_cod": False}
         mock_post.assert_not_called()
 
+    def test_point_cache_respects_documented_24_hour_interval(self):
+        fetched_at = (datetime.now(timezone.utc) - timedelta(hours=23, minutes=30)).isoformat()
+        cached = {
+            "fetched_at": fetched_at,
+            "points": [{"foreign_address_id": "PL55338", "option_cod": True}],
+        }
+        storage = _FakeStorageWithCache(payload=json.dumps(cached).encode())
+        client = ApaczkaClient(_APP_ID, _SECRET, "23", storage=storage)
+
+        with patch.object(client._session, "post") as mock_post:
+            point = client.get_point("DPD", "PL55338")
+
+        assert point is not None
+        mock_post.assert_not_called()
+
     def test_get_point_fetches_and_caches_documented_points_response(self):
         storage = _FakeStorageWithCache(payload=None)
         client = ApaczkaClient(_APP_ID, _SECRET, "23", storage=storage)

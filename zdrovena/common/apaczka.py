@@ -52,7 +52,7 @@ _TIMEOUT = 15
 _SERVICE_CACHE_KEY = "apaczka/service_structure.json"
 _SERVICE_CACHE_TTL_H = 23
 _POINTS_CACHE_PREFIX = "apaczka/points"
-_POINTS_CACHE_TTL_H = 23
+_POINTS_CACHE_TTL_H = 24
 # Apaczka signals in-body success with status == 200 (independent of the HTTP status).
 _APACZKA_BODY_OK = 200
 
