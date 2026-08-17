@@ -117,6 +117,16 @@ def _document(
     }
 
 
+def _sales_pdf_name(invoice_number: str) -> str:
+    """Filename ``FakturowniaClient.download_all_pdfs`` writes for an invoice.
+
+    Kept in lockstep with that method — if the sanitising there changes, the
+    package gate below silently stops matching.
+    """
+    safe = invoice_number.replace("/", "_").replace("\\", "_").replace(" ", "_")
+    return f"{safe}.pdf"
+
+
 def _issue(
     issue_id: str,
     severity: str,
@@ -219,6 +229,39 @@ class MonthCloseInspector:
             issues.append(
                 _issue("sales-missing", "blocker", "Brak faktur sprzedażowych za wybrany okres.")
             )
+
+        # Guard the gap between "sales were collected" and "sales are still current".
+        # The stage downloads a snapshot; Fakturownia keeps moving. If an invoice is
+        # issued after collection, or two invoices shared a number and one PDF was
+        # dropped, the package would quietly ship short. Only meaningful once
+        # something has been collected — before that, step gating covers it.
+        stored_pdfs = {
+            Path(item.key).name
+            for item in month_files
+            if item.key.startswith(f"{self.month_prefix}/sprzedaz/")
+            and item.key.lower().endswith(".pdf")
+        }
+        # Compare by name, not by count: a stray or obsolete PDF would otherwise
+        # pad the total and hide a missing invoice. Names are derived exactly as
+        # FakturowniaClient.download_all_pdfs() writes them.
+        missing_pdfs = sorted(
+            invoice_number
+            for invoice_number in {str(inv.get("number", "")) for inv in sales}
+            if invoice_number and _sales_pdf_name(invoice_number) not in stored_pdfs
+        )
+        # An empty folder is the normal state before `sales` runs, and step gating
+        # already covers that. Only speak up once a collection exists to be wrong.
+        if stored_pdfs and missing_pdfs:
+            issues.append(
+                _issue(
+                    "sales-pdfs-incomplete",
+                    "blocker",
+                    f"Brakuje PDF dla {len(missing_pdfs)} faktur "
+                    f"({', '.join(missing_pdfs[:5])}) — uruchom etap sprzedaży ponownie.",
+                    stage="sales",
+                )
+            )
+
         for series in check_numbering(sales):
             if series.gaps:
                 issues.append(

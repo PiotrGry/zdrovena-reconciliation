@@ -376,3 +376,176 @@ def test_preflight_rejects_bank_statement_from_another_period(tmp_path):
     bank = next(document for document in inspected["documents"] if document["id"] == "bank-pko")
     assert bank["status"] == "invalid"
     assert any("nie pasuje" in issue["message"] for issue in inspected["issues"])
+
+
+def test_sales_with_numbering_gap_downloads_and_stays_gated_until_waived(tmp_path):
+    """The operator's real escape route: gap reported, PDFs in hand, one waiver.
+
+    Before the fix the orchestrator aborted on the gap, so the stage failed with
+    zero PDFs and no waiver could bring them back — re-running the stage dropped
+    the waiver and hit the same abort.
+    """
+    workflow = _workflow(tmp_path)
+    run = workflow.get_run(2026, 6, "owner@example.com")
+    run["steps"]["check"]["status"] = "done"
+    workflow.store.save(run)
+
+    sales_report = CloseReport(
+        sales_invoice_count=2,
+        sales_pdfs_downloaded=2,
+        warnings=["Numeracja /KJ: jest 2, oczekiwano 3 — brakuje: [2]"],
+        steps_completed=["Sales invoices"],
+    )
+    package_report = CloseReport(
+        zip_path=Path("faktury/2026/czerwiec/czerwiec_2026_HUMIO.zip"),
+        zip_files=["sprzedaz/1_06_2026.pdf"],
+        steps_completed=["ZIP archive"],
+    )
+    orchestrator = MagicMock()
+    orchestrator.execute_stage.side_effect = lambda stage: (
+        sales_report if stage == "sales" else package_report
+    )
+    gap_issue = {
+        "id": "sales-gaps-KJ",
+        "severity": "blocker",
+        "message": "Braki w numeracji /KJ: [2]",
+        "stage": "check",
+    }
+
+    with (
+        patch(
+            "zdrovena.month_closing.workflow.MonthCloseOrchestrator",
+            return_value=orchestrator,
+        ),
+        patch(
+            "zdrovena.month_closing.workflow.MonthCloseInspector.inspect",
+            return_value={
+                "documents": [],
+                "issues": [gap_issue],
+                "metrics": {"ready": False},
+            },
+        ),
+    ):
+        updated = workflow.perform(2026, 6, "sales", "owner@example.com")
+
+        # The gap no longer costs us the invoices.
+        assert updated["steps"]["sales"]["status"] == "done"
+        assert updated["metrics"]["sales_pdfs_downloaded"] == 2
+
+        # ...but it still gates the package until waived.
+        for step in ("costs", "reports", "bank"):
+            stored = workflow.get_run(2026, 6, "owner@example.com")
+            stored["steps"][step]["status"] = "done"
+            workflow.store.save(stored)
+
+        blocked = workflow.perform(2026, 6, "package", "owner@example.com")
+        assert blocked["steps"]["package"]["status"] == "failed"
+        assert "blokujące problemy" in blocked["steps"]["package"]["message"]
+
+        # One click on the gap, and the package builds — with the PDFs in it.
+        workflow.waive(2026, 6, "issue:sales-gaps-KJ", "owner@example.com")
+        waived = workflow.perform(2026, 6, "package", "owner@example.com")
+
+    assert waived["steps"]["package"]["status"] == "done"
+    assert waived["status"] == "package_ready"
+
+
+def _sales_invoice(number: str) -> dict:
+    return {"number": number, "price_gross": "100.00", "positions": []}
+
+
+def test_inspector_blocks_when_collected_pdfs_lag_behind_fakturownia(tmp_path):
+    """Fakturownia keeps moving after the sales stage took its snapshot.
+
+    An invoice issued after collection (or a duplicate number that collapsed two
+    invoices into one PDF) would otherwise ship a package one document short,
+    with a clean numbering check and nothing to warn the operator.
+    """
+    storage = LocalStorageService(root=tmp_path / "files")
+    pdf = tmp_path / "1_06_2026.pdf"
+    pdf.write_bytes(b"%PDF")
+    storage.upload(pdf, "faktury/2026/czerwiec/sprzedaz/1_06_2026.pdf")
+    client = MagicMock()
+    client.fetch_sales_invoices.return_value = [
+        _sales_invoice("1/06/2026"),
+        _sales_invoice("2/06/2026"),
+    ]
+    client.fetch_cost_invoices.return_value = []
+
+    with patch(
+        "zdrovena.month_closing.workflow.FakturowniaClient.from_keyring",
+        return_value=client,
+    ):
+        inspected = MonthCloseInspector(2026, 6, storage=storage).inspect()
+
+    gap = next(issue for issue in inspected["issues"] if issue["id"] == "sales-pdfs-incomplete")
+    assert gap["severity"] == "blocker"
+    assert "2/06/2026" in gap["message"]
+    # Owned by `sales`, so re-running that stage drops any waiver on it.
+    assert gap["stage"] == "sales"
+
+
+def test_inspector_stays_quiet_before_any_sales_pdf_is_collected(tmp_path):
+    """Nothing collected yet is the normal pre-`sales` state, not a shortfall."""
+    storage = LocalStorageService(root=tmp_path / "files")
+    client = MagicMock()
+    client.fetch_sales_invoices.return_value = [_sales_invoice("1/06/2026")]
+    client.fetch_cost_invoices.return_value = []
+
+    with patch(
+        "zdrovena.month_closing.workflow.FakturowniaClient.from_keyring",
+        return_value=client,
+    ):
+        inspected = MonthCloseInspector(2026, 6, storage=storage).inspect()
+
+    assert not any(i["id"] == "sales-pdfs-incomplete" for i in inspected["issues"])
+
+
+def test_inspector_accepts_a_complete_sales_collection(tmp_path):
+    storage = LocalStorageService(root=tmp_path / "files")
+    for number in ("1_06_2026", "2_06_2026"):
+        pdf = tmp_path / f"{number}.pdf"
+        pdf.write_bytes(b"%PDF")
+        storage.upload(pdf, f"faktury/2026/czerwiec/sprzedaz/{number}.pdf")
+    client = MagicMock()
+    client.fetch_sales_invoices.return_value = [
+        _sales_invoice("1/06/2026"),
+        _sales_invoice("2/06/2026"),
+    ]
+    client.fetch_cost_invoices.return_value = []
+
+    with patch(
+        "zdrovena.month_closing.workflow.FakturowniaClient.from_keyring",
+        return_value=client,
+    ):
+        inspected = MonthCloseInspector(2026, 6, storage=storage).inspect()
+
+    assert not any(i["id"] == "sales-pdfs-incomplete" for i in inspected["issues"])
+
+
+def test_inspector_is_not_fooled_by_a_stray_pdf(tmp_path):
+    """Counting files would pass here — a leftover PDF padding the total.
+
+    The stored file belongs to no current invoice, so invoice 2 is still
+    missing even though the folder holds two PDFs.
+    """
+    storage = LocalStorageService(root=tmp_path / "files")
+    for name in ("1_06_2026", "99_05_2026"):
+        pdf = tmp_path / f"{name}.pdf"
+        pdf.write_bytes(b"%PDF")
+        storage.upload(pdf, f"faktury/2026/czerwiec/sprzedaz/{name}.pdf")
+    client = MagicMock()
+    client.fetch_sales_invoices.return_value = [
+        _sales_invoice("1/06/2026"),
+        _sales_invoice("2/06/2026"),
+    ]
+    client.fetch_cost_invoices.return_value = []
+
+    with patch(
+        "zdrovena.month_closing.workflow.FakturowniaClient.from_keyring",
+        return_value=client,
+    ):
+        inspected = MonthCloseInspector(2026, 6, storage=storage).inspect()
+
+    gap = next(issue for issue in inspected["issues"] if issue["id"] == "sales-pdfs-incomplete")
+    assert "2/06/2026" in gap["message"]
