@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from zdrovena.common.shipping_exceptions import InPostBusinessError
 from zdrovena.common.shipping_parcels import PARCEL_SPECS
 from zdrovena.shipping.providers.inpost import (
     inpost_call_specs,
@@ -107,6 +108,33 @@ def test_call_specs_preserve_input_order_and_per_type_numbering() -> None:
     assert specs[0][4]["receiver_building_number"] == "7/2"
     assert specs[0][4]["sender"] is _SENDER
     assert specs[0][4]["dimensions"] is PARCEL_SPECS["2-pak"]
+
+
+def test_call_specs_forward_cod_to_the_single_provider_shipment() -> None:
+    specs = inpost_call_specs(
+        _draft(cod={"amount": "200.30", "currency": "PLN"}),
+        _SENDER,
+    )
+
+    assert specs[0][4]["cod_amount"] == "200.30"
+    assert specs[0][4]["cod_currency"] == "PLN"
+
+
+def test_multi_parcel_cod_is_rejected_before_payload_build() -> None:
+    draft = _draft(
+        cod={"amount": "500.00", "currency": "PLN"},
+        packages_breakdown=[{"type": "1-pak", "qty": 2}],
+    )
+
+    with pytest.raises(InPostBusinessError, match="exactly one"):
+        inpost_call_specs(draft, _SENDER)
+
+
+def test_invalid_shopify_cod_data_is_rejected_even_after_manual_review() -> None:
+    draft = _draft(cod=None, cod_error="COD order is missing Shopify total_outstanding")
+
+    with pytest.raises(InPostBusinessError, match="total_outstanding"):
+        inpost_call_specs(draft, _SENDER)
 
 
 def test_pending_specs_filter_by_package_type_and_number() -> None:

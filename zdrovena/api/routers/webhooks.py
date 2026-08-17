@@ -243,7 +243,8 @@ def _sync_shopify_orders_from_api(
                 "id,order_number,name,email,phone,created_at,updated_at,"
                 "cancelled_at,closed_at,financial_status,fulfillment_status,"
                 "fulfillments,shipping_address,shipping_lines,line_items,"
-                "note_attributes,customer"
+                "note_attributes,customer,gateway,payment_gateway_names,"
+                "total_outstanding,currency"
             ),
         },
         headers={"X-Shopify-Access-Token": api_token},
@@ -741,6 +742,7 @@ def seed_e2e_dlq_entry(
 def preview_execute_draft(
     draft_id: str,
     shipping_store: ShippingStoreDep,
+    storage: StorageDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
     pickup_date: str | None = Query(None),
     pickup_from: str | None = Query(None),
@@ -752,6 +754,7 @@ def preview_execute_draft(
     try:
         return execution_composition.execution_preview(
             draft,
+            storage=storage,
             pickup_date=pickup_date,
             pickup_from=pickup_from,
             pickup_to=pickup_to,

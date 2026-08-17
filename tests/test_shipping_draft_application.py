@@ -188,6 +188,8 @@ def test_merge_preserves_manual_service_match_and_terminal_execution_fields() ->
         "tracking_company": "DPD",
         "courier_draft_id": "provider-1",
         "shipment_origin": "system",
+        "cod": {"amount": "200.30", "currency": "PLN"},
+        "cod_error": None,
     }
     incoming = {
         "id": "new-id",
@@ -200,6 +202,8 @@ def test_merge_preserves_manual_service_match_and_terminal_execution_fields() ->
         "shipping_service_match_source": "source title",
         "shipping_service_match_detail": "new mapping",
         "tracking_number": None,
+        "cod": None,
+        "cod_error": "incoming payment state changed",
     }
 
     merged = merge_synced_draft(
@@ -218,7 +222,52 @@ def test_merge_preserves_manual_service_match_and_terminal_execution_fields() ->
     assert merged["shipping_service_match_source"] == "operator"
     assert merged["shipping_service_match_detail"] == "selected manually"
     assert merged["tracking_number"] == "TRACK-1"
+    assert merged["cod"] == {"amount": "200.30", "currency": "PLN"}
+    assert merged["cod_error"] is None
     assert tracking_events == []
+
+
+def test_cod_updates_from_shopify_until_execution_has_started() -> None:
+    existing = {
+        "id": "draft-cod-pending",
+        "status": "pending",
+        "courier": "apaczka",
+        "service": "apaczka",
+        "cod": {"amount": "200.30", "currency": "PLN"},
+        "cod_error": None,
+    }
+    incoming = {
+        **existing,
+        "cod": {"amount": "180.00", "currency": "PLN"},
+    }
+
+    merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
+
+    assert merged["cod"] == {"amount": "180.00", "currency": "PLN"}
+
+
+def test_cod_remains_immutable_after_a_failed_execution_attempt() -> None:
+    existing = {
+        "id": "draft-cod-started",
+        "status": "error",
+        "execution_started_at": "2026-08-17T10:00:00+00:00",
+        "courier": "apaczka",
+        "service": "apaczka",
+        "cod": {"amount": "200.30", "currency": "PLN"},
+        "cod_error": None,
+    }
+    incoming = {
+        **existing,
+        "execution_started_at": None,
+        "cod": {"amount": "180.00", "currency": "PLN"},
+        "cod_error": "incoming payment state changed",
+    }
+
+    merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
+
+    assert merged["execution_started_at"] == "2026-08-17T10:00:00+00:00"
+    assert merged["cod"] == {"amount": "200.30", "currency": "PLN"}
+    assert merged["cod_error"] is None
 
 
 def test_source_status_mapping_preserves_shopify_and_allegro_rules() -> None:

@@ -7,7 +7,11 @@ from typing import Any
 import pytest
 
 from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
-from zdrovena.shipping.providers.apaczka import apaczka_call_specs, apaczka_payload_plan
+from zdrovena.shipping.providers.apaczka import (
+    apaczka_call_specs,
+    apaczka_payload_plan,
+    validate_apaczka_cod_pickup_point,
+)
 
 _PICKUP_ADDRESS = {
     "name": "Zdrovena Magazyn",
@@ -114,6 +118,16 @@ class _RecordingPayloadBuilder:
         }
 
 
+class _PointLookup:
+    def __init__(self, point: dict[str, Any] | None) -> None:
+        self.point = point
+        self.calls: list[tuple[str, str]] = []
+
+    def get_point(self, point_type: str, foreign_address_id: str) -> dict[str, Any] | None:
+        self.calls.append((point_type, foreign_address_id))
+        return self.point
+
+
 def test_call_specs_preserve_order_and_per_type_numbering() -> None:
     draft = _draft(
         packages_breakdown=[
@@ -135,6 +149,102 @@ def test_call_specs_preserve_order_and_per_type_numbering() -> None:
         ("3-pak", 1, "1800 | plastik | 3-pak 1/2"),
         ("3-pak", 2, "1800 | plastik | 3-pak 2/2"),
     ]
+
+
+def test_call_specs_forward_cod_and_bank_account() -> None:
+    specs = apaczka_call_specs(
+        _draft(cod={"amount": "200.30", "currency": "PLN"}),
+        _PICKUP_ADDRESS,
+        cod_bank_account="12345678901234567890123456",
+    )
+
+    assert specs[0]["kwargs"]["cod_amount"] == "200.30"
+    assert specs[0]["kwargs"]["cod_currency"] == "PLN"
+    assert specs[0]["kwargs"]["cod_bank_account"] == "12345678901234567890123456"
+
+
+def test_cod_pickup_point_must_explicitly_advertise_cod() -> None:
+    lookup = _PointLookup({"foreign_address_id": "PL55338", "option_cod": False})
+    draft = _draft(
+        cod={"amount": "200.30", "currency": "PLN"},
+        pickup_point={"provider": "dpd", "id": "PL55338"},
+    )
+
+    with pytest.raises(ApaczkaBusinessError, match="does not support COD"):
+        validate_apaczka_cod_pickup_point(draft, lookup)
+
+    assert lookup.calls == [("DPD", "PL55338")]
+
+
+def test_cod_pickup_point_passes_only_on_literal_true_capability() -> None:
+    lookup = _PointLookup({"foreign_address_id": "PL55338", "option_cod": True})
+    draft = _draft(
+        cod={"amount": "200.30", "currency": "PLN"},
+        pickup_point={"provider": "dpd", "id": "PL55338"},
+    )
+
+    validate_apaczka_cod_pickup_point(draft, lookup)
+
+    assert lookup.calls == [("DPD", "PL55338")]
+
+
+@pytest.mark.parametrize("point", [None, {"foreign_address_id": "PL55338"}])
+def test_cod_pickup_point_fails_closed_when_capability_is_unavailable(
+    point: dict[str, Any] | None,
+) -> None:
+    lookup = _PointLookup(point)
+    draft = _draft(
+        cod={"amount": "200.30", "currency": "PLN"},
+        pickup_point={"provider": "dpd", "id": "PL55338"},
+    )
+
+    with pytest.raises(ApaczkaBusinessError):
+        validate_apaczka_cod_pickup_point(draft, lookup)
+
+
+def test_cod_pickup_point_fails_closed_for_unknown_point_service() -> None:
+    lookup = _PointLookup({"foreign_address_id": "UNKNOWN", "option_cod": True})
+    draft = _draft(
+        apaczka_service_id="999",
+        cod={"amount": "200.30", "currency": "PLN"},
+        pickup_point={"provider": "unknown", "id": "UNKNOWN"},
+    )
+
+    with pytest.raises(ApaczkaBusinessError, match="no documented point type"):
+        validate_apaczka_cod_pickup_point(draft, lookup)
+
+    assert lookup.calls == []
+
+
+def test_non_cod_pickup_point_does_not_require_capability_lookup() -> None:
+    lookup = _PointLookup(None)
+
+    validate_apaczka_cod_pickup_point(
+        _draft(pickup_point={"provider": "dpd", "id": "PL55338"}), lookup
+    )
+
+    assert lookup.calls == []
+
+
+def test_multi_parcel_cod_is_rejected_before_payload_build() -> None:
+    draft = _draft(
+        cod={"amount": "500.00", "currency": "PLN"},
+        packages_breakdown=[{"type": "1-pak", "qty": 2}],
+    )
+
+    with pytest.raises(ApaczkaBusinessError, match="exactly one"):
+        apaczka_call_specs(
+            draft,
+            _PICKUP_ADDRESS,
+            cod_bank_account="12345678901234567890123456",
+        )
+
+
+def test_invalid_shopify_cod_data_is_rejected_even_after_manual_review() -> None:
+    draft = _draft(cod=None, cod_error="Unsupported COD currency: EUR")
+
+    with pytest.raises(ApaczkaBusinessError, match="Unsupported COD currency"):
+        apaczka_call_specs(draft, _PICKUP_ADDRESS)
 
 
 def test_call_specs_filter_completed_parcels_by_type_and_number() -> None:

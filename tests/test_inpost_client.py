@@ -402,6 +402,15 @@ class TestPayloadBuilders:
             client.build_kurier_payload(**self._kwargs())
         mock_post.assert_not_called()
 
+    def test_kurier_builder_includes_cod_money(self):
+        client = InPostClient(_TOKEN, _ORG)
+
+        built = client.build_kurier_payload(
+            **self._kwargs(), cod_amount="200.30", cod_currency="PLN"
+        )
+
+        assert built["cod"] == {"amount": 200.3, "currency": "PLN"}
+
     def test_build_paczkomat_payload_matches_what_create_sends(self):
         client = InPostClient(_TOKEN, _ORG)
         built = client.build_paczkomat_payload(**self._locker_kwargs())
@@ -417,6 +426,24 @@ class TestPayloadBuilders:
         client = InPostClient(_TOKEN, _ORG)
         with patch.object(client._session, "post") as mock_post:
             client.build_paczkomat_payload(**self._locker_kwargs())
+        mock_post.assert_not_called()
+
+    def test_locker_builder_includes_cod_money(self):
+        client = InPostClient(_TOKEN, _ORG)
+
+        built = client.build_paczkomat_payload(
+            **self._locker_kwargs(), cod_amount="200.30", cod_currency="PLN"
+        )
+
+        assert built["cod"] == {"amount": 200.3, "currency": "PLN"}
+
+    def test_invalid_cod_currency_is_rejected_before_http(self):
+        client = InPostClient(_TOKEN, _ORG)
+        with patch.object(client._session, "post") as mock_post:
+            with pytest.raises(InPostBusinessError, match="Invalid InPost COD money"):
+                client.create_kurier_shipment(
+                    **self._kwargs(), cod_amount="200.30", cod_currency="EUR"
+                )
         mock_post.assert_not_called()
 
 

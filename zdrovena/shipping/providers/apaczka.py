@@ -16,6 +16,20 @@ APACZKA_PICKUP_WINDOWS = (
     ("14:00", "17:00"),
 )
 APACZKA_FIXED_WINDOW_SERVICE_IDS = frozenset({"23"})
+APACZKA_POINT_TYPE_BY_SERVICE_ID = {
+    "14": "UPS",
+    "15": "UPS",
+    "23": "DPD",
+    "26": "DPD",
+    "50": "PWR",
+    "53": "PWR",
+    "64": "POCZTA",
+    "66": "POCZTA",
+    "86": "DHL_PARCEL",
+    "203": "GLS",
+    "314": "PACKETA",
+    "317": "PACKETA",
+}
 
 
 def validate_apaczka_pickup_window(
@@ -65,18 +79,75 @@ class ApaczkaPayloadBuilder(Protocol):
         pickup_date: str | None = None,
         pickup_from: str | None = None,
         pickup_to: str | None = None,
+        cod_amount: str | None = None,
+        cod_currency: str = "PLN",
+        cod_bank_account: str | None = None,
     ) -> dict[str, Any]: ...
+
+
+class ApaczkaPointLookup(Protocol):
+    """Read-only point capability used before an Apaczka provider write."""
+
+    def get_point(self, point_type: str, foreign_address_id: str) -> dict[str, Any] | None: ...
+
+
+def apaczka_cod_pickup_point_id(draft: dict[str, Any]) -> str | None:
+    """Return the selected point only when this draft actually requires COD validation."""
+    if not draft.get("cod"):
+        return None
+    receiver = draft.get("receiver") or {}
+    pickup_point = draft.get("pickup_point") or {}
+    point_id = str(pickup_point.get("id") or receiver.get("locker_id") or "").strip()
+    return point_id or None
+
+
+def validate_apaczka_cod_pickup_point(
+    draft: dict[str, Any], point_lookup: ApaczkaPointLookup
+) -> None:
+    """Fail closed unless the selected Apaczka point explicitly advertises COD."""
+    point_id = apaczka_cod_pickup_point_id(draft)
+    if point_id is None:
+        return
+    service_id = str(draft.get("apaczka_service_id") or "").strip()
+    point_type = APACZKA_POINT_TYPE_BY_SERVICE_ID.get(service_id)
+    if point_type is None:
+        raise ApaczkaBusinessError(
+            f"Cannot verify COD capability for Apaczka point {point_id}: "
+            f"service {service_id or '?'} has no documented point type",
+            courier="apaczka",
+            action="validate_point_cod",
+        )
+    point = point_lookup.get_point(point_type, point_id)
+    if point is None:
+        raise ApaczkaBusinessError(
+            f"Cannot verify COD capability: Apaczka point {point_id} was not found",
+            courier="apaczka",
+            action="validate_point_cod",
+        )
+    if point.get("option_cod") is not True:
+        raise ApaczkaBusinessError(
+            f"Apaczka point {point_id} does not support COD",
+            courier="apaczka",
+            action="validate_point_cod",
+        )
 
 
 def apaczka_call_specs(
     draft: dict[str, Any],
     pickup_address: dict[str, str],
     *,
+    cod_bank_account: str | None = None,
     pickup_date: str | None = None,
     pickup_from: str | None = None,
     pickup_to: str | None = None,
 ) -> list[ApaczkaCallSpec]:
     """Return builder arguments for physical parcels not already checkpointed."""
+    if draft.get("cod_error"):
+        raise ApaczkaBusinessError(
+            f"Invalid Shopify COD data: {draft['cod_error']}",
+            courier="apaczka",
+            action="create_shipment",
+        )
     validate_apaczka_pickup_window(
         str(draft.get("apaczka_service_id") or ""),
         pickup_date,
@@ -103,54 +174,72 @@ def apaczka_call_specs(
         for item in draft.get("courier_shipments") or []
     }
 
+    parcels = physical_parcels(draft)
+    cod = draft.get("cod")
+    if cod and len(parcels) != 1:
+        raise ApaczkaBusinessError(
+            "COD requires exactly one physical Apaczka shipment; multi-parcel COD is blocked",
+            courier="apaczka",
+            action="create_shipment",
+        )
+
     specs: list[ApaczkaCallSpec] = []
-    for parcel in physical_parcels(draft):
+    for parcel in parcels:
         package_type = parcel.package_type
         package_number = parcel.position
         package_count = parcel.count_for_type
         if (package_type, package_number) in existing_keys:
             continue
         spec = PARCEL_SPECS.get(package_type, PARCEL_SPECS["1-pak"])
+        kwargs: dict[str, Any] = {
+            "receiver_name": customer_name,
+            "receiver_firstname": receiver.get("first_name", ""),
+            "receiver_lastname": receiver.get("last_name", ""),
+            "receiver_email": receiver.get("email", ""),
+            "receiver_phone": receiver.get("phone", ""),
+            "receiver_address": " ".join(
+                filter(
+                    None,
+                    [
+                        addr.get("street", ""),
+                        addr.get("building_number", ""),
+                        addr.get("flat_number", ""),
+                    ],
+                )
+            ),
+            "receiver_city": addr.get("city", ""),
+            "receiver_zip": addr.get("post_code", ""),
+            "receiver_point_id": receiver_point_id or None,
+            # Deliberate: Apaczka prints the pickup address as sender.
+            "sender": pickup_address,
+            "reference": shipment_reference(
+                str(draft.get("shopify_order_number", "")),
+                package_type,
+                package_number,
+                package_count,
+            ),
+            "content": shipment_content,
+            "weight_kg": spec["weight_kg"],
+            "width_cm": spec["width"],
+            "height_cm": spec["height"],
+            "depth_cm": spec["length"],
+            "pickup_date": pickup_date,
+            "pickup_from": pickup_from,
+            "pickup_to": pickup_to,
+        }
+        if cod:
+            kwargs.update(
+                {
+                    "cod_amount": str(cod.get("amount") or ""),
+                    "cod_currency": str(cod.get("currency") or ""),
+                    "cod_bank_account": cod_bank_account,
+                }
+            )
         specs.append(
             {
                 "package_type": package_type,
                 "package_number": package_number,
-                "kwargs": {
-                    "receiver_name": customer_name,
-                    "receiver_firstname": receiver.get("first_name", ""),
-                    "receiver_lastname": receiver.get("last_name", ""),
-                    "receiver_email": receiver.get("email", ""),
-                    "receiver_phone": receiver.get("phone", ""),
-                    "receiver_address": " ".join(
-                        filter(
-                            None,
-                            [
-                                addr.get("street", ""),
-                                addr.get("building_number", ""),
-                                addr.get("flat_number", ""),
-                            ],
-                        )
-                    ),
-                    "receiver_city": addr.get("city", ""),
-                    "receiver_zip": addr.get("post_code", ""),
-                    "receiver_point_id": receiver_point_id or None,
-                    # Deliberate: Apaczka prints the pickup address as sender.
-                    "sender": pickup_address,
-                    "reference": shipment_reference(
-                        str(draft.get("shopify_order_number", "")),
-                        package_type,
-                        package_number,
-                        package_count,
-                    ),
-                    "content": shipment_content,
-                    "weight_kg": spec["weight_kg"],
-                    "width_cm": spec["width"],
-                    "height_cm": spec["height"],
-                    "depth_cm": spec["length"],
-                    "pickup_date": pickup_date,
-                    "pickup_from": pickup_from,
-                    "pickup_to": pickup_to,
-                },
+                "kwargs": kwargs,
             }
         )
     return specs
@@ -161,6 +250,7 @@ def apaczka_payload_plan(
     pickup_address: dict[str, str],
     builder: ApaczkaPayloadBuilder,
     *,
+    cod_bank_account: str | None = None,
     pickup_date: str | None = None,
     pickup_from: str | None = None,
     pickup_to: str | None = None,
@@ -169,6 +259,7 @@ def apaczka_payload_plan(
     call_specs = apaczka_call_specs(
         draft,
         pickup_address,
+        cod_bank_account=cod_bank_account,
         pickup_date=pickup_date,
         pickup_from=pickup_from,
         pickup_to=pickup_to,

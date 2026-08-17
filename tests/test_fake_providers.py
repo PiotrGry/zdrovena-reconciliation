@@ -232,6 +232,8 @@ def test_inpost_client_stateful_success_and_label_not_ready(
             "post_code": "00-002",
         },
         reference="order-1576",
+        cod_amount="200.30",
+        cod_currency="PLN",
     )
     duplicate = client.create_kurier_shipment(
         receiver_first_name="Anna",
@@ -257,6 +259,7 @@ def test_inpost_client_stateful_success_and_label_not_ready(
     # independent paid writes and application code must prevent duplicates.
     assert shipment["status"] == "created"
     assert shipment["tracking_number"] is None
+    assert shipment["cod"] == {"amount": 200.3, "currency": "PLN"}
     assert duplicate["id"] != shipment["id"]
 
     confirmed = client.get_shipment(shipment["id"])
@@ -314,6 +317,9 @@ def test_apaczka_client_stateful_success_and_provider_validation_failure(
         sender=sender,
         reference="order-1639",
         content="Woda butelkowana",
+        cod_amount="200.30",
+        cod_currency="PLN",
+        cod_bank_account="12345678901234567890123456",
     )
     duplicate = client.create_shipment(
         receiver_name="Anna Nowak",
@@ -571,6 +577,21 @@ def test_fake_providers_reject_documented_contract_violations(fake_provider_url:
     )
     assert missing_locker_point.status_code == 422
 
+    invalid_inpost_cod = requests.post(
+        f"{fake_provider_url}/inpost/v1/organizations/org-1/shipments",
+        headers={"Authorization": "Bearer fake-token"},
+        json={
+            "service": "inpost_locker_standard",
+            "receiver": {"email": "buyer@example.test", "phone": "500500500"},
+            "parcels": [{"template": "small"}],
+            "custom_attributes": {"target_point": "WAW01"},
+            "cod": {"amount": 200.30, "currency": "EUR"},
+        },
+        timeout=2,
+    )
+    assert invalid_inpost_cod.status_code == 422
+    assert "cod.currency" in invalid_inpost_cod.text
+
     request_data = {
         "order": {
             "service_id": "21",
@@ -586,6 +607,47 @@ def test_fake_providers_reject_documented_contract_violations(fake_provider_url:
     )
     assert missing_apaczka_content.status_code == 200
     assert missing_apaczka_content.json()["status"] == 422
+
+    apaczka_client = ApaczkaClient(
+        app_id="fake",
+        app_secret="fake",
+        service_id="21",
+        storage=_MemoryStorage(),
+    )
+    invalid_apaczka_order = apaczka_client.build_shipment_order(
+        receiver_name="Anna Nowak",
+        receiver_firstname="Anna",
+        receiver_lastname="Nowak",
+        receiver_email="anna@example.test",
+        receiver_phone="500500500",
+        receiver_address="Prosta 1",
+        receiver_city="Warszawa",
+        receiver_zip="00-001",
+        sender={
+            "name": "Zdrovena",
+            "firstname": "Piotr",
+            "lastname": "Gryzlo",
+            "email": "sender@example.test",
+            "phone": "500500501",
+            "street": "Magazynowa",
+            "building_number": "2",
+            "city": "Warszawa",
+            "post_code": "00-002",
+        },
+        reference="order-invalid-cod",
+        content="Woda butelkowana",
+        cod_amount="200.30",
+        cod_bank_account="12345678901234567890123456",
+    )
+    invalid_apaczka_order["cod"]["bankaccount"] = "123"
+    invalid_apaczka_cod = requests.post(
+        f"{fake_provider_url}/apaczka/api/v2/order_send/",
+        data=_sign("fake", "fake", "order_send", {"order": invalid_apaczka_order}),
+        timeout=2,
+    )
+    assert invalid_apaczka_cod.status_code == 200
+    assert invalid_apaczka_cod.json()["status"] == 422
+    assert "order.cod.bankaccount" in invalid_apaczka_cod.text
 
 
 def test_fake_apaczka_rejects_wrong_hmac_even_for_valid_payload(fake_provider_url: str) -> None:

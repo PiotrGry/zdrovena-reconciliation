@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -475,12 +476,32 @@ class TestTryClaimExecution:
     def test_claims_from_pending(self, store):
         store.upsert_draft(_draft("c-1", status="pending"))
         assert store.try_claim_execution("c-1") is True
-        assert store.get_draft("c-1")["status"] == "executing"
+        claimed = store.get_draft("c-1")
+        assert claimed["status"] == "executing"
+        assert datetime.fromisoformat(claimed["execution_started_at"]).tzinfo is not None
 
     def test_claims_from_error(self, store):
         # Retry after a transient failure must be possible.
         store.upsert_draft(_draft("c-2", status="error"))
         assert store.try_claim_execution("c-2") is True
+
+    def test_retry_preserves_original_execution_start(self, store):
+        store.upsert_draft(_draft("c-retry", status="pending"))
+        assert store.try_claim_execution("c-retry") is True
+        started_at = store.get_draft("c-retry")["execution_started_at"]
+        store.update_draft("c-retry", {"status": "error"})
+
+        assert store.try_claim_execution("c-retry") is True
+        assert store.get_draft("c-retry")["execution_started_at"] == started_at
+
+    def test_table_claim_persists_execution_start(self, table_store):
+        store, _fake = table_store
+        store.upsert_draft(_draft("c-table", status="pending"))
+
+        assert store.try_claim_execution("c-table") is True
+        claimed = store.get_draft("c-table")
+        assert claimed["status"] == "executing"
+        assert datetime.fromisoformat(claimed["execution_started_at"]).tzinfo is not None
 
     def test_second_claim_loses(self, store):
         # Simulates two concurrent execute requests: only one wins.

@@ -10,6 +10,7 @@ import logging
 import os
 import time
 from collections.abc import Sequence
+from decimal import Decimal, InvalidOperation
 from http import HTTPStatus
 from typing import Any
 
@@ -292,6 +293,35 @@ def _validate_shipment_payload(payload: dict[str, Any]) -> None:
                 )
 
 
+def _cod_payload(amount: str | None, currency: str) -> dict[str, Any] | None:
+    """Validate our canonical decimal COD amount for the ShipX money object."""
+    if amount is None:
+        return None
+    try:
+        parsed = Decimal(str(amount))
+    except (InvalidOperation, ValueError) as exc:
+        raise InPostBusinessError(
+            f"Invalid InPost COD amount: {amount!r}",
+            courier="inpost",
+            action="create_shipment",
+        ) from exc
+    normalized_currency = str(currency or "").strip().upper()
+    if (
+        not parsed.is_finite()
+        or parsed <= 0
+        or parsed != parsed.quantize(Decimal("0.01"))
+        or normalized_currency != "PLN"
+    ):
+        raise InPostBusinessError(
+            f"Invalid InPost COD money: amount={amount!r}, currency={currency!r}",
+            courier="inpost",
+            action="create_shipment",
+        )
+    # ShipX documents a JSON number. Decimal is not JSON serializable, so the
+    # exact two-decimal canonical value is converted only at the HTTP boundary.
+    return {"amount": float(parsed), "currency": normalized_currency}
+
+
 class InPostClient:
     def __init__(self, api_token: str, organization_id: str) -> None:
         self._org_id = organization_id
@@ -384,6 +414,8 @@ class InPostClient:
         target_point: str,
         reference: str,
         template: str = "small",
+        cod_amount: str | None = None,
+        cod_currency: str = "PLN",
     ) -> dict[str, Any]:
         payload = {
             "service": "inpost_locker_standard",
@@ -400,6 +432,9 @@ class InPostClient:
                 "sending_method": "dispatch_order",
             },
         }
+        cod = _cod_payload(cod_amount, cod_currency)
+        if cod is not None:
+            payload["cod"] = cod
         return payload
 
     @staticmethod
@@ -441,6 +476,8 @@ class InPostClient:
         reference: str,
         weight_kg: float = 1.0,
         dimensions: dict[str, float] | None = None,
+        cod_amount: str | None = None,
+        cod_currency: str = "PLN",
     ) -> dict[str, Any]:
         dims = dimensions or _DEFAULT_DIMS
         payload = {
@@ -473,6 +510,9 @@ class InPostClient:
             ],
             "custom_attributes": {"sending_method": "dispatch_order"},
         }
+        cod = _cod_payload(cod_amount, cod_currency)
+        if cod is not None:
+            payload["cod"] = cod
         return payload
 
     def create_paczkomat_shipment(self, **kwargs: Any) -> dict[str, Any]:

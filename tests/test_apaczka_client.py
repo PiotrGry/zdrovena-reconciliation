@@ -19,6 +19,7 @@ import pytest
 import requests
 
 from zdrovena.common.apaczka import (
+    _POINTS_CACHE_PREFIX,
     _SERVICE_CACHE_KEY,
     ApaczkaClient,
     ApaczkaError,
@@ -295,6 +296,64 @@ class TestServiceStructureCache:
         assert services == [{"id": "a"}, {"id": "b"}]
 
 
+class TestPickupPointCache:
+    def test_get_point_uses_fresh_cached_capability(self):
+        fresh_iso = datetime.now(timezone.utc).isoformat()
+        cached = {
+            "fetched_at": fresh_iso,
+            "points": [{"foreign_address_id": "PL55338", "option_cod": False}],
+        }
+        storage = _FakeStorageWithCache(payload=json.dumps(cached).encode())
+        client = ApaczkaClient(_APP_ID, _SECRET, "23", storage=storage)
+
+        with patch.object(client._session, "post") as mock_post:
+            point = client.get_point("DPD", "PL55338")
+
+        assert point == {"foreign_address_id": "PL55338", "option_cod": False}
+        mock_post.assert_not_called()
+
+    def test_point_cache_respects_documented_24_hour_interval(self):
+        fetched_at = (datetime.now(timezone.utc) - timedelta(hours=23, minutes=30)).isoformat()
+        cached = {
+            "fetched_at": fetched_at,
+            "points": [{"foreign_address_id": "PL55338", "option_cod": True}],
+        }
+        storage = _FakeStorageWithCache(payload=json.dumps(cached).encode())
+        client = ApaczkaClient(_APP_ID, _SECRET, "23", storage=storage)
+
+        with patch.object(client._session, "post") as mock_post:
+            point = client.get_point("DPD", "PL55338")
+
+        assert point is not None
+        mock_post.assert_not_called()
+
+    def test_get_point_fetches_and_caches_documented_points_response(self):
+        storage = _FakeStorageWithCache(payload=None)
+        client = ApaczkaClient(_APP_ID, _SECRET, "23", storage=storage)
+        api_response = _ok_response(
+            {
+                "status": 200,
+                "response": {
+                    "points": {
+                        "PL55338": {
+                            "foreign_address_id": "",
+                            "option_cod": True,
+                        }
+                    }
+                },
+            }
+        )
+
+        with patch.object(client._session, "post", return_value=api_response) as mock_post:
+            point = client.get_point("DPD", "PL55338")
+
+        assert point == {"foreign_address_id": "PL55338", "option_cod": True}
+        assert mock_post.call_args.args[0] == f"{_BASE_URL}/points/DPD/"
+        signed_request = json.loads(mock_post.call_args.kwargs["data"]["request"])
+        assert signed_request == {"country_code": "PL"}
+        assert storage.uploaded[0][0] == f"{_POINTS_CACHE_PREFIX}/DPD.json"
+
+
 # ── create_shipment ──────────────────────────────────────────────────────────
 
 
@@ -501,6 +560,33 @@ class TestApaczkaPayloadBuilder:
             "hours_from": "11:00",
             "hours_to": "14:00",
         }
+
+    def test_builder_converts_cod_to_grosze_and_sends_nrb(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+
+        built = client.build_shipment_order(
+            **self._kwargs(),
+            cod_amount="200.30",
+            cod_currency="PLN",
+            cod_bank_account="12 3456 7890 1234 5678 9012 3456",
+        )
+
+        assert built["cod"] == {
+            "amount": 20030,
+            "currency": "PLN",
+            "bankaccount": "12345678901234567890123456",
+        }
+
+    def test_builder_rejects_cod_without_valid_nrb(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+
+        with pytest.raises(ApaczkaBusinessError, match="26-digit NRB"):
+            client.build_shipment_order(
+                **self._kwargs(),
+                cod_amount="200.30",
+                cod_currency="PLN",
+                cod_bank_account=None,
+            )
 
 
 class TestGetLabel:

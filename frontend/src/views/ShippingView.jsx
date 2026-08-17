@@ -508,6 +508,9 @@ function ApaczkaPreviewParcel({ entry }) {
             {previewLine('Punkt odbioru', receiver.foreign_address_id)}
             {previewLine('Wymiary', dimsText)}
             {previewLine('Waga', box.weight != null ? `${box.weight} kg` : '')}
+            {previewLine('Pobranie (COD)', payload.cod?.amount != null
+                ? `${(Number(payload.cod.amount) / 100).toFixed(2)} ${payload.cod.currency}`
+                : '')}
         </div>
     )
 }
@@ -558,6 +561,9 @@ function ExecutePreviewParcel({ entry }) {
             {previewLine('Telefon', receiver.phone)}
             {previewLine('Wymiary', dimsText)}
             {previewLine('Waga', weight != null ? `${weight} kg` : '')}
+            {previewLine('Pobranie (COD)', payload.cod?.amount != null
+                ? `${Number(payload.cod.amount).toFixed(2)} ${payload.cod.currency}`
+                : '')}
         </div>
     )
 }
@@ -921,6 +927,19 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                     <div>
                                         {[draft.shipping_address?.street, draft.shipping_address?.building_number, draft.shipping_address?.flat_number].filter(Boolean).join(' ')}<br />
                                         {draft.shipping_address?.post_code} {draft.shipping_address?.city}
+                                    </div>
+                                )}
+                                {draft.cod && (
+                                    <>
+                                        <div className="detail-label" style={{ marginTop: 10 }}>Pobranie (COD)</div>
+                                        <div style={{ fontWeight: 600 }}>
+                                            {Number(draft.cod.amount).toFixed(2)} {draft.cod.currency}
+                                        </div>
+                                    </>
+                                )}
+                                {draft.cod_error && (
+                                    <div style={{ marginTop: 10, color: 'var(--error)', fontSize: '0.88em' }}>
+                                        COD: {draft.cod_error}
                                     </div>
                                 )}
                             </div>
