@@ -15,6 +15,7 @@ from zdrovena.api.models import (
     CloseStateResponse,
     CloseWorkflowActionRequest,
     CloseWorkflowRunResponse,
+    CloseWorkflowWaiverRequest,
 )
 from zdrovena.common.storage import get_storage_service
 from zdrovena.month_closing.close_history import (
@@ -26,9 +27,9 @@ from zdrovena.month_closing.close_history import (
 from zdrovena.month_closing.config import BASE_DIR, POLISH_MONTHS
 from zdrovena.month_closing.console import ConsoleReporter
 from zdrovena.month_closing.orchestrator import MonthCloseOrchestrator
-from zdrovena.month_closing.run_store import RunBusyError
+from zdrovena.month_closing.run_store import RunBusyError, RunConflictError
 from zdrovena.month_closing.state import PipelineState
-from zdrovena.month_closing.workflow import MonthCloseWorkflow
+from zdrovena.month_closing.workflow import MonthCloseWorkflow, WaiverTargetError
 
 logger = logging.getLogger("zdrovena.api.routers.close")
 router = APIRouter(prefix="/close", tags=["close"])
@@ -188,7 +189,56 @@ def execute_close_workflow_action(
             override_reason=req.override_reason,
             ignore_vendors=req.ignore_vendors,
         )
-    except RunBusyError as exc:
+    except (RunBusyError, RunConflictError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return CloseWorkflowRunResponse.model_validate(run)
+
+
+@router.post(
+    "/workflow/waivers",
+    response_model=CloseWorkflowRunResponse,
+    summary="Wave one failed stage or one issue through so it stops gating the run",
+    responses={
+        404: {"description": "Target cannot be waived or does not exist"},
+        409: {"description": "Another action already owns this period"},
+    },
+)
+def add_close_workflow_waiver(
+    req: CloseWorkflowWaiverRequest,
+    principal: Annotated[Principal, Depends(require_accountant_or_admin)],
+) -> CloseWorkflowRunResponse:
+    """Record an operator decision to proceed despite a failed stage or an issue.
+
+    ``target`` is ``step:<stage>`` or ``issue:<issue_id>``. The waiver is stored
+    with the operator's identity and timestamp, and is dropped automatically when
+    the owning stage is executed again.
+    """
+    workflow = MonthCloseWorkflow()
+    try:
+        run = workflow.waive(req.year, req.month, req.target, principal.email)
+    except WaiverTargetError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except (RunBusyError, RunConflictError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return CloseWorkflowRunResponse.model_validate(run)
+
+
+@router.delete(
+    "/workflow/waivers",
+    response_model=CloseWorkflowRunResponse,
+    summary="Restore a waived stage or issue to full gating power",
+    responses={409: {"description": "Another action already owns this period"}},
+)
+def remove_close_workflow_waiver(
+    principal: Annotated[Principal, Depends(require_accountant_or_admin)],
+    year: int = Query(..., ge=2020),
+    month: int = Query(..., ge=1, le=12),
+    target: str = Query(..., min_length=6, max_length=300),
+) -> CloseWorkflowRunResponse:
+    workflow = MonthCloseWorkflow()
+    try:
+        run = workflow.unwaive(year, month, target, principal.email)
+    except (RunBusyError, RunConflictError) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return CloseWorkflowRunResponse.model_validate(run)
 

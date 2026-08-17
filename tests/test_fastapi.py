@@ -22,7 +22,8 @@ os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 from zdrovena.api.auth import Principal, get_current_principal
 from zdrovena.api.main import app
 from zdrovena.common.storage import LocalStorageService
-from zdrovena.month_closing.run_store import new_close_run
+from zdrovena.month_closing.run_store import RunBusyError, RunConflictError, new_close_run
+from zdrovena.month_closing.workflow import WaiverTargetError
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -349,6 +350,76 @@ class TestCloseWorkflowEndpoints:
             json={"year": 2026, "month": 3},
         )
         assert resp.status_code == 404
+
+    def test_waiver_endpoints_round_trip(self, api):
+        c, _ = api
+        run = new_close_run(2026, 3, "local-dev@localhost")
+        run["steps"]["costs"]["waived"] = True
+        with patch("zdrovena.api.routers.close.MonthCloseWorkflow") as workflow:
+            workflow.return_value.waive.return_value = run
+            workflow.return_value.unwaive.return_value = run
+            added = c.post(
+                "/api/close/workflow/waivers",
+                json={"year": 2026, "month": 3, "target": "step:costs"},
+            )
+            removed = c.request(
+                "DELETE",
+                "/api/close/workflow/waivers",
+                params={"year": 2026, "month": 3, "target": "issue:manual-missing-Shopify"},
+            )
+
+        assert added.status_code == 200
+        assert added.json()["steps"]["costs"]["waived"] is True
+        workflow.return_value.waive.assert_called_once_with(2026, 3, "step:costs", "dev@localhost")
+        assert removed.status_code == 200
+        workflow.return_value.unwaive.assert_called_once_with(
+            2026, 3, "issue:manual-missing-Shopify", "dev@localhost"
+        )
+
+    def test_waiver_target_must_name_a_step_or_an_issue(self, api):
+        c, _ = api
+        resp = c.post(
+            "/api/close/workflow/waivers",
+            json={"year": 2026, "month": 3, "target": "wszystko"},
+        )
+        assert resp.status_code == 422
+
+    def test_unwaivable_target_returns_404(self, api):
+        c, _ = api
+        with patch("zdrovena.api.routers.close.MonthCloseWorkflow") as workflow:
+            workflow.return_value.waive.side_effect = WaiverTargetError(
+                "Etapu 'package' nie można pominąć."
+            )
+            resp = c.post(
+                "/api/close/workflow/waivers",
+                json={"year": 2026, "month": 3, "target": "step:package"},
+            )
+
+        assert resp.status_code == 404
+
+    def test_stage_result_losing_a_revoked_claim_returns_409(self, api):
+        c, _ = api
+        with patch("zdrovena.api.routers.close.MonthCloseWorkflow") as workflow:
+            workflow.return_value.perform.side_effect = RunConflictError(
+                "Run 2026-03 zmienił się w trakcie zapisu."
+            )
+            resp = c.post(
+                "/api/close/workflow/actions/costs",
+                json={"year": 2026, "month": 3},
+            )
+
+        assert resp.status_code == 409
+
+    def test_waiver_during_a_running_stage_returns_409(self, api):
+        c, _ = api
+        with patch("zdrovena.api.routers.close.MonthCloseWorkflow") as workflow:
+            workflow.return_value.waive.side_effect = RunBusyError("Etap costs jest w trakcie.")
+            resp = c.post(
+                "/api/close/workflow/waivers",
+                json={"year": 2026, "month": 3, "target": "step:costs"},
+            )
+
+        assert resp.status_code == 409
 
 
 # ── Principal unit tests ───────────────────────────────────────────────────────

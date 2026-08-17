@@ -112,6 +112,7 @@ def build_history_entry(
     dry_run: bool,
     report: Any | None = None,
     error: str | None = None,
+    waivers: list[dict] | None = None,
 ) -> dict:
     entry: dict = {
         "ts": datetime.now(tz=timezone.utc).isoformat(),
@@ -120,6 +121,11 @@ def build_history_entry(
         "month_name": month_name,
         "status": status,
         "dry_run": dry_run,
+        # Stages and issues the operator waved through for the shipped package.
+        # The run record forgets a waiver once its stage is re-run, so this is
+        # the only durable trace of what was knowingly skipped.
+        "waiver_count": len(waivers or []),
+        "waivers": list(waivers or []),
     }
     if report is not None:
         entry["sales_invoice_count"] = report.sales_invoice_count

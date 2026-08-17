@@ -157,6 +157,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/close/workflow/waivers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Wave one failed stage or one issue through so it stops gating the run
+         * @description Record an operator decision to proceed despite a failed stage or an issue.
+         *
+         *     ``target`` is ``step:<stage>`` or ``issue:<issue_id>``. The waiver is stored
+         *     with the operator's identity and timestamp, and is dropped automatically when
+         *     the owning stage is executed again.
+         */
+        post: operations["add_close_workflow_waiver_api_close_workflow_waivers_post"];
+        /** Restore a waived stage or issue to full gating power */
+        delete: operations["remove_close_workflow_waiver_api_close_workflow_waivers_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/damage-cases": {
         parameters: {
             query?: never;
@@ -1039,6 +1064,15 @@ export interface components {
             severity: string;
             /** Stage */
             stage: string;
+            /**
+             * Waived
+             * @default false
+             */
+            waived: boolean;
+            /** Waived At */
+            waived_at?: string | null;
+            /** Waived By */
+            waived_by?: string | null;
         };
         /** CloseWorkflowRunResponse */
         CloseWorkflowRunResponse: {
@@ -1076,6 +1110,8 @@ export interface components {
             };
             /** Updated At */
             updated_at: string;
+            /** Waivers */
+            waivers?: components["schemas"]["CloseWorkflowWaiver"][];
             /** Year */
             year: number;
         };
@@ -1089,6 +1125,34 @@ export interface components {
             started_at?: string | null;
             /** Status */
             status: string;
+            /**
+             * Waived
+             * @default false
+             */
+            waived: boolean;
+        };
+        /** CloseWorkflowWaiver */
+        CloseWorkflowWaiver: {
+            /** At */
+            at: string;
+            /** Stage */
+            stage: string;
+            /** Target */
+            target: string;
+            /** User */
+            user: string;
+        };
+        /**
+         * CloseWorkflowWaiverRequest
+         * @description Ask for one failed stage or one issue to stop gating the run.
+         */
+        CloseWorkflowWaiverRequest: {
+            /** Month */
+            month: number;
+            /** Target */
+            target: string;
+            /** Year */
+            year: number;
         };
         /** ConfirmDamageRequest */
         ConfirmDamageRequest: {
@@ -1564,6 +1628,93 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CloseWorkflowRunResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_close_workflow_waiver_api_close_workflow_waivers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseWorkflowWaiverRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseWorkflowRunResponse"];
+                };
+            };
+            /** @description Target cannot be waived or does not exist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Another action already owns this period */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_close_workflow_waiver_api_close_workflow_waivers_delete: {
+        parameters: {
+            query: {
+                year: number;
+                month: number;
+                target: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseWorkflowRunResponse"];
+                };
+            };
+            /** @description Another action already owns this period */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
