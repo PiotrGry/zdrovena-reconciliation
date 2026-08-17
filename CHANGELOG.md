@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Added
+
+- **month-close**: Operator waivers — a stage that finished with errors can be waved through
+  ("Pomiń mimo problemów"), and any single entry in "Problemy i ostrzeżenia" can be ignored, so
+  neither one keeps gating the accounting package. One click, no reason prompt; the run records who
+  granted it and when. Re-running a stage drops the waivers it owns, so a stale click cannot hide a
+  fresh problem. `package` and `send` are deliberately not waivable — skipping them would mail an
+  empty archive to the accountant.
+- **api**: `POST /api/close/workflow/waivers` and `DELETE /api/close/workflow/waivers` grant and
+  revoke a waiver for `step:<stage>` or `issue:<issue_id>`. Accountant/admin only; 409 while a stage
+  is running, 404 for a target that cannot be waived.
+- **month-close**: Close-history entries now carry `waiver_count` and the waivers that were in force
+  for the shipped package. The run record forgets a waiver once its stage is re-run, so this is the
+  only durable trace of what was knowingly skipped. Package contents and manifest are unchanged.
+- **frontend**: Waived stages render as "Pominięte", ignored issues are struck through with a
+  restore action, and the close-history table shows a badge with the number of waived items.
+
+### Changed
+
+- **month-close**: `CloseRunStore` writes through compare-and-swap. Every persisted write bumps a
+  `rev` counter, and a write carrying a stale revision — or belonging to a different `run_id` after a
+  reset — is rejected instead of clobbering the other writer. On Azure the write additionally carries
+  an `If-Match` etag condition. The new `update()` helper replays a mutation against freshly read
+  state when it loses a race. A late stage result whose claim was already revoked (30-minute stale
+  takeover) now fails with HTTP 409 instead of silently overwriting the newer run.
+- **month-close**: Package and send gates count only non-waived issues, and the collection gate
+  accepts a waived stage as satisfied. Sending still demands a written reason, but only for warnings
+  the operator did not ignore.
+
+
 ## v2.8.0 (2026-07-11)
 
 ### Added

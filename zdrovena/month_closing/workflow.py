@@ -5,6 +5,7 @@ from __future__ import annotations
 import calendar
 import fnmatch
 import logging
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -23,11 +24,74 @@ from zdrovena.month_closing.config import (
 from zdrovena.month_closing.console import ConsoleReporter
 from zdrovena.month_closing.orchestrator import CloseReport, MonthCloseOrchestrator
 from zdrovena.month_closing.preflight import pko_matches_month
-from zdrovena.month_closing.run_store import CloseRunStore
+from zdrovena.month_closing.run_store import CloseRunStore, RunBusyError
 
 logger = logging.getLogger("zdrovena.month_closing.workflow")
 
 COLLECTION_ACTIONS = ("sales", "costs", "reports", "bank")
+
+#: Stages an operator may wave through despite a failed result. ``package`` and
+#: ``send`` are excluded on purpose — skipping them would mail an empty or
+#: non-existent archive to the accountant.
+WAIVABLE_STEPS = ("check", "sales", "costs", "reports", "bank")
+
+BLOCKING_SEVERITIES = frozenset({"blocker", "error"})
+
+#: Ledger cap; one entry per distinct target the operator clicked.
+MAX_WAIVERS = 200
+
+
+class WaiverTargetError(ValueError):
+    """Raised when a waiver points at something that cannot be waived."""
+
+
+def _now() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
+
+
+def _waived_targets(run: dict[str, Any]) -> set[str]:
+    return {str(waiver["target"]) for waiver in run.get("waivers", [])}
+
+
+def _active_issues(run: dict[str, Any]) -> list[dict[str, Any]]:
+    """Issues the operator has not explicitly waved through."""
+    waived = _waived_targets(run)
+    return [issue for issue in run.get("issues", []) if f"issue:{issue['id']}" not in waived]
+
+
+def _step_satisfied(run: dict[str, Any], step_id: str) -> bool:
+    if run["steps"][step_id]["status"] == "done":
+        return True
+    return f"step:{step_id}" in _waived_targets(run)
+
+
+def _recompute_ready(run: dict[str, Any]) -> None:
+    run.setdefault("metrics", {})["ready"] = not any(
+        issue["severity"] in BLOCKING_SEVERITIES for issue in _active_issues(run)
+    )
+
+
+def _sync_waiver_status(run: dict[str, Any]) -> None:
+    """Keep the idle run status honest after a waiver was granted or revoked."""
+    _recompute_ready(run)
+    ready = bool(run["metrics"].get("ready"))
+    if ready and run["status"] == "needs_input":
+        run["status"] = "ready"
+    elif not ready and run["status"] == "ready":
+        run["status"] = "needs_input"
+
+
+def _decorate(run: dict[str, Any]) -> dict[str, Any]:
+    """Stamp derived waiver flags onto steps and issues for the API response."""
+    waivers = {str(waiver["target"]): waiver for waiver in run.get("waivers", [])}
+    for step_id, step in run.get("steps", {}).items():
+        step["waived"] = f"step:{step_id}" in waivers
+    for issue in run.get("issues", []):
+        waiver = waivers.get(f"issue:{issue['id']}")
+        issue["waived"] = waiver is not None
+        issue["waived_by"] = str(waiver["user"]) if waiver else None
+        issue["waived_at"] = str(waiver["at"]) if waiver else None
+    return run
 
 
 def _document(
@@ -458,12 +522,147 @@ class MonthCloseWorkflow:
         self.storage = storage or get_storage_service()
 
     def get_run(self, year: int, month: int, requested_by: str) -> dict[str, Any]:
-        return self.store.get_or_create(year, month, requested_by)
+        return _decorate(self.store.get_or_create(year, month, requested_by))
 
     def reset(self, year: int, month: int, requested_by: str) -> dict[str, Any]:
-        return self.store.reset(year, month, requested_by)
+        return _decorate(self.store.reset(year, month, requested_by))
+
+    def waive(
+        self,
+        year: int,
+        month: int,
+        target: str,
+        requested_by: str,
+    ) -> dict[str, Any]:
+        """Wave one failed stage or one issue through so it stops gating the run."""
+        granted = False
+
+        def _apply(run: dict[str, Any]) -> None:
+            nonlocal granted
+            granted = False
+            if run.get("active_action"):
+                raise RunBusyError(
+                    f"Etap {run['active_action']} jest w trakcie — poczekaj na zakończenie."
+                )
+            stage = self._waiver_stage(run, target)
+            if target not in _waived_targets(run):
+                run["waivers"].append(
+                    {
+                        "target": target,
+                        "stage": stage,
+                        "user": requested_by,
+                        "at": _now(),
+                    }
+                )
+                run["waivers"] = run["waivers"][-MAX_WAIVERS:]
+                granted = True
+            _sync_waiver_status(run)
+
+        run = self.store.update(year, month, _apply, requested_by)
+        if granted:
+            logger.info(
+                "Month-close waiver granted by %s for %d/%02d: %s",
+                requested_by,
+                year,
+                month,
+                target,
+            )
+        return _decorate(run)
+
+    def unwaive(
+        self,
+        year: int,
+        month: int,
+        target: str,
+        requested_by: str,
+    ) -> dict[str, Any]:
+        """Restore a previously waived stage or issue to full gating power."""
+        revoked = False
+
+        def _apply(run: dict[str, Any]) -> None:
+            nonlocal revoked
+            if run.get("active_action"):
+                raise RunBusyError(
+                    f"Etap {run['active_action']} jest w trakcie — poczekaj na zakończenie."
+                )
+            remaining = [waiver for waiver in run["waivers"] if waiver.get("target") != target]
+            revoked = len(remaining) != len(run["waivers"])
+            run["waivers"] = remaining
+            _sync_waiver_status(run)
+
+        run = self.store.update(year, month, _apply, requested_by)
+        if revoked:
+            logger.info(
+                "Month-close waiver revoked by %s for %d/%02d: %s",
+                requested_by,
+                year,
+                month,
+                target,
+            )
+        return _decorate(run)
+
+    @staticmethod
+    def _waiver_stage(run: dict[str, Any], target: str) -> str:
+        """Validate a waiver target and return the stage that owns it."""
+        kind, separator, reference = str(target).partition(":")
+        if not separator:
+            raise WaiverTargetError(f"Nieprawidłowy cel odstępstwa: {target}")
+        if kind == "step":
+            if reference not in WAIVABLE_STEPS:
+                raise WaiverTargetError(f"Etapu '{reference}' nie można pominąć.")
+            return reference
+        if kind == "issue":
+            issue = next(
+                (issue for issue in run.get("issues", []) if issue["id"] == reference),
+                None,
+            )
+            if issue is None:
+                raise WaiverTargetError(f"Nie znaleziono problemu '{reference}' w tym runie.")
+            return str(issue.get("stage") or "check")
+        raise WaiverTargetError(f"Nieznany typ celu odstępstwa: {kind}")
+
+    def _finish(
+        self,
+        run: dict[str, Any],
+        action: str,
+        *,
+        success: bool,
+        message: str,
+        status: str,
+    ) -> dict[str, Any]:
+        _recompute_ready(run)
+        return self.store.finish_action(
+            run,
+            action,
+            success=success,
+            message=message,
+            status=status,
+        )
 
     def perform(
+        self,
+        year: int,
+        month: int,
+        action: str,
+        requested_by: str,
+        *,
+        confirm: bool = False,
+        override_reason: str | None = None,
+        ignore_vendors: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return _decorate(
+            self._perform(
+                year,
+                month,
+                action,
+                requested_by,
+                confirm=confirm,
+                override_reason=override_reason,
+                ignore_vendors=ignore_vendors,
+            )
+        )
+
+    def _perform(
         self,
         year: int,
         month: int,
@@ -483,8 +682,9 @@ class MonthCloseWorkflow:
                     storage=self.storage,
                 ).inspect()
                 run.update(inspected)
-                ready = bool(inspected["metrics"].get("ready"))
-                return self.store.finish_action(
+                _recompute_ready(run)
+                ready = bool(run["metrics"].get("ready"))
+                return self._finish(
                     run,
                     action,
                     success=True,
@@ -517,7 +717,7 @@ class MonthCloseWorkflow:
                 run["issues"].append(
                     _issue(f"{action}-blocked", "blocker", prerequisite_error, stage=action)
                 )
-                return self.store.finish_action(
+                return self._finish(
                     run,
                     action,
                     success=False,
@@ -541,7 +741,7 @@ class MonthCloseWorkflow:
 
             success, message = self._stage_result(action, report)
             if not success:
-                return self.store.finish_action(
+                return self._finish(
                     run,
                     action,
                     success=False,
@@ -581,9 +781,10 @@ class MonthCloseWorkflow:
                         status="success",
                         dry_run=False,
                         report=report,
+                        waivers=run["waivers"],
                     ),
                 )
-            return self.store.finish_action(
+            return self._finish(
                 run,
                 action,
                 success=True,
@@ -594,7 +795,7 @@ class MonthCloseWorkflow:
             logger.exception("Month-close action %s failed", action)
             run["issues"] = [issue for issue in run["issues"] if issue.get("stage") != action]
             run["issues"].append(_issue(f"{action}-error", "error", str(exc), stage=action))
-            return self.store.finish_action(
+            return self._finish(
                 run,
                 action,
                 success=False,
@@ -609,29 +810,23 @@ class MonthCloseWorkflow:
         confirm: bool,
         override_reason: str | None,
     ) -> str | None:
-        if action in COLLECTION_ACTIONS and run["steps"]["check"]["status"] != "done":
+        active = _active_issues(run)
+        if action in COLLECTION_ACTIONS and not _step_satisfied(run, "check"):
             return "Najpierw uruchom kontrolę wstępną."
         if action == "package":
-            missing = [
-                step for step in COLLECTION_ACTIONS if run["steps"][step]["status"] != "done"
-            ]
+            missing = [step for step in COLLECTION_ACTIONS if not _step_satisfied(run, step)]
             if missing:
-                return f"Najpierw zakończ etapy: {', '.join(missing)}."
-            blockers = [
-                issue["message"]
-                for issue in run["issues"]
-                if issue.get("severity") in {"blocker", "error"}
-            ]
-            if blockers:
-                return "Usuń blokujące problemy przed zbudowaniem paczki."
+                return f"Najpierw zakończ lub pomiń etapy: {', '.join(missing)}."
+            if any(issue.get("severity") in BLOCKING_SEVERITIES for issue in active):
+                return "Usuń lub zignoruj blokujące problemy przed zbudowaniem paczki."
         if action == "send":
             if run["steps"]["package"]["status"] != "done":
                 return "Najpierw zbuduj i przejrzyj paczkę."
-            if any(issue.get("severity") in {"blocker", "error"} for issue in run["issues"]):
-                return "Usuń blokujące problemy przed wysyłką."
+            if any(issue.get("severity") in BLOCKING_SEVERITIES for issue in active):
+                return "Usuń lub zignoruj blokujące problemy przed wysyłką."
             if not confirm:
                 return "Wysyłka wymaga jawnego potwierdzenia operatora."
-            if any(issue.get("severity") == "warning" for issue in run["issues"]) and not (
+            if any(issue.get("severity") == "warning" for issue in active) and not (
                 override_reason and override_reason.strip()
             ):
                 return "Wysyłka z ostrzeżeniami wymaga podania powodu."
@@ -672,9 +867,7 @@ class MonthCloseWorkflow:
             return "package_ready"
         if action == "send":
             return "completed"
-        if all(
-            step == action or run["steps"][step]["status"] == "done" for step in COLLECTION_ACTIONS
-        ):
+        if all(step == action or _step_satisfied(run, step) for step in COLLECTION_ACTIONS):
             return "awaiting_review"
         return "collecting"
 

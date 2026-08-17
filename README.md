@@ -157,6 +157,8 @@ Większość endpointów biznesowych zamontowana pod prefixem `/api` (np. `GET /
 | `POST` | `/close` | accountant+ | Dry-run całego pipeline; tryb live kieruje do etapowego workflow |
 | `GET` | `/close/workflow` | viewer+ | Trwały stan etapowego zamknięcia dla miesiąca |
 | `POST` | `/close/workflow/actions/{action}` | accountant+ | Wykonanie etapu: `check`, `sales`, `costs`, `reports`, `bank`, `package`, `send` |
+| `POST` | `/close/workflow/waivers` | accountant+ | Świadome pominięcie etapu (`step:<etap>`) lub zignorowanie problemu (`issue:<id>`), by przestał blokować paczkę |
+| `DELETE` | `/close/workflow/waivers` | accountant+ | Cofnięcie odstępstwa (`?year=&month=&target=`) |
 | `POST` | `/close/workflow/reset` | accountant+ | Rozpoczęcie nowego przebiegu dla okresu |
 | `GET` | `/close/state` | viewer+ | Stan checkpointów pipeline (`PipelineState`) |
 | `GET` | `/close/history` | viewer+ | Historia zamknięć |
