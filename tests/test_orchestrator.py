@@ -448,7 +448,14 @@ class TestStep2SalesInvoices:
             orch._step_2_sales_invoices()
 
     @patch("zdrovena.month_closing.orchestrator.FakturowniaClient")
-    def test_numbering_gap_raises(self, mock_client_cls):
+    def test_numbering_gap_warns_but_still_downloads(self, mock_client_cls):
+        """A gap must not swallow the invoices that do exist.
+
+        Aborting here left the operator stuck: waivers gate the workflow one
+        layer above the orchestrator, so nothing they clicked could make the
+        download run. The gap is reported instead, and MonthCloseInspector
+        keeps the package gated with its own blocking issue.
+        """
         orch = _make_orchestrator()
         mock_client = MagicMock()
         # Invoices 1 and 3 in same series — gap at 2
@@ -456,11 +463,79 @@ class TestStep2SalesInvoices:
             {"number": "1/06/2025", "price_gross": "100.00", "positions": []},
             {"number": "3/06/2025", "price_gross": "200.00", "positions": []},
         ]
-        mock_client.download_all_pdfs.return_value = []
+        mock_client.download_all_pdfs.return_value = [Path("/tmp/a.pdf"), Path("/tmp/b.pdf")]
         mock_client_cls.from_keyring.return_value = mock_client
 
-        with pytest.raises(RuntimeError, match="Brakuje faktur"):
-            orch._step_2_sales_invoices()
+        orch._step_2_sales_invoices()
+
+        mock_client.download_all_pdfs.assert_called_once()
+        assert orch.report.sales_pdfs_downloaded == 2
+        assert any("brakuje" in w for w in orch.report.warnings)
+        assert orch.report.errors == []
+
+    @patch("zdrovena.month_closing.orchestrator.FakturowniaClient")
+    def test_numbering_duplicates_warn_but_still_download(self, mock_client_cls):
+        orch = _make_orchestrator()
+        # Live run: the shortfall guard is meaningless under dry_run, where
+        # download_all_pdfs() deliberately saves nothing.
+        orch.dry_run = False
+        orch.manage_state = False
+        mock_client = MagicMock()
+        mock_client.fetch_sales_invoices.return_value = [
+            {"number": "1/06/2025", "price_gross": "100.00", "positions": []},
+            {"number": "1/06/2025", "price_gross": "100.00", "positions": []},
+        ]
+        mock_client.download_all_pdfs.return_value = [Path("/tmp/a.pdf")]
+        mock_client_cls.from_keyring.return_value = mock_client
+
+        orch._step_2_sales_invoices()
+
+        mock_client.download_all_pdfs.assert_called_once()
+        assert orch.report.sales_pdfs_downloaded == 1
+        assert any("duplikaty" in w for w in orch.report.warnings)
+        # download_all_pdfs() dedupes by invoice number, so one document was
+        # dropped. Continuing past duplicates must not let that pass in silence.
+        assert any("nie zapisano" in w for w in orch.report.warnings)
+
+    @patch("zdrovena.month_closing.orchestrator.FakturowniaClient")
+    def test_colliding_invoice_numbers_are_reported(self, mock_client_cls):
+        """Two distinct numbers can sanitise to one filename.
+
+        download_all_pdfs() returns the same path twice, so counting returned
+        entries would report full success while one document is missing.
+        """
+        orch = _make_orchestrator()
+        orch.dry_run = False
+        orch.manage_state = False
+        mock_client = MagicMock()
+        mock_client.fetch_sales_invoices.return_value = [
+            {"number": "1/06/2025", "price_gross": "100.00", "positions": []},
+            {"number": "1_06_2025", "price_gross": "200.00", "positions": []},
+        ]
+        collided = Path("/tmp/1_06_2025.pdf")
+        mock_client.download_all_pdfs.return_value = [collided, collided]
+        mock_client_cls.from_keyring.return_value = mock_client
+
+        orch._step_2_sales_invoices()
+
+        assert any("nie zapisano" in w for w in orch.report.warnings)
+
+    @patch("zdrovena.month_closing.orchestrator.FakturowniaClient")
+    def test_no_shortfall_warning_when_every_invoice_saved(self, mock_client_cls):
+        orch = _make_orchestrator()
+        orch.dry_run = False
+        orch.manage_state = False
+        mock_client = MagicMock()
+        mock_client.fetch_sales_invoices.return_value = [
+            {"number": "1/06/2025", "price_gross": "100.00", "positions": []},
+            {"number": "2/06/2025", "price_gross": "200.00", "positions": []},
+        ]
+        mock_client.download_all_pdfs.return_value = [Path("/tmp/a.pdf"), Path("/tmp/b.pdf")]
+        mock_client_cls.from_keyring.return_value = mock_client
+
+        orch._step_2_sales_invoices()
+
+        assert not any("nie zapisano" in w for w in orch.report.warnings)
 
     @patch("zdrovena.month_closing.orchestrator.FakturowniaClient")
     def test_successful_download(self, mock_client_cls):
