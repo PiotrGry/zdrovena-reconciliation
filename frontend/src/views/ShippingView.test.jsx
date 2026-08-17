@@ -136,6 +136,19 @@ describe('ShippingView', () => {
         expect(addressLabel.nextElementSibling).toHaveTextContent('00-001 Warszawa')
     })
 
+    it('shows the Shopify COD amount in the expanded draft', async () => {
+        installShippingFetch({
+            drafts: [draft({ cod: { amount: '200.30', currency: 'PLN' } })],
+        })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+        await userEvent.click(screen.getByRole('button', { name: 'Rozwiń' }))
+
+        expect(screen.getByText('Pobranie (COD)')).toBeInTheDocument()
+        expect(screen.getByText('200.30 PLN')).toBeInTheDocument()
+    })
+
     it('shows material totals derived from physical package types', async () => {
         installShippingFetch({
             drafts: [draft({
@@ -426,6 +439,7 @@ describe('execute preview', () => {
                     dimensions: { unit: 'mm', length: 300, width: 200, height: 200 },
                     weight: { unit: 'kg', amount: 6 },
                 }],
+                cod: { amount: 200.3, currency: 'PLN' },
             },
         }],
     }
@@ -487,6 +501,7 @@ describe('execute preview', () => {
                 },
                 shipment: [{ weight: 6, dimension1: 30, dimension2: 20, dimension3: 20 }],
                 pickup: { type: 'COURIER' },
+                cod: { amount: 20030, currency: 'PLN', bankaccount: '12345678901234567890123456' },
             },
         }],
     }
@@ -521,6 +536,7 @@ describe('execute preview', () => {
         expect(panel.textContent).toContain('Anna Nowak')
         expect(panel.textContent).toContain('Gdansk')
         expect(panel.textContent).toContain('6 kg')
+        expect(panel.textContent).toContain('200.30 PLN')
     })
 
     it('offers only provider-supported pickup windows for Apaczka execute', async () => {
@@ -683,6 +699,8 @@ describe('execute preview', () => {
         expect(panel).toHaveTextContent('inpost_courier_standard')
         expect(panel).toHaveTextContent('30 × 20 × 20 cm')
         expect(panel).toHaveTextContent('6 kg')
+        expect(panel).toHaveTextContent('Pobranie (COD)')
+        expect(panel).toHaveTextContent('200.30 PLN')
     })
 
     it('sends nothing when the preview is cancelled', async () => {

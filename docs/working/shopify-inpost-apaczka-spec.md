@@ -135,6 +135,8 @@ W webhooku `orders/create` interesujące pola:
 **Apaczka** (panel `Ustawienia → Web API`):
 - `apaczka_app_id`.
 - `apaczka_app_secret` (klucz HMAC).
+- `apaczka_cod_bank_account` — 26-cyfrowy polski NRB, na który Apaczka ma
+  przekazać pobranie; wymagany tylko dla przesyłek COD.
 - `apaczka_service_id` — pobierany z endpointu `service_structure`, osobny per kurier.
 
 **Nadawca** (już w kodzie w `_get_sender()`):
@@ -166,6 +168,22 @@ Zidentyfikowane w `webhooks.py`, `inpost.py`, `apaczka.py`:
 - Mapowanie `line_items` → typ paczki → wymiary + template.
 - Zapis `dispatch_order_id` (InPost) i `apaczka_order_id` (Apaczka) do draft schema.
 - Nowe endpointy: `/cancel`, `/cancel-pickup`.
+
+### 10.1 COD z Shopify
+
+- COD rozpoznajemy wyłącznie po dokładnej, niewrażliwej na wielkość liter
+  wartości w `payment_gateway_names`: `Cash on Delivery (COD)`. Sam
+  `financial_status=pending` nie oznacza pobrania.
+- Kwota pobrania pochodzi z `total_outstanding`, nie z `total_price`, aby
+  uwzględnić częściowe płatności i korekty.
+- Kanoniczny zapis w drafcie to
+  `cod={amount: "200.30", currency: "PLN", gateway: "cash on delivery (cod)"}`.
+- Pierwsza wersja obsługuje PLN i dokładnie jedną fizyczną paczkę. COD przy
+  wielu paczkach trafia do `needs_review`, a provider dodatkowo odrzuca próbę
+  realizacji, żeby kwota nie została pobrana wielokrotnie.
+- InPost dostaje `cod.amount` jako liczbę i `cod.currency="PLN"`. Apaczka
+  dostaje `order.cod.amount` w groszach, `currency="PLN"` oraz rachunek z
+  `apaczka_cod_bank_account`.
 
 ---
 

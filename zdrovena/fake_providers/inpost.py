@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
+from decimal import Decimal, InvalidOperation
 from typing import Any, NoReturn
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
@@ -115,6 +116,21 @@ def _validate_parcels(value: Any) -> None:
         _positive(weight.get("amount"), f"{path}.weight.amount")
 
 
+def _validate_cod(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        _reject("cod", "must be an object")
+    try:
+        amount = Decimal(str(value.get("amount")))
+    except (InvalidOperation, ValueError):
+        _reject("cod.amount", "must be a positive amount with two decimal places")
+    if not amount.is_finite() or amount <= 0 or amount != amount.quantize(Decimal("0.01")):
+        _reject("cod.amount", "must be a positive amount with two decimal places")
+    if value.get("currency") != "PLN":
+        _reject("cod.currency", "must be PLN")
+
+
 def validate_shipment(body: Any) -> dict[str, Any]:
     if not isinstance(body, dict):
         _reject("shipment", "must be an object")
@@ -122,6 +138,7 @@ def validate_shipment(body: Any) -> dict[str, Any]:
     if service not in SERVICES:
         _reject("shipment.service", "is not supported")
     _validate_parcels(body.get("parcels"))
+    _validate_cod(body.get("cod"))
     receiver = body.get("receiver")
     if "locker" in service:
         if not isinstance(receiver, dict):

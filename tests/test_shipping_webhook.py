@@ -2944,6 +2944,95 @@ class TestCreateDraft:
         assert d["shipping_address"]["post_code"] == "30-001"
         assert d["shipping_address"]["flat_number"] == "m. 5"
 
+    def test_shopify_cod_uses_gateway_and_exact_outstanding_amount(self, store):
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        order.update(
+            {
+                "payment_gateway_names": ["Cash on Delivery (COD)"],
+                "gateway": "Cash on Delivery (COD)",
+                "financial_status": "pending",
+                "total_price": "250.00",
+                "total_outstanding": "200.30",
+                "currency": "PLN",
+            }
+        )
+
+        _create_draft_for_test(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["cod"] == {
+            "amount": "200.30",
+            "currency": "PLN",
+            "gateway": "cash on delivery (cod)",
+        }
+        assert draft["cod_error"] is None
+        assert draft["status"] == "pending"
+
+    def test_pending_non_cod_payment_is_not_misclassified(self, store):
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        order.update(
+            {
+                "payment_gateway_names": ["Shopify Payments"],
+                "financial_status": "pending",
+                "total_outstanding": "200.30",
+                "currency": "PLN",
+            }
+        )
+
+        _create_draft_for_test(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["cod"] is None
+        assert draft["cod_error"] is None
+
+    def test_multi_parcel_cod_is_fail_closed_for_manual_review(self, store):
+        order = {
+            "id": "cod-multi",
+            "order_number": 1707,
+            "shipping_lines": [{"title": "InPost Kurier"}],
+            "line_items": [
+                {"name": "HUMIO - woda alkaliczna, 12 butelek", "quantity": 5},
+            ],
+            "shipping_address": {
+                "first_name": "Jan",
+                "last_name": "Kowalski",
+                "address1": "Testowa 5",
+                "city": "Wrocław",
+                "zip": "50-001",
+                "phone": "600100200",
+            },
+            "email": "jan@example.com",
+            "customer": {},
+            "note_attributes": [],
+            "payment_gateway_names": ["Cash on Delivery (COD)"],
+            "total_outstanding": "500.00",
+            "currency": "PLN",
+        }
+
+        _create_draft_for_test(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["packages_count"] == 2
+        assert draft["cod"]["amount"] == "500.00"
+        assert draft["status"] == "needs_review"
+
+    def test_cod_without_outstanding_amount_is_fail_closed(self, store):
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        order.update(
+            {
+                "payment_gateway_names": ["Cash on Delivery (COD)"],
+                "currency": "PLN",
+            }
+        )
+        order.pop("total_outstanding", None)
+
+        _create_draft_for_test(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["cod"] is None
+        assert "total_outstanding" in draft["cod_error"]
+        assert draft["status"] == "needs_review"
+
     def test_locker_id_from_address2_fallback(self, store):
 
         storage = object()
@@ -4538,6 +4627,13 @@ class TestSyncShopifyOrdersFromApi:
         assert query["status"] == ["any"]
         assert query["fulfillment_status"] == ["any"]
         assert query["order"] == ["updated_at desc"]
+        requested_fields = set(query["fields"][0].split(","))
+        assert {
+            "gateway",
+            "payment_gateway_names",
+            "total_outstanding",
+            "currency",
+        } <= requested_fields
 
     def test_sync_does_not_regress_created_draft_to_pending(self, tmp_path):
         from responses import RequestsMock

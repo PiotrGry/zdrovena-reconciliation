@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from zdrovena.common.shipping_exceptions import InPostBusinessError
 from zdrovena.common.shipping_parcels import PARCEL_SPECS
 from zdrovena.shipping.domain.planning import physical_parcels, shipment_reference
 
@@ -26,6 +27,8 @@ class InPostPayloadBuilder(Protocol):
         target_point: str,
         reference: str,
         template: str = "small",
+        cod_amount: str | None = None,
+        cod_currency: str = "PLN",
     ) -> dict[str, Any]: ...
 
     def build_kurier_payload(
@@ -43,18 +46,35 @@ class InPostPayloadBuilder(Protocol):
         reference: str,
         weight_kg: float = 1.0,
         dimensions: dict[str, float] | None = None,
+        cod_amount: str | None = None,
+        cod_currency: str = "PLN",
     ) -> dict[str, Any]: ...
 
 
 def inpost_call_specs(draft: dict[str, Any], sender: dict[str, str]) -> list[InPostCallSpec]:
     """Expand a draft into the exact builder arguments for each physical parcel."""
+    if draft.get("cod_error"):
+        raise InPostBusinessError(
+            f"Invalid Shopify COD data: {draft['cod_error']}",
+            courier="inpost",
+            action="create_shipment",
+        )
     receiver = draft.get("receiver") or {}
     addr = draft.get("shipping_address") or {}
     order_number = str(draft.get("shopify_order_number", ""))
     inpost_service = "paczkomat" if draft.get("service") == "inpost_locker_standard" else "kurier"
 
+    parcels = physical_parcels(draft)
+    cod = draft.get("cod")
+    if cod and len(parcels) != 1:
+        raise InPostBusinessError(
+            "COD requires exactly one physical InPost shipment; multi-parcel COD is blocked",
+            courier="inpost",
+            action="create_shipment",
+        )
+
     specs: list[InPostCallSpec] = []
-    for parcel in physical_parcels(draft):
+    for parcel in parcels:
         package_type = parcel.package_type
         package_number = parcel.position
         package_count = parcel.count_for_type
@@ -87,6 +107,13 @@ def inpost_call_specs(draft: dict[str, Any], sender: dict[str, str]) -> list[InP
                 "weight_kg": spec["weight_kg"],
                 "dimensions": spec,
             }
+        if cod:
+            kwargs.update(
+                {
+                    "cod_amount": str(cod.get("amount") or ""),
+                    "cod_currency": str(cod.get("currency") or ""),
+                }
+            )
         specs.append((inpost_service, package_type, package_number, reference, kwargs))
     return specs
 

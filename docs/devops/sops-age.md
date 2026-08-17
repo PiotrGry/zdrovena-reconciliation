@@ -273,7 +273,7 @@ uv run python scripts/secrets_sync.py decrypt   # .env.local.sops -> .env.local
 
 The set of secrets `pull`/`push` operate on is the canonical list in
 [`scripts/secrets_manifest.py`](../../scripts/secrets_manifest.py)'s
-`ENV_LOCAL_SECRETS` (26 names: Allegro, Shopify, InPost, Apaczka, SMS, and
+`ENV_LOCAL_SECRETS` (27 names: Allegro, Shopify, InPost, Apaczka, SMS, and
 sender/pickup-address secrets).
 
 | Subcommand | Needs Key Vault? | Use it when... |
@@ -324,11 +324,10 @@ Bootstrap them with the device flow rather than by hand:
 zdrovena allegro-auth --sandbox    # writes both straight into .env.local.sops
 ```
 
-`push` doubles as the Key Vault backfill mechanism: as of this writing, none
-of the 26 `ENV_LOCAL_SECRETS` exist in Key Vault yet (see the "Sekret AKV"
-status table in [`TODOS.md`](../../TODOS.md)), so the first real `push` run
-performs that migration as a side effect — every secret with a value in
-`.env.local` gets uploaded, whether or not it existed in Key Vault before.
+`push` doubles as the Key Vault backfill mechanism. Any of the 27
+`ENV_LOCAL_SECRETS` that are still missing can be uploaded from `.env.local`;
+every manifest secret with a local value is written whether or not it already
+existed in Key Vault.
 
 Sample `pull` output (some secrets not yet backfilled):
 

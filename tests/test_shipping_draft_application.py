@@ -188,6 +188,8 @@ def test_merge_preserves_manual_service_match_and_terminal_execution_fields() ->
         "tracking_company": "DPD",
         "courier_draft_id": "provider-1",
         "shipment_origin": "system",
+        "cod": {"amount": "200.30", "currency": "PLN"},
+        "cod_error": None,
     }
     incoming = {
         "id": "new-id",
@@ -200,6 +202,8 @@ def test_merge_preserves_manual_service_match_and_terminal_execution_fields() ->
         "shipping_service_match_source": "source title",
         "shipping_service_match_detail": "new mapping",
         "tracking_number": None,
+        "cod": None,
+        "cod_error": "incoming payment state changed",
     }
 
     merged = merge_synced_draft(
@@ -218,6 +222,8 @@ def test_merge_preserves_manual_service_match_and_terminal_execution_fields() ->
     assert merged["shipping_service_match_source"] == "operator"
     assert merged["shipping_service_match_detail"] == "selected manually"
     assert merged["tracking_number"] == "TRACK-1"
+    assert merged["cod"] == {"amount": "200.30", "currency": "PLN"}
+    assert merged["cod_error"] is None
     assert tracking_events == []
 
 

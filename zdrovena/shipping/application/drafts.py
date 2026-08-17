@@ -177,6 +177,11 @@ def merge_synced_draft(
     if existing.get("service") and existing_status in _SYNC_BUSY_STATUSES | _SYNC_TERMINAL_STATUSES:
         merged["service"] = existing["service"]
         merged["courier"] = existing.get("courier", merged.get("courier"))
+        # The collection amount is part of the already-reviewed provider
+        # contract. A later Shopify payment update must not rewrite the audit
+        # record after shipment creation has started.
+        merged["cod"] = existing.get("cod")
+        merged["cod_error"] = existing.get("cod_error")
     if existing.get("tracking_number"):
         merged["tracking_number"] = existing["tracking_number"]
         merged["tracking_company"] = existing.get("tracking_company")

@@ -137,6 +137,39 @@ def test_call_specs_preserve_order_and_per_type_numbering() -> None:
     ]
 
 
+def test_call_specs_forward_cod_and_bank_account() -> None:
+    specs = apaczka_call_specs(
+        _draft(cod={"amount": "200.30", "currency": "PLN"}),
+        _PICKUP_ADDRESS,
+        cod_bank_account="12345678901234567890123456",
+    )
+
+    assert specs[0]["kwargs"]["cod_amount"] == "200.30"
+    assert specs[0]["kwargs"]["cod_currency"] == "PLN"
+    assert specs[0]["kwargs"]["cod_bank_account"] == "12345678901234567890123456"
+
+
+def test_multi_parcel_cod_is_rejected_before_payload_build() -> None:
+    draft = _draft(
+        cod={"amount": "500.00", "currency": "PLN"},
+        packages_breakdown=[{"type": "1-pak", "qty": 2}],
+    )
+
+    with pytest.raises(ApaczkaBusinessError, match="exactly one"):
+        apaczka_call_specs(
+            draft,
+            _PICKUP_ADDRESS,
+            cod_bank_account="12345678901234567890123456",
+        )
+
+
+def test_invalid_shopify_cod_data_is_rejected_even_after_manual_review() -> None:
+    draft = _draft(cod=None, cod_error="Unsupported COD currency: EUR")
+
+    with pytest.raises(ApaczkaBusinessError, match="Unsupported COD currency"):
+        apaczka_call_specs(draft, _PICKUP_ADDRESS)
+
+
 def test_call_specs_filter_completed_parcels_by_type_and_number() -> None:
     draft = _draft(
         packages_breakdown=[

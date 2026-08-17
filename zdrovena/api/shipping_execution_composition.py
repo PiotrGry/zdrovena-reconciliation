@@ -74,6 +74,13 @@ def get_pickup_address() -> dict[str, str]:
     }
 
 
+def get_apaczka_cod_bank_account(draft: dict[str, Any]) -> str | None:
+    """Resolve the payout NRB only when this shipment actually uses COD."""
+    if not draft.get("cod"):
+        return None
+    return get_secret("apaczka_cod_bank_account", required=False)
+
+
 def allegro_carrier_id_for_courier(courier: str) -> str:
     return "INPOST" if courier == "inpost" else "OTHER"
 
@@ -320,6 +327,7 @@ def _run_apaczka(
     for call_spec in apaczka_provider.apaczka_call_specs(
         draft,
         pickup_address or get_pickup_address(),
+        cod_bank_account=get_apaczka_cod_bank_account(draft),
         pickup_date=pickup_date,
         pickup_from=pickup_from,
         pickup_to=pickup_to,
@@ -639,22 +647,32 @@ def execution_preview(
         from zdrovena.common.inpost import InPostClient
 
         sender = get_sender()
-        preview: dict[str, Any] = {
-            "courier": courier,
-            "sender": sender,
-            "parcels": inpost_provider.inpost_payload_plan(
+        try:
+            parcels = inpost_provider.inpost_payload_plan(
                 draft, sender, InPostClient("preview", "preview")
-            ),
-            "preview_available": True,
-        }
+            )
+        except InPostBusinessError as exc:
+            logger.warning("InPost preview unavailable for draft %s: %s", draft.get("id"), exc)
+            preview: dict[str, Any] = {
+                "courier": courier,
+                "sender": sender,
+                "parcels": [],
+                "preview_available": False,
+                "note": str(exc),
+            }
+        else:
+            preview = {
+                "courier": courier,
+                "sender": sender,
+                "parcels": parcels,
+                "preview_available": True,
+            }
     elif courier == "apaczka":
         from zdrovena.common.apaczka import ApaczkaClient
 
         pickup_address = get_pickup_address()
-        preview = {
-            "courier": courier,
-            "sender": pickup_address,
-            "parcels": apaczka_provider.apaczka_payload_plan(
+        try:
+            parcels = apaczka_provider.apaczka_payload_plan(
                 draft,
                 pickup_address,
                 ApaczkaClient(
@@ -663,12 +681,27 @@ def execution_preview(
                     str(draft.get("apaczka_service_id") or ""),
                     None,
                 ),
+                cod_bank_account=get_apaczka_cod_bank_account(draft),
                 pickup_date=pickup_date,
                 pickup_from=pickup_from,
                 pickup_to=pickup_to,
-            ),
-            "preview_available": True,
-        }
+            )
+        except ApaczkaBusinessError as exc:
+            logger.warning("Apaczka preview unavailable for draft %s: %s", draft.get("id"), exc)
+            preview = {
+                "courier": courier,
+                "sender": pickup_address,
+                "parcels": [],
+                "preview_available": False,
+                "note": str(exc),
+            }
+        else:
+            preview = {
+                "courier": courier,
+                "sender": pickup_address,
+                "parcels": parcels,
+                "preview_available": True,
+            }
     elif courier == "allegro_delivery":
         try:
             order_id = str(draft.get("external_order_id") or "")

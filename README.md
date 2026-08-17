@@ -453,6 +453,7 @@ INPOST_ORGANIZATION_ID=fake
 INPOST_BASE_URL=http://localhost:9009/inpost
 APACZKA_APP_ID=fake
 APACZKA_APP_SECRET=fake
+APACZKA_COD_BANK_ACCOUNT=12345678901234567890123456
 APACZKA_BASE_URL=http://localhost:9009/apaczka/api/v2
 FAKTUROWNIA_BASE_URL=http://localhost:9009/fakturownia
 FAKTUROWNIA_API_TOKEN=fake
@@ -463,6 +464,13 @@ i stanów asynchronicznych. Emulatory nie importują builderów klientów aplika
 błędny payload lub HMAC ma upaść na granicy providera. W szczególności InPost
 zwraca najpierw `created` bez trackingu, a ponowiony POST z tym samym `reference`
 tworzy nowy zasób — takiej operacji nie wolno traktować jako idempotentnej.
+
+Zamówienia Shopify opłacane przez `Cash on Delivery (COD)` są realizowane jako
+pobranie na kwotę `total_outstanding`. W pierwszej wersji obsługujemy wyłącznie
+PLN i jedną fizyczną paczkę. InPost otrzymuje obiekt `cod`, a Apaczka obiekt
+`order.cod` z kwotą w groszach. Dla Apaczki trzeba ustawić w Key Vault sekret
+`apaczka-cod-bank-account` z 26-cyfrowym polskim numerem NRB; bez niego podgląd
+oznaczy payload jako niedostępny, a realizacja nie wykona płatnego requestu.
 
 Reset stanu i scenariusze awarii:
 

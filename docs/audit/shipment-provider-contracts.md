@@ -1,6 +1,6 @@
 # Kontrakty tworzenia przesyłek — Allegro, Apaczka, InPost
 
-Stan dokumentacji sprawdzony: 2026-08-03.
+Stan dokumentacji sprawdzony: 2026-08-17.
 
 Zakres: produkcyjne ścieżki tworzenia przesyłki używane przez Zdrovena. To nie
 jest opis wszystkich operacji providerów.
@@ -50,6 +50,19 @@ Publiczna dokumentacja Apaczki nie oznacza wszystkich pól maszynowym znacznikie
 `required`; powyższy minimalny podzbiór jest zgodny z opublikowaną strukturą i
 walidacją zwróconą przez produkcyjne API dla brakującej zawartości.
 
+Pobranie jest przekazywane w opcjonalnym `request.order.cod`:
+
+- `amount` jest dodatnią liczbą całkowitą w groszach, np. `20030`,
+- w pierwszej wersji Zdroveny `currency` ma wartość `PLN`,
+- `bankaccount` jest 26-cyfrowym polskim NRB pobieranym z sekretu
+  `apaczka-cod-bank-account` (`APACZKA_COD_BANK_ACCOUNT` lokalnie).
+
+Dokumentacja punktów Apaczki udostępnia też flagę `option_cod`, która informuje,
+czy konkretny punkt obsługuje pobranie. Obecna ścieżka krajowa nie wysyła COD
+przy więcej niż jednej fizycznej paczce: jeden request z pełną kwotą per paczka
+groziłby wielokrotnym pobraniem. Brak lub błędny rachunek blokuje payload przed
+wywołaniem API.
+
 Źródło: [oficjalna dokumentacja Web API v2 Apaczka](https://panel.apaczka.pl/dokumentacja_api_v2.php).
 
 ## InPost — legacy ShipX v1
@@ -82,8 +95,34 @@ Utworzenie jest asynchroniczne. `POST` zwraca `status=created` i może zwrócić
 do `confirmed` i udostępnia tracking. Zdrovena zapisuje ID z pierwszej
 odpowiedzi, polluje ten sam zasób i przy retry nie wykonuje kolejnego `POST`.
 
-Źródła: [tworzenie przesyłki w trybie uproszczonym](https://dokumentacja-inpost.atlassian.net/wiki/spaces/PL/pages/11731061),
-[walidacja formularzy ShipX](https://dokumentacja-inpost.atlassian.net/wiki/spaces/PL/pages/11731043).
+Pobranie dla przesyłek krajowych jest opcjonalnym obiektem `cod`, np.
+`{"amount": 200.30, "currency": "PLN"}`. Dotyczy obsługiwanych usług
+paczkomatowych i kurierskich; dostępność oraz limity nadal zależą od usługi i
+umowy organizacji, więc odpowiedź walidacyjna ShipX pozostaje źródłem prawdy.
+`cod` nie jest elementem `additional_services`. Tak samo jak dla Apaczki,
+Zdrovena v1 blokuje COD przy więcej niż jednej fizycznej paczce.
+
+Źródła: [tworzenie przesyłki w trybie uproszczonym](https://dokumentacja-inpost.atlassian.net/wiki/spaces/PL/pages/28639258/1.23.0%2BShipment%2Bcreation%2Bin%2Bsimplified%2Bmode),
+[usługi dodatkowe i COD](https://dokumentacja-inpost.atlassian.net/wiki/spaces/PL/pages/28639264).
+
+## Shopify → COD — reguła mapowania
+
+Zamówienie Shopify `#1706` potwierdziło produkcyjny kształt danych bez potrzeby
+ujawniania danych odbiorcy:
+
+| Pole Shopify | Wartość / znaczenie |
+|---|---|
+| `payment_gateway_names` | `["Cash on Delivery (COD)"]` — jedyny marker COD |
+| `financial_status` | `pending` — informacja pomocnicza, niewystarczająca do wykrycia COD |
+| `total_outstanding` | `200.30` — kwota pobrania |
+| `currency` | `PLN` |
+
+Detekcja porównuje dokładną nazwę bramki bez rozróżniania wielkości liter; nie
+zgaduje COD na podstawie samego statusu `pending`. Draft przechowuje kwotę jako
+tekst dziesiętny z dwoma miejscami, aby uniknąć błędów zmiennoprzecinkowych.
+Brak kwoty, niepoprawna precyzja, nieobsługiwana waluta lub więcej niż jedna
+paczka kierują draft do `needs_review`. Podgląd realizacji zawiera COD, więc
+zmiana kwoty unieważnia fingerprint i wymaga ponownego potwierdzenia operatora.
 
 ## Dlaczego wcześniejsze testy przepuszczały błędne payloady
 

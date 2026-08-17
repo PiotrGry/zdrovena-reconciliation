@@ -502,6 +502,33 @@ class TestApaczkaPayloadBuilder:
             "hours_to": "14:00",
         }
 
+    def test_builder_converts_cod_to_grosze_and_sends_nrb(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+
+        built = client.build_shipment_order(
+            **self._kwargs(),
+            cod_amount="200.30",
+            cod_currency="PLN",
+            cod_bank_account="12 3456 7890 1234 5678 9012 3456",
+        )
+
+        assert built["cod"] == {
+            "amount": 20030,
+            "currency": "PLN",
+            "bankaccount": "12345678901234567890123456",
+        }
+
+    def test_builder_rejects_cod_without_valid_nrb(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+
+        with pytest.raises(ApaczkaBusinessError, match="26-digit NRB"):
+            client.build_shipment_order(
+                **self._kwargs(),
+                cod_amount="200.30",
+                cod_currency="PLN",
+                cod_bank_account=None,
+            )
+
 
 class TestGetLabel:
     def test_decodes_base64_waybill(self):

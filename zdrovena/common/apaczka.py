@@ -19,6 +19,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from http import HTTPStatus
 from typing import Any
 
@@ -242,6 +243,9 @@ class ApaczkaClient:
         pickup_date: str | None = None,
         pickup_from: str | None = None,
         pickup_to: str | None = None,
+        cod_amount: str | None = None,
+        cod_currency: str = "PLN",
+        cod_bank_account: str | None = None,
     ) -> dict[str, Any]:
         """pickup_date: YYYY-MM-DD, pickup_from/pickup_to: HH:MM.
         Available slots from Apaczka pickup_hours endpoint (today + 3 biz days).
@@ -311,6 +315,39 @@ class ApaczkaClient:
             "pickup": pickup,
             "content": shipment_content,
         }
+        if cod_amount is not None:
+            try:
+                amount = Decimal(str(cod_amount))
+            except (InvalidOperation, ValueError) as exc:
+                raise ApaczkaBusinessError(
+                    f"Invalid Apaczka COD amount: {cod_amount!r}",
+                    courier="apaczka",
+                    action="create_shipment",
+                ) from exc
+            currency = str(cod_currency or "").strip().upper()
+            bank_account = "".join(str(cod_bank_account or "").split())
+            if (
+                not amount.is_finite()
+                or amount <= 0
+                or amount != amount.quantize(Decimal("0.01"))
+                or currency != "PLN"
+            ):
+                raise ApaczkaBusinessError(
+                    f"Invalid Apaczka COD money: amount={cod_amount!r}, currency={cod_currency!r}",
+                    courier="apaczka",
+                    action="create_shipment",
+                )
+            if len(bank_account) != 26 or not bank_account.isdigit():
+                raise ApaczkaBusinessError(
+                    "Apaczka PLN COD requires APACZKA_COD_BANK_ACCOUNT as a 26-digit NRB",
+                    courier="apaczka",
+                    action="create_shipment",
+                )
+            order["cod"] = {
+                "amount": int(amount * 100),
+                "currency": currency,
+                "bankaccount": bank_account,
+            }
         return order
 
     def create_shipment(self, **kwargs: Any) -> dict[str, Any]:

@@ -243,7 +243,8 @@ def _sync_shopify_orders_from_api(
                 "id,order_number,name,email,phone,created_at,updated_at,"
                 "cancelled_at,closed_at,financial_status,fulfillment_status,"
                 "fulfillments,shipping_address,shipping_lines,line_items,"
-                "note_attributes,customer"
+                "note_attributes,customer,gateway,payment_gateway_names,"
+                "total_outstanding,currency"
             ),
         },
         headers={"X-Shopify-Access-Token": api_token},

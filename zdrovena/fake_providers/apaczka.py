@@ -198,6 +198,25 @@ def _validate_order(value: Any) -> dict[str, Any] | None:
             )
         if shipment.get("is_nstd", 0) not in (0, 1):
             return _failure(422, f"{path}.is_nstd must be 0 or 1", field=f"{path}.is_nstd")
+    cod = value.get("cod")
+    if cod is not None:
+        if not isinstance(cod, dict):
+            return _failure(422, "order.cod must be an object", field="order.cod")
+        amount = cod.get("amount")
+        if type(amount) is not int or amount <= 0:
+            return _failure(
+                422,
+                "order.cod.amount must be a positive integer in grosze",
+                field="order.cod.amount",
+            )
+        if cod.get("currency") != "PLN":
+            return _failure(422, "order.cod.currency must be PLN", field="order.cod.currency")
+        if not re.fullmatch(r"[0-9]{26}", str(cod.get("bankaccount") or "")):
+            return _failure(
+                422,
+                "order.cod.bankaccount must be a 26-digit NRB",
+                field="order.cod.bankaccount",
+            )
     pickup = value["pickup"]
     if not isinstance(pickup, dict) or pickup.get("type") not in {"COURIER", "SELF"}:
         return _failure(422, "order.pickup.type is invalid", field="order.pickup.type")

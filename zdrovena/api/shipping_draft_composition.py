@@ -13,6 +13,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from typing import Any
 
@@ -144,6 +145,52 @@ _APACZKA_PICKUP_SERVICES = {
     "poczta": "64",
 }
 _APACZKA_SERVICES_REQUIRING_PICKUP_POINT = frozenset(_APACZKA_PICKUP_SERVICES.values())
+_SHOPIFY_COD_GATEWAYS = frozenset({"cash on delivery (cod)"})
+
+
+def _shopify_cod_details(
+    order: dict[str, Any],
+) -> tuple[dict[str, str] | None, str | None]:
+    """Return the exact outstanding COD amount, or a fail-closed review reason.
+
+    Shopify's financial status alone is not a COD signal: card payments can also
+    be pending.  Order #1706 and Shopify's documented contract both identify COD
+    through ``payment_gateway_names``.  ``total_outstanding`` is the amount still
+    owed after partial payments/edits, so using ``total_price`` could overcharge.
+    """
+    gateways = {
+        " ".join(str(value or "").strip().lower().split())
+        for value in [*(order.get("payment_gateway_names") or []), order.get("gateway")]
+        if value
+    }
+    matched_gateway = next((value for value in gateways if value in _SHOPIFY_COD_GATEWAYS), None)
+    if matched_gateway is None:
+        return None, None
+
+    raw_amount = order.get("total_outstanding")
+    if raw_amount is None or str(raw_amount).strip() == "":
+        return None, "COD order is missing Shopify total_outstanding"
+    try:
+        amount = Decimal(str(raw_amount))
+    except (InvalidOperation, ValueError):
+        return None, f"Invalid Shopify COD total_outstanding: {raw_amount!r}"
+    if not amount.is_finite() or amount < 0:
+        return None, f"Invalid Shopify COD total_outstanding: {raw_amount!r}"
+    if amount == 0:
+        # A COD gateway can remain on a manually-paid order. There is no money
+        # left for the courier to collect in that case.
+        return None, None
+    if amount != amount.quantize(Decimal("0.01")):
+        return None, f"Shopify COD total_outstanding has sub-cent precision: {raw_amount!r}"
+
+    currency = str(order.get("currency") or "").strip().upper()
+    if currency != "PLN":
+        return None, f"Unsupported COD currency: {currency or '<missing>'}"
+    return {
+        "amount": format(amount, ".2f"),
+        "currency": currency,
+        "gateway": matched_gateway,
+    }, None
 
 
 def _normalize_pickup_provider(value: Any) -> str | None:
@@ -365,6 +412,7 @@ def build_draft_record(
     total_qty = max(sum(item.get("quantity", 1) for item in product_items), 1)
     package_plan = calc_packages(product_items)
     packages_count, packages_breakdown = package_plan.to_legacy_tuple()
+    cod, cod_error = _shopify_cod_details(order) if source == "shopify" else (None, None)
     for warning in package_fit_warnings(packages_breakdown, carrier="inpost"):
         logger.warning("_calc_packages: %s", warning)
     if inpost_service == "paczkomat":
@@ -391,7 +439,12 @@ def build_draft_record(
 
     street, building_number = parse_pl_address(shipping_addr.get("address1", ""))
     phone = normalize_pl_phone(phone) if phone else phone
-    needs_review = phone is None or (courier == "apaczka" and apaczka_service_id is None)
+    needs_review = (
+        phone is None
+        or (courier == "apaczka" and apaczka_service_id is None)
+        or cod_error is not None
+        or (cod is not None and packages_count != 1)
+    )
     if (
         courier == "apaczka"
         and apaczka_service_id in _APACZKA_SERVICES_REQUIRING_PICKUP_POINT
@@ -456,6 +509,8 @@ def build_draft_record(
             "post_code": shipping_addr.get("zip", ""),
         },
         "parcel": {"template": "large", "weight_kg": None},
+        "cod": cod,
+        "cod_error": cod_error,
         "error": None,
         "source_order_status": order.get("financial_status") or order.get("status"),
         "source_fulfillment_status": order.get("fulfillment_status"),
