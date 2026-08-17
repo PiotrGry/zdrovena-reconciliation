@@ -20,6 +20,22 @@
 - **frontend**: Waived stages render as "Pominięte", ignored issues are struck through with a
   restore action, and the close-history table shows a badge with the number of waived items.
 
+### Fixed
+
+- **month-close**: A gap or duplicate in Fakturownia numbering no longer cancels the sales-invoice
+  download. The check aborted `sales` before `download_all_pdfs()` ran, so the operator was left
+  with an empty `sprzedaz/` folder and no way out: waivers gate the workflow one layer above the
+  orchestrator, and re-running the stage dropped the waiver and hit the same abort. The gap is now
+  reported as a warning and as a blocking issue, so the PDFs land while the package stays gated
+  until the operator waives the gap explicitly.
+- **month-close**: A duplicate invoice number no longer costs a document in silence. PDFs are keyed
+  by invoice number, so two invoices sharing one collapse into a single file; the sales stage now
+  warns when it saved fewer PDFs than there were invoices.
+- **month-close**: The package is blocked when the collected PDFs no longer match Fakturownia —
+  an invoice issued after the sales stage ran, or a document lost to a duplicate number. Previously
+  the operator could fix the gap in Fakturownia, skip re-running `sales`, and ship a package one
+  invoice short with a clean numbering check and no warning.
+
 ### Changed
 
 - **month-close**: `CloseRunStore` writes through compare-and-swap. Every persisted write bumps a

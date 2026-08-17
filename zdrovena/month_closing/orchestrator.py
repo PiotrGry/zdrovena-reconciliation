@@ -399,11 +399,15 @@ class MonthCloseOrchestrator:
             f"{len(invoices)} invoice(s), gross total: {self.report.sales_gross_total:,.2f} PLN"
         )
 
-        # Numbering gap check — abort before downloading if gaps found
-        numbering_ok = True
+        # Numbering gap check — reported, never fatal. A gap says something is
+        # missing in Fakturownia; it says nothing about the invoices that DO
+        # exist, and those still belong in the package. Aborting here used to
+        # leave the operator with an empty sprzedaz/ folder and no way out:
+        # waivers gate the workflow one layer up, so they could not reach this
+        # code path. MonthCloseInspector raises the same gap as a blocking
+        # issue, which keeps the ZIP gated until the operator waives it.
         for sr in check_numbering(invoices):
             if sr.gaps:
-                numbering_ok = False
                 msg = (
                     f"Numeracja /{sr.series}: jest {sr.count}, "
                     f"oczekiwano {sr.expected} — brakuje: {sr.gaps}"
@@ -411,20 +415,31 @@ class MonthCloseOrchestrator:
                 self.out.warn(msg)
                 self.report.warnings.append(msg)
             elif sr.duplicates:
-                numbering_ok = False
                 msg = f"Numeracja /{sr.series}: duplikaty: {sr.duplicates}"
                 self.out.warn(msg)
                 self.report.warnings.append(msg)
             else:
                 self.out.ok(f"Numeracja /{sr.series}: {sr.first}–{sr.last} ({sr.count} dok.)")
 
-        if not numbering_ok:
-            raise RuntimeError(
-                "Brakuje faktur — uzupełnij numerację w Fakturowni przed zamknięciem miesiąca."
-            )
-
         saved = client.download_all_pdfs(invoices, self.sales_dir, dry_run=self.dry_run)
         self.report.sales_pdfs_downloaded = len(saved)
+        # download_all_pdfs() keys files by invoice NUMBER, so two invoices sharing
+        # a number collapse into one PDF. Now that duplicates no longer abort the
+        # stage, that silent drop has to surface — otherwise the package ships one
+        # document short and nothing says so.
+        # Count distinct FILES, not returned entries: two different invoice
+        # numbers can sanitise to the same filename ("1/06/2026" and
+        # "1_06_2026"), in which case the downloader returns the same path
+        # twice and a plain len() would report full success.
+        distinct_saved = len(set(saved))
+        if not self.dry_run and distinct_saved < len(invoices):
+            msg = (
+                f"Pobrano {distinct_saved} PDF dla {len(invoices)} faktur — "
+                f"{len(invoices) - distinct_saved} dokument(ów) nie zapisano "
+                "(zduplikowane lub kolidujące numery)."
+            )
+            self.out.warn(msg)
+            self.report.warnings.append(msg)
         blob_sales = f"{self._blob_prefix}/sprzedaz"
         for pdf_path in saved:
             self._upload_to_blob(pdf_path, blob_sales)
