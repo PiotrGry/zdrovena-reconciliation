@@ -26,6 +26,7 @@ SendNewOrderSms = Callable[[dict[str, Any]], None]
 _SYNC_PRESERVED_FIELDS = {
     "id",
     "created_at",
+    "execution_started_at",
     "shipment_origin",
     "courier_draft_id",
     "courier_shipments",
@@ -44,6 +45,7 @@ _SYNC_PRESERVED_FIELDS = {
 
 _SYNC_TERMINAL_STATUSES = {"created", "cancelled"}
 _SYNC_BUSY_STATUSES = {"executing", "pending_confirmation"}
+_SYNC_EXECUTION_STARTED_STATUSES = {"executing", "pending_confirmation", "created"}
 _MATCH_MANUAL = "manual"
 _MATCH_FIELDS = (
     "shipping_service_match_status",
@@ -177,6 +179,7 @@ def merge_synced_draft(
     if existing.get("service") and existing_status in _SYNC_BUSY_STATUSES | _SYNC_TERMINAL_STATUSES:
         merged["service"] = existing["service"]
         merged["courier"] = existing.get("courier", merged.get("courier"))
+    if existing.get("execution_started_at") or existing_status in _SYNC_EXECUTION_STARTED_STATUSES:
         # The collection amount is part of the already-reviewed provider
         # contract. A later Shopify payment update must not rewrite the audit
         # record after shipment creation has started.

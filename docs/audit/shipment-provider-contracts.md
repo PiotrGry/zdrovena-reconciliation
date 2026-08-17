@@ -58,10 +58,15 @@ Pobranie jest przekazywane w opcjonalnym `request.order.cod`:
   `apaczka-cod-bank-account` (`APACZKA_COD_BANK_ACCOUNT` lokalnie).
 
 Dokumentacja punktów Apaczki udostępnia też flagę `option_cod`, która informuje,
-czy konkretny punkt obsługuje pobranie. Obecna ścieżka krajowa nie wysyła COD
-przy więcej niż jednej fizycznej paczce: jeden request z pełną kwotą per paczka
-groziłby wielokrotnym pobraniem. Brak lub błędny rachunek blokuje payload przed
-wywołaniem API.
+czy konkretny punkt obsługuje pobranie. Shopify zapisuje w drafcie identyfikator
+i dane opisowe punktu wybranego przez widget Octolize, ale nie zapisuje tej flagi.
+Dlatego preview i wykonanie COD pobierają właściwą listę z `points/:type`
+(cache 23 godziny, zgodnie z limitem jednego pobrania na dobę) i wymagają
+`option_cod === true` dla wybranego `foreign_address_id`. Brak punktu, brak flagi,
+wartość `false` albo nieznany typ punktu blokują operację przed `order_send`.
+Ścieżka krajowa nie wysyła też COD przy więcej niż jednej fizycznej paczce: jeden
+request z pełną kwotą per paczka groziłby wielokrotnym pobraniem. Brak lub błędny
+rachunek blokuje payload przed wywołaniem API.
 
 Źródło: [oficjalna dokumentacja Web API v2 Apaczka](https://panel.apaczka.pl/dokumentacja_api_v2.php).
 

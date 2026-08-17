@@ -983,6 +983,35 @@ class TestExecutePreviewEndpoint:
         assert body["parcels"] and "payload" in body["parcels"][0]
         assert "note" not in body
 
+    def test_preview_blocks_apaczka_cod_for_point_without_cod_capability(self, client, store):
+        draft = _seed_error_draft(store, courier="apaczka", service="apaczka")
+        store.update_draft(
+            draft["id"],
+            {
+                "apaczka_service_id": "23",
+                "cod": {"amount": "200.30", "currency": "PLN"},
+                "pickup_point": {"provider": "dpd", "id": "PL55338"},
+            },
+        )
+        with (
+            patch(
+                "zdrovena.api.shipping_execution_composition.get_pickup_address",
+                return_value=_PICKUP,
+            ),
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.apaczka.ApaczkaClient.get_point",
+                return_value={"foreign_address_id": "PL55338", "option_cod": False},
+            ),
+        ):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview")
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["preview_available"] is False
+        assert "does not support COD" in body["note"]
+        assert body["parcels"] == []
+
 
 # ── Order pickup ──────────────────────────────────────────────────────────────
 
@@ -2645,6 +2674,34 @@ class TestInPostPayloadPlan:
 
 
 class TestRunApaczka:
+    def test_cod_point_without_capability_is_rejected_before_provider_write(self):
+        from zdrovena.api.shipping_execution_composition import _run_apaczka
+        from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
+
+        draft = {
+            "id": "d-ap-no-cod-point",
+            "shopify_order_number": "1706",
+            "courier": "apaczka",
+            "service": "apaczka",
+            "apaczka_service_id": "23",
+            "cod": {"amount": "200.30", "currency": "PLN"},
+            "pickup_point": {"provider": "dpd", "id": "PL55338"},
+            "receiver": {"first_name": "A", "last_name": "N"},
+            "shipping_address": {"street": "Polna", "building_number": "1"},
+        }
+        with (
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.apaczka.ApaczkaClient.get_point",
+                return_value={"foreign_address_id": "PL55338", "option_cod": False},
+            ),
+            patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as create_shipment,
+            pytest.raises(ApaczkaBusinessError, match="does not support COD"),
+        ):
+            _run_apaczka(draft, object(), pickup_address=_SENDER)
+
+        create_shipment.assert_not_called()
+
     def test_rejects_unsupported_pickup_window_before_provider_write(self):
         from zdrovena.api.shipping_execution_composition import _run_apaczka
         from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
@@ -2967,6 +3024,29 @@ class TestCreateDraft:
         }
         assert draft["cod_error"] is None
         assert draft["status"] == "pending"
+
+    def test_shopify_outstanding_change_updates_cod_and_preview_fingerprint(self, client, store):
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        order.update(
+            {
+                "payment_gateway_names": ["Cash on Delivery (COD)"],
+                "gateway": "Cash on Delivery (COD)",
+                "financial_status": "pending",
+                "total_outstanding": "200.30",
+                "currency": "PLN",
+            }
+        )
+        _create_draft_for_test(order, store, object())
+        draft = store.list_drafts()[0]
+        first_preview = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview").json()
+
+        order["total_outstanding"] = "180.00"
+        assert _sync_draft_from_order_for_test(order, store, object(), existing=draft) is True
+        updated = store.get_draft(draft["id"])
+        second_preview = client.get(f"/api/shipping/drafts/{draft['id']}/execute/preview").json()
+
+        assert updated["cod"]["amount"] == "180.00"
+        assert first_preview["fingerprint"] != second_preview["fingerprint"]
 
     def test_pending_non_cod_payment_is_not_misclassified(self, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")

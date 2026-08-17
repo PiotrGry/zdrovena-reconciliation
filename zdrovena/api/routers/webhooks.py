@@ -742,6 +742,7 @@ def seed_e2e_dlq_entry(
 def preview_execute_draft(
     draft_id: str,
     shipping_store: ShippingStoreDep,
+    storage: StorageDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
     pickup_date: str | None = Query(None),
     pickup_from: str | None = Query(None),
@@ -753,6 +754,7 @@ def preview_execute_draft(
     try:
         return execution_composition.execution_preview(
             draft,
+            storage=storage,
             pickup_date=pickup_date,
             pickup_from=pickup_from,
             pickup_to=pickup_to,

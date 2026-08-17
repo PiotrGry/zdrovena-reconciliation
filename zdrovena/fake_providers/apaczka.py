@@ -51,6 +51,20 @@ SUPPORTED_SERVICES = frozenset(
 POINT_SERVICES = frozenset(
     {"14", "15", "23", "26", "50", "53", "64", "66", "86", "203", "314", "317"}
 )
+POINTS_BY_TYPE: dict[str, dict[str, dict[str, Any]]] = {
+    "DPD": {
+        "PL55338": {"foreign_address_id": "PL55338", "option_cod": True},
+        "PL72095": {"foreign_address_id": "PL72095", "option_cod": True},
+        "PL-NO-COD": {"foreign_address_id": "PL-NO-COD", "option_cod": False},
+    },
+    "POCZTA": {
+        "318409": {"foreign_address_id": "318409", "option_cod": True},
+        "POCZTA-NO-COD": {
+            "foreign_address_id": "POCZTA-NO-COD",
+            "option_cod": False,
+        },
+    },
+}
 SHIPMENT_TYPES = frozenset({"PACZKA", "PALETA"})
 POST_CODE_RE = re.compile(r"^[0-9]{2}-[0-9]{3}$")
 DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
@@ -269,6 +283,12 @@ async def call(endpoint: str, http_request: Request) -> dict[str, Any]:
             for service_id in sorted(SUPPORTED_SERVICES, key=int)
         ]
         return _ok({"services": services})
+    if endpoint.startswith("points/"):
+        point_type = endpoint.removeprefix("points/").upper()
+        points = POINTS_BY_TYPE.get(point_type)
+        if points is None:
+            return _failure(404, f"Unknown point type: {point_type}")
+        return _ok({"points": deepcopy(points)})
     if endpoint == "orders":
         return _ok({"orders": [deepcopy(order) for order in STATE.apaczka_orders.values()]})
     if endpoint == "order_send":

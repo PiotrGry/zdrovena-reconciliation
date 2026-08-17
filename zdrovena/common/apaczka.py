@@ -51,6 +51,8 @@ _BASE = os.environ.get("APACZKA_BASE_URL", "https://www.apaczka.pl/api/v2").rstr
 _TIMEOUT = 15
 _SERVICE_CACHE_KEY = "apaczka/service_structure.json"
 _SERVICE_CACHE_TTL_H = 23
+_POINTS_CACHE_PREFIX = "apaczka/points"
+_POINTS_CACHE_TTL_H = 23
 # Apaczka signals in-body success with status == 200 (independent of the HTTP status).
 _APACZKA_BODY_OK = 200
 
@@ -208,6 +210,66 @@ class ApaczkaClient:
         except (OSError, ValueError) as exc:
             logger.warning("Failed to cache Apaczka service_structure: %s", exc)
         return services  # type: ignore[return-value]
+
+    # ── Pickup points cache ──────────────────────────────────────────────────
+
+    def _get_points(self, point_type: str) -> list[dict[str, Any]]:
+        """Return Apaczka pickup points without exceeding its daily read limit."""
+        normalized_type = point_type.strip().upper()
+        if not normalized_type or not normalized_type.replace("_", "").isalnum():
+            raise ValueError(f"Invalid Apaczka point type: {point_type!r}")
+        cache_key = f"{_POINTS_CACHE_PREFIX}/{normalized_type}.json"
+        try:
+            cached_bytes = b"".join(self._storage.stream(cache_key))
+            cached = json.loads(cached_bytes)
+            fetched_at = datetime.fromisoformat(cached["fetched_at"])
+            age_h = (datetime.now(timezone.utc) - fetched_at).total_seconds() / 3600
+            if age_h < _POINTS_CACHE_TTL_H:
+                return cached["points"]  # type: ignore[return-value]
+        except Exception as exc:
+            logger.debug("Apaczka %s points cache miss/unreadable: %s", normalized_type, exc)
+
+        logger.info("Fetching Apaczka %s points (cache miss)", normalized_type)
+        result = self._call(f"points/{normalized_type}", {"country_code": "PL"})
+        raw_points = result.get("response", {}).get("points", {})
+        points: list[dict[str, Any]] = []
+        if isinstance(raw_points, dict):
+            for point_id, value in raw_points.items():
+                if not isinstance(value, dict):
+                    continue
+                point = dict(value)
+                point["foreign_address_id"] = str(point.get("foreign_address_id") or point_id)
+                points.append(point)
+        elif isinstance(raw_points, list):
+            points = [dict(value) for value in raw_points if isinstance(value, dict)]
+
+        cache_doc = {
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "points": points,
+        }
+        try:
+            self._storage.upload_stream(
+                io.BytesIO(json.dumps(cache_doc).encode()),
+                cache_key,
+                "application/json",
+            )
+        except Exception as exc:
+            logger.warning("Failed to cache Apaczka %s points: %s", normalized_type, exc)
+        return points
+
+    def get_point(self, point_type: str, foreign_address_id: str) -> dict[str, Any] | None:
+        """Find one point by the ID required in ``receiver.foreign_address_id``."""
+        selected_id = foreign_address_id.strip()
+        if not selected_id:
+            return None
+        return next(
+            (
+                point
+                for point in self._get_points(point_type)
+                if str(point.get("foreign_address_id") or "").strip() == selected_id
+            ),
+            None,
+        )
 
     # ── Shipment creation ─────────────────────────────────────────────────────
 

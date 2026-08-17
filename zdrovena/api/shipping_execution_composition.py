@@ -24,6 +24,7 @@ from zdrovena.common.shipping_exceptions import (
     AllegroBusinessError,
     AllegroCommandPending,
     ApaczkaBusinessError,
+    ApaczkaError,
     CourierTransientError,
     InPostBusinessError,
 )
@@ -323,6 +324,7 @@ def _run_apaczka(
         service_id,
         storage,
     )
+    apaczka_provider.validate_apaczka_cod_pickup_point(draft, client)
     existing = list(draft.get("courier_shipments") or [])
     for call_spec in apaczka_provider.apaczka_call_specs(
         draft,
@@ -637,6 +639,7 @@ def _run_allegro_delivery(
 def execution_preview(
     draft: dict[str, Any],
     *,
+    storage: Any | None = None,
     pickup_date: str | None = None,
     pickup_from: str | None = None,
     pickup_to: str | None = None,
@@ -672,21 +675,36 @@ def execution_preview(
 
         pickup_address = get_pickup_address()
         try:
+            builder = ApaczkaClient(
+                "preview",
+                "preview",
+                str(draft.get("apaczka_service_id") or ""),
+                None,
+            )
+            if apaczka_provider.apaczka_cod_pickup_point_id(draft) is not None:
+                if storage is None:
+                    raise ApaczkaBusinessError(
+                        "Apaczka point COD validation requires storage-backed point data",
+                        courier="apaczka",
+                        action="validate_point_cod",
+                    )
+                builder = ApaczkaClient(
+                    get_secret("apaczka_app_id"),
+                    get_secret("apaczka_app_secret"),
+                    str(draft.get("apaczka_service_id") or ""),
+                    storage,
+                )
+                apaczka_provider.validate_apaczka_cod_pickup_point(draft, builder)
             parcels = apaczka_provider.apaczka_payload_plan(
                 draft,
                 pickup_address,
-                ApaczkaClient(
-                    "preview",
-                    "preview",
-                    str(draft.get("apaczka_service_id") or ""),
-                    None,
-                ),
+                builder,
                 cod_bank_account=get_apaczka_cod_bank_account(draft),
                 pickup_date=pickup_date,
                 pickup_from=pickup_from,
                 pickup_to=pickup_to,
             )
-        except ApaczkaBusinessError as exc:
+        except (ApaczkaError, MissingSecretError) as exc:
             logger.warning("Apaczka preview unavailable for draft %s: %s", draft.get("id"), exc)
             preview = {
                 "courier": courier,
@@ -818,6 +836,7 @@ def execute_shipping_draft(
     def build_preview(current_draft: dict[str, Any]) -> dict[str, Any]:
         return execution_preview(
             current_draft,
+            storage=storage,
             pickup_date=effective_pickup_window.date,
             pickup_from=effective_pickup_window.from_time,
             pickup_to=effective_pickup_window.to_time,

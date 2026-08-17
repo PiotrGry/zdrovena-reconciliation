@@ -16,6 +16,20 @@ APACZKA_PICKUP_WINDOWS = (
     ("14:00", "17:00"),
 )
 APACZKA_FIXED_WINDOW_SERVICE_IDS = frozenset({"23"})
+APACZKA_POINT_TYPE_BY_SERVICE_ID = {
+    "14": "UPS",
+    "15": "UPS",
+    "23": "DPD",
+    "26": "DPD",
+    "50": "PWR",
+    "53": "PWR",
+    "64": "POCZTA",
+    "66": "POCZTA",
+    "86": "DHL_PARCEL",
+    "203": "GLS",
+    "314": "PACKETA",
+    "317": "PACKETA",
+}
 
 
 def validate_apaczka_pickup_window(
@@ -69,6 +83,53 @@ class ApaczkaPayloadBuilder(Protocol):
         cod_currency: str = "PLN",
         cod_bank_account: str | None = None,
     ) -> dict[str, Any]: ...
+
+
+class ApaczkaPointLookup(Protocol):
+    """Read-only point capability used before an Apaczka provider write."""
+
+    def get_point(self, point_type: str, foreign_address_id: str) -> dict[str, Any] | None: ...
+
+
+def apaczka_cod_pickup_point_id(draft: dict[str, Any]) -> str | None:
+    """Return the selected point only when this draft actually requires COD validation."""
+    if not draft.get("cod"):
+        return None
+    receiver = draft.get("receiver") or {}
+    pickup_point = draft.get("pickup_point") or {}
+    point_id = str(pickup_point.get("id") or receiver.get("locker_id") or "").strip()
+    return point_id or None
+
+
+def validate_apaczka_cod_pickup_point(
+    draft: dict[str, Any], point_lookup: ApaczkaPointLookup
+) -> None:
+    """Fail closed unless the selected Apaczka point explicitly advertises COD."""
+    point_id = apaczka_cod_pickup_point_id(draft)
+    if point_id is None:
+        return
+    service_id = str(draft.get("apaczka_service_id") or "").strip()
+    point_type = APACZKA_POINT_TYPE_BY_SERVICE_ID.get(service_id)
+    if point_type is None:
+        raise ApaczkaBusinessError(
+            f"Cannot verify COD capability for Apaczka point {point_id}: "
+            f"service {service_id or '?'} has no documented point type",
+            courier="apaczka",
+            action="validate_point_cod",
+        )
+    point = point_lookup.get_point(point_type, point_id)
+    if point is None:
+        raise ApaczkaBusinessError(
+            f"Cannot verify COD capability: Apaczka point {point_id} was not found",
+            courier="apaczka",
+            action="validate_point_cod",
+        )
+    if point.get("option_cod") is not True:
+        raise ApaczkaBusinessError(
+            f"Apaczka point {point_id} does not support COD",
+            courier="apaczka",
+            action="validate_point_cod",
+        )
 
 
 def apaczka_call_specs(
