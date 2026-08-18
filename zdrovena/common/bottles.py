@@ -9,8 +9,9 @@ Used by:
 Rules:
   - "12 butelek" / "36 butelek" → literal count
   - "500ml x 12" / "x 6" → count after 'x'
+  - "12 szt." → literal count (only when the name mentions butelki)
   - "zgrzewka" → 12, "zestaw testowy" → 6 (fixed keywords)
-  - Glass: name matches "szkł" or "szkle" → glass, else PET
+  - Glass: name contains "szkl"/"szkł" in any form → glass, else PET
   - Skip: shipping/fees/coupons/kaucja lines
 """
 
@@ -35,8 +36,19 @@ BUTELEK_RE = re.compile(r"(\d+)\s*butel(?:ek|ki|ka)", re.IGNORECASE)
 # "500ml x 12" (older product naming scheme)
 X_RE = re.compile(r"x\s*(\d+)", re.IGNORECASE)
 
-# Glass indicator: "szkle" or "szkło"
-GLASS_RE = re.compile(r"szk[lł][eo]", re.IGNORECASE)
+# "12 szt." / "12 sztuk" — the naming the shop moved to on 2026-08-17.
+# The token boundary keeps "12 sztucznych wkładów" from reading as 12 bottles.
+SZT_RE = re.compile(r"(\d+)\s*szt(?:uk\w*|\.|\b)", re.IGNORECASE)
+
+# A bare "N szt." counts bottles only when the name says bottles. Without this,
+# any merchandise sold by the piece (a set of glasses, a pack of inserts) would
+# enter the parcel plan and the month-close reconciliation as bottles.
+BOTTLE_WORD_RE = re.compile(r"butel", re.IGNORECASE)
+
+# Glass indicator. Any Polish form of szkło / szklany: "w szkle",
+# "butelka szkło", "w szklanych butelkach". Matching only "szkle"/"szkło"
+# silently classified the renamed glass SKU as PET (orders #1710-#1712).
+GLASS_RE = re.compile(r"szk[lł]", re.IGNORECASE)
 
 # Fixed-count items without explicit numeric count in the name
 FIXED_COUNTS: dict[str, int] = {
@@ -71,6 +83,10 @@ def bottles_per_unit(name: str) -> int:
     m = X_RE.search(nl)
     if m:
         return int(m.group(1))
+    if BOTTLE_WORD_RE.search(nl):
+        m = SZT_RE.search(nl)
+        if m:
+            return int(m.group(1))
     for keyword, count in FIXED_COUNTS.items():
         if keyword in nl:
             return count
