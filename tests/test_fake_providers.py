@@ -699,3 +699,158 @@ def test_fake_allegro_generates_optional_command_id_and_polls_async(
     )
     assert second.json()["status"] == "SUCCESS"
     assert second.json()["shipmentId"]
+
+
+def test_inpost_emulator_rejects_cod_without_insurance(fake_provider_url: str) -> None:
+    """The emulator now enforces the rule that broke production order #1708.
+
+    Before this guard the only place the rule existed was the live ShipX API,
+    so a payload missing `insurance` passed every test and failed in prod.
+    """
+    payload = {
+        "service": "inpost_courier_standard",
+        "reference": "order-1708",
+        "receiver": {
+            "first_name": "Anna",
+            "last_name": "Nowak",
+            "email": "anna@example.test",
+            "phone": "500500500",
+            "address": {
+                "street": "Prosta",
+                "building_number": "1",
+                "city": "Warszawa",
+                "post_code": "00-001",
+                "country_code": "PL",
+            },
+        },
+        "sender": {
+            "company_name": "Zdrovena",
+            "first_name": "Zdrovena",
+            "last_name": "Zdrovena",
+            "email": "sender@example.test",
+            "phone": "500500501",
+            "address": {
+                "street": "Magazynowa",
+                "building_number": "2",
+                "city": "Warszawa",
+                "post_code": "00-002",
+                "country_code": "PL",
+            },
+        },
+        "parcels": [
+            {
+                "dimensions": {"unit": "mm", "length": 300, "width": 200, "height": 150},
+                "weight": {"unit": "kg", "amount": 6.0},
+            }
+        ],
+        "cod": {"amount": 151.0, "currency": "PLN"},
+    }
+    response = requests.post(
+        f"{fake_provider_url}/inpost/v1/organizations/fake-org/shipments",
+        headers={"Authorization": "Bearer fake-token"},
+        json=payload,
+        timeout=2,
+    )
+
+    # The emulator answers 422 where live ShipX answers 400; the error code and
+    # the details object are what application code branches on.
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"] == "validation_failed"
+    assert body["details"] == {"insurance": ["should_be_greater_or_equal_than_cod"]}
+
+    # Insurance below the collected amount is the same violation as none at all.
+    payload["insurance"] = {"amount": 150.99, "currency": "PLN"}
+    too_low = requests.post(
+        f"{fake_provider_url}/inpost/v1/organizations/fake-org/shipments",
+        headers={"Authorization": "Bearer fake-token"},
+        json=payload,
+        timeout=2,
+    )
+    assert too_low.status_code == 422
+    assert too_low.json()["details"] == {"insurance": ["should_be_greater_or_equal_than_cod"]}
+
+    payload["insurance"] = {"amount": "not-a-number", "currency": "PLN"}
+    unparseable = requests.post(
+        f"{fake_provider_url}/inpost/v1/organizations/fake-org/shipments",
+        headers={"Authorization": "Bearer fake-token"},
+        json=payload,
+        timeout=2,
+    )
+    assert unparseable.status_code == 422
+
+    payload["insurance"] = {"amount": 151.0, "currency": "EUR"}
+    wrong_currency = requests.post(
+        f"{fake_provider_url}/inpost/v1/organizations/fake-org/shipments",
+        headers={"Authorization": "Bearer fake-token"},
+        json=payload,
+        timeout=2,
+    )
+    assert wrong_currency.status_code == 422
+    assert "insurance.currency" in wrong_currency.json()["details"]
+
+    payload["insurance"] = {"amount": 151.0, "currency": "PLN"}
+    accepted = requests.post(
+        f"{fake_provider_url}/inpost/v1/organizations/fake-org/shipments",
+        headers={"Authorization": "Bearer fake-token"},
+        json=payload,
+        timeout=2,
+    )
+    assert accepted.status_code == 201
+
+
+def test_apaczka_emulator_rejects_cod_without_declared_value(
+    fake_provider_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Apaczka requires deklaracja wartosci >= kwota pobrania."""
+    import zdrovena.common.apaczka as apaczka_module
+
+    monkeypatch.setattr(apaczka_module, "_BASE", f"{fake_provider_url}/apaczka/api/v2")
+    client = ApaczkaClient(
+        app_id="fake",
+        app_secret="fake",
+        service_id="21",
+        storage=_MemoryStorage(),
+    )
+    order = client.build_shipment_order(
+        receiver_name="Anna Nowak",
+        receiver_firstname="Anna",
+        receiver_lastname="Nowak",
+        receiver_email="anna@example.test",
+        receiver_phone="500500500",
+        receiver_address="Prosta 1",
+        receiver_city="Warszawa",
+        receiver_zip="00-001",
+        receiver_point_id=None,
+        sender={
+            "name": "Zdrovena",
+            "firstname": "Piotr",
+            "lastname": "Gryzlo",
+            "email": "sender@example.test",
+            "phone": "500500501",
+            "street": "Magazynowa",
+            "building_number": "2",
+            "city": "Warszawa",
+            "post_code": "00-002",
+        },
+        reference="order-1708",
+        content="Woda",
+        cod_amount="151.00",
+        cod_currency="PLN",
+        cod_bank_account="12345678901234567890123456",
+    )
+    assert order["shipment_value"] == 15100
+
+    order.pop("shipment_value")
+    with pytest.raises(ApaczkaBusinessError):
+        client._call("order_send", {"order": order})
+
+    # A declared value below the collection is the same violation as none at all.
+    order["shipment_value"] = 15099
+    with pytest.raises(ApaczkaBusinessError):
+        client._call("order_send", {"order": order})
+
+    order["shipment_value"] = 15100
+    order["shipment_currency"] = "EUR"
+    with pytest.raises(ApaczkaBusinessError):
+        client._call("order_send", {"order": order})

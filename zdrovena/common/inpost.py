@@ -10,7 +10,7 @@ import logging
 import os
 import time
 from collections.abc import Sequence
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from http import HTTPStatus
 from typing import Any
 
@@ -322,6 +322,21 @@ def _cod_payload(amount: str | None, currency: str) -> dict[str, Any] | None:
     return {"amount": float(parsed), "currency": normalized_currency}
 
 
+def _insurance_payload(cod: dict[str, Any]) -> dict[str, Any]:
+    """Insure a COD shipment for at least what the courier will collect.
+
+    ShipX rejects a COD shipment whose insurance is below the collected amount
+    (`insurance: ["should_be_greater_or_equal_than_cod"]`), which is how
+    production order #1708 failed. The declared value is rounded up to the next
+    whole zloty: it keeps the payload safely above the COD after the float
+    conversion at the HTTP boundary, and whole zlotys stay inside the included
+    limit at the amounts we collect. Callers attach this only alongside a `cod`
+    block, because declared value above a carrier's included limit is billed.
+    """
+    insured = int(Decimal(str(cod["amount"])).to_integral_value(rounding=ROUND_CEILING))
+    return {"amount": float(insured), "currency": cod["currency"]}
+
+
 class InPostClient:
     def __init__(self, api_token: str, organization_id: str) -> None:
         self._org_id = organization_id
@@ -435,6 +450,7 @@ class InPostClient:
         cod = _cod_payload(cod_amount, cod_currency)
         if cod is not None:
             payload["cod"] = cod
+            payload["insurance"] = _insurance_payload(cod)
         return payload
 
     @staticmethod
@@ -513,6 +529,7 @@ class InPostClient:
         cod = _cod_payload(cod_amount, cod_currency)
         if cod is not None:
             payload["cod"] = cod
+            payload["insurance"] = _insurance_payload(cod)
         return payload
 
     def create_paczkomat_shipment(self, **kwargs: Any) -> dict[str, Any]:

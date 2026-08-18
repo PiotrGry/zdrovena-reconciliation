@@ -577,6 +577,37 @@ class TestApaczkaPayloadBuilder:
             "bankaccount": "12345678901234567890123456",
         }
 
+    def test_cod_declares_a_shipment_value_at_least_equal_to_the_collection(self):
+        """Apaczka: "kwota deklaracji wartosci nie moze byc mniejsza niz kwota
+        pobrania" — the declared value must cover the collected amount.
+
+        The API models this as order.shipment_value (grosze) plus
+        shipment_currency; there is no insurance object. Rounded up to the
+        next whole zloty for the same reason as the InPost side.
+        """
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+
+        built = client.build_shipment_order(
+            **self._kwargs(),
+            cod_amount="200.30",
+            cod_currency="PLN",
+            cod_bank_account="12 3456 7890 1234 5678 9012 3456",
+        )
+
+        assert built["shipment_value"] == 20100
+        assert built["shipment_currency"] == "PLN"
+        assert built["shipment_value"] >= built["cod"]["amount"]
+
+    def test_no_cod_means_no_declared_value(self):
+        """Declared value above the included limit is billed, so it is sent
+        only where the COD rule requires it."""
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+
+        built = client.build_shipment_order(**self._kwargs())
+
+        assert "shipment_value" not in built
+        assert "shipment_currency" not in built
+
     def test_builder_rejects_cod_without_valid_nrb(self):
         client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
 
