@@ -22,6 +22,32 @@
 
 ### Fixed
 
+- **shipping**: COD shipments are declared for at least the amount the courier collects, so they
+  stop being rejected. InPost answers `400 validation_failed` with
+  `insurance: ["should_be_greater_or_equal_than_cod"]` when a COD parcel carries no insurance, and
+  Apaczka applies the same rule through `shipment_value` ("deklaracja wartości nie może być mniejsza
+  niż kwota pobrania"). Neither field was ever sent, so order #1708 (COD 151,00 zł) failed and every
+  COD order would have. Both carriers now get the collected amount rounded up to the next whole
+  złoty, and only on COD shipments — declared value above a carrier's included limit is billed.
+  The provider emulators enforce the rule too, so the gap cannot reopen without a failing test.
+- **shipping**: A renamed glass product is no longer packed as PET. On 2026-08-17 the shop renamed
+  the glass SKU to "Woda alkaliczna HUMIO w szklanych butelkach – 12 szt.", which matched neither
+  the glass pattern (it only knew "szkle"/"szkło", not the adjectival "szklanych") nor any
+  bottle-count pattern ("szt." instead of "butelek"). Orders #1710, #1711 and #1712 were planned
+  as plastic cartons. Both patterns are widened, and the full production catalogue is now pinned
+  by tests.
+- **shipping**: A product line whose bottle count cannot be read sends the draft to `needs_review`
+  instead of quietly guessing "one unit is one zgrzewka". The next rename surfaces as a review
+  flag rather than as wrong boxes in the warehouse. The flag survives a Shopify re-sync: sync
+  normally clears `needs_review` back to `pending` so an operator is not re-prompted, but it
+  cannot clear a draft whose plan is a guess.
+- **shipping**: `"N szt."` counts bottles only when the product name also says bottles, so
+  merchandise sold by the piece ("Zestaw 2 szklanek – 2 szt.", "12 sztucznych wkładów") stays
+  unreadable and reaches an operator instead of entering the parcel plan and the month-close
+  reconciliation as bottles.
+- **shipping**: Line items are read through one accessor. The parcel planner read `name` while
+  the draft record and the readability guard read `name or title`, so a title-only line could
+  pass the guard and still be planned from an empty string.
 - **month-close**: A gap or duplicate in Fakturownia numbering no longer cancels the sales-invoice
   download. The check aborted `sales` before `download_all_pdfs()` ran, so the operator was left
   with an empty `sprzedaz/` folder and no way out: waivers gate the workflow one layer above the
