@@ -325,3 +325,35 @@ def test_create_draft_does_not_swallow_builder_or_repository_errors() -> None:
     repository = RecordingDraftRepository(calls, upsert_error=RuntimeError("store failed"))
     with pytest.raises(RuntimeError, match="store failed"):
         create_draft({"order_number": "1001"}, repository, **collaborators)
+
+
+def test_sync_keeps_a_draft_in_review_when_the_plan_is_a_guess() -> None:
+    """A rename must not slip a guessed parcel plan past an operator.
+
+    Sync normally downgrades an incoming `needs_review` back to `pending` so a
+    draft the operator already cleared is not re-flagged. That downgrade cannot
+    apply when the product name became unreadable: the recomputed plan is a
+    guess, and an executable guess is how orders #1710-#1712 were packed wrong.
+    """
+    existing = {"id": "draft-1", "status": "pending", "unreadable_products": []}
+    incoming = {
+        "id": "new-id",
+        "status": "needs_review",
+        "unreadable_products": ["Kubek termiczny HUMIO"],
+        "packages_breakdown": [{"type": "1-pak", "qty": 1}],
+    }
+
+    merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *args: None)
+
+    assert merged["status"] == "needs_review"
+    assert merged["unreadable_products"] == ["Kubek termiczny HUMIO"]
+
+
+def test_sync_still_respects_an_operator_who_cleared_a_readable_draft() -> None:
+    """The existing downgrade survives when the plan is not a guess."""
+    existing = {"id": "draft-1", "status": "pending"}
+    incoming = {"id": "new-id", "status": "needs_review", "unreadable_products": []}
+
+    merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *args: None)
+
+    assert merged["status"] == "pending"

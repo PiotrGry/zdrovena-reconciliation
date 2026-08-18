@@ -28,7 +28,12 @@ from zdrovena.common.shipping_format import (
 )
 from zdrovena.common.shipping_store import ShippingStore
 from zdrovena.shipping.application import drafts as draft_application
-from zdrovena.shipping.domain.planning import calc_packages, package_fit_warnings
+from zdrovena.shipping.domain.planning import (
+    calc_packages,
+    package_fit_warnings,
+    product_name,
+    unreadable_product_names,
+)
 
 logger = logging.getLogger("zdrovena.api.shipping_draft_composition")
 
@@ -408,13 +413,20 @@ def build_draft_record(
             apaczka_service_id = pick_apaczka_service(title) if courier == "apaczka" else None
 
     line_items = order.get("line_items") or []
-    product_items = [item for item in line_items if not SKIP_RE.search(item.get("name", ""))]
+    product_items = [item for item in line_items if not SKIP_RE.search(product_name(item))]
     total_qty = max(sum(item.get("quantity", 1) for item in product_items), 1)
     package_plan = calc_packages(product_items)
     packages_count, packages_breakdown = package_plan.to_legacy_tuple()
     cod, cod_error = _shopify_cod_details(order) if source == "shopify" else (None, None)
     for warning in package_fit_warnings(packages_breakdown, carrier="inpost"):
         logger.warning("_calc_packages: %s", warning)
+    unreadable = unreadable_product_names(product_items)
+    for name in unreadable:
+        logger.warning(
+            "_calc_packages: cannot read a bottle count from product name %r "
+            "- parcel plan is a guess, draft flagged for review",
+            name,
+        )
     if inpost_service == "paczkomat":
         locker_id = (
             (pickup_point or {}).get("id")
@@ -440,7 +452,8 @@ def build_draft_record(
     street, building_number = parse_pl_address(shipping_addr.get("address1", ""))
     phone = normalize_pl_phone(phone) if phone else phone
     needs_review = (
-        phone is None
+        bool(unreadable)
+        or phone is None
         or (courier == "apaczka" and apaczka_service_id is None)
         or cod_error is not None
         or (cod is not None and packages_count != 1)
@@ -488,9 +501,10 @@ def build_draft_record(
         "status": draft_application.status_from_source(order, base_status, source=source),
         "packages_count": packages_count,
         "packages_breakdown": packages_breakdown,
+        "unreadable_products": unreadable,
         "total_qty": total_qty,
         "order_items": [
-            {"name": item.get("name") or item.get("title", ""), "quantity": item.get("quantity", 1)}
+            {"name": product_name(item), "quantity": item.get("quantity", 1)}
             for item in product_items
         ],
         "pickup_ordered": False,
