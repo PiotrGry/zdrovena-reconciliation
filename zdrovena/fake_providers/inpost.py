@@ -131,6 +131,28 @@ def _validate_cod(value: Any) -> None:
         _reject("cod.currency", "must be PLN")
 
 
+def _validate_insurance(cod: Any, insurance: Any) -> None:
+    """Mirror the live ShipX rule that broke production order #1708.
+
+    A COD shipment must declare insurance at least equal to the collected
+    amount; ShipX answers 400 validation_failed with
+    `{"insurance": ["should_be_greater_or_equal_than_cod"]}` otherwise.
+    """
+    if not isinstance(cod, dict):
+        return
+    if not isinstance(insurance, dict):
+        _reject("insurance", "should_be_greater_or_equal_than_cod")
+    try:
+        insured = Decimal(str(insurance.get("amount")))
+        collected = Decimal(str(cod.get("amount")))
+    except (InvalidOperation, ValueError):
+        _reject("insurance", "should_be_greater_or_equal_than_cod")
+    if not insured.is_finite() or insured < collected:
+        _reject("insurance", "should_be_greater_or_equal_than_cod")
+    if insurance.get("currency") != cod.get("currency"):
+        _reject("insurance.currency", "must match cod.currency")
+
+
 def validate_shipment(body: Any) -> dict[str, Any]:
     if not isinstance(body, dict):
         _reject("shipment", "must be an object")
@@ -139,6 +161,7 @@ def validate_shipment(body: Any) -> dict[str, Any]:
         _reject("shipment.service", "is not supported")
     _validate_parcels(body.get("parcels"))
     _validate_cod(body.get("cod"))
+    _validate_insurance(body.get("cod"), body.get("insurance"))
     receiver = body.get("receiver")
     if "locker" in service:
         if not isinstance(receiver, dict):

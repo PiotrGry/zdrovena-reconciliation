@@ -19,7 +19,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from http import HTTPStatus
 from typing import Any
 
@@ -410,6 +410,13 @@ class ApaczkaClient:
                 "currency": currency,
                 "bankaccount": bank_account,
             }
+            # "W przypadku przesylki pobraniowej kwota deklaracji wartosci nie
+            # moze byc mniejsza niz kwota pobrania." Apaczka has no insurance
+            # object; declared value is order.shipment_value in grosze. Rounded
+            # up to the next whole zloty, matching the InPost side.
+            insured = int(amount.to_integral_value(rounding=ROUND_CEILING))
+            order["shipment_value"] = insured * 100
+            order["shipment_currency"] = currency
         return order
 
     def create_shipment(self, **kwargs: Any) -> dict[str, Any]:

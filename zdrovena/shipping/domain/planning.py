@@ -20,16 +20,26 @@ GLASS_PACKAGE_SIZES = {
 }
 
 
+def product_name(item: dict[str, Any]) -> str:
+    """Read a line item's product name the one way the whole pipeline reads it.
+
+    Shopify sends `name`; the Allegro mapper sends both. Reading `name` in one
+    place and `name or title` in another let a title-only line pass the
+    readability guard and still be planned from an empty string.
+    """
+    return str(item.get("name") or item.get("title") or "").strip()
+
+
 def calc_packages(product_items: list[dict[str, Any]]) -> PackagePlan:
     """Calculate an ordered parcel plan for filtered product line items."""
     plastic_half_packs = 0
     glass_half_packs = 0
     for item in product_items:
         qty = item.get("quantity", 1)
-        name = item.get("name", "")
+        name = product_name(item)
         bottle_count = bottles_per_unit(name)
         half_packs = ceil(float(qty) * bottle_count / 6) if bottle_count else int(qty) * 2
-        if is_glass(item.get("name", "")):
+        if is_glass(name):
             glass_half_packs += half_packs
         else:
             plastic_half_packs += half_packs
@@ -55,6 +65,24 @@ def calc_packages(product_items: list[dict[str, Any]]) -> PackagePlan:
 
     total = sum(item.quantity for item in breakdown)
     return PackagePlan(package_count=max(total, 1), breakdown=tuple(breakdown))
+
+
+def unreadable_product_names(product_items: list[dict[str, Any]]) -> list[str]:
+    """Return named product lines whose bottle count cannot be read.
+
+    ``calc_packages`` falls back to "one unit is one zgrzewka" for these, which
+    is a guess. When the shop renamed the glass SKU to "... 12 szt." the guess
+    happened to be right about the box count and silently wrong about the
+    material (orders #1710-#1712). A named line we cannot read is therefore an
+    operator review, not a silent assumption. Unnamed lines keep the fallback:
+    a missing name carries no information a rename could have changed.
+    """
+    unreadable = []
+    for item in product_items:
+        name = product_name(item)
+        if name and bottles_per_unit(name) == 0:
+            unreadable.append(name)
+    return unreadable
 
 
 def physical_parcels(draft: dict[str, Any]) -> list[PhysicalParcel]:

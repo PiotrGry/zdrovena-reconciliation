@@ -231,6 +231,20 @@ def _validate_order(value: Any) -> dict[str, Any] | None:
                 "order.cod.bankaccount must be a 26-digit NRB",
                 field="order.cod.bankaccount",
             )
+        # "Kwota deklaracji wartosci nie moze byc mniejsza niz kwota pobrania."
+        shipment_value = value.get("shipment_value")
+        if type(shipment_value) is not int or shipment_value < amount:
+            return _failure(
+                422,
+                "order.shipment_value must be at least order.cod.amount",
+                field="order.shipment_value",
+            )
+        if value.get("shipment_currency") != cod.get("currency"):
+            return _failure(
+                422,
+                "order.shipment_currency must match order.cod.currency",
+                field="order.shipment_currency",
+            )
     pickup = value["pickup"]
     if not isinstance(pickup, dict) or pickup.get("type") not in {"COURIER", "SELF"}:
         return _failure(422, "order.pickup.type is invalid", field="order.pickup.type")

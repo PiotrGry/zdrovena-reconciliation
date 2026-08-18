@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
+import pytest
+
 from zdrovena.audit.bottles import (
     BOTTLE_ALIASES,
     BOTTLE_PRODUCTS,
@@ -216,3 +220,83 @@ class TestBottleAliases:
         p, g = wz_bottles(300, actions)
         assert p == 24
         assert g == 0
+
+
+# ── Real product catalogue ───────────────────────────────────────────────────
+
+
+class TestProductionCatalogue:
+    """Every product name that has reached a shipping draft in production.
+
+    The shop renames products without warning: on 2026-08-17 the glass SKU
+    became "w szklanych butelkach - 12 szt.", which matched neither the glass
+    pattern (adjectival "szklanych") nor any bottle-count pattern ("szt."
+    instead of "butelek"). Orders #1710, #1711 and #1712 were planned as
+    plastic boxes. This matrix is the regression guard: a rename that this
+    module cannot read must fail here, not in the warehouse.
+    """
+
+    # (name, bottles per unit, is glass)
+    CATALOGUE: ClassVar[list[tuple[str, int, bool]]] = [
+        ("HUMIO - Alkaliczna Woda Humusowa 500ml x 12", 12, False),
+        ("HUMIO - Aklaliczna Woda Humusowa 500ml x 12", 12, False),
+        ("HUMIO - woda alkaliczna, 12 butelek", 12, False),
+        ("Woda alkaliczna HUMIO z kwasami humusowymi – 12 butelek", 12, False),
+        ("Przetestuj wodę HUMIO, 6 butelek", 6, False),
+        ("Miesięczny zapas wody HUMIO - 36 butelek", 36, False),
+        ("Imprezowy zapas wody HUMIO – 72 butelki", 72, False),
+        ("Imprezowy zapas wody HUMIO - 72 butelek", 72, False),
+        ("HUMIO - woda alkaliczna, 12 butelek w szkle", 12, True),
+        ("HUMIO - Aklaliczna Woda Humusowa w szkle 500ml x 12", 12, True),
+        ("HUMIO - Alkaliczna Woda Humusowa w szkle 500ml x 12", 12, True),
+        ("Woda alkaliczna HUMIO w szklanych butelkach – 12 szt.", 12, True),
+    ]
+
+    @pytest.mark.parametrize("name,expected_bpu,expected_glass", CATALOGUE)
+    def test_catalogue_name_is_read_correctly(self, name, expected_bpu, expected_glass):
+        assert bottles_per_unit(name) == expected_bpu
+        assert is_glass(name) is expected_glass
+
+    @pytest.mark.parametrize("name,expected_bpu,expected_glass", CATALOGUE)
+    def test_catalogue_name_splits_plastic_and_glass(self, name, expected_bpu, expected_glass):
+        plastic, glass = extract_bottles(name, 2)
+        if expected_glass:
+            assert (plastic, glass) == (0, expected_bpu * 2)
+        else:
+            assert (plastic, glass) == (expected_bpu * 2, 0)
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "12 sztucznych wkładów",
+            "Zestaw 2 szklanek – 2 szt.",
+            "Kubek termiczny HUMIO",
+            "HUMIO 6 PET",
+        ],
+    )
+    def test_non_bottle_merchandise_stays_unreadable(self, name):
+        """ "szt." only counts bottles when the name says bottles.
+
+        Without the bottle context, "12 sztucznych wkładów" reads as 12 bottles
+        and a set of drinking glasses reads as glass zgrzewki. Returning 0 keeps
+        these out of the parcel plan and out of the month-close reconciliation,
+        and sends the draft to an operator instead.
+        """
+        assert bottles_per_unit(name) == 0
+        assert extract_bottles(name, 2) == (0, 0)
+
+    @pytest.mark.parametrize(
+        "name,expected",
+        [
+            ("Woda alkaliczna HUMIO w szklanych butelkach – 12 szt.", 12),
+            ("HUMIO butelki 24 szt", 24),
+            ("HUMIO butelka 6 sztuk", 6),
+        ],
+    )
+    def test_szt_counts_when_the_name_mentions_bottles(self, name, expected):
+        assert bottles_per_unit(name) == expected
+
+    def test_kaucja_line_is_still_skipped_despite_the_wider_glass_pattern(self):
+        """A kaucja line matches the wider glass pattern, so the skip rule must win."""
+        assert extract_bottles("kaucja szklana", 1) == (0, 0)
+        assert extract_bottles("kaucja 18zł, 36 butelek plastik", 1) == (0, 0)

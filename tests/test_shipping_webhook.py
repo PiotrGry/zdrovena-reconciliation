@@ -36,6 +36,7 @@ from zdrovena.shipping.domain.planning import (
     parcel_weight_and_dims,
     physical_parcels,
     shipment_reference,
+    unreadable_product_names,
 )
 from zdrovena.shipping.providers.allegro_delivery import (
     allegro_payload_plan as allegro_delivery_payload_plan,
@@ -4013,6 +4014,87 @@ class TestCreateDraftDispatchFail:
         assert d["courier_draft_id"] is None
 
 
+class TestUnreadableProductNames:
+    """Which product lines the planner admits it cannot read."""
+
+    def test_readable_names_are_not_reported(self):
+        assert (
+            unreadable_product_names(
+                [
+                    {"name": "HUMIO - woda alkaliczna, 12 butelek", "quantity": 1},
+                    {
+                        "name": "Woda alkaliczna HUMIO w szklanych butelkach – 12 szt.",
+                        "quantity": 2,
+                    },
+                ]
+            )
+            == []
+        )
+
+    def test_unreadable_name_is_reported(self):
+        assert unreadable_product_names([{"name": "Zestaw prezentowy", "quantity": 1}]) == [
+            "Zestaw prezentowy"
+        ]
+
+    def test_allegro_line_falls_back_to_title(self):
+        """Allegro-mapped orders carry the product under `title` as well."""
+        assert unreadable_product_names([{"title": "Zestaw prezentowy", "quantity": 1}]) == [
+            "Zestaw prezentowy"
+        ]
+
+    def test_nameless_line_keeps_the_fallback_plan(self):
+        """No name carries no information a rename could have changed."""
+        assert unreadable_product_names([{"quantity": 3}]) == []
+        assert unreadable_product_names([{"name": "   ", "quantity": 3}]) == []
+
+
+class TestCreateDraftUnreadableProductName:
+    """A product rename the planner cannot read must reach a human.
+
+    On 2026-08-17 the shop renamed the glass SKU and the planner silently
+    guessed the parcel plan for three orders. The guess is still made (the
+    operator gets a draft, not an error) but the draft is flagged instead of
+    presented as a settled plan.
+    """
+
+    def _order(self, product_name: str) -> dict[str, Any]:
+        return {
+            "id": "700",
+            "order_number": 7001,
+            "shipping_lines": [{"title": "InPost Kurier"}],
+            "line_items": [{"name": product_name, "quantity": 2}],
+            "shipping_address": {
+                "first_name": "Ewa",
+                "last_name": "N",
+                "address1": "Polna 3",
+                "address2": "",
+                "city": "Poznań",
+                "zip": "61-001",
+                "phone": "+48600100200",
+            },
+            "customer": {},
+            "email": "ewa@n.pl",
+            "note_attributes": [],
+        }
+
+    def test_unknown_product_name_flags_the_draft_for_review(self, store):
+        _create_draft_for_test(self._order("Zestaw prezentowy HUMIO"), store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["status"] == "needs_review"
+
+    def test_readable_product_name_stays_pending(self, store):
+        _create_draft_for_test(
+            self._order("Woda alkaliczna HUMIO w szklanych butelkach – 12 szt."),
+            store,
+            object(),
+        )
+
+        draft = store.list_drafts()[0]
+        assert draft["status"] == "pending"
+        assert draft["packages_breakdown"] == [{"type": "szkło-2pak", "qty": 1}]
+
+
 class TestCreateDraftKaucjaFilter:
     def test_kaucja_excluded_from_packages_and_order_items(self, store):
 
@@ -4152,6 +4234,51 @@ class TestCalcPackages:
         count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek w szkle", 4))
         assert count == 2
         assert bd == {"szkło-2pak": 2}
+
+    # ── Szkło pod nową nazwą (regresja #1710-#1712) ──────────────────────────
+
+    _RENAMED_GLASS = "Woda alkaliczna HUMIO w szklanych butelkach – 12 szt."
+
+    def test_renamed_glass_sku_plans_glass_boxes_order_1710(self):
+        """Order #1710: 2 units of the renamed glass SKU.
+
+        Planned as {"2-pak": 1} in production — a plastic box — because
+        neither "szklanych" nor "12 szt." was readable. The operator would
+        have packed glass bottles into plastic cartons.
+        """
+        count, bd = self._run((self._RENAMED_GLASS, 2))
+        assert count == 1
+        assert bd == {"szkło-2pak": 1}
+
+    def test_renamed_glass_sku_single_unit_order_1712(self):
+        count, bd = self._run((self._RENAMED_GLASS, 1))
+        assert count == 1
+        assert bd == {"szkło": 1}
+
+    def test_renamed_glass_sku_four_units_order_1711(self):
+        count, bd = self._run((self._RENAMED_GLASS, 4))
+        assert count == 2
+        assert bd == {"szkło-2pak": 2}
+
+    def test_title_only_line_is_planned_like_a_named_one(self):
+        """Line items are read through one accessor, not two.
+
+        The draft record and the readability guard fall back to `title`, so the
+        planner must too. Otherwise a title-only glass line reads as readable
+        and is silently planned as plastic — the exact bug this branch fixes.
+        """
+        titled = calc_packages([{"title": self._RENAMED_GLASS, "quantity": 2}])
+        named = calc_packages([{"name": self._RENAMED_GLASS, "quantity": 2}])
+
+        assert titled == named
+        assert [b.package_type for b in titled.breakdown] == ["szkło-2pak"]
+
+    def test_renamed_glass_matches_the_old_name_exactly(self):
+        """The rename must not change the plan for the same physical goods."""
+        for qty in (1, 2, 3, 4, 5, 7):
+            assert self._run((self._RENAMED_GLASS, qty)) == self._run(
+                ("HUMIO - woda alkaliczna, 12 butelek w szkle", qty)
+            )
 
     # ── Mieszane ─────────────────────────────────────────────────────────────
 

@@ -159,7 +159,14 @@ def merge_synced_draft(
     elif existing_status == "error":
         merged["status"] = "error"
         merged["error"] = existing.get("error")
-    elif existing_status == "pending" and incoming_status == "needs_review":
+    elif (
+        existing_status == "pending"
+        and incoming_status == "needs_review"
+        and not merged.get("unreadable_products")
+    ):
+        # A draft the operator already cleared is not re-flagged. The exception
+        # is a product name the planner cannot read: the recomputed plan is a
+        # guess, and an executable guess is how #1710-#1712 were packed wrong.
         merged["status"] = "pending"
     else:
         merged["status"] = incoming_status or existing_status

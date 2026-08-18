@@ -437,6 +437,51 @@ class TestPayloadBuilders:
 
         assert built["cod"] == {"amount": 200.3, "currency": "PLN"}
 
+    def test_kurier_cod_is_insured_at_least_up_to_the_collected_amount(self):
+        """ShipX rejects COD without insurance >= cod (`should_be_greater_or_equal_than_cod`).
+
+        Production order #1708 (COD 151,00 PLN) failed on exactly this rule.
+        The amount is rounded up to the next whole zloty so a float round-trip
+        can never land a fraction of a grosz below the collected amount.
+        """
+        client = InPostClient(_TOKEN, _ORG)
+
+        built = client.build_kurier_payload(
+            **self._kwargs(), cod_amount="200.30", cod_currency="PLN"
+        )
+
+        assert built["insurance"] == {"amount": 201.0, "currency": "PLN"}
+        assert built["insurance"]["amount"] >= built["cod"]["amount"]
+
+    def test_locker_cod_is_insured_at_least_up_to_the_collected_amount(self):
+        client = InPostClient(_TOKEN, _ORG)
+
+        built = client.build_paczkomat_payload(
+            **self._locker_kwargs(), cod_amount="200.30", cod_currency="PLN"
+        )
+
+        assert built["insurance"] == {"amount": 201.0, "currency": "PLN"}
+
+    def test_whole_zloty_cod_is_not_rounded_up_further(self):
+        client = InPostClient(_TOKEN, _ORG)
+
+        built = client.build_kurier_payload(
+            **self._kwargs(), cod_amount="151.00", cod_currency="PLN"
+        )
+
+        assert built["insurance"] == {"amount": 151.0, "currency": "PLN"}
+
+    def test_no_cod_means_no_insurance_block(self):
+        """Non-COD parcels keep the payload they ship with today.
+
+        Declared value above a carrier's included limit is a paid add-on, so
+        it is attached only where the API demands it.
+        """
+        client = InPostClient(_TOKEN, _ORG)
+
+        assert "insurance" not in client.build_kurier_payload(**self._kwargs())
+        assert "insurance" not in client.build_paczkomat_payload(**self._locker_kwargs())
+
     def test_invalid_cod_currency_is_rejected_before_http(self):
         client = InPostClient(_TOKEN, _ORG)
         with patch.object(client._session, "post") as mock_post:

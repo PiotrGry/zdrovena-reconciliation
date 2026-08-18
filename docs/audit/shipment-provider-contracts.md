@@ -68,7 +68,16 @@ wartość `false` albo nieznany typ punktu blokują operację przed `order_send`
 request z pełną kwotą per paczka groziłby wielokrotnym pobraniem. Brak lub błędny
 rachunek blokuje payload przed wywołaniem API.
 
-Źródło: [oficjalna dokumentacja Web API v2 Apaczka](https://panel.apaczka.pl/dokumentacja_api_v2.php).
+Przesyłka pobraniowa wymaga deklaracji wartości: „kwota deklaracji wartości nie
+może być mniejsza niż kwota pobrania. Musi być równa bądź większa". Apaczka nie
+ma obiektu `insurance` — deklarację wartości przenosi `order.shipment_value`
+(grosze) razem z `order.shipment_currency`. Zdrovena wysyła oba pola wyłącznie
+przy COD, z kwotą pobrania zaokrągloną w górę do pełnego złotego. Deklaracja
+ponad limit wliczony w usługę bazową (500–1000 zł dla DHL/DPD/InPost) jest
+płatna, więc przesyłki bez pobrania nie dostają tych pól.
+
+Źródła: [oficjalna dokumentacja Web API v2 Apaczka](https://panel.apaczka.pl/dokumentacja_api_v2.php),
+[deklaracja wartości](https://www.apaczka.pl/centrum_pomocy/deklaracja-wartosci/).
 
 ## InPost — legacy ShipX v1
 
@@ -107,8 +116,18 @@ umowy organizacji, więc odpowiedź walidacyjna ShipX pozostaje źródłem prawd
 `cod` nie jest elementem `additional_services`. Tak samo jak dla Apaczki,
 Zdrovena v1 blokuje COD przy więcej niż jednej fizycznej paczce.
 
+COD wymaga ubezpieczenia nie mniejszego niż kwota pobrania. Payload bez
+`insurance` dostaje `400 validation_failed` z `details.insurance =
+["should_be_greater_or_equal_than_cod"]` — tak przepadło produkcyjne zamówienie
+#1708 (pobranie 151,00 zł). Zdrovena dokłada `insurance` w tym samym kształcie co
+`cod` (`{"amount": 151.0, "currency": "PLN"}`), z kwotą zaokrągloną w górę do
+pełnego złotego, i tylko przy COD — wyższa suma ubezpieczenia bywa płatna.
+Emulator ShipX egzekwuje tę regułę, więc kontrakt jest pokryty testem, a nie
+tylko produkcją.
+
 Źródła: [tworzenie przesyłki w trybie uproszczonym](https://dokumentacja-inpost.atlassian.net/wiki/spaces/PL/pages/28639258/1.23.0%2BShipment%2Bcreation%2Bin%2Bsimplified%2Bmode),
-[usługi dodatkowe i COD](https://dokumentacja-inpost.atlassian.net/wiki/spaces/PL/pages/28639264).
+[usługi dodatkowe i COD](https://dokumentacja-inpost.atlassian.net/wiki/spaces/PL/pages/28639264),
+[FAQ — "Insurance should be equal or higher than COD"](https://dokumentacja-inpost.atlassian.net/wiki/spaces/PL/pages/52428808/FAQ).
 
 ## Shopify → COD — reguła mapowania
 
