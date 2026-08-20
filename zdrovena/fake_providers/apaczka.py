@@ -67,6 +67,7 @@ POINTS_BY_TYPE: dict[str, dict[str, dict[str, Any]]] = {
 }
 SHIPMENT_TYPES = frozenset({"PACZKA", "PALETA"})
 POST_CODE_RE = re.compile(r"^[0-9]{2}-[0-9]{3}$")
+CONTENT_MAX_LENGTH = 50
 DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 TIME_RE = re.compile(r"^[0-2][0-9]:[0-5][0-9]$")
 
@@ -176,6 +177,11 @@ def _validate_order(value: Any) -> dict[str, Any] | None:
     service_id = str(value["service_id"])
     if service_id not in SUPPORTED_SERVICES:
         return _failure(422, "Unknown service_id", field="order.service_id")
+    if len(str(value["content"])) > CONTENT_MAX_LENGTH:
+        # Production returns this exact envelope, with `errors` as a flat list
+        # rather than the field-keyed map used by the validation failures above.
+        message = f'"Zawartość przesyłki" może zawierać maksymalnie {CONTENT_MAX_LENGTH} znaków.'
+        return {"status": 400, "message": message, "response": {"errors": [message]}}
     address = value["address"]
     if not isinstance(address, dict):
         return _failure(422, "order.address must be an object", field="order.address")
