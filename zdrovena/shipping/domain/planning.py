@@ -132,12 +132,28 @@ def shipment_reference(
     package_count: int,
 ) -> str:
     """Build the legacy courier reference for one physical parcel."""
-    material = "szkło" if package_type in GLASS_PACKAGE_SIZES else "plastik"
-    size = GLASS_PACKAGE_SIZES.get(package_type, package_type)
+    material, size = _parcel_material_and_size(package_type)
     reference = f"{order_number} | {material} | {size}"
     if package_count > 1:
         reference = f"{reference} {package_number}/{package_count}"
     return reference
+
+
+def parcel_content(package_type: str) -> str:
+    """Describe one physical parcel for carriers that require a content line.
+
+    Apaczka caps `order.content` at 50 characters, so the description is built
+    from the parcel itself rather than from product names: a catalogue rename
+    must never be able to push this over the carrier's limit.
+    """
+    material, size = _parcel_material_and_size(package_type)
+    return f"Woda butelkowana, {material} {size}"
+
+
+def _parcel_material_and_size(package_type: str) -> tuple[str, str]:
+    """Split a package type into the material and pack size shown to couriers."""
+    material = "szkło" if package_type in GLASS_PACKAGE_SIZES else "plastik"
+    return material, GLASS_PACKAGE_SIZES.get(package_type, package_type)
 
 
 def package_fit_warnings(

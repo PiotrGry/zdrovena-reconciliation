@@ -6,7 +6,11 @@ from typing import Any, Protocol
 
 from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
 from zdrovena.common.shipping_parcels import PARCEL_SPECS
-from zdrovena.shipping.domain.planning import physical_parcels, shipment_reference
+from zdrovena.shipping.domain.planning import (
+    parcel_content,
+    physical_parcels,
+    shipment_reference,
+)
 
 ApaczkaCallSpec = dict[str, Any]
 
@@ -160,15 +164,6 @@ def apaczka_call_specs(
     addr = draft.get("shipping_address") or {}
     customer_name = f"{receiver.get('first_name', '')} {receiver.get('last_name', '')}".strip()
 
-    content_parts: list[str] = []
-    for item in draft.get("order_items") or []:
-        name = str(item.get("name") or "").strip()
-        if not name:
-            continue
-        quantity = item.get("quantity", 1)
-        content_parts.append(f"{quantity} x {name}")
-    shipment_content = ", ".join(content_parts)[:255] or "Woda butelkowana"
-
     existing_keys = {
         (str(item.get("package_type")), int(item.get("package_number") or 1))
         for item in draft.get("courier_shipments") or []
@@ -218,7 +213,7 @@ def apaczka_call_specs(
                 package_number,
                 package_count,
             ),
-            "content": shipment_content,
+            "content": parcel_content(package_type),
             "weight_kg": spec["weight_kg"],
             "width_cm": spec["width"],
             "height_cm": spec["height"],
