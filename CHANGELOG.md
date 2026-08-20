@@ -22,6 +22,14 @@
 
 ### Fixed
 
+- **shipping**: Apaczka shipments stopped being rejected with
+  `"Zawartość przesyłki" może zawierać maksymalnie 50 znaków.`. The content line was built from
+  product names and capped at 255 characters, a limit we had guessed; Apaczka's real cap is 50.
+  The 2026-08-17 catalogue rename pushed `"2 x HUMIO - Alkaliczna Woda Humusowa w szkle 500ml x 12"`
+  to 55 characters and every affected order failed with a 400. The line now describes the parcel
+  ("Woda butelkowana, szkło 1-pak"), the way the InPost reference already does, so no future rename
+  can push it over a carrier limit. The client trims to 50 as a last resort and the Apaczka
+  emulator now returns the production 400, so the gap cannot reopen without a failing test.
 - **shipping**: COD shipments are declared for at least the amount the courier collects, so they
   stop being rejected. InPost answers `400 validation_failed` with
   `insurance: ["should_be_greater_or_equal_than_cod"]` when a COD parcel carries no insurance, and

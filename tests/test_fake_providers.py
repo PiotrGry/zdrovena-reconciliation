@@ -22,6 +22,7 @@ from zdrovena.common.shipping_exceptions import (
     InPostBusinessError,
 )
 from zdrovena.fake_providers.app import app
+from zdrovena.shipping.domain.planning import parcel_content
 
 
 class _MemoryStorage:
@@ -648,6 +649,91 @@ def test_fake_providers_reject_documented_contract_violations(fake_provider_url:
     assert invalid_apaczka_cod.status_code == 200
     assert invalid_apaczka_cod.json()["status"] == 422
     assert "order.cod.bankaccount" in invalid_apaczka_cod.text
+
+
+def test_fake_apaczka_rejects_content_over_fifty_characters(fake_provider_url: str) -> None:
+    """Reproduce the production 400 the operator hit after the catalogue rename."""
+    client = ApaczkaClient(
+        app_id="fake",
+        app_secret="fake",
+        service_id="21",
+        storage=_MemoryStorage(),
+    )
+    order = client.build_shipment_order(
+        receiver_name="Anna Nowak",
+        receiver_firstname="Anna",
+        receiver_lastname="Nowak",
+        receiver_email="anna@example.test",
+        receiver_phone="500500500",
+        receiver_address="Prosta 1",
+        receiver_city="Warszawa",
+        receiver_zip="00-001",
+        sender={
+            "name": "Zdrovena",
+            "firstname": "Piotr",
+            "lastname": "Gryzlo",
+            "email": "sender@example.test",
+            "phone": "500500501",
+            "street": "Magazynowa",
+            "building_number": "2",
+            "city": "Warszawa",
+            "post_code": "00-002",
+        },
+        reference="order-long-content",
+        content="Woda butelkowana",
+    )
+    # The client caps content, so overwrite it to exercise the carrier contract.
+    order["content"] = "2 x HUMIO - Alkaliczna Woda Humusowa w szkle 500ml x 12"
+
+    response = requests.post(
+        f"{fake_provider_url}/apaczka/api/v2/order_send/",
+        data=_sign("fake", "fake", "order_send", {"order": order}),
+        timeout=2,
+    )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["status"] == 400
+    assert body["message"] == '"Zawartość przesyłki" może zawierać maksymalnie 50 znaków.'
+    assert body["response"]["errors"] == [body["message"]]
+
+
+def test_fake_apaczka_accepts_the_parcel_content_we_send(fake_provider_url: str) -> None:
+    import zdrovena.common.apaczka as apaczka_module
+
+    client = ApaczkaClient(
+        app_id="fake",
+        app_secret="fake",
+        service_id="21",
+        storage=_MemoryStorage(),
+    )
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(apaczka_module, "_BASE", f"{fake_provider_url}/apaczka/api/v2")
+        created = client.create_shipment(
+            receiver_name="Anna Nowak",
+            receiver_firstname="Anna",
+            receiver_lastname="Nowak",
+            receiver_email="anna@example.test",
+            receiver_phone="500500500",
+            receiver_address="Prosta 1",
+            receiver_city="Warszawa",
+            receiver_zip="00-001",
+            sender={
+                "name": "Zdrovena",
+                "firstname": "Piotr",
+                "lastname": "Gryzlo",
+                "email": "sender@example.test",
+                "phone": "500500501",
+                "street": "Magazynowa",
+                "building_number": "2",
+                "city": "Warszawa",
+                "post_code": "00-002",
+            },
+            reference="1800 | szkło | 1-pak",
+            content=parcel_content("szkło"),
+        )
+
+    assert created["id"]
 
 
 def test_fake_apaczka_rejects_wrong_hmac_even_for_valid_payload(fake_provider_url: str) -> None:
