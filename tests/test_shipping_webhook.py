@@ -25,14 +25,16 @@ from zdrovena.api.main import app
 from zdrovena.api.routers import webhooks as webhooks_router
 from zdrovena.api.routers.webhooks import _verify_shopify_hmac
 from zdrovena.api.shipping_draft_composition import pick_courier as _pick_courier
-from zdrovena.common.apaczka import ApaczkaClient
+from zdrovena.common.apaczka import APACZKA_CONTENT_MAX_LENGTH, ApaczkaClient
 from zdrovena.common.inpost import InPostClient
+from zdrovena.common.shipping_parcels import PARCEL_SPECS
 from zdrovena.common.shipping_store import ShippingStore
 from zdrovena.common.shopify_dedup_store import ShopifyDedupStore
 from zdrovena.shipping.application import drafts as draft_application
 from zdrovena.shipping.domain.models import PackageBreakdownItem, PackagePlan, PhysicalParcel
 from zdrovena.shipping.domain.planning import (
     calc_packages,
+    parcel_content,
     parcel_weight_and_dims,
     physical_parcels,
     shipment_reference,
@@ -2069,6 +2071,25 @@ class TestShipmentReferenceCharacterization:
         assert shipment_reference("1050", "custom-box", 1, 1) == "1050 | plastik | custom-box"
 
 
+class TestParcelContent:
+    @pytest.mark.parametrize(
+        ("package_type", "expected"),
+        [
+            ("1-pak", "Woda butelkowana, plastik 1-pak"),
+            ("3-pak", "Woda butelkowana, plastik 3-pak"),
+            ("pół-pak", "Woda butelkowana, plastik pół-pak"),
+            ("szkło", "Woda butelkowana, szkło 1-pak"),
+            ("szkło-2pak", "Woda butelkowana, szkło 2-pak"),
+        ],
+    )
+    def test_content_names_material_and_pack_size(self, package_type, expected):
+        assert parcel_content(package_type) == expected
+
+    def test_every_catalog_parcel_fits_the_apaczka_content_limit(self):
+        for package_type in PARCEL_SPECS:
+            assert len(parcel_content(package_type)) <= APACZKA_CONTENT_MAX_LENGTH
+
+
 class TestParcelDomainShapes:
     def test_typed_parcels_keep_explicit_legacy_conversion(self):
         parcels = physical_parcels({"packages_breakdown": [{"type": "1-pak", "qty": 1}]})
@@ -2760,7 +2781,7 @@ class TestRunApaczka:
         assert result["courier_draft_id"] == "ap-1"
         assert result["tracking_number"] == "WAY001"
         assert result["status"] == "created"
-        assert mock_ship.call_args.kwargs["content"] == "2 x HUMIO 500 ml"
+        assert mock_ship.call_args.kwargs["content"] == "Woda butelkowana, plastik 1-pak"
         assert mock_ship.call_args.kwargs["reference"] == "1060 | plastik | 1-pak"
 
     def test_passes_pickup_point_to_apaczka(self):
@@ -5474,7 +5495,7 @@ class TestApaczkaPayloadPlan:
                         }
                     ],
                     "pickup": {"type": "COURIER"},
-                    "content": "2 x HUMIO 500 ml",
+                    "content": "Woda butelkowana, plastik pół-pak",
                 },
             }
         ]

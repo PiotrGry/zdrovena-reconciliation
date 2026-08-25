@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from zdrovena.common.apaczka import APACZKA_CONTENT_MAX_LENGTH
 from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
 from zdrovena.shipping.providers.apaczka import (
     apaczka_call_specs,
@@ -149,6 +150,32 @@ def test_call_specs_preserve_order_and_per_type_numbering() -> None:
         ("3-pak", 1, "1800 | plastik | 3-pak 1/2"),
         ("3-pak", 2, "1800 | plastik | 3-pak 2/2"),
     ]
+
+
+def test_content_describes_the_parcel_and_never_the_product_names() -> None:
+    # The catalogue rename that broke production pushed the old product-name
+    # content ("2 x HUMIO - Alkaliczna Woda Humusowa w szkle 500ml x 12") to 55
+    # characters and Apaczka rejected the whole order with a 400.
+    draft = _draft(
+        order_items=[
+            {"name": "HUMIO - Alkaliczna Woda Humusowa w szkle 500ml x 12", "quantity": 2}
+        ],
+        packages_breakdown=[{"type": "szkło", "qty": 1}, {"type": "3-pak", "qty": 1}],
+    )
+
+    specs = apaczka_call_specs(draft, _PICKUP_ADDRESS)
+
+    contents = [spec["kwargs"]["content"] for spec in specs]
+    assert contents == ["Woda butelkowana, szkło 1-pak", "Woda butelkowana, plastik 3-pak"]
+    assert all(len(content) <= APACZKA_CONTENT_MAX_LENGTH for content in contents)
+
+
+def test_content_survives_an_empty_or_unreadable_product_list() -> None:
+    draft = _draft(order_items=[], packages_breakdown=[{"type": "1-pak", "qty": 1}])
+
+    specs = apaczka_call_specs(draft, _PICKUP_ADDRESS)
+
+    assert specs[0]["kwargs"]["content"] == "Woda butelkowana, plastik 1-pak"
 
 
 def test_call_specs_forward_cod_and_bank_account() -> None:

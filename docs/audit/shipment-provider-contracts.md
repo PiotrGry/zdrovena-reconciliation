@@ -46,6 +46,17 @@ W `request.order` nasza krajowa ścieżka wymaga co najmniej:
 
 Istotne: `content` nie jest polem elementu `shipment`. Oficjalny przykład
 struktury umieszcza je obok `comment` i `is_zebra`, bezpośrednio w `order`.
+
+`content` ma twardy limit 50 znaków. Produkcyjne API odrzuca dłuższą wartość
+statusem 400 i komunikatem
+`"Zawartość przesyłki" może zawierać maksymalnie 50 znaków.`, z `errors` jako
+płaską listą, nie mapą pól. Dlatego opis budujemy z samej paczki
+(`parcel_content()` w `zdrovena/shipping/domain/planning.py`), a nie z nazw
+produktów: zmiana nazwy w katalogu nie może wypchnąć przesyłki poza limit
+przewoźnika. Klient dodatkowo przycina `content` do
+`APACZKA_CONTENT_MAX_LENGTH` przed wysyłką
+(`zdrovena/common/apaczka.py`). InPost nie ma odpowiednika tego pola — tam
+jedyny wolny tekst to `reference`.
 Publiczna dokumentacja Apaczki nie oznacza wszystkich pól maszynowym znacznikiem
 `required`; powyższy minimalny podzbiór jest zgodny z opublikowaną strukturą i
 walidacją zwróconą przez produkcyjne API dla brakującej zawartości.

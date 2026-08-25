@@ -21,6 +21,7 @@ import requests
 from zdrovena.common.apaczka import (
     _POINTS_CACHE_PREFIX,
     _SERVICE_CACHE_KEY,
+    APACZKA_CONTENT_MAX_LENGTH,
     ApaczkaClient,
     ApaczkaError,
     _sign,
@@ -426,6 +427,21 @@ class TestCreateShipment:
             with pytest.raises(ApaczkaBusinessError, match=r"order\.content is required"):
                 client.create_shipment(**{**self._kwargs(), "content": "   "})
         mock_post.assert_not_called()
+
+    def test_content_is_capped_at_the_documented_apaczka_limit(self):
+        # Apaczka answers a longer content with
+        # '"Zawartość przesyłki" może zawierać maksymalnie 50 znaków.'
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        api_response = _ok_response({"status": 200, "response": {"id": "ap-long"}})
+        long_content = "2 x HUMIO - Alkaliczna Woda Humusowa w szkle 500ml x 12"
+        assert len(long_content) > APACZKA_CONTENT_MAX_LENGTH
+
+        with patch.object(client._session, "post", return_value=api_response) as mock_post:
+            client.create_shipment(**{**self._kwargs(), "content": long_content})
+
+        order = json.loads(mock_post.call_args.kwargs["data"]["request"])["order"]
+        assert len(order["content"]) == APACZKA_CONTENT_MAX_LENGTH
+        assert long_content.startswith(order["content"])
 
     def test_pickup_point_id_sent_as_foreign_address_id(self):
         client = ApaczkaClient(_APP_ID, _SECRET, "23", storage=MagicMock())

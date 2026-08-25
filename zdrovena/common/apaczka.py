@@ -55,6 +55,9 @@ _POINTS_CACHE_PREFIX = "apaczka/points"
 _POINTS_CACHE_TTL_H = 24
 # Apaczka signals in-body success with status == 200 (independent of the HTTP status).
 _APACZKA_BODY_OK = 200
+# Apaczka rejects a longer order.content with
+# '"Zawartość przesyłki" może zawierać maksymalnie 50 znaków.'
+APACZKA_CONTENT_MAX_LENGTH = 50
 
 # Curated subset of Apaczka's ~70 service_ids (fetched live from the
 # `service_structure` endpoint, verified 2026-07-09), covering non-InPost
@@ -319,6 +322,10 @@ class ApaczkaClient:
                 courier="apaczka",
                 action="create_shipment",
             )
+        # Last-resort guard: callers build a short parcel description, so this
+        # only bites if a new caller passes free text. Trimming a label beats
+        # blocking a shipment on a 400.
+        shipment_content = shipment_content[:APACZKA_CONTENT_MAX_LENGTH].strip()
 
         pickup: dict[str, Any] = {"type": "COURIER"}
         if pickup_date:
