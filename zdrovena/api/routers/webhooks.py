@@ -71,6 +71,7 @@ from zdrovena.common.shipping_store import (
 from zdrovena.common.shopify_dedup_store import DedupStoreError
 from zdrovena.shipping.application import drafts as draft_application
 from zdrovena.shipping.application.execution import workflow as execution_workflow
+from zdrovena.shipping.domain.labels import WARSAW, batch_label_title, single_label_title
 
 logger = logging.getLogger("zdrovena.api.routers.webhooks")
 
@@ -1394,17 +1395,21 @@ _SUPPORTED_LABEL_COURIERS = ("inpost", "apaczka", "allegro_delivery")
 _MAX_BATCH_LABELS = 100  # provider-agnostic safety cap on one batch print
 
 
-def _safe_label_filename(courier: str, order_number: Any) -> str:
+def _now_warsaw() -> datetime:
+    """Single seam so tests can freeze the day used in label titles."""
+    return datetime.now(WARSAW)
+
+
+def _label_filename(title: str) -> str:
     """Return an ASCII-only filename safe for a quoted response header."""
-    normalized = unicodedata.normalize("NFKD", str(order_number).lstrip("#"))
-    ascii_order = normalized.encode("ascii", "ignore").decode("ascii")
-    safe_order = re.sub(r"[^A-Za-z0-9._-]+", "_", ascii_order).strip("._-")
-    safe_order = safe_order[:80] or "order"
-    return f"label_{courier}_{safe_order}.pdf"
+    normalized = unicodedata.normalize("NFKD", title)
+    ascii_title = normalized.encode("ascii", "ignore").decode("ascii")
+    safe = re.sub(r"[^A-Za-z0-9 ._-]+", "_", ascii_title).strip(" ._-")
+    return f"{safe[:80] or 'label'}.pdf"
 
 
-def _fetch_label_pdf(draft: dict[str, Any], courier: str, storage: Any) -> bytes:
-    """Fetch one label PDF for a draft. Shared by the single-label and batch
+def _fetch_label_pdfs(draft: dict[str, Any], courier: str, storage: Any) -> list[bytes]:
+    """Fetch every label PDF for a draft. Shared by the single-label and batch
     endpoints (R5-B).
 
     Raises :class:`LabelNotReadyError` (HTTP 409) when the label is not printable
@@ -1430,7 +1435,7 @@ def _fetch_label_pdf(draft: dict[str, Any], courier: str, storage: Any) -> bytes
             org_id = get_secret("inpost_organization_id")
             try:
                 pdfs = [InPostClient(token, org_id).get_label(label_id) for label_id in label_ids]
-                return _merge_pdfs(pdfs) if len(pdfs) > 1 else pdfs[0]
+                return pdfs
             except InPostBusinessError as exc:
                 # A business rejection while fetching a label means the shipment
                 # is not confirmed/processed yet → not ready, not a hard failure.
@@ -1443,14 +1448,14 @@ def _fetch_label_pdf(draft: dict[str, Any], courier: str, storage: Any) -> bytes
             service_id = draft.get("apaczka_service_id") or ""
             client = ApaczkaClient(app_id, app_secret, service_id, storage)
             pdfs = [client.get_label(label_id) for label_id in label_ids]
-            return _merge_pdfs(pdfs) if len(pdfs) > 1 else pdfs[0]
+            return pdfs
         else:  # allegro_delivery
             client = execution_composition.get_allegro_client()
             if client is None:
                 raise HTTPException(status_code=502, detail="Allegro credentials missing")
             try:
                 pdfs = [client.get_ship_with_allegro_label(label_id) for label_id in label_ids]
-                return _merge_pdfs(pdfs) if len(pdfs) > 1 else pdfs[0]
+                return pdfs
             except (AllegroBusinessError, AllegroAuthError, CourierTransientError) as exc:
                 logger.exception("Allegro label fetch failed for draft %s", draft.get("id"))
                 raise HTTPException(status_code=502, detail=f"Allegro API error: {exc}") from exc
@@ -1461,17 +1466,34 @@ def _fetch_label_pdf(draft: dict[str, Any], courier: str, storage: Any) -> bytes
         raise HTTPException(status_code=502, detail=f"Courier API error: {exc}") from exc
 
 
-def _merge_pdfs(pdfs: list[bytes]) -> bytes:
-    """Merge label PDFs into a single document (R5-B batch printing)."""
+def _titled_pdf(pdfs: list[bytes], title: str) -> bytes:
+    """Assemble label PDFs into one document carrying ``title`` as its /Title.
+
+    Chrome takes the "Save as PDF" filename from the printed document's title.
+    The label is printed from a ``blob:`` URL, which has no filename and does
+    not carry Content-Disposition, so this metadata is the only lever we have.
+
+    A single carrier PDF pypdf cannot parse is returned unchanged: an
+    unprintable label is a worse failure than an untitled one. A multi-PDF
+    merge still raises, because there is no meaningful fallback for it and
+    that was already the behaviour.
+    """
     from pypdf import PdfWriter
 
-    writer = PdfWriter()
-    for pdf in pdfs:
-        writer.append(io.BytesIO(pdf))
-    out = io.BytesIO()
-    writer.write(out)
-    writer.close()
-    return out.getvalue()
+    try:
+        writer = PdfWriter()
+        for pdf in pdfs:
+            writer.append(io.BytesIO(pdf))
+        writer.add_metadata({"/Title": title})
+        out = io.BytesIO()
+        writer.write(out)
+        writer.close()
+        return out.getvalue()
+    except Exception:
+        if len(pdfs) != 1:
+            raise
+        logger.exception("Could not title a label PDF — streaming it untitled")
+        return pdfs[0]
 
 
 @router.post(
@@ -1530,7 +1552,7 @@ def batch_labels(
     not_ready: list[str] = []
     for d in drafts:
         try:
-            pdfs.append(_fetch_label_pdf(d, d["courier"], storage))
+            pdfs.extend(_fetch_label_pdfs(d, d["courier"], storage))
         except LabelNotReadyError:
             not_ready.append(str(d.get("id")))
         except HTTPException as exc:
@@ -1547,11 +1569,11 @@ def batch_labels(
             detail=f"Etykiety nie są jeszcze gotowe dla: {', '.join(not_ready)}",
         )
 
-    merged = _merge_pdfs(pdfs)
+    title = batch_label_title(_now_warsaw())
     return StreamingResponse(
-        io.BytesIO(merged),
+        io.BytesIO(_titled_pdf(pdfs, title)),
         media_type="application/pdf",
-        headers={"Content-Disposition": 'inline; filename="labels_batch.pdf"'},
+        headers={"Content-Disposition": f'inline; filename="{_label_filename(title)}"'},
     )
 
 
@@ -1582,13 +1604,12 @@ def get_label(
             detail=f"courier must be one of: {', '.join(_SUPPORTED_COURIERS)}",
         )
 
-    pdf_bytes = _fetch_label_pdf(draft, courier, storage)
-
-    filename = _safe_label_filename(courier, draft.get("shopify_order_number", draft_id))
+    pdfs = _fetch_label_pdfs(draft, courier, storage)
+    title = single_label_title(str(draft.get("shopify_order_number") or ""), _now_warsaw())
     return StreamingResponse(
-        io.BytesIO(pdf_bytes),
+        io.BytesIO(_titled_pdf(pdfs, title)),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={"Content-Disposition": f'inline; filename="{_label_filename(title)}"'},
     )
 
 

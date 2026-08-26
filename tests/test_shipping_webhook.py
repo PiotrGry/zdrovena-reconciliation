@@ -9,9 +9,11 @@ import io
 import json
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar
 from unittest.mock import ANY, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import HTTPException
@@ -3305,6 +3307,24 @@ class TestCreateDraftAllegroDelivery:
 # ── Label endpoint ────────────────────────────────────────────────────────────
 
 
+def _valid_label_pdf() -> bytes:
+    """A parsable one-page PDF. `b"%PDF-1.4 fake"` is not one: pypdf raises
+    PdfReadError on it, so it cannot exercise the titling path."""
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=300)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def _pdf_title(pdf_bytes: bytes) -> str | None:
+    from pypdf import PdfReader
+
+    return PdfReader(io.BytesIO(pdf_bytes)).metadata.title
+
+
 class TestGetLabel:
     def _seed_created_draft(self, store, courier="inpost"):
         service = "inpost_courier_standard" if courier == "inpost" else "apaczka"
@@ -3377,13 +3397,15 @@ class TestGetLabel:
     def test_label_content_disposition_uses_safe_ascii_filename(self, store, order_number):
         draft = self._seed_created_draft(store, courier="inpost")
         store.update_draft(draft["id"], {"shopify_order_number": order_number})
+        moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
 
         with (
             patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
             patch(
                 "zdrovena.common.inpost.InPostClient.get_label",
-                return_value=b"%PDF-1.4 fake",
+                return_value=_valid_label_pdf(),
             ),
+            patch("zdrovena.api.routers.webhooks._now_warsaw", return_value=moment),
         ):
             response = webhooks_router.get_label(draft["id"], store, MagicMock(), MagicMock(), None)
 
@@ -3396,7 +3418,7 @@ class TestGetLabel:
         assert "\\" not in disposition
         assert disposition.count('"') == 2
         if order_number == "5000":
-            assert disposition == 'inline; filename="label_inpost_5000.pdf"'
+            assert disposition == 'inline; filename="Etykieta 5000 26.08.pdf"'
 
     def test_inpost_multiple_box_labels_are_merged(self, client, store):
         draft = self._seed_created_draft(store, courier="inpost")
@@ -3415,14 +3437,14 @@ class TestGetLabel:
                 side_effect=[b"first", b"second"],
             ) as mock_label:
                 with patch(
-                    "zdrovena.api.routers.webhooks._merge_pdfs", return_value=b"merged"
+                    "zdrovena.api.routers.webhooks._titled_pdf", return_value=b"merged"
                 ) as merge:
                     resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
 
         assert resp.status_code == 200
         assert resp.content == b"merged"
         assert [call.args[0] for call in mock_label.call_args_list] == ["ship-3pak", "ship-1pak"]
-        merge.assert_called_once_with([b"first", b"second"])
+        merge.assert_called_once_with([b"first", b"second"], ANY)
 
     def test_label_502_on_courier_error(self, client, store):
         draft = self._seed_created_draft(store, courier="inpost")
@@ -3433,6 +3455,42 @@ class TestGetLabel:
             ):
                 resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
         assert resp.status_code == 502
+
+    def test_single_label_carries_the_dated_title(self, client, store):
+        draft = self._seed_created_draft(store, courier="inpost")
+        store.update_draft(draft["id"], {"shopify_order_number": "1723"})
+        moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
+
+        with (
+            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                return_value=_valid_label_pdf(),
+            ),
+            patch("zdrovena.api.routers.webhooks._now_warsaw", return_value=moment),
+        ):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
+
+        assert resp.status_code == 200
+        assert _pdf_title(resp.content) == "Etykieta 1723 26.08"
+        assert resp.headers["content-disposition"] == ('inline; filename="Etykieta 1723 26.08.pdf"')
+
+    def test_an_unparsable_carrier_pdf_is_still_returned(self, client, store):
+        # A label the operator cannot print is a worse failure than an ugly
+        # filename, so titling degrades instead of raising.
+        draft = self._seed_created_draft(store, courier="inpost")
+
+        with (
+            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                return_value=b"%PDF-1.4 not really a pdf",
+            ),
+        ):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
+
+        assert resp.status_code == 200
+        assert resp.content == b"%PDF-1.4 not really a pdf"
 
 
 class TestGetLabelAllegroDelivery:
@@ -3480,7 +3538,7 @@ class TestGetLabelAllegroDelivery:
                 "zdrovena.api.shipping_execution_composition.get_allegro_client",
                 return_value=allegro,
             ),
-            patch("zdrovena.api.routers.webhooks._merge_pdfs", return_value=b"merged") as merge,
+            patch("zdrovena.api.routers.webhooks._titled_pdf", return_value=b"merged") as merge,
         ):
             response = client.get(f"/api/shipping/drafts/{draft['id']}/label")
 
@@ -3490,7 +3548,7 @@ class TestGetLabelAllegroDelivery:
             "ship-1",
             "ship-2",
         ]
-        merge.assert_called_once_with([b"label-1", b"label-2"])
+        merge.assert_called_once_with([b"label-1", b"label-2"], ANY)
 
     def test_allegro_delivery_falls_back_to_courier_draft_id(self, client, store):
         draft = self._seed(store, allegro_shipment_id=None, courier_draft_id="fallback-id-9")
@@ -5005,6 +5063,26 @@ class TestBatchLabels:
         ids = [f"x-{i}" for i in range(101)]
         resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ids})
         assert resp.status_code == 400
+
+    def test_batch_label_carries_the_portal_title(self, client, store):
+        self._seed(store, "b-1", courier_draft_id="cd-1")
+        moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
+
+        with (
+            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                return_value=self._valid_pdf(),
+            ),
+            patch("zdrovena.api.routers.webhooks._now_warsaw", return_value=moment),
+        ):
+            resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ["b-1"]})
+
+        assert resp.status_code == 200
+        assert _pdf_title(resp.content) == "Etykiety portal 26.08"
+        assert resp.headers["content-disposition"] == (
+            'inline; filename="Etykiety portal 26.08.pdf"'
+        )
 
 
 class TestSingleLabelNotReady:

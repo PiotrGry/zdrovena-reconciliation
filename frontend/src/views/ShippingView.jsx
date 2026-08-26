@@ -31,6 +31,21 @@ function fmtDate(iso) {
     }
 }
 
+function dayStamp() {
+    // Matches zdrovena/shipping/domain/labels.py — the browser is already in
+    // the operator's timezone, so no conversion is needed here.
+    const now = new Date()
+    return `${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+function batchSheetTitle() {
+    return `Etykiety portal ${dayStamp()}`
+}
+
+function labelSheetTitle(orderNumber) {
+    return `Etykieta ${String(orderNumber).replace(/^#/, '')} ${dayStamp()}`
+}
+
 export function printPdf(blob, title) {
     const url = URL.createObjectURL(blob)
     const frame = document.createElement('iframe')
@@ -1460,7 +1475,7 @@ export default function ShippingView() {
             }
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
             const blob = await res.blob()
-            printPdf(blob, `Etykieta ${draft.shopify_order_number || draft.id}`)
+            printPdf(blob, labelSheetTitle(draft.shopify_order_number || draft.id))
         } catch (e) {
             pushToast({ kind: 'error', msg: `Błąd pobierania etykiety: ${e.message}` })
         }
@@ -1673,7 +1688,7 @@ export default function ShippingView() {
                 throw new Error(body.detail || 'Co najmniej jedna etykieta nie jest jeszcze gotowa.')
             }
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-            printPdf(await res.blob(), `Etykiety A6 (${selected.length})`)
+            printPdf(await res.blob(), batchSheetTitle())
             setSelectedDraftIds(new Set())
         } catch (error) {
             pushToast({ kind: 'error', msg: `Błąd drukowania etykiet: ${error.message}` })
