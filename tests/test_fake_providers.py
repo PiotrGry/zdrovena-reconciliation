@@ -390,6 +390,85 @@ def test_apaczka_client_stateful_success_and_provider_validation_failure(
         )
 
 
+def _apaczka_shipment_kwargs() -> dict[str, Any]:
+    """Minimal valid kwargs for ApaczkaClient.create_shipment / build_shipment_order."""
+    return {
+        "receiver_name": "Anna Nowak",
+        "receiver_firstname": "Anna",
+        "receiver_lastname": "Nowak",
+        "receiver_email": "anna@example.test",
+        "receiver_phone": "500500500",
+        "receiver_address": "Prosta 1",
+        "receiver_city": "Warszawa",
+        "receiver_zip": "00-001",
+        "sender": {
+            "name": "Zdrovena",
+            "firstname": "Piotr",
+            "lastname": "Gryzlo",
+            "email": "sender@example.test",
+            "phone": "500500501",
+            "street": "Magazynowa",
+            "building_number": "2",
+            "city": "Warszawa",
+            "post_code": "00-002",
+        },
+        "reference": "order-1639",
+        "content": "Woda butelkowana",
+    }
+
+
+def test_apaczka_order_detail_assigns_a_pickup_number_on_the_second_read(
+    fake_provider_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The carrier assigns pickup_number asynchronously. The emulator withholds
+    it on the first read so the poller path is exercised, not assumed."""
+    import zdrovena.common.apaczka as apaczka_module
+
+    monkeypatch.setattr(apaczka_module, "_BASE", f"{fake_provider_url}/apaczka/api/v2")
+    client = ApaczkaClient(
+        app_id="fake", app_secret="fake", service_id="21", storage=_MemoryStorage()
+    )
+    created = client.create_shipment(**_apaczka_shipment_kwargs())
+
+    assert client.get_order_pickup_number(created["id"]) == ""
+    assert client.get_order_pickup_number(created["id"]).startswith("ZO-")
+
+
+def test_apaczka_order_detail_keeps_the_pickup_window_it_was_sent(
+    fake_provider_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import zdrovena.common.apaczka as apaczka_module
+
+    monkeypatch.setattr(apaczka_module, "_BASE", f"{fake_provider_url}/apaczka/api/v2")
+    client = ApaczkaClient(
+        app_id="fake", app_secret="fake", service_id="21", storage=_MemoryStorage()
+    )
+    created = client.create_shipment(
+        **_apaczka_shipment_kwargs(),
+        pickup_date="2026-08-27",
+        pickup_from="10:00",
+        pickup_to="12:00",
+    )
+
+    pickup = client.get_order(created["id"])["pickup"]
+    assert pickup["date"] == "2026-08-27"
+    assert pickup["hours_from"] == "10:00"
+    assert pickup["hours_to"] == "12:00"
+
+
+def test_apaczka_order_detail_404s_for_an_unknown_order(
+    fake_provider_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import zdrovena.common.apaczka as apaczka_module
+
+    monkeypatch.setattr(apaczka_module, "_BASE", f"{fake_provider_url}/apaczka/api/v2")
+    client = ApaczkaClient(
+        app_id="fake", app_secret="fake", service_id="21", storage=_MemoryStorage()
+    )
+    with pytest.raises(ApaczkaBusinessError):
+        client.get_order("does-not-exist")
+
+
 def test_fakturownia_client_stateful_success_and_existing_invoice(
     fake_provider_url: str,
 ) -> None:
