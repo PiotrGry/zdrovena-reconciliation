@@ -286,6 +286,31 @@ class ApaczkaClient:
         response = result.get("response") or {}
         return list(response.get("orders") or []) if isinstance(response, dict) else []
 
+    def get_order(self, order_id: str) -> dict[str, Any]:
+        """Return one order's detail record.
+
+        This is the only endpoint carrying the pickup block: ``order_send``
+        answers with the created order and no pickup information at all.
+        """
+        result = self._call(f"order/{order_id}", {})
+        response = result.get("response") or {}
+        if not isinstance(response, dict):
+            return {}
+        order = response.get("order")
+        return order if isinstance(order, dict) else {}
+
+    def get_order_pickup_number(self, order_id: str) -> str:
+        """Return the carrier's pickup-order id, or "" if not assigned yet.
+
+        The operator quotes this number to Apaczka support when a collection
+        goes wrong, so it is worth one extra read per shipment. The carrier
+        assigns it asynchronously, hence the empty-string case.
+        """
+        pickup = self.get_order(order_id).get("pickup")
+        if not isinstance(pickup, dict):
+            return ""
+        return str(pickup.get("pickup_number") or "").strip()
+
     def build_shipment_order(
         self,
         *,
