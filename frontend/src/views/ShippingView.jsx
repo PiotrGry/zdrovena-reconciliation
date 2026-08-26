@@ -18,6 +18,7 @@ import {
     shippingGridTemplate,
     sortDrafts,
 } from './shippingTable'
+import { TrackingList } from './shipping/TrackingList'
 
 function fmtDate(iso) {
     if (!iso) return '—'
@@ -959,18 +960,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 )}
                             </div>
                             <div>
-                                <div className="detail-label">Numer śledzenia</div>
-                                <div>
-                                    {draft.tracking_number
-                                        ? (
-                                            <span className="mono copyable" title="Kliknij żeby skopiować"
-                                                onClick={() => navigator.clipboard.writeText(draft.tracking_number)}
-                                                style={{ cursor: 'pointer' }}>
-                                                {draft.tracking_number}
-                                            </span>
-                                        )
-                                        : <span className="dim">—</span>}
-                                </div>
+                                <TrackingList draft={draft} />
                                 <div className="detail-label" style={{ marginTop: 10 }}>ID draftu kuriera</div>
                                 <div className="mono dim">{draft.courier_draft_id || '—'}</div>
                             </div>
