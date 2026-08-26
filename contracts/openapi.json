@@ -130,6 +130,21 @@
             ],
             "title": "Locker Id"
           },
+          "packages_breakdown": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packages Breakdown"
+          },
           "packages_count": {
             "anyOf": [
               {
@@ -3198,7 +3213,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Update draft metadata (packages_count, service, locker_id)",
+        "summary": "Update draft metadata (packages_breakdown, service, locker_id)",
         "tags": [
           "shipping"
         ]
