@@ -47,6 +47,7 @@ _SYNC_TERMINAL_STATUSES = {"created", "cancelled"}
 _SYNC_BUSY_STATUSES = {"executing", "pending_confirmation"}
 _SYNC_EXECUTION_STARTED_STATUSES = {"executing", "pending_confirmation", "created"}
 _MATCH_MANUAL = "manual"
+_PACKAGES_SOURCE_OPERATOR = "operator"
 _MATCH_FIELDS = (
     "shipping_service_match_status",
     "shipping_service_match_source",
@@ -183,6 +184,17 @@ def merge_synced_draft(
             for field in _MATCH_FIELDS:
                 if field in existing:
                     merged[field] = existing[field]
+    if existing.get("packages_source") == _PACKAGES_SOURCE_OPERATOR and existing.get(
+        "packages_breakdown"
+    ):
+        # Preserved conditionally, like a manual Apaczka service override: a
+        # plan the operator corrected outranks a recomputed one, but a draft
+        # nobody touched still re-plans when the order changes.
+        merged["packages_breakdown"] = existing["packages_breakdown"]
+        merged["packages_count"] = existing.get("packages_count") or sum(
+            int(row.get("qty") or 0) for row in existing["packages_breakdown"]
+        )
+        merged["packages_source"] = _PACKAGES_SOURCE_OPERATOR
     if existing.get("service") and existing_status in _SYNC_BUSY_STATUSES | _SYNC_TERMINAL_STATUSES:
         merged["service"] = existing["service"]
         merged["courier"] = existing.get("courier", merged.get("courier"))

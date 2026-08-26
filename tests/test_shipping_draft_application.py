@@ -357,3 +357,85 @@ def test_sync_still_respects_an_operator_who_cleared_a_readable_draft() -> None:
     merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *args: None)
 
     assert merged["status"] == "pending"
+
+
+class TestOperatorParcelPlanSurvivesSync:
+    def test_keeps_the_operator_plan_and_its_count(self):
+        # The planner recomputes on every sync. Without this, the operator's
+        # correction is silently reverted and the wrong boxes ship — which is
+        # exactly how #1710-#1712 went out.
+        existing = {
+            "id": "d1",
+            "status": "pending",
+            "packages_source": "operator",
+            "packages_breakdown": [{"type": "szkło", "qty": 2}],
+            "packages_count": 2,
+        }
+        incoming = {
+            "id": "d1",
+            "status": "pending",
+            "packages_source": "planner",
+            "packages_breakdown": [{"type": "1-pak", "qty": 1}],
+            "packages_count": 1,
+        }
+
+        merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
+
+        assert merged["packages_breakdown"] == [{"type": "szkło", "qty": 2}]
+        assert merged["packages_count"] == 2
+        assert merged["packages_source"] == "operator"
+
+    def test_a_planner_plan_is_still_replaced_by_a_fresh_one(self):
+        existing = {
+            "id": "d1",
+            "status": "pending",
+            "packages_source": "planner",
+            "packages_breakdown": [{"type": "1-pak", "qty": 1}],
+            "packages_count": 1,
+        }
+        incoming = {
+            "id": "d1",
+            "status": "pending",
+            "packages_source": "planner",
+            "packages_breakdown": [{"type": "3-pak", "qty": 1}],
+            "packages_count": 1,
+        }
+
+        merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
+
+        assert merged["packages_breakdown"] == [{"type": "3-pak", "qty": 1}]
+
+    def test_a_draft_written_before_the_field_existed_is_treated_as_planner(self):
+        existing = {
+            "id": "d1",
+            "status": "pending",
+            "packages_breakdown": [{"type": "1-pak", "qty": 1}],
+            "packages_count": 1,
+        }
+        incoming = {
+            "id": "d1",
+            "status": "pending",
+            "packages_source": "planner",
+            "packages_breakdown": [{"type": "3-pak", "qty": 1}],
+            "packages_count": 1,
+        }
+
+        merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
+
+        assert merged["packages_breakdown"] == [{"type": "3-pak", "qty": 1}]
+
+    def test_an_operator_draft_missing_its_plan_does_not_crash_the_sync(self):
+        # Defensive: a KeyError here would break syncing for every draft, not
+        # just this one. A malformed record must degrade, not take down the run.
+        existing = {"id": "d1", "status": "pending", "packages_source": "operator"}
+        incoming = {
+            "id": "d1",
+            "status": "pending",
+            "packages_source": "planner",
+            "packages_breakdown": [{"type": "3-pak", "qty": 1}],
+            "packages_count": 1,
+        }
+
+        merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
+
+        assert merged["packages_breakdown"] == [{"type": "3-pak", "qty": 1}]
