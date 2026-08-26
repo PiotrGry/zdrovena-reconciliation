@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import socket
 import threading
 import time
@@ -9,6 +10,7 @@ from typing import Any
 
 import pytest
 import requests
+from pypdf import PdfReader
 from uvicorn import Config, Server
 
 from zdrovena.common.allegro import AllegroClient
@@ -22,6 +24,7 @@ from zdrovena.common.shipping_exceptions import (
     InPostBusinessError,
 )
 from zdrovena.fake_providers.app import app
+from zdrovena.fake_providers.common import PDF_BYTES
 from zdrovena.shipping.domain.planning import parcel_content
 
 
@@ -204,6 +207,12 @@ def test_allegro_client_uses_fake_provider_over_http(
     state = requests.get(f"{fake_provider_url}/__fake__/state", timeout=2).json()
     assert state["allegro"]["orders"]["fake-order-1"]["fulfillment"]["status"] == "PROCESSING"
     assert state["allegro"]["invoices"][invoice["id"]]["fileUploaded"] is True
+
+
+def test_emulator_labels_are_parsable_pdfs() -> None:
+    """The portal merges and titles label PDFs with pypdf. An emulator that
+    serves bytes pypdf cannot read makes that path untestable end to end."""
+    assert len(PdfReader(io.BytesIO(PDF_BYTES)).pages) == 1
 
 
 def test_inpost_client_stateful_success_and_label_not_ready(

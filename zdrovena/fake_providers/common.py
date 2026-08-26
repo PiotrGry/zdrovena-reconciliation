@@ -6,14 +6,31 @@ provider module so one fake cannot accidentally inherit another API's rules.
 
 from __future__ import annotations
 
+import io
 import os
 import time
 from typing import Any
 from urllib.parse import parse_qs
 
 from fastapi import HTTPException, Request
+from pypdf import PdfWriter
 
-PDF_BYTES = b"%PDF-1.4\n% fake provider label\n%%EOF\n"
+
+def _blank_label_pdf() -> bytes:
+    """One valid, empty A6-ish page.
+
+    The portal runs every label through pypdf to merge parcels and set the
+    document title. A hand-written byte string does not parse, so the emulator
+    would only ever exercise the fallback path.
+    """
+    writer = PdfWriter()
+    writer.add_blank_page(width=298, height=420)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+PDF_BYTES = _blank_label_pdf()
 
 
 async def form_body(request: Request) -> dict[str, str]:
