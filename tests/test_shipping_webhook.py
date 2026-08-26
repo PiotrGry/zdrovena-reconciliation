@@ -1837,6 +1837,113 @@ class TestUpdateDraft:
             assert "review" not in resp.json()["detail"].lower()
 
 
+class TestUpdateDraftPackagesBreakdown:
+    @staticmethod
+    def _seed_pending_draft(store):
+        draft = {
+            "id": "draft-packages-1",
+            "shopify_order_number": "1801",
+            "courier": "apaczka",
+            "service": "apaczka",
+            "apaczka_service_id": "21",
+            "status": "pending",
+            "packages_count": 1,
+            "packages_breakdown": [{"type": "1-pak", "qty": 1}],
+            "packages_source": "planner",
+            "courier_shipments": [],
+        }
+        store.upsert_draft(draft)
+        return draft
+
+    def test_replaces_the_plan_and_recomputes_the_count(self, client, store):
+        draft = self._seed_pending_draft(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "szkło", "qty": 2}, {"type": "1-pak", "qty": 1}]},
+        )
+        assert resp.status_code == 200
+        updated = store.get_draft(draft["id"])
+        assert updated["packages_breakdown"] == [
+            {"type": "szkło", "qty": 2},
+            {"type": "1-pak", "qty": 1},
+        ]
+        assert updated["packages_count"] == 3
+        assert updated["packages_source"] == "operator"
+
+    def test_rejects_a_type_outside_the_catalogue(self, client, store):
+        draft = self._seed_pending_draft(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "karton", "qty": 1}]},
+        )
+        assert resp.status_code == 400
+        assert "karton" in resp.json()["detail"]
+
+    def test_rejects_an_empty_plan(self, client, store):
+        draft = self._seed_pending_draft(store)
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"packages_breakdown": []})
+        assert resp.status_code == 400
+
+    def test_rejects_a_quantity_outside_one_to_ninetynine(self, client, store):
+        draft = self._seed_pending_draft(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "1-pak", "qty": 0}]},
+        )
+        assert resp.status_code == 400
+
+    def test_rejects_more_than_thirty_parcels(self, client, store):
+        draft = self._seed_pending_draft(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "1-pak", "qty": 31}]},
+        )
+        assert resp.status_code == 400
+
+    def test_rejects_both_fields_at_once(self, client, store):
+        draft = self._seed_pending_draft(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_count": 2, "packages_breakdown": [{"type": "1-pak", "qty": 1}]},
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.parametrize(
+        "status", ["executing", "pending_confirmation", "created", "cancelled"]
+    )
+    def test_409_once_the_shipment_exists_at_the_carrier(self, client, store, status):
+        # Past this point the plan is the audit record of what was sent, not a
+        # draft. Editing it would make the stored plan disagree with the labels.
+        draft = self._seed_pending_draft(store)
+        store.update_draft(draft["id"], {"status": status})
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "1-pak", "qty": 2}]},
+        )
+        assert resp.status_code == 409
+
+    def test_400_when_a_cod_draft_would_get_more_than_one_parcel(self, client, store):
+        # apaczka_call_specs refuses multi-parcel COD, because one full
+        # collection amount per parcel charges the customer several times.
+        # Saying so at save time beats failing at execute time.
+        draft = self._seed_pending_draft(store)
+        store.update_draft(draft["id"], {"cod": {"amount": 20030, "currency": "PLN"}})
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "1-pak", "qty": 2}]},
+        )
+        assert resp.status_code == 400
+
+    def test_a_cod_draft_may_still_be_repacked_into_one_parcel(self, client, store):
+        draft = self._seed_pending_draft(store)
+        store.update_draft(draft["id"], {"cod": {"amount": 20030, "currency": "PLN"}})
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "szkło", "qty": 1}]},
+        )
+        assert resp.status_code == 200
+
+
 # ── Helper function unit tests ────────────────────────────────────────────────
 
 

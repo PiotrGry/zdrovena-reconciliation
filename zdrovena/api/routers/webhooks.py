@@ -6,7 +6,7 @@ GET  /shipping/drafts                         — list shipping drafts from Tabl
 GET  /shipping/drafts/{id}/label              — stream label PDF from courier
 POST /shipping/drafts/{id}/execute            — (re)create courier shipment for a draft
 POST /shipping/drafts/{id}/pickup             — order InPost kurier pickup
-PATCH /shipping/drafts/{id}                   — update packages_count
+PATCH /shipping/drafts/{id}                   — update packages_breakdown, service, locker_id
 DELETE /shipping/drafts/{id}/shipment         — cancel Ship-with-Allegro shipment
 DELETE /shipping/drafts/{id}/dispatch         — cancel Ship-with-Allegro dispatch
 DELETE /inpost/shipments/{id}                 — cancel InPost shipment before dispatch
@@ -1324,12 +1324,66 @@ def cancel_apaczka_order(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-# ── Update packages_count ─────────────────────────────────────────────────────
+# ── Update packages_breakdown ─────────────────────────────────────────────────
+
+_MAX_BREAKDOWN_ROWS = 20
+_MAX_TOTAL_PARCELS = 30
+# Past these statuses the parcel plan describes shipments that already exist at
+# the carrier. Editing it would make the record disagree with the printed labels.
+_BREAKDOWN_LOCKED_STATUSES = frozenset(
+    {"executing", "pending_confirmation", "created", "cancelled"}
+)
+
+
+def _validated_breakdown(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalise an operator parcel plan or raise a 400 the operator can read."""
+    from zdrovena.common.shipping_parcels import PARCEL_SPECS
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="Plan paczek nie może być pusty")
+    if len(rows) > _MAX_BREAKDOWN_ROWS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Za dużo pozycji w planie paczek (maksymalnie {_MAX_BREAKDOWN_ROWS})",
+        )
+
+    cleaned: list[dict[str, Any]] = []
+    for row in rows:
+        package_type = str(row.get("type") or "").strip()
+        if package_type not in PARCEL_SPECS:
+            raise HTTPException(status_code=400, detail=f"Nieznany typ paczki: {package_type}")
+        raw_qty = row.get("qty")
+        if raw_qty is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Liczba sztuk dla {package_type} musi być liczbą całkowitą",
+            )
+        try:
+            qty = int(raw_qty)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Liczba sztuk dla {package_type} musi być liczbą całkowitą",
+            ) from None
+        if not 1 <= qty <= 99:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Liczba sztuk dla {package_type} musi mieścić się w zakresie 1–99",
+            )
+        cleaned.append({"type": package_type, "qty": qty})
+
+    total = sum(row["qty"] for row in cleaned)
+    if total > _MAX_TOTAL_PARCELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Za dużo paczek w jednym zamówieniu ({total}, maksymalnie {_MAX_TOTAL_PARCELS})",
+        )
+    return cleaned
 
 
 @router.patch(
     "/shipping/drafts/{draft_id}",
-    summary="Update draft metadata (packages_count, service, locker_id)",
+    summary="Update draft metadata (packages_breakdown, service, locker_id)",
     responses={
         403: {"description": "Insufficient role"},
         404: {"description": "Draft not found"},
@@ -1341,6 +1395,11 @@ def update_draft(
     shipping_store: ShippingStoreDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
     packages_count: int | None = Body(None, ge=1, le=99),
+    # Body(None) is FastAPI's documented way to declare an optional list-typed
+    # body field. Ruff's bugbear check flags list/dict-annotated Body(...)
+    # defaults as if they were mutable-default literals, but the actual
+    # default is an immutable FieldInfo sentinel, not a list.
+    packages_breakdown: list[dict[str, Any]] | None = Body(None),  # noqa: B008
     service: str | None = Body(None),
     locker_id: str | None = Body(None),
     apaczka_service_id: str | None = Body(None),
@@ -1353,6 +1412,33 @@ def update_draft(
     patch: dict[str, Any] = {}
     if packages_count is not None:
         patch["packages_count"] = packages_count
+    if packages_breakdown is not None:
+        if packages_count is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Podaj plan paczek albo liczbę paczek, nie oba naraz",
+            )
+        if draft.get("status") in _BREAKDOWN_LOCKED_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail="Nie można zmienić paczek po wysłaniu przesyłki do kuriera",
+            )
+        cleaned = _validated_breakdown(packages_breakdown)
+        total = sum(row["qty"] for row in cleaned)
+        if draft.get("cod") and total != 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Przesyłka pobraniowa musi mieścić się w jednej paczce",
+            )
+        logger.info(
+            "Operator repacked draft %s: %s -> %s",
+            draft_id,
+            draft.get("packages_breakdown"),
+            cleaned,
+        )
+        patch["packages_breakdown"] = cleaned
+        patch["packages_count"] = total
+        patch["packages_source"] = "operator"
     if service is not None:
         valid = {"inpost_locker_standard", "inpost_courier_standard", "apaczka"}
         if service not in valid:
