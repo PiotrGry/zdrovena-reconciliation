@@ -20,6 +20,8 @@ from fcntl import LOCK_EX, LOCK_UN, flock
 from pathlib import Path
 from typing import Any
 
+from zdrovena.common.exceptions import storage_unavailable
+
 logger = logging.getLogger("zdrovena.common.shipping_store")
 
 TABLE_NAME = "shippingdrafts"
@@ -362,12 +364,18 @@ class ShippingStore:
     def get_draft(self, draft_id: str) -> dict[str, Any] | None:
         if self._use_table:
             try:
+                from azure.core.exceptions import ResourceNotFoundError
+
                 entity = self._table_client().get_entity(
                     partition_key=PARTITION_KEY, row_key=draft_id
                 )
                 return _deserialize(dict(entity))
-            except Exception:
+            except ResourceNotFoundError:
                 return None
+            except Exception as exc:
+                # An outage is not an absence. Returning None here made a timeout
+                # look like "this draft does not exist" (issue #310).
+                raise storage_unavailable("shipping", "get_draft", exc) from exc
         else:
             return self._local_load().get(draft_id)
 
@@ -554,8 +562,7 @@ class ShippingStore:
                 )
                 records = [self._deserialize_dlq_entry(dict(e)) for e in entities]
             except Exception as exc:
-                logger.warning("DLQ list failed: %s", exc)
-                return []
+                raise storage_unavailable("shipping", "list_dlq", exc) from exc
         else:
             records = list(self._dlq_load_unlocked().values())
         records.sort(key=lambda r: r.get("created_at", ""), reverse=True)
@@ -564,12 +571,16 @@ class ShippingStore:
     def get_dlq_entry(self, entry_id: str) -> dict[str, Any] | None:
         if self._use_table:
             try:
+                from azure.core.exceptions import ResourceNotFoundError
+
                 entity = self._dlq_table_client().get_entity(
                     partition_key=DLQ_PARTITION_KEY, row_key=entry_id
                 )
                 return self._deserialize_dlq_entry(dict(entity))
-            except Exception:
+            except ResourceNotFoundError:
                 return None
+            except Exception as exc:
+                raise storage_unavailable("shipping", "get_dlq_entry", exc) from exc
         return self._dlq_load_unlocked().get(entry_id)
 
     def delete_dlq_entry(self, entry_id: str) -> None:
@@ -595,8 +606,9 @@ class ShippingStore:
                 )
                 records: list[dict[str, Any]] = [_deserialize(dict(e)) for e in entities]
             except Exception as exc:
-                logger.warning("Table list_drafts failed: %s", exc)
-                return []
+                # A list read has no not-found case: an empty partition yields an
+                # empty result without raising. So every exception is an outage.
+                raise storage_unavailable("shipping", "list_drafts", exc) from exc
         else:
             records = list(self._local_load().values())
         records.sort(key=lambda r: r.get("created_at", ""), reverse=True)
