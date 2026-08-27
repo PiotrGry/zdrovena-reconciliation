@@ -5,6 +5,16 @@
 
 ### Fixed
 
+- **storage**: Awaria Azure Table Storage nie wygląda już jak brak danych. Sześć ścieżek odczytu
+  w `ShippingStore` i `DamageStore` łapało gołe `Exception` i odpowiadało `None` albo pustą listą,
+  więc timeout, throttling czy wygasłe poświadczenia były nieodróżnialne od rekordu, którego
+  naprawdę nie ma. Najgroźniejszy skutek nie był kosmetyczny: `find_case_by_fingerprint` iteruje
+  po `list_cases`, więc przy awarii odpowiadał „nie ma takiej sprawy" i wywołujący tworzył duplikat
+  sprawy uszkodzenia. Teraz brak encji nadal daje `None`/404, a każda inna awaria to
+  `StorageUnavailableError` → HTTP 503 z correlation ID plus zdarzenie `storage_unavailable`,
+  na którym mogą się oprzeć alerty (#214). Lokalny backend JSON celowo bez zmian — tam uszkodzony
+  plik sam się leczy przy następnym zapisie i jest to udokumentowana decyzja. (#310)
+
 - **shipping**: InPost wymaga i waliduje numer telefonu odbiorcy od 2026-09-08 — portal sprawdza
   go teraz przed wysłaniem przesyłki, zamiast czekać na odrzucenie przez ShipX. Numer jest przy
   okazji normalizowany w jedynym lejku ścieżki InPost, więc stare drafty z surową wartością też
