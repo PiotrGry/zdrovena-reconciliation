@@ -68,6 +68,25 @@ export function printPdf(blob, title) {
     }, 60_000)
 }
 
+/**
+ * Every carrier calls its pickup order something different and stores it in a
+ * different shape. The operator quotes this id to that carrier's support when a
+ * collection goes wrong, so all three have to surface in the same place.
+ * Apaczka binds a pickup to a single order, so a multi-parcel draft can carry
+ * several distinct numbers.
+ */
+function pickupOrderIds(draft) {
+    if (draft.courier === 'apaczka') {
+        return (draft.courier_shipments || [])
+            .map(shipment => String(shipment.pickup_number || '').trim())
+            .filter(Boolean)
+    }
+    const single = draft.courier === 'allegro_delivery'
+        ? draft.allegro_dispatch_id
+        : draft.dispatch_order_id
+    return String(single || '').trim() ? [String(single).trim()] : []
+}
+
 function courierLabel(draft, apaczkaServices = []) {
     if (draft.courier === 'allegro_delivery') {
         if (draft.allegro_sending_method === 'parcel_locker') return 'Wysyłam z Allegro (Paczkomat)'
@@ -815,6 +834,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
     // Apaczka is absent on purpose: its API has no standalone pickup call, so a
     // pickup can only travel inside order_send at execute time.
     const canOrderPickup = draft.courier === 'inpost' || draft.courier === 'allegro_delivery'
+    const draftPickupOrderIds = pickupOrderIds(draft)
     const canPickup = (
         canOrderPickup &&
         draft.status === 'created' &&
@@ -963,6 +983,18 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 <TrackingList draft={draft} />
                                 <div className="detail-label" style={{ marginTop: 10 }}>ID draftu kuriera</div>
                                 <div className="mono dim">{draft.courier_draft_id || '—'}</div>
+                                <div className="detail-label" style={{ marginTop: 10 }}>ID zlecenia odbioru</div>
+                                <div>
+                                    {draftPickupOrderIds.length
+                                        ? draftPickupOrderIds.map(id => (
+                                            <div key={id} className="mono copyable" title="Kliknij żeby skopiować"
+                                                onClick={() => navigator.clipboard.writeText(id)}
+                                                style={{ cursor: 'pointer' }}>
+                                                {id}
+                                            </div>
+                                        ))
+                                        : <span className="dim">—</span>}
+                                </div>
                             </div>
                             <div>
                                 <PackagesEditor

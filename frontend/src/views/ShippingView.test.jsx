@@ -409,6 +409,56 @@ describe('ShippingView', () => {
         })
         expect(getConfirmCalls()).toBe(1)
     }, 7000)
+
+    it('shows the InPost dispatch order id as the pickup order id', async () => {
+        installShippingFetch({ drafts: [draft({
+            status: 'created', courier: 'inpost', dispatch_order_id: 'DO-4411',
+        })] })
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+        await userEvent.click(screen.getByRole('button', { name: 'Rozwiń' }))
+
+        expect(await screen.findByText('ID zlecenia odbioru')).toBeInTheDocument()
+        expect(screen.getByText('DO-4411')).toBeInTheDocument()
+    })
+
+    it('shows every Apaczka pickup number, one per parcel', async () => {
+        installShippingFetch({ drafts: [draft({
+            status: 'created',
+            courier: 'apaczka',
+            courier_shipments: [
+                { id: 'ord-1', tracking_number: 'APZ1', package_type: '1-pak', package_number: '1', pickup_number: 'ZO-1' },
+                { id: 'ord-2', tracking_number: 'APZ2', package_type: '1-pak', package_number: '2', pickup_number: 'ZO-2' },
+            ],
+        })] })
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+        await userEvent.click(screen.getByRole('button', { name: 'Rozwiń' }))
+
+        expect(await screen.findByText('ZO-1')).toBeInTheDocument()
+        expect(screen.getByText('ZO-2')).toBeInTheDocument()
+    })
+
+    it('shows the Allegro dispatch id as the pickup order id', async () => {
+        installShippingFetch({ drafts: [draft({
+            status: 'created', courier: 'allegro_delivery', allegro_dispatch_id: 'AL-77',
+        })] })
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+        await userEvent.click(screen.getByRole('button', { name: 'Rozwiń' }))
+
+        expect(await screen.findByText('AL-77')).toBeInTheDocument()
+    })
+
+    it('renders a dash when no pickup has been ordered', async () => {
+        installShippingFetch({ drafts: [draft({ status: 'created', courier: 'inpost' })] })
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+        await userEvent.click(screen.getByRole('button', { name: 'Rozwiń' }))
+
+        const label = await screen.findByText('ID zlecenia odbioru')
+        expect(label.nextSibling.textContent).toBe('—')
+    })
 })
 
 describe('execute preview', () => {
