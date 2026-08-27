@@ -439,3 +439,44 @@ class TestOperatorParcelPlanSurvivesSync:
         merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
 
         assert merged["packages_breakdown"] == [{"type": "3-pak", "qty": 1}]
+
+
+class TestInPostPhoneReFlagsOnSync:
+    """Issue #294. Without this, one "reviewed" click makes a phone-less InPost
+    draft executable forever: merge_synced_draft deliberately keeps a cleared
+    draft at pending, so every later sync preserved the broken state."""
+
+    @staticmethod
+    def _pair(existing_phone, incoming_phone, courier="inpost"):
+        base = {"id": "d1", "courier": courier, "service": "inpost_courier_standard"}
+        existing = {**base, "status": "pending", "receiver": {"phone": existing_phone}}
+        incoming = {**base, "status": "needs_review", "receiver": {"phone": incoming_phone}}
+        return existing, incoming
+
+    def test_a_cleared_inpost_draft_without_a_phone_is_re_flagged(self):
+        existing, incoming = self._pair(None, None)
+
+        merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
+
+        assert merged["status"] == "needs_review"
+
+    def test_a_malformed_phone_counts_as_missing(self):
+        existing, incoming = self._pair("12345", "12345")
+
+        merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
+
+        assert merged["status"] == "needs_review"
+
+    def test_a_cleared_inpost_draft_with_a_phone_stays_cleared(self):
+        existing, incoming = self._pair("+48600100200", "+48600100200")
+
+        merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
+
+        assert merged["status"] == "pending"
+
+    def test_other_carriers_keep_the_old_behaviour(self):
+        existing, incoming = self._pair(None, None, courier="apaczka")
+
+        merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
+
+        assert merged["status"] == "pending"

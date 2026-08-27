@@ -158,6 +158,17 @@
             ],
             "title": "Packages Count"
           },
+          "receiver_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receiver Phone"
+          },
           "reviewed": {
             "anyOf": [
               {
@@ -3213,7 +3224,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Update draft metadata (packages_breakdown, service, locker_id)",
+        "summary": "Update draft metadata (packages_breakdown, service, locker_id, receiver_phone)",
         "tags": [
           "shipping"
         ]

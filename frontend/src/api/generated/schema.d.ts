@@ -630,7 +630,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Update draft metadata (packages_breakdown, service, locker_id) */
+        /** Update draft metadata (packages_breakdown, service, locker_id, receiver_phone) */
         patch: operations["update_draft_api_shipping_drafts__draft_id__patch"];
         trace?: never;
     };
@@ -939,6 +939,8 @@ export interface components {
             }[] | null;
             /** Packages Count */
             packages_count?: number | null;
+            /** Receiver Phone */
+            receiver_phone?: string | null;
             /** Reviewed */
             reviewed?: boolean | null;
             /** Service */

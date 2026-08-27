@@ -7,7 +7,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from zdrovena.common.shipping_exceptions import InPostBusinessError
+from zdrovena.common.shipping_exceptions import (
+    InPostBusinessError,
+    InPostRecipientPhoneError,
+)
 from zdrovena.common.shipping_parcels import PARCEL_SPECS
 from zdrovena.shipping.providers.inpost import (
     inpost_call_specs,
@@ -572,3 +575,62 @@ def test_resume_never_posts_another_paid_shipment(
     client.create_kurier_shipment.assert_not_called()
     client.create_paczkomat_shipment.assert_not_called()
     client._post_shipment.assert_not_called()
+
+
+# ── Recipient phone (issue #294) ──────────────────────────────────────────────
+#
+# InPost enforces a valid recipient phone from 2026-09-08. Validated in
+# inpost_call_specs: the one funnel both services share, ahead of the paid POST.
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["+48 000 000 000", "48 000 000 000", "000 000 000", "000000000", "+48000000000"],
+)
+def test_every_inpost_accepted_format_reaches_the_payload_normalised(raw: str) -> None:
+    """The four shapes InPost's notice lists, plus the already-normalised one."""
+    draft = _draft()
+    draft["receiver"] = {**draft["receiver"], "phone": raw}
+
+    specs = inpost_call_specs(draft, _SENDER)
+
+    assert [spec[4]["receiver_phone"] for spec in specs] == ["+48000000000"]
+
+
+@pytest.mark.parametrize("raw", [None, "", "   ", "12345", "abc", "+1 202 555 0100"])
+def test_an_unusable_phone_is_rejected_before_any_payload_is_built(raw: Any) -> None:
+    draft = _draft()
+    draft["receiver"] = {**draft["receiver"], "phone": raw}
+
+    with pytest.raises(InPostRecipientPhoneError):
+        inpost_call_specs(draft, _SENDER)
+
+
+def test_a_missing_phone_key_is_rejected() -> None:
+    draft = _draft()
+    receiver = dict(draft["receiver"])
+    receiver.pop("phone", None)
+    draft["receiver"] = receiver
+
+    with pytest.raises(InPostRecipientPhoneError):
+        inpost_call_specs(draft, _SENDER)
+
+
+def test_a_legacy_raw_phone_is_normalised_rather_than_rejected() -> None:
+    # Drafts written before build_draft_record normalised anything still hold
+    # raw values. Those are valid numbers - normalise them, do not refuse them.
+    draft = _draft()
+    draft["receiver"] = {**draft["receiver"], "phone": "500 600 700"}
+
+    specs = inpost_call_specs(draft, _SENDER)
+
+    assert specs[0][4]["receiver_phone"] == "+48500600700"
+
+
+def test_the_paczkomat_branch_validates_too() -> None:
+    # Two code paths build kwargs; both must go through the same rule.
+    draft = _draft(service="inpost_locker_standard")
+    draft["receiver"] = {**draft["receiver"], "phone": None}
+
+    with pytest.raises(InPostRecipientPhoneError):
+        inpost_call_specs(draft, _SENDER)

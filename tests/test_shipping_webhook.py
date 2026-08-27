@@ -2706,7 +2706,7 @@ class TestInPostPayloadPlan:
                         "first_name": "Jan",
                         "last_name": "Kowalski",
                         "email": "jan@k.pl",
-                        "phone": "600100200",
+                        "phone": "+48600100200",
                         "address": {
                             "street": "Kwiatowa 1",
                             "building_number": "1",
@@ -2802,6 +2802,180 @@ class TestInPostPayloadPlan:
                 wh._run_inpost(draft, _SENDER)
 
         assert [call.args[0] for call in mock_post.call_args_list] == [plan[0]["payload"]]
+
+
+class TestUpdateDraftRecipientPhone:
+    """Issue #294: before this field existed the operator could only wave a
+    phone-less draft through, never fix it — PATCH had no phone parameter."""
+
+    @staticmethod
+    def _seed(store, phone=None, courier="inpost", status="needs_review"):
+        draft = {
+            "id": "draft-phone-1",
+            "shopify_order_number": "1802",
+            "courier": courier,
+            "service": "inpost_courier_standard" if courier == "inpost" else "apaczka",
+            "apaczka_service_id": None if courier == "inpost" else "21",
+            "status": status,
+            "receiver": {
+                "first_name": "Jan",
+                "last_name": "K",
+                "email": "",
+                "phone": phone,
+                "locker_id": "KRA01A",
+            },
+            "courier_shipments": [],
+        }
+        store.upsert_draft(draft)
+        return draft
+
+    def test_stores_the_normalised_number(self, client, store):
+        draft = self._seed(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}", json={"receiver_phone": "600 100 200"}
+        )
+        assert resp.status_code == 200
+        assert store.get_draft(draft["id"])["receiver"]["phone"] == "+48600100200"
+
+    @pytest.mark.parametrize("raw", ["", "12345", "abc", "+1 202 555 0100"])
+    def test_rejects_a_number_inpost_will_not_accept(self, client, store, raw):
+        draft = self._seed(store, phone="+48600100200")
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"receiver_phone": raw})
+        assert resp.status_code == 400
+        # a rejected edit must leave the stored value alone
+        assert store.get_draft(draft["id"])["receiver"]["phone"] == "+48600100200"
+
+    def test_saving_a_phone_does_not_clear_needs_review(self, client, store):
+        # Clearing review stays a separate, explicit click: the operator
+        # confirms the whole draft, not one field.
+        draft = self._seed(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}", json={"receiver_phone": "600100200"}
+        )
+        assert resp.status_code == 200
+        assert store.get_draft(draft["id"])["status"] == "needs_review"
+
+    def test_keeps_the_rest_of_the_receiver(self, client, store):
+        draft = self._seed(store)
+        client.patch(f"/api/shipping/drafts/{draft['id']}", json={"receiver_phone": "600100200"})
+        receiver = store.get_draft(draft["id"])["receiver"]
+        assert receiver["first_name"] == "Jan"
+        assert receiver["locker_id"] == "KRA01A"
+
+    def test_review_cannot_be_cleared_while_an_inpost_draft_has_no_usable_phone(
+        self, client, store
+    ):
+        # Otherwise one click makes the draft executable and it ships with a
+        # null phone, which InPost rejects from 2026-09-08.
+        draft = self._seed(store, phone=None)
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"reviewed": True})
+        assert resp.status_code == 400
+        assert store.get_draft(draft["id"])["status"] == "needs_review"
+
+    def test_review_clears_once_a_usable_phone_is_present(self, client, store):
+        draft = self._seed(store, phone="+48600100200")
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"reviewed": True})
+        assert resp.status_code == 200
+        assert store.get_draft(draft["id"])["status"] == "pending"
+
+    def test_the_block_does_not_apply_to_other_carriers(self, client, store):
+        # Apaczka has announced no such enforcement; the issue scopes this to InPost.
+        draft = self._seed(store, phone=None, courier="apaczka")
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"reviewed": True})
+        assert resp.status_code == 200
+        assert store.get_draft(draft["id"])["status"] == "pending"
+
+    def test_a_phone_and_a_review_can_be_sent_together(self, client, store):
+        # The guard must read the phone from the patch, not the stored draft:
+        # supplying the number and clearing review in one request must work.
+        draft = self._seed(store, phone=None)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"receiver_phone": "600100200", "reviewed": True},
+        )
+        assert resp.status_code == 200
+        updated = store.get_draft(draft["id"])
+        assert updated["receiver"]["phone"] == "+48600100200"
+        assert updated["status"] == "pending"
+
+    def test_a_phone_and_a_locker_can_be_sent_together(self, client, store):
+        # Both branches write patch["receiver"]; whichever ran second used to
+        # discard the other one's edit.
+        draft = self._seed(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"receiver_phone": "600100200", "locker_id": "WAW99Z"},
+        )
+        assert resp.status_code == 200
+        receiver = store.get_draft(draft["id"])["receiver"]
+        assert receiver["phone"] == "+48600100200"
+        assert receiver["locker_id"] == "WAW99Z"
+
+
+class TestRunInPostRecipientPhone:
+    """InPost enforces a valid recipient phone from 2026-09-08 (issue #294).
+
+    The point of this class is the negative assertion: bad data must cost
+    nothing, so no ShipX shipment POST may happen.
+    """
+
+    @staticmethod
+    def _draft() -> dict[str, Any]:
+        return {
+            "id": "d-inpost-phone",
+            "shopify_order_number": "1803",
+            "courier": "inpost",
+            "service": "inpost_courier_standard",
+            "receiver": {
+                "first_name": "Jan",
+                "last_name": "Kowalski",
+                "email": "jan@example.test",
+                "phone": None,
+                "locker_id": "",
+            },
+            "shipping_address": {
+                "street": "Kwiatowa",
+                "building_number": "7",
+                "flat_number": "",
+                "city": "Warszawa",
+                "post_code": "00-001",
+            },
+            "packages_breakdown": [{"type": "1-pak", "qty": 1}],
+            "courier_shipments": [],
+        }
+
+    def test_an_unusable_phone_creates_no_inpost_shipment(self):
+        from zdrovena.api.shipping_execution_composition import _run_inpost
+        from zdrovena.common.shipping_exceptions import InPostRecipientPhoneError
+
+        with (
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch("zdrovena.common.inpost.InPostClient.create_paczkomat_shipment") as paczkomat,
+            patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as kurier,
+        ):
+            with pytest.raises(InPostRecipientPhoneError):
+                _run_inpost(self._draft(), _SENDER)
+
+        paczkomat.assert_not_called()
+        kurier.assert_not_called()
+
+    def test_a_usable_phone_still_creates_the_shipment(self):
+        from zdrovena.api.shipping_execution_composition import _run_inpost
+
+        draft = self._draft()
+        draft["receiver"] = {**draft["receiver"], "phone": "600100200"}
+
+        with (
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.inpost.InPostClient.create_kurier_shipment",
+                return_value={"id": "ship-1", "tracking_number": "620ABC"},
+            ) as kurier,
+        ):
+            result = _run_inpost(draft, _SENDER)
+
+        assert result["tracking_number"] == "620ABC"
+        assert kurier.call_args.kwargs["receiver_phone"] == "+48600100200"
 
 
 class TestRunApaczka:
