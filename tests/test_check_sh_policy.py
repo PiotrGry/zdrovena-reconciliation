@@ -7,6 +7,7 @@ downgrades every guarantee the gate is supposed to give (issue #279).
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -61,3 +62,53 @@ class TestMissingTool:
                 env={"CHECK_TRIVY": value},
             )
             assert result.returncode != 0, f"CHECK_TRIVY={value!r} should not opt out"
+
+
+class TestNoBareSkips:
+    def test_every_skip_is_either_an_opt_out_or_goes_through_missing_tool(self) -> None:
+        """A bare `echo ${SKIP} ... not found` is the bug this issue is about.
+
+        Only two skips may be printed directly: the deliberate CHECK_TESTS and
+        CHECK_TYPECHECK opt-outs. Everything else must route through
+        missing_tool, which fails unless the developer opted out on purpose.
+        """
+        allowed = ("CHECK_TYPECHECK=0", "CHECK_TESTS=0", "($var=0)")
+
+        offenders = []
+        for number, line in enumerate(SOURCE.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped.startswith("echo -e") or "${SKIP}" not in stripped:
+                continue
+            if any(token in stripped for token in allowed):
+                continue
+            offenders.append(f"{number}: {stripped}")
+
+        assert offenders == [], (
+            "check.sh must not print a skip outside missing_tool — a step that "
+            "cannot run has to fail the gate (issue #279). Offending lines:\n"
+            + "\n".join(offenders)
+        )
+
+    def test_the_frontend_hints_do_not_advise_npm_install(self) -> None:
+        # npm install resolves fresh versions and lets node_modules drift from
+        # package-lock.json, which is how the local eslint became weaker than
+        # CI's. npm ci installs exactly what the lockfile pins.
+        assert "npm install" not in SOURCE
+
+    def test_missing_tool_is_defined_before_it_is_used(self) -> None:
+        definition = SOURCE.index("missing_tool()")
+        first_call = SOURCE.index('missing_tool "')
+        assert definition < first_call
+
+    def test_every_documented_opt_out_is_actually_read_by_the_script(self) -> None:
+        """A table that lies is worse than no table."""
+        contributing = (REPO_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        # Not opt-outs: CHECK_DOCS_FASTPATH forces a full run past the
+        # docs-only shortcut, CHECK_RANGE carries the git range from the
+        # pre-push hook. Neither disables a step.
+        not_opt_outs = {"CHECK_DOCS_FASTPATH", "CHECK_RANGE"}
+        used = set(re.findall(r"CHECK_[A-Z_]+", SOURCE)) - not_opt_outs
+        documented = set(re.findall(r"CHECK_[A-Z_]+", contributing)) - not_opt_outs
+
+        assert used - documented == set(), f"undocumented opt-outs: {sorted(used - documented)}"
+        assert documented - used == set(), f"documented but unused: {sorted(documented - used)}"
