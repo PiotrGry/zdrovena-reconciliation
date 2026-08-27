@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+## v2.9.0 (2026-08-27)
+
 ### Added
 
 - **shipping**: Arkusz etykiet zapisuje się jako „Etykiety portal DD.MM", pojedyncza etykieta jako
