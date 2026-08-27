@@ -16,6 +16,7 @@ from zdrovena.api.errors import (
     _envelope,
     install_exception_handlers,
 )
+from zdrovena.common.exceptions import storage_unavailable
 from zdrovena.common.shipping_exceptions import (
     ApaczkaServiceUnavailableError,
     CourierServerError,
@@ -111,6 +112,12 @@ def _app_with_handlers() -> FastAPI:
     def _boom_generic():
         raise KeyError("secret-internal-detail")
 
+    @app.get("/boom-storage")
+    def _boom_storage():
+        raise storage_unavailable(
+            "shipping", "list_drafts", RuntimeError("ServerBusy: subscription xyz throttled")
+        )
+
     return app
 
 
@@ -134,3 +141,37 @@ class TestHandlersViaTestClient:
         # Raw exception text must NOT leak to the operator-facing message.
         assert "secret-internal-detail" not in body["message_pl"]
         assert "nieoczekiwany błąd serwera" in body["message_pl"]
+
+
+class TestStorageOutage:
+    """Issue #310: an outage is not an absence, and it is not the caller's fault
+    either. 503 is what tells the operator - and any alerting - that the system
+    is unavailable rather than empty."""
+
+    def test_storage_outage_is_503_with_a_correlation_id(self):
+        client = TestClient(_app_with_handlers(), raise_server_exceptions=False)
+
+        res = client.get("/boom-storage")
+
+        assert res.status_code == 503
+        body = res.json()
+        assert body["error_code"] == "StorageUnavailableError"
+        assert body["correlation_id"]
+
+    def test_the_raw_azure_text_never_reaches_the_operator(self):
+        client = TestClient(_app_with_handlers(), raise_server_exceptions=False)
+
+        res = client.get("/boom-storage")
+
+        assert "ServerBusy" not in res.text
+        assert "xyz" not in res.text
+
+    def test_the_message_says_the_data_is_not_missing(self):
+        # The whole point of the issue: an operator who reads "no data" may act
+        # on an incomplete picture.
+        client = TestClient(_app_with_handlers(), raise_server_exceptions=False)
+
+        body = client.get("/boom-storage").json()
+
+        assert "niedostępny" in body["message_pl"]
+        assert "nie znaczy" in body["message_pl"]
