@@ -83,6 +83,18 @@ def _failure(status: int, message: str, *, field: str = "") -> dict[str, Any]:
     return {"status": status, "message": message, "response": response}
 
 
+def _public_order(order: dict[str, Any]) -> dict[str, Any]:
+    """Copy of a stored order with internal bookkeeping fields stripped.
+
+    ``_detail_reads`` tracks how many times ``order/:order_id/`` has been
+    read (see the pickup_number assignment below) and must never leak into
+    an emulator response.
+    """
+    public = deepcopy(order)
+    public.pop("_detail_reads", None)
+    return public
+
+
 def _credentials() -> tuple[str, str]:
     return (
         os.environ.get("FAKE_APACZKA_APP_ID", "fake"),
@@ -310,7 +322,7 @@ async def call(endpoint: str, http_request: Request) -> dict[str, Any]:
             return _failure(404, f"Unknown point type: {point_type}")
         return _ok({"points": deepcopy(points)})
     if endpoint == "orders":
-        return _ok({"orders": [deepcopy(order) for order in STATE.apaczka_orders.values()]})
+        return _ok({"orders": [_public_order(order) for order in STATE.apaczka_orders.values()]})
     if endpoint == "order_send":
         if "order" not in data:
             return _failure(422, "order is required", field="order")
@@ -325,16 +337,31 @@ async def call(endpoint: str, http_request: Request) -> dict[str, Any]:
             "status": "SENT",
             "waybill_number": f"APZ{order_id[-4:]}000000",
             "service_id": str(order_data["service_id"]),
+            # Mirrors the real contract: the pickup block exists from creation,
+            # but the carrier fills pickup_number in later.
+            "pickup": {**(order_data.get("pickup") or {}), "pickup_number": ""},
+            "_detail_reads": 0,
         }
         STATE.apaczka_orders[order_id] = created
-        return _ok({"order": deepcopy(created)})
+        return _ok({"order": _public_order(created)})
+    if endpoint.startswith("order/"):
+        order_id = endpoint.removeprefix("order/")
+        order = STATE.apaczka_orders.get(order_id)
+        if not order:
+            return _failure(404, "Order not found")
+        # The carrier assigns the pickup number asynchronously. Withholding it
+        # on the first read keeps the poller path honest in tests.
+        order["_detail_reads"] = int(order.get("_detail_reads") or 0) + 1
+        if order["_detail_reads"] > 1 and not order["pickup"].get("pickup_number"):
+            order["pickup"]["pickup_number"] = f"ZO-{order_id[-5:]}"
+        return _ok({"order": _public_order(order)})
     if endpoint.startswith("cancel_order/"):
         order_id = endpoint.removeprefix("cancel_order/")
         order = STATE.apaczka_orders.get(order_id)
         if not order:
             return _failure(404, "Order not found")
         order["status"] = "CANCELLED"
-        return _ok(deepcopy(order))
+        return _ok(_public_order(order))
     if endpoint.startswith("waybill/"):
         order_id = endpoint.removeprefix("waybill/")
         if order_id not in STATE.apaczka_orders:

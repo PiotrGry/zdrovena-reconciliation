@@ -9,9 +9,11 @@ import io
 import json
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar
 from unittest.mock import ANY, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import HTTPException
@@ -1835,6 +1837,113 @@ class TestUpdateDraft:
             assert "review" not in resp.json()["detail"].lower()
 
 
+class TestUpdateDraftPackagesBreakdown:
+    @staticmethod
+    def _seed_pending_draft(store):
+        draft = {
+            "id": "draft-packages-1",
+            "shopify_order_number": "1801",
+            "courier": "apaczka",
+            "service": "apaczka",
+            "apaczka_service_id": "21",
+            "status": "pending",
+            "packages_count": 1,
+            "packages_breakdown": [{"type": "1-pak", "qty": 1}],
+            "packages_source": "planner",
+            "courier_shipments": [],
+        }
+        store.upsert_draft(draft)
+        return draft
+
+    def test_replaces_the_plan_and_recomputes_the_count(self, client, store):
+        draft = self._seed_pending_draft(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "szkło", "qty": 2}, {"type": "1-pak", "qty": 1}]},
+        )
+        assert resp.status_code == 200
+        updated = store.get_draft(draft["id"])
+        assert updated["packages_breakdown"] == [
+            {"type": "szkło", "qty": 2},
+            {"type": "1-pak", "qty": 1},
+        ]
+        assert updated["packages_count"] == 3
+        assert updated["packages_source"] == "operator"
+
+    def test_rejects_a_type_outside_the_catalogue(self, client, store):
+        draft = self._seed_pending_draft(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "karton", "qty": 1}]},
+        )
+        assert resp.status_code == 400
+        assert "karton" in resp.json()["detail"]
+
+    def test_rejects_an_empty_plan(self, client, store):
+        draft = self._seed_pending_draft(store)
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"packages_breakdown": []})
+        assert resp.status_code == 400
+
+    def test_rejects_a_quantity_outside_one_to_ninetynine(self, client, store):
+        draft = self._seed_pending_draft(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "1-pak", "qty": 0}]},
+        )
+        assert resp.status_code == 400
+
+    def test_rejects_more_than_thirty_parcels(self, client, store):
+        draft = self._seed_pending_draft(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "1-pak", "qty": 31}]},
+        )
+        assert resp.status_code == 400
+
+    def test_rejects_both_fields_at_once(self, client, store):
+        draft = self._seed_pending_draft(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_count": 2, "packages_breakdown": [{"type": "1-pak", "qty": 1}]},
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.parametrize(
+        "status", ["executing", "pending_confirmation", "created", "cancelled"]
+    )
+    def test_409_once_the_shipment_exists_at_the_carrier(self, client, store, status):
+        # Past this point the plan is the audit record of what was sent, not a
+        # draft. Editing it would make the stored plan disagree with the labels.
+        draft = self._seed_pending_draft(store)
+        store.update_draft(draft["id"], {"status": status})
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "1-pak", "qty": 2}]},
+        )
+        assert resp.status_code == 409
+
+    def test_400_when_a_cod_draft_would_get_more_than_one_parcel(self, client, store):
+        # apaczka_call_specs refuses multi-parcel COD, because one full
+        # collection amount per parcel charges the customer several times.
+        # Saying so at save time beats failing at execute time.
+        draft = self._seed_pending_draft(store)
+        store.update_draft(draft["id"], {"cod": {"amount": 20030, "currency": "PLN"}})
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "1-pak", "qty": 2}]},
+        )
+        assert resp.status_code == 400
+
+    def test_a_cod_draft_may_still_be_repacked_into_one_parcel(self, client, store):
+        draft = self._seed_pending_draft(store)
+        store.update_draft(draft["id"], {"cod": {"amount": 20030, "currency": "PLN"}})
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "szkło", "qty": 1}]},
+        )
+        assert resp.status_code == 200
+
+
 # ── Helper function unit tests ────────────────────────────────────────────────
 
 
@@ -2775,7 +2884,12 @@ class TestRunApaczka:
             "shipping_address": {"street": "Wiśniowa 5", "city": "Gdańsk", "post_code": "80-001"},
         }
         with patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"):
-            with patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship:
+            with (
+                patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship,
+                patch(
+                    "zdrovena.common.apaczka.ApaczkaClient.get_order_pickup_number", return_value=""
+                ),
+            ):
                 mock_ship.return_value = {"id": "ap-1", "waybill_number": "WAY001"}
                 result = _run_apaczka(draft, storage_mock, pickup_address=_SENDER)
         assert result["courier_draft_id"] == "ap-1"
@@ -2783,6 +2897,24 @@ class TestRunApaczka:
         assert result["status"] == "created"
         assert mock_ship.call_args.kwargs["content"] == "Woda butelkowana, plastik 1-pak"
         assert mock_ship.call_args.kwargs["reference"] == "1060 | plastik | 1-pak"
+
+    def _apaczka_draft(self) -> dict[str, Any]:
+        return {
+            "id": "d-ap",
+            "shopify_order_number": "1060",
+            "courier": "apaczka",
+            "service": "apaczka",
+            "apaczka_service_id": "53",
+            "order_items": [{"name": "HUMIO 500 ml", "quantity": 2}],
+            "receiver": {
+                "first_name": "Piotr",
+                "last_name": "W",
+                "email": "p@w.pl",
+                "phone": "800300400",
+                "locker_id": "",
+            },
+            "shipping_address": {"street": "Wiśniowa 5", "city": "Gdańsk", "post_code": "80-001"},
+        }
 
     def test_passes_pickup_point_to_apaczka(self):
         from zdrovena.api.shipping_execution_composition import _run_apaczka
@@ -2813,7 +2945,12 @@ class TestRunApaczka:
             },
         }
         with patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"):
-            with patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship:
+            with (
+                patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship,
+                patch(
+                    "zdrovena.common.apaczka.ApaczkaClient.get_order_pickup_number", return_value=""
+                ),
+            ):
                 mock_ship.return_value = {"id": "ap-point", "waybill_number": "WAY-POINT"}
                 _run_apaczka(draft, object(), pickup_address=_SENDER)
 
@@ -2879,7 +3016,12 @@ class TestRunApaczka:
             },
         }
         with patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"):
-            with patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship:
+            with (
+                patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship,
+                patch(
+                    "zdrovena.common.apaczka.ApaczkaClient.get_order_pickup_number", return_value=""
+                ),
+            ):
                 mock_ship.return_value = {"id": "ap-bnum", "waybill_number": "WAY-BNUM"}
                 _run_apaczka(draft, storage_mock, pickup_address=_SENDER)
 
@@ -2913,7 +3055,12 @@ class TestRunApaczka:
             },
         }
         with patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"):
-            with patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship:
+            with (
+                patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship,
+                patch(
+                    "zdrovena.common.apaczka.ApaczkaClient.get_order_pickup_number", return_value=""
+                ),
+            ):
                 mock_ship.return_value = {"id": "ap-flat", "waybill_number": "WAY-FLAT"}
                 _run_apaczka(draft, storage_mock, pickup_address=_SENDER)
 
@@ -2985,6 +3132,75 @@ class TestRunApaczka:
                     _run_apaczka(draft, storage_mock, pickup_address=_SENDER)
 
         MockClient.assert_not_called()
+
+    def test_stores_the_pickup_number_on_the_shipment(self):
+        from zdrovena.api.shipping_execution_composition import _run_apaczka
+
+        draft = self._apaczka_draft()
+        with (
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.apaczka.ApaczkaClient.create_shipment",
+                return_value={"id": "ap-1", "waybill_number": "WAY001"},
+            ),
+            patch(
+                "zdrovena.common.apaczka.ApaczkaClient.get_order_pickup_number",
+                return_value="ZO-77123",
+            ),
+        ):
+            result = _run_apaczka(draft, object(), pickup_address=_SENDER)
+
+        assert result["courier_shipments"][0]["pickup_number"] == "ZO-77123"
+
+    def test_a_failing_detail_call_does_not_lose_the_shipment(self):
+        # The shipment already exists at the carrier. Losing it over a missing
+        # support id would be a far worse outcome than an empty field.
+        from zdrovena.api.shipping_execution_composition import _run_apaczka
+
+        draft = self._apaczka_draft()
+        with (
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.apaczka.ApaczkaClient.create_shipment",
+                return_value={"id": "ap-1", "waybill_number": "WAY001"},
+            ),
+            patch(
+                "zdrovena.common.apaczka.ApaczkaClient.get_order_pickup_number",
+                side_effect=RuntimeError("apaczka down"),
+            ),
+        ):
+            result = _run_apaczka(draft, object(), pickup_address=_SENDER)
+
+        shipment = result["courier_shipments"][0]
+        assert shipment["id"] == "ap-1"
+        assert shipment["tracking_number"] == "WAY001"
+        assert shipment["pickup_number"] == ""
+        assert result["status"] == "created"
+
+    def test_each_parcel_carries_its_own_pickup_number(self):
+        # Apaczka binds a pickup to one order, so a two-parcel draft can hold
+        # two different numbers.
+        from zdrovena.api.shipping_execution_composition import _run_apaczka
+
+        draft = self._apaczka_draft()
+        draft["packages_breakdown"] = [{"type": "1-pak", "qty": 2}]
+        with (
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.apaczka.ApaczkaClient.create_shipment",
+                side_effect=[
+                    {"id": "ap-1", "waybill_number": "WAY001"},
+                    {"id": "ap-2", "waybill_number": "WAY002"},
+                ],
+            ),
+            patch(
+                "zdrovena.common.apaczka.ApaczkaClient.get_order_pickup_number",
+                side_effect=["ZO-1", "ZO-2"],
+            ),
+        ):
+            result = _run_apaczka(draft, object(), pickup_address=_SENDER)
+
+        assert [s["pickup_number"] for s in result["courier_shipments"]] == ["ZO-1", "ZO-2"]
 
 
 class TestListApaczkaServices:
@@ -3305,6 +3521,24 @@ class TestCreateDraftAllegroDelivery:
 # ── Label endpoint ────────────────────────────────────────────────────────────
 
 
+def _valid_label_pdf() -> bytes:
+    """A parsable one-page PDF. `b"%PDF-1.4 fake"` is not one: pypdf raises
+    PdfReadError on it, so it cannot exercise the titling path."""
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=300)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def _pdf_title(pdf_bytes: bytes) -> str | None:
+    from pypdf import PdfReader
+
+    return PdfReader(io.BytesIO(pdf_bytes)).metadata.title
+
+
 class TestGetLabel:
     def _seed_created_draft(self, store, courier="inpost"):
         service = "inpost_courier_standard" if courier == "inpost" else "apaczka"
@@ -3377,13 +3611,15 @@ class TestGetLabel:
     def test_label_content_disposition_uses_safe_ascii_filename(self, store, order_number):
         draft = self._seed_created_draft(store, courier="inpost")
         store.update_draft(draft["id"], {"shopify_order_number": order_number})
+        moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
 
         with (
             patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
             patch(
                 "zdrovena.common.inpost.InPostClient.get_label",
-                return_value=b"%PDF-1.4 fake",
+                return_value=_valid_label_pdf(),
             ),
+            patch("zdrovena.api.routers.webhooks._now_warsaw", return_value=moment),
         ):
             response = webhooks_router.get_label(draft["id"], store, MagicMock(), MagicMock(), None)
 
@@ -3396,7 +3632,7 @@ class TestGetLabel:
         assert "\\" not in disposition
         assert disposition.count('"') == 2
         if order_number == "5000":
-            assert disposition == 'inline; filename="label_inpost_5000.pdf"'
+            assert disposition == 'inline; filename="Etykieta 5000 26.08.pdf"'
 
     def test_inpost_multiple_box_labels_are_merged(self, client, store):
         draft = self._seed_created_draft(store, courier="inpost")
@@ -3415,14 +3651,14 @@ class TestGetLabel:
                 side_effect=[b"first", b"second"],
             ) as mock_label:
                 with patch(
-                    "zdrovena.api.routers.webhooks._merge_pdfs", return_value=b"merged"
+                    "zdrovena.api.routers.webhooks._titled_pdf", return_value=b"merged"
                 ) as merge:
                     resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
 
         assert resp.status_code == 200
         assert resp.content == b"merged"
         assert [call.args[0] for call in mock_label.call_args_list] == ["ship-3pak", "ship-1pak"]
-        merge.assert_called_once_with([b"first", b"second"])
+        merge.assert_called_once_with([b"first", b"second"], ANY)
 
     def test_label_502_on_courier_error(self, client, store):
         draft = self._seed_created_draft(store, courier="inpost")
@@ -3433,6 +3669,42 @@ class TestGetLabel:
             ):
                 resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
         assert resp.status_code == 502
+
+    def test_single_label_carries_the_dated_title(self, client, store):
+        draft = self._seed_created_draft(store, courier="inpost")
+        store.update_draft(draft["id"], {"shopify_order_number": "1723"})
+        moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
+
+        with (
+            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                return_value=_valid_label_pdf(),
+            ),
+            patch("zdrovena.api.routers.webhooks._now_warsaw", return_value=moment),
+        ):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
+
+        assert resp.status_code == 200
+        assert _pdf_title(resp.content) == "Etykieta 1723 26.08"
+        assert resp.headers["content-disposition"] == ('inline; filename="Etykieta 1723 26.08.pdf"')
+
+    def test_an_unparsable_carrier_pdf_is_still_returned(self, client, store):
+        # A label the operator cannot print is a worse failure than an ugly
+        # filename, so titling degrades instead of raising.
+        draft = self._seed_created_draft(store, courier="inpost")
+
+        with (
+            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                return_value=b"%PDF-1.4 not really a pdf",
+            ),
+        ):
+            resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
+
+        assert resp.status_code == 200
+        assert resp.content == b"%PDF-1.4 not really a pdf"
 
 
 class TestGetLabelAllegroDelivery:
@@ -3480,7 +3752,7 @@ class TestGetLabelAllegroDelivery:
                 "zdrovena.api.shipping_execution_composition.get_allegro_client",
                 return_value=allegro,
             ),
-            patch("zdrovena.api.routers.webhooks._merge_pdfs", return_value=b"merged") as merge,
+            patch("zdrovena.api.routers.webhooks._titled_pdf", return_value=b"merged") as merge,
         ):
             response = client.get(f"/api/shipping/drafts/{draft['id']}/label")
 
@@ -3490,7 +3762,7 @@ class TestGetLabelAllegroDelivery:
             "ship-1",
             "ship-2",
         ]
-        merge.assert_called_once_with([b"label-1", b"label-2"])
+        merge.assert_called_once_with([b"label-1", b"label-2"], ANY)
 
     def test_allegro_delivery_falls_back_to_courier_draft_id(self, client, store):
         draft = self._seed(store, allegro_shipment_id=None, courier_draft_id="fallback-id-9")
@@ -5006,6 +5278,26 @@ class TestBatchLabels:
         resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ids})
         assert resp.status_code == 400
 
+    def test_batch_label_carries_the_portal_title(self, client, store):
+        self._seed(store, "b-1", courier_draft_id="cd-1")
+        moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
+
+        with (
+            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                return_value=self._valid_pdf(),
+            ),
+            patch("zdrovena.api.routers.webhooks._now_warsaw", return_value=moment),
+        ):
+            resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ["b-1"]})
+
+        assert resp.status_code == 200
+        assert _pdf_title(resp.content) == "Etykiety portal 26.08"
+        assert resp.headers["content-disposition"] == (
+            'inline; filename="Etykiety portal 26.08.pdf"'
+        )
+
 
 class TestSingleLabelNotReady:
     def test_inpost_business_error_maps_to_409(self, client, store):
@@ -5530,7 +5822,9 @@ class TestApaczkaPayloadPlan:
                     pickup_to="14:00",
                 )
 
-        sent = [c.args[1]["order"] for c in mock_call.call_args_list]
+        # _run_apaczka now also reads the pickup number via a separate
+        # "order/<id>" detail call per shipment — filter to order_send only.
+        sent = [c.args[1]["order"] for c in mock_call.call_args_list if c.args[0] == "order_send"]
         assert sent == [entry["payload"] for entry in plan]
 
     def test_sender_on_the_payload_is_the_pickup_address(self):

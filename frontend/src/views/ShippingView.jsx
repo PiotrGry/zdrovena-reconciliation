@@ -18,6 +18,9 @@ import {
     shippingGridTemplate,
     sortDrafts,
 } from './shippingTable'
+import { TrackingList } from './shipping/TrackingList'
+import { PackagesEditor } from './shipping/PackagesEditor'
+import { BOX_STYLE } from './shipping/parcelTypes'
 
 function fmtDate(iso) {
     if (!iso) return '—'
@@ -29,6 +32,21 @@ function fmtDate(iso) {
     } catch {
         return iso
     }
+}
+
+function dayStamp() {
+    // Matches zdrovena/shipping/domain/labels.py — the browser is already in
+    // the operator's timezone, so no conversion is needed here.
+    const now = new Date()
+    return `${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+function batchSheetTitle() {
+    return `Etykiety portal ${dayStamp()}`
+}
+
+function labelSheetTitle(orderNumber) {
+    return `Etykieta ${String(orderNumber).replace(/^#/, '')} ${dayStamp()}`
 }
 
 export function printPdf(blob, title) {
@@ -48,6 +66,25 @@ export function printPdf(blob, title) {
         URL.revokeObjectURL(url)
         frame.remove()
     }, 60_000)
+}
+
+/**
+ * Every carrier calls its pickup order something different and stores it in a
+ * different shape. The operator quotes this id to that carrier's support when a
+ * collection goes wrong, so all three have to surface in the same place.
+ * Apaczka binds a pickup to a single order, so a multi-parcel draft can carry
+ * several distinct numbers.
+ */
+function pickupOrderIds(draft) {
+    if (draft.courier === 'apaczka') {
+        return (draft.courier_shipments || [])
+            .map(shipment => String(shipment.pickup_number || '').trim())
+            .filter(Boolean)
+    }
+    const single = draft.courier === 'allegro_delivery'
+        ? draft.allegro_dispatch_id
+        : draft.dispatch_order_id
+    return String(single || '').trim() ? [String(single).trim()] : []
 }
 
 function courierLabel(draft, apaczkaServices = []) {
@@ -374,11 +411,9 @@ function InvoicePreviewPanel({ draft, getToken, onClose, onCreated }) {
     )
 }
 
-const _GLASS_TYPES = new Set(['szkło', 'szkło-2pak'])
-const _BOX_STYLE = {
-    plastic: { color: '#3b82f6', bg: '#eff6ff', border: '#bfdbfe' },
-    glass: { color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' },
-}
+// Mirrors _BREAKDOWN_LOCKED_STATUSES in zdrovena/api/routers/webhooks.py: past
+// these the API answers 409, so the table must not offer an edit that cannot land.
+const PACKAGES_LOCKED_STATUSES = new Set(['executing', 'pending_confirmation', 'created', 'cancelled'])
 
 const _PACKAGE_UNITS = {
     '3-pak': { material: 'plastik', amount: 3 },
@@ -399,8 +434,8 @@ function materialTags(breakdown) {
         else plastic += amount
     }
     const tags = []
-    if (plastic > 0) tags.push({ label: `plastik: ${String(plastic).replace('.', ',')} zgrzewki`, ..._BOX_STYLE.plastic })
-    if (glass > 0) tags.push({ label: `szkło: ${String(glass).replace('.', ',')} zgrzewki`, ..._BOX_STYLE.glass })
+    if (plastic > 0) tags.push({ label: `plastik: ${String(plastic).replace('.', ',')} zgrzewki`, ...BOX_STYLE.plastic })
+    if (glass > 0) tags.push({ label: `szkło: ${String(glass).replace('.', ',')} zgrzewki`, ...BOX_STYLE.glass })
     return tags
 }
 
@@ -756,7 +791,7 @@ function PickupScheduleModal({
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, onReviewDraft, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen, getToken, onDraftUpdate, columnGridTemplate, tableMinWidth }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, onReviewDraft, onSavePackages, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen, getToken, onDraftUpdate, columnGridTemplate, tableMinWidth }) {
     const { t, lang } = useT()
     const T = t[lang]
     const [open, setOpen] = useState(forceOpen ?? false)
@@ -799,6 +834,7 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
     // Apaczka is absent on purpose: its API has no standalone pickup call, so a
     // pickup can only travel inside order_send at execute time.
     const canOrderPickup = draft.courier === 'inpost' || draft.courier === 'allegro_delivery'
+    const draftPickupOrderIds = pickupOrderIds(draft)
     const canPickup = (
         canOrderPickup &&
         draft.status === 'created' &&
@@ -944,54 +980,29 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 )}
                             </div>
                             <div>
-                                <div className="detail-label">Numer śledzenia</div>
-                                <div>
-                                    {draft.tracking_number
-                                        ? (
-                                            <span className="mono copyable" title="Kliknij żeby skopiować"
-                                                onClick={() => navigator.clipboard.writeText(draft.tracking_number)}
-                                                style={{ cursor: 'pointer' }}>
-                                                {draft.tracking_number}
-                                            </span>
-                                        )
-                                        : <span className="dim">—</span>}
-                                </div>
+                                <TrackingList draft={draft} />
                                 <div className="detail-label" style={{ marginTop: 10 }}>ID draftu kuriera</div>
                                 <div className="mono dim">{draft.courier_draft_id || '—'}</div>
+                                <div className="detail-label" style={{ marginTop: 10 }}>ID zlecenia odbioru</div>
+                                <div>
+                                    {draftPickupOrderIds.length
+                                        ? draftPickupOrderIds.map(id => (
+                                            <div key={id} className="mono copyable" title="Kliknij żeby skopiować"
+                                                onClick={() => navigator.clipboard.writeText(id)}
+                                                style={{ cursor: 'pointer' }}>
+                                                {id}
+                                            </div>
+                                        ))
+                                        : <span className="dim">—</span>}
+                                </div>
                             </div>
                             <div>
-                                <div className="detail-label">Paczki</div>
-                                {draft.packages_breakdown?.length > 0 ? (
-                                    <table style={{ borderCollapse: 'collapse', width: '100%', marginTop: 6, fontSize: '0.9em' }}>
-                                        <thead>
-                                            <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                                                <th style={{ textAlign: 'left', padding: '3px 12px 3px 0', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Typ</th>
-                                                <th style={{ textAlign: 'center', padding: '3px 12px', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Szt.</th>
-                                                <th style={{ textAlign: 'left', padding: '3px 0', fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Materiał</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {draft.packages_breakdown.map((b, i) => {
-                                                const isGlass = _GLASS_TYPES.has(b.type)
-                                                const s = isGlass ? _BOX_STYLE.glass : _BOX_STYLE.plastic
-                                                return (
-                                                    <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                                                        <td style={{ padding: '6px 12px 6px 0', fontWeight: 500 }}>
-                                                            <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: s.color, marginRight: 6, flexShrink: 0 }} />
-                                                            {b.type}
-                                                        </td>
-                                                        <td style={{ padding: '6px 12px', textAlign: 'center' }}>
-                                                            <span className="mono" style={{ fontWeight: 600, fontSize: '1em' }}>{b.qty}</span>
-                                                        </td>
-                                                        <td style={{ padding: '6px 0', color: s.color, fontWeight: 500 }}>
-                                                            {isGlass ? 'szkło' : 'plastik'}
-                                                        </td>
-                                                    </tr>
-                                                )
-                                            })}
-                                        </tbody>
-                                    </table>
-                                ) : <span className="dim">—</span>}
+                                <PackagesEditor
+                                    breakdown={draft.packages_breakdown}
+                                    canEdit={canManage && !PACKAGES_LOCKED_STATUSES.has(draft.status)}
+                                    saving={isBusy}
+                                    onSave={rows => onSavePackages(draft, rows)}
+                                />
                             </div>
                         </div>
 
@@ -1460,7 +1471,7 @@ export default function ShippingView() {
             }
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
             const blob = await res.blob()
-            printPdf(blob, `Etykieta ${draft.shopify_order_number || draft.id}`)
+            printPdf(blob, labelSheetTitle(draft.shopify_order_number || draft.id))
         } catch (e) {
             pushToast({ kind: 'error', msg: `Błąd pobierania etykiety: ${e.message}` })
         }
@@ -1512,6 +1523,21 @@ export default function ShippingView() {
                 throw new Error(apiErrorMessage(body, res))
             }
         }, 'Nie udało się zapisać usługi Apaczka')()
+    }
+
+    function handleSavePackages(draft, rows) {
+        return withBusy(draft.id, async () => {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ packages_breakdown: rows }),
+            })
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(apiErrorMessage(body, res))
+            }
+        }, 'Nie udało się zapisać paczek')()
     }
 
     function handleReviewDraft(draft) {
@@ -1673,7 +1699,7 @@ export default function ShippingView() {
                 throw new Error(body.detail || 'Co najmniej jedna etykieta nie jest jeszcze gotowa.')
             }
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-            printPdf(await res.blob(), `Etykiety A6 (${selected.length})`)
+            printPdf(await res.blob(), batchSheetTitle())
             setSelectedDraftIds(new Set())
         } catch (error) {
             pushToast({ kind: 'error', msg: `Błąd drukowania etykiet: ${error.message}` })
@@ -1926,6 +1952,7 @@ export default function ShippingView() {
                             onConfirmPending={handleConfirmPending}
                             onSetApaczkaService={handleSetApaczkaService}
                             onReviewDraft={handleReviewDraft}
+                            onSavePackages={handleSavePackages}
                             apaczkaServices={apaczkaServices}
                             selected={selectedDraftIds.has(draft.id)}
                             onToggleSelect={handleToggleSelect}
