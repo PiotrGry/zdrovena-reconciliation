@@ -149,6 +149,18 @@ pełnego złotego, i tylko przy COD — wyższa suma ubezpieczenia bywa płatna.
 Emulator ShipX egzekwuje tę regułę, więc kontrakt jest pokryty testem, a nie
 tylko produkcją.
 
+Od 2026-09-08 InPost wymaga numeru telefonu odbiorcy i go waliduje; brak lub zły
+format blokuje utworzenie przesyłki. Akceptowane formaty: `+48 000 000 000`,
+`48 000 000 000`, `000 000 000` oraz te same bez spacji — `normalize_pl_phone()`
+sprowadza wszystkie do `+48XXXXXXXXX`. Zdrovena waliduje i normalizuje numer
+w `inpost_call_specs()` (`zdrovena/shipping/providers/inpost.py`), czyli
+w jedynym lejku wspólnym dla paczkomatu i kuriera, przed płatnym POST-em do
+ShipX. Niepoprawny numer to `InPostRecipientPhoneError` (HTTP 422), widoczny też
+w podglądzie wykonania jako `preview_available: false` z powodem w `note`.
+Normalizujemy, nie tylko sprawdzamy: drafty sprzed wprowadzenia normalizacji
+w `build_draft_record` trzymają surowe wartości, a te są poprawne. Apaczka
+i Allegro nie mają odpowiednika tego wymogu.
+
 Źródła: [tworzenie przesyłki w trybie uproszczonym](https://dokumentacja-inpost.atlassian.net/wiki/spaces/PL/pages/28639258/1.23.0%2BShipment%2Bcreation%2Bin%2Bsimplified%2Bmode),
 [usługi dodatkowe i COD](https://dokumentacja-inpost.atlassian.net/wiki/spaces/PL/pages/28639264),
 [FAQ — "Insurance should be equal or higher than COD"](https://dokumentacja-inpost.atlassian.net/wiki/spaces/PL/pages/52428808/FAQ).

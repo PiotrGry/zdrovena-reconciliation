@@ -3,6 +3,17 @@
 
 ## Unreleased
 
+### Fixed
+
+- **shipping**: InPost wymaga i waliduje numer telefonu odbiorcy od 2026-09-08 — portal sprawdza
+  go teraz przed wysłaniem przesyłki, zamiast czekać na odrzucenie przez ShipX. Numer jest przy
+  okazji normalizowany w jedynym lejku ścieżki InPost, więc stare drafty z surową wartością też
+  przechodzą. Operator może uzupełnić brakujący numer w portalu (pole „Telefon odbiorcy");
+  wcześniej mógł go tylko przepchnąć, bo PATCH nie miał takiego pola. Zatwierdzenie draftu InPost
+  bez numeru zwraca teraz 400, a synchronizacja z Shopify ponownie flaguje taki draft — dotąd
+  jedno kliknięcie czyniło go wykonywalnym na zawsze. `scripts/audit-inpost-phones.py` (tylko
+  odczyt) wypisuje drafty do naprawienia przed terminem. Apaczka i Allegro bez zmian. (#294)
+
 ## v2.9.0 (2026-08-27)
 
 ### Added
