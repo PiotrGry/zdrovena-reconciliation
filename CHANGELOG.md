@@ -5,6 +5,24 @@
 
 ### Added
 
+- **shipping**: Arkusz etykiet zapisuje się jako „Etykiety portal DD.MM", pojedyncza etykieta jako
+  „Etykieta <numer> DD.MM". Nazwa idzie w metadanych PDF-a, bo druk leci z `blob:` URL-a i Chrome
+  bierze nazwę pliku właśnie stamtąd — Content-Disposition nie ma tam nic do powiedzenia. Data
+  liczona w strefie Europe/Warsaw: kontener chodzi na UTC i wieczorny wydruk dostawał jutrzejszy
+  dzień. Pojedyncza etykieta też przechodzi teraz przez pypdf; PDF, którego pypdf nie sparsuje,
+  wraca nietknięty, bo nieczytelna etykieta to gorsza awaria niż brzydka nazwa pliku.
+- **shipping**: Panel pokazuje numer śledzenia każdej paczki, nie tylko pierwszej. Backend tworzył
+  osobną przesyłkę na sztukę od zawsze — widok wyświetlał jedną z nich i resztę wyrzucał.
+- **shipping**: Pola TYP i SZT. w planie paczek są edytowalne do momentu wysłania przesyłki do
+  kuriera, razem z dodawaniem i usuwaniem pozycji. Poprawka operatora przeżywa resynchronizację
+  z Shopify (`packages_source: "operator"`), więc przeliczony plan jej nie nadpisze — to była droga,
+  którą zamówienia #1710-#1712 pojechały w złych pudełkach. Po utworzeniu przesyłki edycja zwraca
+  409, a przesyłka pobraniowa nadal musi mieścić się w jednej paczce.
+- **shipping**: „ID zlecenia odbioru" widoczne dla wszystkich trzech przewoźników. Dla Apaczki
+  czytane z `order/:id/` (`pickup.pickup_number`) przy wykonaniu i dobijane pollerem, gdy przewoźnik
+  nada je później; InPost (`dispatch_order_id`) i Allegro (`allegro_dispatch_id`) miały swoje id
+  zapisane od dawna, tylko nigdy nie trafiły do widoku.
+
 - **month-close**: Operator waivers — a stage that finished with errors can be waved through
   ("Pomiń mimo problemów"), and any single entry in "Problemy i ostrzeżenia" can be ignored, so
   neither one keeps gating the accounting package. One click, no reason prompt; the run records who

@@ -87,6 +87,19 @@ przy COD, z kwotą pobrania zaokrągloną w górę do pełnego złotego. Deklara
 ponad limit wliczony w usługę bazową (500–1000 zł dla DHL/DPD/InPost) jest
 płatna, więc przesyłki bez pobrania nie dostają tych pól.
 
+Numer zlecenia odbioru („ID zlecenia odbioru" w panelu, po którym szuka wsparcie
+Apaczki) nie występuje w odpowiedzi `order_send`. Jest wyłącznie w detalu
+zlecenia, `order/:order_id/`, jako `pickup.pickup_number` obok `type`, `date`,
+`hours_from` i `hours_to`. Przewoźnik nadaje go asynchronicznie, więc odczyt tuż
+po utworzeniu przesyłki potrafi zwrócić pustą wartość — dlatego wykonanie czyta
+go best-effort (`_apaczka_pickup_number()` w
+`zdrovena/api/shipping_execution_composition.py`), a
+`zdrovena/api/routers/apaczka_pickup_poller.py` dobija resztę z limitem prób.
+Apaczka wiąże odbiór z pojedynczym zleceniem, więc draft o trzech paczkach może
+mieć trzy różne numery — dlatego numer siedzi per przesyłka
+w `courier_shipments`, nie per draft. InPost trzyma odpowiednik
+w `dispatch_order_id` (ShipX `dispatch_orders`), Allegro w `allegro_dispatch_id`.
+
 Źródła: [oficjalna dokumentacja Web API v2 Apaczka](https://panel.apaczka.pl/dokumentacja_api_v2.php),
 [deklaracja wartości](https://www.apaczka.pl/centrum_pomocy/deklaracja-wartosci/).
 
