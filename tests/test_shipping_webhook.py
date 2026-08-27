@@ -2884,7 +2884,12 @@ class TestRunApaczka:
             "shipping_address": {"street": "Wiśniowa 5", "city": "Gdańsk", "post_code": "80-001"},
         }
         with patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"):
-            with patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship:
+            with (
+                patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship,
+                patch(
+                    "zdrovena.common.apaczka.ApaczkaClient.get_order_pickup_number", return_value=""
+                ),
+            ):
                 mock_ship.return_value = {"id": "ap-1", "waybill_number": "WAY001"}
                 result = _run_apaczka(draft, storage_mock, pickup_address=_SENDER)
         assert result["courier_draft_id"] == "ap-1"
@@ -2892,6 +2897,24 @@ class TestRunApaczka:
         assert result["status"] == "created"
         assert mock_ship.call_args.kwargs["content"] == "Woda butelkowana, plastik 1-pak"
         assert mock_ship.call_args.kwargs["reference"] == "1060 | plastik | 1-pak"
+
+    def _apaczka_draft(self) -> dict[str, Any]:
+        return {
+            "id": "d-ap",
+            "shopify_order_number": "1060",
+            "courier": "apaczka",
+            "service": "apaczka",
+            "apaczka_service_id": "53",
+            "order_items": [{"name": "HUMIO 500 ml", "quantity": 2}],
+            "receiver": {
+                "first_name": "Piotr",
+                "last_name": "W",
+                "email": "p@w.pl",
+                "phone": "800300400",
+                "locker_id": "",
+            },
+            "shipping_address": {"street": "Wiśniowa 5", "city": "Gdańsk", "post_code": "80-001"},
+        }
 
     def test_passes_pickup_point_to_apaczka(self):
         from zdrovena.api.shipping_execution_composition import _run_apaczka
@@ -2922,7 +2945,12 @@ class TestRunApaczka:
             },
         }
         with patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"):
-            with patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship:
+            with (
+                patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship,
+                patch(
+                    "zdrovena.common.apaczka.ApaczkaClient.get_order_pickup_number", return_value=""
+                ),
+            ):
                 mock_ship.return_value = {"id": "ap-point", "waybill_number": "WAY-POINT"}
                 _run_apaczka(draft, object(), pickup_address=_SENDER)
 
@@ -2988,7 +3016,12 @@ class TestRunApaczka:
             },
         }
         with patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"):
-            with patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship:
+            with (
+                patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship,
+                patch(
+                    "zdrovena.common.apaczka.ApaczkaClient.get_order_pickup_number", return_value=""
+                ),
+            ):
                 mock_ship.return_value = {"id": "ap-bnum", "waybill_number": "WAY-BNUM"}
                 _run_apaczka(draft, storage_mock, pickup_address=_SENDER)
 
@@ -3022,7 +3055,12 @@ class TestRunApaczka:
             },
         }
         with patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"):
-            with patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship:
+            with (
+                patch("zdrovena.common.apaczka.ApaczkaClient.create_shipment") as mock_ship,
+                patch(
+                    "zdrovena.common.apaczka.ApaczkaClient.get_order_pickup_number", return_value=""
+                ),
+            ):
                 mock_ship.return_value = {"id": "ap-flat", "waybill_number": "WAY-FLAT"}
                 _run_apaczka(draft, storage_mock, pickup_address=_SENDER)
 
@@ -3094,6 +3132,75 @@ class TestRunApaczka:
                     _run_apaczka(draft, storage_mock, pickup_address=_SENDER)
 
         MockClient.assert_not_called()
+
+    def test_stores_the_pickup_number_on_the_shipment(self):
+        from zdrovena.api.shipping_execution_composition import _run_apaczka
+
+        draft = self._apaczka_draft()
+        with (
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.apaczka.ApaczkaClient.create_shipment",
+                return_value={"id": "ap-1", "waybill_number": "WAY001"},
+            ),
+            patch(
+                "zdrovena.common.apaczka.ApaczkaClient.get_order_pickup_number",
+                return_value="ZO-77123",
+            ),
+        ):
+            result = _run_apaczka(draft, object(), pickup_address=_SENDER)
+
+        assert result["courier_shipments"][0]["pickup_number"] == "ZO-77123"
+
+    def test_a_failing_detail_call_does_not_lose_the_shipment(self):
+        # The shipment already exists at the carrier. Losing it over a missing
+        # support id would be a far worse outcome than an empty field.
+        from zdrovena.api.shipping_execution_composition import _run_apaczka
+
+        draft = self._apaczka_draft()
+        with (
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.apaczka.ApaczkaClient.create_shipment",
+                return_value={"id": "ap-1", "waybill_number": "WAY001"},
+            ),
+            patch(
+                "zdrovena.common.apaczka.ApaczkaClient.get_order_pickup_number",
+                side_effect=RuntimeError("apaczka down"),
+            ),
+        ):
+            result = _run_apaczka(draft, object(), pickup_address=_SENDER)
+
+        shipment = result["courier_shipments"][0]
+        assert shipment["id"] == "ap-1"
+        assert shipment["tracking_number"] == "WAY001"
+        assert shipment["pickup_number"] == ""
+        assert result["status"] == "created"
+
+    def test_each_parcel_carries_its_own_pickup_number(self):
+        # Apaczka binds a pickup to one order, so a two-parcel draft can hold
+        # two different numbers.
+        from zdrovena.api.shipping_execution_composition import _run_apaczka
+
+        draft = self._apaczka_draft()
+        draft["packages_breakdown"] = [{"type": "1-pak", "qty": 2}]
+        with (
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.apaczka.ApaczkaClient.create_shipment",
+                side_effect=[
+                    {"id": "ap-1", "waybill_number": "WAY001"},
+                    {"id": "ap-2", "waybill_number": "WAY002"},
+                ],
+            ),
+            patch(
+                "zdrovena.common.apaczka.ApaczkaClient.get_order_pickup_number",
+                side_effect=["ZO-1", "ZO-2"],
+            ),
+        ):
+            result = _run_apaczka(draft, object(), pickup_address=_SENDER)
+
+        assert [s["pickup_number"] for s in result["courier_shipments"]] == ["ZO-1", "ZO-2"]
 
 
 class TestListApaczkaServices:
@@ -5715,7 +5822,9 @@ class TestApaczkaPayloadPlan:
                     pickup_to="14:00",
                 )
 
-        sent = [c.args[1]["order"] for c in mock_call.call_args_list]
+        # _run_apaczka now also reads the pickup number via a separate
+        # "order/<id>" detail call per shipment — filter to order_send only.
+        sent = [c.args[1]["order"] for c in mock_call.call_args_list if c.args[0] == "order_send"]
         assert sent == [entry["payload"] for entry in plan]
 
     def test_sender_on_the_payload_is_the_pickup_address(self):
