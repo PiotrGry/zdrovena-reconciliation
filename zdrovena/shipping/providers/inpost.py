@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from zdrovena.common.shipping_exceptions import InPostBusinessError
+from zdrovena.common.shipping_exceptions import (
+    InPostBusinessError,
+    InPostRecipientPhoneError,
+)
+from zdrovena.common.shipping_format import normalize_pl_phone
 from zdrovena.common.shipping_parcels import PARCEL_SPECS
 from zdrovena.shipping.domain.planning import physical_parcels, shipment_reference
 
@@ -60,6 +64,18 @@ def inpost_call_specs(draft: dict[str, Any], sender: dict[str, str]) -> list[InP
             action="create_shipment",
         )
     receiver = draft.get("receiver") or {}
+    # InPost enforces a valid recipient phone from 2026-09-08 (issue #294).
+    # Validated here rather than at the call site: this is the one funnel both
+    # the paczkomat and the kurier path share, it is pure, and it runs before
+    # the paid ShipX POST. The operator's execution preview goes through the
+    # same function, so the reason surfaces before they press send.
+    raw_phone = receiver.get("phone")
+    receiver_phone = normalize_pl_phone(raw_phone)
+    if not receiver_phone:
+        raise InPostRecipientPhoneError(
+            raw_phone=str(raw_phone or ""),
+            order_id=str(draft.get("shopify_order_number") or ""),
+        )
     addr = draft.get("shipping_address") or {}
     order_number = str(draft.get("shopify_order_number", ""))
     inpost_service = "paczkomat" if draft.get("service") == "inpost_locker_standard" else "kurier"
@@ -85,7 +101,7 @@ def inpost_call_specs(draft: dict[str, Any], sender: dict[str, str]) -> list[InP
                 "receiver_first_name": receiver.get("first_name", ""),
                 "receiver_last_name": receiver.get("last_name", ""),
                 "receiver_email": receiver.get("email", ""),
-                "receiver_phone": receiver.get("phone", ""),
+                "receiver_phone": receiver_phone,
                 "target_point": receiver.get("locker_id", ""),
                 "reference": reference,
                 "template": spec.get("paczkomat_template") or "large",
@@ -95,7 +111,7 @@ def inpost_call_specs(draft: dict[str, Any], sender: dict[str, str]) -> list[InP
                 "receiver_first_name": receiver.get("first_name", ""),
                 "receiver_last_name": receiver.get("last_name", ""),
                 "receiver_email": receiver.get("email", ""),
-                "receiver_phone": receiver.get("phone", ""),
+                "receiver_phone": receiver_phone,
                 "receiver_street": addr.get("street", ""),
                 "receiver_building_number": "/".join(
                     filter(None, [addr.get("building_number", "1"), addr.get("flat_number", "")])

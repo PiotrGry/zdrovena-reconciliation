@@ -10,6 +10,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from zdrovena.common.shipping_format import normalize_pl_phone
+
 
 class DraftRepository(Protocol):
     """Minimal persistence boundary required by draft lifecycle operations."""
@@ -115,6 +117,17 @@ def status_from_source(order: dict[str, Any], fallback: str, *, source: str) -> 
     return fallback
 
 
+def _inpost_phone_missing(draft: dict[str, Any]) -> bool:
+    """Return whether an InPost draft lacks a phone the carrier will accept.
+
+    InPost enforces this from 2026-09-08. A draft in that state cannot ship, so
+    it must not sit in ``pending`` looking ready.
+    """
+    if draft.get("courier") != "inpost":
+        return False
+    return not normalize_pl_phone((draft.get("receiver") or {}).get("phone"))
+
+
 def merge_synced_draft(
     existing: dict[str, Any],
     incoming: dict[str, Any],
@@ -164,10 +177,13 @@ def merge_synced_draft(
         existing_status == "pending"
         and incoming_status == "needs_review"
         and not merged.get("unreadable_products")
+        and not _inpost_phone_missing(merged)
     ):
-        # A draft the operator already cleared is not re-flagged. The exception
-        # is a product name the planner cannot read: the recomputed plan is a
-        # guess, and an executable guess is how #1710-#1712 were packed wrong.
+        # A draft the operator already cleared is not re-flagged. Two exceptions,
+        # both executable states that cannot actually ship: a product name the
+        # planner cannot read (the recomputed plan is a guess, and an executable
+        # guess is how #1710-#1712 were packed wrong), and an InPost draft
+        # without a phone the carrier will accept from 2026-09-08.
         merged["status"] = "pending"
     else:
         merged["status"] = incoming_status or existing_status

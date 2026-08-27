@@ -23,6 +23,9 @@ _DRAFT: dict[str, Any] = {
     "receiver": {
         "first_name": "Ola",
         "last_name": "Wisniewska",
+        # InPost rejects a shipment without a recipient phone from 2026-09-08,
+        # and this fixture is shared with inpost_call_specs below.
+        "phone": "600100200",
         "locker_id": "LOD01A",
     },
     "shipping_address": {

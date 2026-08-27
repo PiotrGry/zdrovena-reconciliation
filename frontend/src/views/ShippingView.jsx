@@ -20,6 +20,7 @@ import {
 } from './shippingTable'
 import { TrackingList } from './shipping/TrackingList'
 import { PackagesEditor } from './shipping/PackagesEditor'
+import { RecipientPhone } from './shipping/RecipientPhone'
 import { BOX_STYLE } from './shipping/parcelTypes'
 
 function fmtDate(iso) {
@@ -791,7 +792,7 @@ function PickupScheduleModal({
     )
 }
 
-function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, onReviewDraft, onSavePackages, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen, getToken, onDraftUpdate, columnGridTemplate, tableMinWidth }) {
+function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, onReviewDraft, onSavePackages, onSavePhone, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen, getToken, onDraftUpdate, columnGridTemplate, tableMinWidth }) {
     const { t, lang } = useT()
     const T = t[lang]
     const [open, setOpen] = useState(forceOpen ?? false)
@@ -980,7 +981,16 @@ function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, o
                                 )}
                             </div>
                             <div>
-                                <TrackingList draft={draft} />
+                                <RecipientPhone
+                                    phone={draft.receiver?.phone}
+                                    courier={draft.courier}
+                                    canEdit={canManage && !PACKAGES_LOCKED_STATUSES.has(draft.status)}
+                                    saving={isBusy}
+                                    onSave={value => onSavePhone(draft, value)}
+                                />
+                                <div style={{ marginTop: 10 }}>
+                                    <TrackingList draft={draft} />
+                                </div>
                                 <div className="detail-label" style={{ marginTop: 10 }}>ID draftu kuriera</div>
                                 <div className="mono dim">{draft.courier_draft_id || '—'}</div>
                                 <div className="detail-label" style={{ marginTop: 10 }}>ID zlecenia odbioru</div>
@@ -1525,6 +1535,21 @@ export default function ShippingView() {
         }, 'Nie udało się zapisać usługi Apaczka')()
     }
 
+    function handleSavePhone(draft, phone) {
+        return withBusy(draft.id, async () => {
+            const token = await getToken()
+            const res = await fetch(`/api/shipping/drafts/${draft.id}`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ receiver_phone: phone }),
+            })
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}))
+                throw new Error(apiErrorMessage(body, res))
+            }
+        }, 'Nie udało się zapisać telefonu')()
+    }
+
     function handleSavePackages(draft, rows) {
         return withBusy(draft.id, async () => {
             const token = await getToken()
@@ -1953,6 +1978,7 @@ export default function ShippingView() {
                             onSetApaczkaService={handleSetApaczkaService}
                             onReviewDraft={handleReviewDraft}
                             onSavePackages={handleSavePackages}
+                            onSavePhone={handleSavePhone}
                             apaczkaServices={apaczkaServices}
                             selected={selectedDraftIds.has(draft.id)}
                             onToggleSelect={handleToggleSelect}

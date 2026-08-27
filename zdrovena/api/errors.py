@@ -62,6 +62,9 @@ _MESSAGES_PL: dict[str, str] = {
     # ── Błędy biznesowe przewoźnika ──
     "InPostLockerUnavailableError": "Paczkomat InPost jest pełny lub niedostępny.",
     "InPostInvalidServiceError": "InPost odrzucił usługę lub wymiary paczki.",
+    "InPostRecipientPhoneError": (
+        "InPost wymaga numeru telefonu odbiorcy — uzupełnij go w danych przesyłki."
+    ),
     "InPostShipmentNotCancellable": "Przesyłki InPost nie można już anulować (została nadana).",
     "InPostOrganizationError": (
         "Błąd konfiguracji organizacji InPost — skontaktuj się z administratorem."
