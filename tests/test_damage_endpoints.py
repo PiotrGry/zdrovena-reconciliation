@@ -295,3 +295,22 @@ def test_send_rejects_unconfigured_info_alias(client, stores):
         response = client.post("/api/damage-cases/case-1648/send-email")
     assert response.status_code == 409
     assert "info@wodahumio.pl" in response.json()["detail"]
+
+
+class TestStorageOutageSurfacesAs503:
+    """Issue #310: the damage surface must answer an outage the same way the
+    shipping and DLQ surfaces do — 503, not an empty list."""
+
+    def test_an_outage_is_503_not_an_empty_list(self, client, stores):
+        from zdrovena.common.exceptions import storage_unavailable
+
+        def _boom(*args, **kwargs):
+            raise storage_unavailable("damage", "list_cases", RuntimeError("timeout"))
+
+        with patch.object(DamageStore, "list_cases", _boom):
+            resp = client.get("/api/damage-cases")
+
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["error_code"] == "StorageUnavailableError"
+        assert body["correlation_id"]
