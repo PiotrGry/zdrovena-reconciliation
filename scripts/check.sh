@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # scripts/check.sh — lokalna bramka jakości (odpowiednik CI)
 # Uruchamiana ręcznie lub automatycznie przez .git/hooks/pre-push
+# Każdy krok, którego nie da się uruchomić, wywala bramkę. Świadome pominięcie:
+# CHECK_<KROK>=0 — pełna tabela w CONTRIBUTING.md § Quality gate.
 set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
