@@ -2706,7 +2706,7 @@ class TestInPostPayloadPlan:
                         "first_name": "Jan",
                         "last_name": "Kowalski",
                         "email": "jan@k.pl",
-                        "phone": "600100200",
+                        "phone": "+48600100200",
                         "address": {
                             "street": "Kwiatowa 1",
                             "building_number": "1",
@@ -2802,6 +2802,72 @@ class TestInPostPayloadPlan:
                 wh._run_inpost(draft, _SENDER)
 
         assert [call.args[0] for call in mock_post.call_args_list] == [plan[0]["payload"]]
+
+
+class TestRunInPostRecipientPhone:
+    """InPost enforces a valid recipient phone from 2026-09-08 (issue #294).
+
+    The point of this class is the negative assertion: bad data must cost
+    nothing, so no ShipX shipment POST may happen.
+    """
+
+    @staticmethod
+    def _draft() -> dict[str, Any]:
+        return {
+            "id": "d-inpost-phone",
+            "shopify_order_number": "1803",
+            "courier": "inpost",
+            "service": "inpost_courier_standard",
+            "receiver": {
+                "first_name": "Jan",
+                "last_name": "Kowalski",
+                "email": "jan@example.test",
+                "phone": None,
+                "locker_id": "",
+            },
+            "shipping_address": {
+                "street": "Kwiatowa",
+                "building_number": "7",
+                "flat_number": "",
+                "city": "Warszawa",
+                "post_code": "00-001",
+            },
+            "packages_breakdown": [{"type": "1-pak", "qty": 1}],
+            "courier_shipments": [],
+        }
+
+    def test_an_unusable_phone_creates_no_inpost_shipment(self):
+        from zdrovena.api.shipping_execution_composition import _run_inpost
+        from zdrovena.common.shipping_exceptions import InPostRecipientPhoneError
+
+        with (
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch("zdrovena.common.inpost.InPostClient.create_paczkomat_shipment") as paczkomat,
+            patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as kurier,
+        ):
+            with pytest.raises(InPostRecipientPhoneError):
+                _run_inpost(self._draft(), _SENDER)
+
+        paczkomat.assert_not_called()
+        kurier.assert_not_called()
+
+    def test_a_usable_phone_still_creates_the_shipment(self):
+        from zdrovena.api.shipping_execution_composition import _run_inpost
+
+        draft = self._draft()
+        draft["receiver"] = {**draft["receiver"], "phone": "600100200"}
+
+        with (
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.inpost.InPostClient.create_kurier_shipment",
+                return_value={"id": "ship-1", "tracking_number": "620ABC"},
+            ) as kurier,
+        ):
+            result = _run_inpost(draft, _SENDER)
+
+        assert result["tracking_number"] == "620ABC"
+        assert kurier.call_args.kwargs["receiver_phone"] == "+48600100200"
 
 
 class TestRunApaczka:
