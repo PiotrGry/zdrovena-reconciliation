@@ -152,6 +152,11 @@ class ShippingStore:
         try:
             return json.loads(self._local_file.read_text(encoding="utf-8"))
         except Exception:
+            # Deliberate, and NOT the outage-looks-empty bug of #310: the local
+            # JSON backend self-heals. TestOnDiskFormat pins it — a mangled file
+            # reads as empty and the next upsert rewrites it, so a developer is
+            # never stuck with a store they cannot use. Azure has no equivalent
+            # recovery, which is why the table paths raise instead.
             return {}
 
     def _local_save_unlocked(self, data: dict[str, Any]) -> None:
