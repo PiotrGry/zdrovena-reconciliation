@@ -270,6 +270,22 @@ def _run_inpost(
     return patch
 
 
+def _apaczka_pickup_number(client: Any, order_id: str) -> str:
+    """Read the pickup-order id the operator quotes to Apaczka support.
+
+    Best-effort by design. The shipment already exists at the carrier by the
+    time this runs, so a failed or not-yet-assigned read must leave the record
+    intact and let the poller fill it in later.
+    """
+    if not order_id:
+        return ""
+    try:
+        return client.get_order_pickup_number(order_id)
+    except Exception:
+        logger.exception("Apaczka pickup number unavailable for order %s", order_id)
+        return ""
+
+
 def _run_apaczka(
     draft: dict[str, Any],
     storage: Any,
@@ -335,11 +351,13 @@ def _run_apaczka(
         pickup_to=pickup_to,
     ):
         result = client.create_shipment(**call_spec["kwargs"])
+        order_id = str(result.get("id", ""))
         shipment = {
-            "id": str(result.get("id", "")),
+            "id": order_id,
             "tracking_number": str(result.get("waybill_number") or ""),
             "package_type": call_spec["package_type"],
             "package_number": str(call_spec["package_number"]),
+            "pickup_number": _apaczka_pickup_number(client, order_id),
         }
         existing.append(shipment)
         if on_shipment_created:

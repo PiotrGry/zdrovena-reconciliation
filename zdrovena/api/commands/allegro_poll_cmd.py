@@ -197,6 +197,21 @@ def _run_cycle(args: argparse.Namespace) -> None:
     except Exception:
         logger.exception("InPost pending resolution failed")
 
+    # Apaczka assigns the pickup number after order_send returns, so execution's
+    # one read can come back empty. This is what fills it in — the operator needs
+    # that id when a collection goes wrong, not when they remember to click.
+    try:
+        from zdrovena.api.routers.apaczka_pickup_poller import (
+            resolve_apaczka_pickup_numbers_once,
+        )
+
+        apaczka_stats = resolve_apaczka_pickup_numbers_once(
+            shipping_store=shipping_store, storage=storage
+        )
+        logger.info("Apaczka pickup number resolution complete: %s", apaczka_stats)
+    except Exception:
+        logger.exception("Apaczka pickup number resolution failed")
+
     overdue_count = _emit_orders_without_tracking_snapshot(shipping_store)
     logger.info("Orders without tracking after 48h: %d", overdue_count)
 

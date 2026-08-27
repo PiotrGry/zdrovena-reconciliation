@@ -500,6 +500,7 @@ def build_draft_record(
         "dispatch_order_id": None,
         "status": draft_application.status_from_source(order, base_status, source=source),
         "packages_count": packages_count,
+        "packages_source": "planner",
         "packages_breakdown": packages_breakdown,
         "unreadable_products": unreadable,
         "total_qty": total_qty,

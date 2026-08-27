@@ -630,7 +630,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Update draft metadata (packages_count, service, locker_id) */
+        /** Update draft metadata (packages_breakdown, service, locker_id) */
         patch: operations["update_draft_api_shipping_drafts__draft_id__patch"];
         trace?: never;
     };
@@ -933,6 +933,10 @@ export interface components {
             apaczka_service_id?: string | null;
             /** Locker Id */
             locker_id?: string | null;
+            /** Packages Breakdown */
+            packages_breakdown?: {
+                [key: string]: unknown;
+            }[] | null;
             /** Packages Count */
             packages_count?: number | null;
             /** Reviewed */

@@ -663,6 +663,59 @@ class TestGetLabel:
                 client.get_label("missing")
 
 
+# ── get_order ──────────────────────────────────────────────────────────────────
+
+
+class TestGetOrder:
+    def test_calls_the_order_detail_endpoint(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        with patch.object(
+            client, "_call", return_value={"response": {"order": {"id": "ord-1"}}}
+        ) as call:
+            assert client.get_order("ord-1") == {"id": "ord-1"}
+        # _call appends the trailing slash itself, like cancel_order/ and waybill/
+        assert call.call_args.args[0] == "order/ord-1"
+
+    def test_reads_the_pickup_number(self):
+        # order_send does not return this; it exists only on order detail.
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        response = {
+            "response": {
+                "order": {
+                    "id": "ord-1",
+                    "waybill_number": "APZ1",
+                    "pickup": {
+                        "type": "COURIER",
+                        "date": "2026-08-26",
+                        "pickup_number": "ZO-77123",
+                    },
+                }
+            }
+        }
+        with patch.object(client, "_call", return_value=response):
+            assert client.get_order_pickup_number("ord-1") == "ZO-77123"
+
+    def test_returns_empty_when_the_carrier_has_not_assigned_one_yet(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        with patch.object(
+            client,
+            "_call",
+            return_value={"response": {"order": {"id": "ord-1", "pickup": {"type": "COURIER"}}}},
+        ):
+            assert client.get_order_pickup_number("ord-1") == ""
+
+    def test_returns_empty_when_there_is_no_pickup_object(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        with patch.object(client, "_call", return_value={"response": {"order": {"id": "ord-1"}}}):
+            assert client.get_order_pickup_number("ord-1") == ""
+
+    def test_tolerates_a_response_without_an_order_object(self):
+        client = ApaczkaClient(_APP_ID, _SECRET, _SERVICE_ID, storage=MagicMock())
+        with patch.object(client, "_call", return_value={"response": {}}):
+            assert client.get_order("ord-1") == {}
+            assert client.get_order_pickup_number("ord-1") == ""
+
+
 # ── error hierarchy: both classification axes must catch ─────────────────────
 
 
