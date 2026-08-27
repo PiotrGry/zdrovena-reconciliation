@@ -95,6 +95,19 @@ else
     && ok "tests passed" || fail "tests failed"
 fi
 
+step "uv lock — zgodność lockfile z pyproject"
+# Dependabot podbija wersje w pyproject.toml i NIE aktualizuje uv.lock (PR #276
+# podniósł ruffa i zostawił lock na starej wersji). Bez tego kroku rozjazd
+# wchodzi na develop niezauważony — a przy włączonym auto-merge robi to sam.
+# Naprawa: uv lock && git add uv.lock
+if command -v uv >/dev/null 2>&1; then
+  uv lock --check >/dev/null 2>&1 \
+    && ok "uv lock" \
+    || fail "uv.lock rozjechany z pyproject.toml — uruchom: uv lock"
+else
+  echo -e "${SKIP} uv nie znaleziony — pomijam sprawdzenie uv.lock"
+fi
+
 step "pip-audit — zależności Python"
 # Ignorowane CVE (transitive deps, brak fix version):
 #   PYSEC-2026-89  — markdown 3.10.2 (via cloudsplaining), no fix version
