@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import { BOX_STYLE, GLASS_TYPES, PACKAGE_TYPES } from './parcelTypes'
 
@@ -30,15 +30,21 @@ function styleFor(type) {
  * there, and `canEdit` mirrors that rule.
  */
 export function PackagesEditor({ breakdown, canEdit, onSave, saving = false }) {
-    const [rows, setRows] = useState(() => (breakdown || []).map(row => ({ ...row })))
-
-    // Keyed on the serialised plan, not the array identity: ShippingView polls
-    // every 5s and hands back a fresh array each time, which would otherwise
+    // Compared as a serialised plan, not by array identity: ShippingView polls
+    // every 5s and hands back a fresh array each time, which by identity would
     // wipe the operator's half-finished edit on every tick.
     const serverPlan = JSON.stringify(breakdown || [])
-    useEffect(() => {
+
+    // Adjusting state during render rather than in an effect — React's own
+    // answer to "reset state when a prop changes". An effect would commit the
+    // stale rows first and re-render, which is what react-hooks/set-state-in-effect
+    // is warning about.
+    const [rows, setRows] = useState(() => JSON.parse(serverPlan))
+    const [syncedPlan, setSyncedPlan] = useState(serverPlan)
+    if (serverPlan !== syncedPlan) {
+        setSyncedPlan(serverPlan)
         setRows(JSON.parse(serverPlan))
-    }, [serverPlan])
+    }
 
     const total = rows.reduce((sum, row) => sum + (Number(row.qty) || 0), 0)
     const dirty = JSON.stringify(rows) !== serverPlan
