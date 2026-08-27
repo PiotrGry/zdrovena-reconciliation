@@ -162,87 +162,85 @@ Today `_fetch_label_pdf` merges a draft's parcels, and `batch_labels` merges the
 Append to `tests/test_shipping_webhook.py`, in the class that already covers labels (the one holding `test_inpost_label_returns_pdf`):
 
 ```python
-    @staticmethod
-    def _real_pdf() -> bytes:
-        """A parsable one-page PDF. `b"%PDF-1.4 fake"` is not one: pypdf raises
-        PdfReadError on it, so it cannot exercise the titling path."""
-        import io as _io
+@staticmethod
+def _real_pdf() -> bytes:
+    """A parsable one-page PDF. `b"%PDF-1.4 fake"` is not one: pypdf raises
+    PdfReadError on it, so it cannot exercise the titling path."""
+    import io as _io
 
-        from pypdf import PdfWriter
+    from pypdf import PdfWriter
 
-        writer = PdfWriter()
-        writer.add_blank_page(width=200, height=300)
-        buffer = _io.BytesIO()
-        writer.write(buffer)
-        return buffer.getvalue()
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=300)
+    buffer = _io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
 
-    @staticmethod
-    def _title_of(pdf_bytes: bytes) -> str | None:
-        import io as _io
 
-        from pypdf import PdfReader
+@staticmethod
+def _title_of(pdf_bytes: bytes) -> str | None:
+    import io as _io
 
-        return PdfReader(_io.BytesIO(pdf_bytes)).metadata.title
+    from pypdf import PdfReader
 
-    def test_single_label_carries_the_dated_title(self, client, store):
-        draft = self._seed_created_draft(store, courier="inpost")
-        store.update_draft(draft["id"], {"shopify_order_number": "1723"})
-        moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
+    return PdfReader(_io.BytesIO(pdf_bytes)).metadata.title
 
-        with (
-            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
-            patch(
-                "zdrovena.common.inpost.InPostClient.get_label",
-                return_value=self._real_pdf(),
-            ),
-            patch("zdrovena.api.routers.webhooks._now_warsaw", return_value=moment),
-        ):
-            resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
 
-        assert resp.status_code == 200
-        assert self._title_of(resp.content) == "Etykieta 1723 26.08"
-        assert resp.headers["content-disposition"] == (
-            'inline; filename="Etykieta 1723 26.08.pdf"'
-        )
+def test_single_label_carries_the_dated_title(self, client, store):
+    draft = self._seed_created_draft(store, courier="inpost")
+    store.update_draft(draft["id"], {"shopify_order_number": "1723"})
+    moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
 
-    def test_batch_label_carries_the_portal_title(self, client, store):
-        draft = self._seed_created_draft(store, courier="inpost")
-        moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
+    with (
+        patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+        patch(
+            "zdrovena.common.inpost.InPostClient.get_label",
+            return_value=self._real_pdf(),
+        ),
+        patch("zdrovena.api.routers.webhooks._now_warsaw", return_value=moment),
+    ):
+        resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
 
-        with (
-            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
-            patch(
-                "zdrovena.common.inpost.InPostClient.get_label",
-                return_value=self._real_pdf(),
-            ),
-            patch("zdrovena.api.routers.webhooks._now_warsaw", return_value=moment),
-        ):
-            resp = client.post(
-                "/api/shipping/labels/batch", json={"draft_ids": [draft["id"]]}
-            )
+    assert resp.status_code == 200
+    assert self._title_of(resp.content) == "Etykieta 1723 26.08"
+    assert resp.headers["content-disposition"] == ('inline; filename="Etykieta 1723 26.08.pdf"')
 
-        assert resp.status_code == 200
-        assert self._title_of(resp.content) == "Etykiety portal 26.08"
-        assert resp.headers["content-disposition"] == (
-            'inline; filename="Etykiety portal 26.08.pdf"'
-        )
 
-    def test_an_unparsable_carrier_pdf_is_still_returned(self, client, store):
-        # A label the operator cannot print is a worse failure than an ugly
-        # filename, so titling degrades instead of raising.
-        draft = self._seed_created_draft(store, courier="inpost")
+def test_batch_label_carries_the_portal_title(self, client, store):
+    draft = self._seed_created_draft(store, courier="inpost")
+    moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
 
-        with (
-            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
-            patch(
-                "zdrovena.common.inpost.InPostClient.get_label",
-                return_value=b"%PDF-1.4 not really a pdf",
-            ),
-        ):
-            resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
+    with (
+        patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+        patch(
+            "zdrovena.common.inpost.InPostClient.get_label",
+            return_value=self._real_pdf(),
+        ),
+        patch("zdrovena.api.routers.webhooks._now_warsaw", return_value=moment),
+    ):
+        resp = client.post("/api/shipping/labels/batch", json={"draft_ids": [draft["id"]]})
 
-        assert resp.status_code == 200
-        assert resp.content == b"%PDF-1.4 not really a pdf"
+    assert resp.status_code == 200
+    assert self._title_of(resp.content) == "Etykiety portal 26.08"
+    assert resp.headers["content-disposition"] == ('inline; filename="Etykiety portal 26.08.pdf"')
+
+
+def test_an_unparsable_carrier_pdf_is_still_returned(self, client, store):
+    # A label the operator cannot print is a worse failure than an ugly
+    # filename, so titling degrades instead of raising.
+    draft = self._seed_created_draft(store, courier="inpost")
+
+    with (
+        patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+        patch(
+            "zdrovena.common.inpost.InPostClient.get_label",
+            return_value=b"%PDF-1.4 not really a pdf",
+        ),
+    ):
+        resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
+
+    assert resp.status_code == 200
+    assert resp.content == b"%PDF-1.4 not really a pdf"
 ```
 
 Add to that file's imports if missing:
@@ -674,9 +672,7 @@ class TestUpdateDraftPackagesBreakdown:
 
     def test_rejects_an_empty_plan(self, client, store):
         draft = self._seed_pending_draft(store)
-        resp = client.patch(
-            f"/api/shipping/drafts/{draft['id']}", json={"packages_breakdown": []}
-        )
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"packages_breakdown": []})
         assert resp.status_code == 400
 
     def test_rejects_a_quantity_outside_one_to_ninetynine(self, client, store):
@@ -822,7 +818,7 @@ def _validated_breakdown(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 Add the parameter to `update_draft`'s signature, after `packages_count`:
 
 ```python
-    packages_breakdown: list[dict[str, Any]] | None = Body(None),
+packages_breakdown: list[dict[str, Any]] | None = (Body(None),)
 ```
 
 and the branch, immediately after the existing `if packages_count is not None:` block:
@@ -1455,30 +1451,31 @@ Expected: FAIL — `AttributeError: 'ApaczkaClient' object has no attribute 'get
 - [ ] **Step 3: Write the implementation**
 
 ```python
-    def get_order(self, order_id: str) -> dict[str, Any]:
-        """Return one order's detail record.
+def get_order(self, order_id: str) -> dict[str, Any]:
+    """Return one order's detail record.
 
-        This is the only endpoint carrying the pickup block: ``order_send``
-        answers with the created order and no pickup information at all.
-        """
-        result = self._call(f"order/{order_id}", {})
-        response = result.get("response") or {}
-        if not isinstance(response, dict):
-            return {}
-        order = response.get("order")
-        return order if isinstance(order, dict) else {}
+    This is the only endpoint carrying the pickup block: ``order_send``
+    answers with the created order and no pickup information at all.
+    """
+    result = self._call(f"order/{order_id}", {})
+    response = result.get("response") or {}
+    if not isinstance(response, dict):
+        return {}
+    order = response.get("order")
+    return order if isinstance(order, dict) else {}
 
-    def get_order_pickup_number(self, order_id: str) -> str:
-        """Return the carrier's pickup-order id, or "" if not assigned yet.
 
-        The operator quotes this number to Apaczka support when a collection
-        goes wrong, so it is worth one extra read per shipment. The carrier
-        assigns it asynchronously, hence the empty-string case.
-        """
-        pickup = self.get_order(order_id).get("pickup")
-        if not isinstance(pickup, dict):
-            return ""
-        return str(pickup.get("pickup_number") or "").strip()
+def get_order_pickup_number(self, order_id: str) -> str:
+    """Return the carrier's pickup-order id, or "" if not assigned yet.
+
+    The operator quotes this number to Apaczka support when a collection
+    goes wrong, so it is worth one extra read per shipment. The carrier
+    assigns it asynchronously, hence the empty-string case.
+    """
+    pickup = self.get_order(order_id).get("pickup")
+    if not isinstance(pickup, dict):
+        return ""
+    return str(pickup.get("pickup_number") or "").strip()
 ```
 
 `_call` appends the trailing slash itself (`f"{_BASE}/{endpoint}/"`), so the endpoint string must not carry one — same as `cancel_order/{order_id}` and `waybill/{order_id}` above it.
@@ -1594,7 +1591,9 @@ class TestApaczkaPickupNumberCapture:
         client.create_shipment.return_value = {"id": "ord-1", "waybill_number": "APZ1"}
         client.get_order_pickup_number.return_value = "ZO-77123"
 
-        patch_written = _run_apaczka_with(client, _draft(packages_breakdown=[{"type": "1-pak", "qty": 1}]))
+        patch_written = _run_apaczka_with(
+            client, _draft(packages_breakdown=[{"type": "1-pak", "qty": 1}])
+        )
 
         assert patch_written["courier_shipments"][0]["pickup_number"] == "ZO-77123"
 
@@ -1605,7 +1604,9 @@ class TestApaczkaPickupNumberCapture:
         client.create_shipment.return_value = {"id": "ord-1", "waybill_number": "APZ1"}
         client.get_order_pickup_number.side_effect = RuntimeError("apaczka down")
 
-        patch_written = _run_apaczka_with(client, _draft(packages_breakdown=[{"type": "1-pak", "qty": 1}]))
+        patch_written = _run_apaczka_with(
+            client, _draft(packages_breakdown=[{"type": "1-pak", "qty": 1}])
+        )
 
         assert patch_written["courier_shipments"][0]["id"] == "ord-1"
         assert patch_written["courier_shipments"][0]["tracking_number"] == "APZ1"
@@ -1621,7 +1622,9 @@ class TestApaczkaPickupNumberCapture:
         ]
         client.get_order_pickup_number.side_effect = ["ZO-1", "ZO-2"]
 
-        patch_written = _run_apaczka_with(client, _draft(packages_breakdown=[{"type": "1-pak", "qty": 2}]))
+        patch_written = _run_apaczka_with(
+            client, _draft(packages_breakdown=[{"type": "1-pak", "qty": 2}])
+        )
 
         assert [s["pickup_number"] for s in patch_written["courier_shipments"]] == ["ZO-1", "ZO-2"]
 ```
