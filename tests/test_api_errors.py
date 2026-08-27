@@ -20,7 +20,9 @@ from zdrovena.common.shipping_exceptions import (
     ApaczkaServiceUnavailableError,
     CourierServerError,
     InPostAuthError,
+    InPostBusinessError,
     InPostLockerUnavailableError,
+    InPostRecipientPhoneError,
     MissingShippingAddressError,
     ShipmentAlreadyDispatchedError,
     ZdrovenaShippingError,
@@ -47,6 +49,16 @@ class TestClassify:
         http_status, msg = _classify(InPostLockerUnavailableError(locker_id="WAW01A"))
         assert http_status == 422
         assert msg == "Paczkomat InPost jest pełny lub niedostępny."
+
+    def test_recipient_phone_error_is_a_business_error_mapped_to_422(self):
+        """InPost enforces a recipient phone from 2026-09-08. The operator must
+        see which field to fix, not a generic "carrier rejected" message."""
+        exc = InPostRecipientPhoneError(raw_phone="", order_id="1700")
+
+        assert isinstance(exc, InPostBusinessError)
+        http_status, msg = _classify(exc)
+        assert http_status == 422
+        assert "telefon" in msg.lower()
 
     def test_cancellation_error_is_409(self):
         http_status, msg = _classify(ShipmentAlreadyDispatchedError(shipment_id="s-1"))
