@@ -71,18 +71,42 @@ footer bumps major. Semantic release runs automatically on merge to `main`.
 
 ### Local (automatic on push)
 
-When you `git push`, a pre-push hook runs all tests automatically:
+`.git/hooks/pre-push` runs `scripts/check.sh` on every push. It is not optional — it is the
+last gate before code leaves your machine, and it blocks the push when a step fails.
 
+Install the hook (one-time per developer):
 ```bash
-git push  # ← pytest fires here, blocks push if tests fail
+bash scripts/install-hooks.sh
 ```
 
-This saves time — no waiting for CI feedback on unit tests.
+A change touching only `.md` / `.pdf` files takes the fast path in `scripts/docs-only.sh` and
+skips the gate. Force a full run with `CHECK_DOCS_FASTPATH=0 bash scripts/check.sh`.
 
-To install the hook (one-time per developer):
-```bash
-pre-commit install --hook-type pre-push
-```
+**A step that cannot run fails the gate.** A missing tool used to print a skip and let the push
+through, which meant a half-built `.venv` silently downgraded every guarantee below (#279). If you
+genuinely cannot install something, skip it on purpose with the matching variable — that way the
+skip is a decision you recorded, not something that happened to you.
+
+| Step | Needs | Skip with |
+| --- | --- | --- |
+| ruff lint + format | `uv sync --extra dev` | `CHECK_RUFF=0` |
+| pyright | `uv sync --extra dev` | `CHECK_TYPECHECK=0` |
+| bandit | `uv sync --extra dev` | `CHECK_BANDIT=0` |
+| pytest + coverage | `uv sync --extra dev` | `CHECK_TESTS=0` |
+| uv lock consistency | [uv](https://docs.astral.sh/uv/) | `CHECK_UV_LOCK=0` |
+| pip-audit | `uv sync --extra dev` | `CHECK_PIPAUDIT=0` |
+| SOPS age guard | `chmod +x scripts/check-sops-secrets.sh` | `CHECK_SOPS=0` |
+| gitleaks | [gitleaks](https://github.com/gitleaks/gitleaks) | `CHECK_GITLEAKS=0` |
+| trivy | [trivy](https://aquasecurity.github.io/trivy) | `CHECK_TRIVY=0` |
+| terraform fmt | [terraform](https://developer.hashicorp.com/terraform/downloads) | `CHECK_TERRAFORM=0` |
+| checkov | `uv sync --extra iac` | `CHECK_CHECKOV=0` |
+| frontend lint, tests, build | `npm --prefix frontend ci` | `CHECK_FRONTEND=0` |
+
+Use `npm ci`, not `npm install`. `npm install` resolves fresh versions and lets `node_modules`
+drift from `package-lock.json`, which makes the local lint weaker than CI's — that is how an
+eslint rule violation reached CI on a branch whose local lint was green.
+
+`git push --no-verify` bypasses the whole gate. Prefer one targeted variable above.
 
 ### CI (after push to develop / on PR to main)
 
@@ -101,16 +125,6 @@ pip-audit
 gitleaks
 trivy
 ```
-
-### Manual full check (optional)
-
-To run all checks manually before pushing:
-
-```bash
-bash scripts/check.sh
-```
-
-This includes lint + typecheck + full test suite + security.
 
 **Staging gate (PR → main):** runs TypeScript smoke tests + Playwright E2E against a real staging deployment. This is the final quality gate before production.
 
