@@ -9,6 +9,8 @@ from __future__ import annotations
 import subprocess
 import sys
 
+from zdrovena import __version__
+
 PYTHON = sys.executable
 
 
@@ -68,7 +70,9 @@ class TestCLISmoke:
             [PYTHON, "-m", "zdrovena.cli", "--version"], capture_output=True, text=True
         )
         assert r.returncode == 0
-        assert "2.0.0" in r.stdout
+        # Asserting the literal is what let the CLI drift to 2.0.0 while the
+        # package was on 2.9.0 -- compare against the single source (#238).
+        assert __version__ in r.stdout
 
     def test_audit_help(self):
         r = subprocess.run(

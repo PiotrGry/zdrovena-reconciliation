@@ -29,3 +29,6 @@ docker-compose*.yml
 .vscode/
 .idea/
 *.swp
+
+# Editor/agent scratch inside the package tree — was shipping to production
+zdrovena/.continue/
