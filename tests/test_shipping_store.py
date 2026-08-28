@@ -14,7 +14,14 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from azure.core.exceptions import (
+    ClientAuthenticationError,
+    HttpResponseError,
+    ResourceNotFoundError,
+    ServiceRequestError,
+)
 
+from zdrovena.common.exceptions import StorageUnavailableError
 from zdrovena.common.shipping_store import ShippingStore
 
 
@@ -356,7 +363,10 @@ class _FakeTableClient:
     def get_entity(self, partition_key, row_key):
         key = (partition_key, row_key)
         if key not in self._rows:
-            raise KeyError("not found")
+            # Azure raises ResourceNotFoundError, not KeyError. A fake that
+            # invents its own exception hides the difference between "absent"
+            # and "unreachable" - which is the bug in issue #310.
+            raise ResourceNotFoundError("not found")
         return _FakeTableEntity(dict(self._rows[key]), str(self._etags[key]))
 
     def upsert_entity(self, entity):
@@ -520,3 +530,69 @@ class TestTryClaimExecution:
 
     def test_missing_draft_loses(self, store):
         assert store.try_claim_execution("does-not-exist") is False
+
+
+# ── Storage outage is not emptiness (issue #310) ──────────────────────────────
+
+_OUTAGES = [
+    ServiceRequestError("timeout"),
+    HttpResponseError("429 ServerBusy"),
+    ClientAuthenticationError("token expired"),
+]
+
+
+class _BrokenTableClient:
+    """Every call fails the way Azure fails: not with ResourceNotFoundError."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def get_entity(self, *args, **kwargs):
+        raise self._exc
+
+    def query_entities(self, *args, **kwargs):
+        raise self._exc
+
+
+def _broken_store(monkeypatch, exc: Exception) -> ShippingStore:
+    store = ShippingStore(account_url="https://fake.blob.core.windows.net")
+    broken = _BrokenTableClient(exc)
+    monkeypatch.setattr(store, "_table_client", lambda: broken)
+    monkeypatch.setattr(store, "_dlq_table_client", lambda: broken)
+    return store
+
+
+class TestOutageIsNotEmptiness:
+    @pytest.mark.parametrize("exc", _OUTAGES, ids=lambda e: type(e).__name__)
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda s: s.get_draft("d1"),
+            lambda s: s.list_drafts(),
+            lambda s: s.get_dlq_entry("e1"),
+            lambda s: s.list_dlq(),
+        ],
+        ids=["get_draft", "list_drafts", "get_dlq_entry", "list_dlq"],
+    )
+    def test_an_outage_raises_instead_of_answering_absent(self, monkeypatch, exc, call):
+        store = _broken_store(monkeypatch, exc)
+
+        with pytest.raises(StorageUnavailableError):
+            call(store)
+
+    def test_a_genuinely_missing_row_still_returns_none(self, monkeypatch):
+        # The contract for real absence is unchanged - this is what stops the
+        # fix from turning every read into an error.
+        store = _broken_store(monkeypatch, ResourceNotFoundError("no such row"))
+
+        assert store.get_draft("d1") is None
+        assert store.get_dlq_entry("e1") is None
+
+    def test_an_empty_partition_still_returns_an_empty_list(self, monkeypatch):
+        store = ShippingStore(account_url="https://fake.blob.core.windows.net")
+        empty = _FakeTableClient()
+        monkeypatch.setattr(store, "_table_client", lambda: empty)
+        monkeypatch.setattr(store, "_dlq_table_client", lambda: empty)
+
+        assert store.list_drafts() == []
+        assert store.list_dlq() == []

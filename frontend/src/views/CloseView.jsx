@@ -28,7 +28,9 @@ export default function CloseView() {
     const loadRun = useCallback(async () => {
         setLoading(true)
         try {
-            const token = await getToken()
+            // Driven by a 2s setInterval, so never interactive: a popup without a
+            // user gesture is blocked by the browser anyway.
+            const token = await getToken({ interactive: false })
             const data = await fetchJson(`/api/close/workflow?year=${year}&month=${month}`, { token })
             setRun(data)
         } catch (error) {

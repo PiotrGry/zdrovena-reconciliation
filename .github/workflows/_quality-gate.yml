@@ -66,15 +66,19 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          python-version: "3.12"
-          cache: pip
-      - run: pip install -e ".[dev,api,cloud,report,ksef,pdf]" pyright
-      - run: ruff check .
-      - run: ruff format --check .
-      - run: pyright
-      - run: pytest tests/ -q --tb=short --cov=zdrovena --cov-fail-under=80
+          version: "0.11.6"
+      # uv reads uv.lock; pip does not. CI used to test a different resolution
+      # than the image ships (issue #278). --locked fails when the lockfile no
+      # longer matches pyproject.toml — --frozen would not.
+      - run: uv sync --locked --extra dev --extra api --extra cloud --extra report --extra ksef --extra pdf
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      # pyright is CI tooling, in neither pyproject nor uv.lock. Isolated and
+      # pinned so local and CI cannot disagree about what "clean" means.
+      - run: uvx pyright@1.1.409
+      - run: uv run pytest tests/ -q --tb=short --cov=zdrovena --cov-fail-under=80
 
   security:
     name: Security scan
@@ -86,12 +90,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          python-version: "3.12"
-          cache: pip
-      - run: pip install --upgrade pip  # CVE-2026-3219, CVE-2026-6357 fixed in pip>=26.1
-      - run: pip install -e ".[dev,api,cloud]" pip-audit "bandit[toml]"
+          version: "0.11.6"
+      # Both dev selectors: pip-audit and bandit live in [dependency-groups] dev,
+      # the rest of the tooling in [project.optional-dependencies] dev.
+      # The old `pip install --upgrade pip` (CVE-2026-3219, CVE-2026-6357) is
+      # gone with pip itself — nothing in this job installs with pip any more.
+      - run: uv sync --locked --group dev --extra dev --extra api --extra cloud
+      # uv sync installs into .venv; the pip-audit and bandit steps below call
+      # the binaries by name, so the environment has to be on PATH.
+      - run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - run: |
           pip-audit \
             --ignore-vuln PYSEC-2026-89 \
@@ -143,16 +152,18 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          python-version: "3.12"
-          cache: pip
+          version: "0.11.6"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: pip install -e ".[api,cloud,report,ksef,pdf]"
+      - run: uv sync --locked --extra api --extra cloud --extra report --extra ksef --extra pdf
+      # scripts/generate-api-contracts.sh calls python3 directly, so the uv
+      # environment has to be on PATH rather than reached through uv run.
+      - run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - working-directory: frontend
         run: npm ci
       - run: scripts/check-api-contracts.sh

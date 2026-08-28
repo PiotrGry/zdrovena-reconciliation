@@ -5,6 +5,34 @@
 
 ### Fixed
 
+- **auth**: Koniec z błędem MSAL `interaction_in_progress` na stronie Wysyłki. `getToken()`
+  przy każdym niepowodzeniu cichego odświeżenia wpadało w `acquireTokenPopup` bez żadnej
+  serializacji, a MSAL dopuszcza jedną interakcję naraz — więc gdy token wygasał, dwóch
+  współbieżnych wywołujących startowało dwie i drugi dostawał ten błąd. Wysyłki obrywały
+  najczęściej: dwa niezależne timery (20 s i 5 s) plus 17 miejsc wywołania. Interakcja jest
+  teraz współdzielona przez wszystkich czekających, a powtarzalne timery w pięciu widokach nie
+  próbują już otwierać okna logowania — bez gestu użytkownika przeglądarka i tak by je
+  zablokowała, więc cichy polling po prostu odpuszcza, a kolejne kliknięcie operatora odnawia
+  sesję.
+- **build**: CI i obraz produkcyjny instalują teraz z `uv.lock`. Wcześniej oba używały pipa, który
+  lockfile'a nie czyta — `Dockerfile` nawet go nie kopiował do kontekstu budowy, więc każdy build
+  rozwiązywał zależności od nowa. Zmierzone przed zmianą: **46 z 78** wspólnych pakietów jechało na
+  produkcji w innej wersji niż przypina lock, w tym `fastapi` 0.141.1 zamiast 0.138.2. Po zmianie
+  rozbieżności zero. Użyte `uv sync --locked`, nie `--frozen`: to pierwsze wywala build, gdy lock
+  rozjedzie się z `pyproject.toml`, drugie nie. Obraz jest teraz multi-stage — `uv` zostaje
+  w warstwie budującej. Narzędzia CI spoza projektu (`pyright`, `mutmut`) idą przez `uvx`
+  z przypiętymi wersjami. Krok seedujący staging stracił instalację Pythona, bo jego skrypt używa
+  wyłącznie `az` i `curl`. (#278)
+- **storage**: Awaria Azure Table Storage nie wygląda już jak brak danych. Sześć ścieżek odczytu
+  w `ShippingStore` i `DamageStore` łapało gołe `Exception` i odpowiadało `None` albo pustą listą,
+  więc timeout, throttling czy wygasłe poświadczenia były nieodróżnialne od rekordu, którego
+  naprawdę nie ma. Najgroźniejszy skutek nie był kosmetyczny: `find_case_by_fingerprint` iteruje
+  po `list_cases`, więc przy awarii odpowiadał „nie ma takiej sprawy" i wywołujący tworzył duplikat
+  sprawy uszkodzenia. Teraz brak encji nadal daje `None`/404, a każda inna awaria to
+  `StorageUnavailableError` → HTTP 503 z correlation ID plus zdarzenie `storage_unavailable`,
+  na którym mogą się oprzeć alerty (#214). Lokalny backend JSON celowo bez zmian — tam uszkodzony
+  plik sam się leczy przy następnym zapisie i jest to udokumentowana decyzja. (#310)
+
 - **shipping**: InPost wymaga i waliduje numer telefonu odbiorcy od 2026-09-08 — portal sprawdza
   go teraz przed wysłaniem przesyłki, zamiast czekać na odrzucenie przez ShipX. Numer jest przy
   okazji normalizowany w jedynym lejku ścieżki InPost, więc stare drafty z surową wartością też

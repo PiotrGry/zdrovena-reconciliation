@@ -24,18 +24,22 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          python-version: '3.12'
-          cache: pip
+          version: "0.11.6"
 
+      # uv reads uv.lock; pip does not (issue #278). mutmut is CI tooling, in
+      # neither pyproject nor the lock, so it runs isolated through uvx.
       - name: Install dependencies
-        run: pip install -e ".[dev]" mutmut
+        run: uv sync --locked --extra dev
+
+      # .venv on PATH: mutmut's --runner shells out to `python -m pytest`.
+      - run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Run mutation tests
         id: mutmut
         run: |
-          mutmut run \
+          uvx mutmut@3.7.0 run \
             --paths-to-mutate zdrovena/audit/sections.py,zdrovena/common/client.py \
             --runner "python -m pytest tests/test_sections.py tests/test_client.py -x -q"
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
