@@ -98,6 +98,9 @@ jobs:
       # The old `pip install --upgrade pip` (CVE-2026-3219, CVE-2026-6357) is
       # gone with pip itself — nothing in this job installs with pip any more.
       - run: uv sync --locked --group dev --extra dev --extra api --extra cloud
+      # uv sync installs into .venv; the pip-audit and bandit steps below call
+      # the binaries by name, so the environment has to be on PATH.
+      - run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - run: |
           pip-audit \
             --ignore-vuln PYSEC-2026-89 \
