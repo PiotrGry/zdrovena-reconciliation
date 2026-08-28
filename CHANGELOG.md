@@ -5,6 +5,14 @@
 
 ### Fixed
 
+- **api**: Health check Fakturowni działa na deploymencie, który trzyma token wyłącznie
+  w Key Vault. Flaga „skonfigurowane" brała się z samej obecności `AZURE_KEYVAULT_URL`
+  — sekret nigdy nie był rozwiązywany — a klienta do wywołania live budowano z
+  `FAKTUROWNIA_API_TOKEN` z env. Integracja działała w runtime, a dashboard pokazywał
+  awarię. Obie ścieżki idą teraz przez `get_secret()`, czyli to samo rozwiązywanie
+  sekretów co runtime, więc panel i aplikacja nie mogą się już rozjechać. Sam token
+  nigdy nie trafia do odpowiedzi. (#315)
+
 - **api**: `/health` raportuje teraz prawdziwą wersję aplikacji. `zdrovena/__init__.py`
   i `main.py` trzymały własne literały `2.0.0`, podczas gdy `pyproject.toml` był już na 2.9.0,
   a `version.json` z CI raportował 2.9.0 — czyli endpoint diagnostyczny kłamał o wdrożonej
