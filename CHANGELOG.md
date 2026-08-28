@@ -5,6 +5,16 @@
 
 ### Fixed
 
+- **build**: CI i obraz produkcyjny instalują teraz z `uv.lock`. Wcześniej oba używały pipa, który
+  lockfile'a nie czyta — `Dockerfile` nawet go nie kopiował do kontekstu budowy, więc każdy build
+  rozwiązywał zależności od nowa. Zmierzone przed zmianą: **46 z 78** wspólnych pakietów jechało na
+  produkcji w innej wersji niż przypina lock, w tym `fastapi` 0.141.1 zamiast 0.138.2. Po zmianie
+  rozbieżności zero. Użyte `uv sync --locked`, nie `--frozen`: to pierwsze wywala build, gdy lock
+  rozjedzie się z `pyproject.toml`, drugie nie. Obraz jest teraz multi-stage — `uv` zostaje
+  w warstwie budującej. Narzędzia CI spoza projektu (`pyright`, `mutmut`) idą przez `uvx`
+  z przypiętymi wersjami. Krok seedujący staging stracił instalację Pythona, bo jego skrypt używa
+  wyłącznie `az` i `curl`. (#278)
+
 - **shipping**: InPost wymaga i waliduje numer telefonu odbiorcy od 2026-09-08 — portal sprawdza
   go teraz przed wysłaniem przesyłki, zamiast czekać na odrzucenie przez ShipX. Numer jest przy
   okazji normalizowany w jedynym lejku ścieżki InPost, więc stare drafty z surową wartością też
