@@ -5,6 +5,18 @@
 
 ### Fixed
 
+- **observability**: Ponad 99% rekordów `AppTraces` to był szum bibliotek, nie logi
+  aplikacji. Przyczyna: Azure Monitor distro podpina handler eksportujący pod **root
+  loggera** (`logger_name` domyślnie `""`), więc każdy rekord INFO z dowolnej biblioteki
+  w procesie leciał do Log Analytics i był fakturowany. Obroną była lista pięciu nazw
+  loggerów, skopiowana do dwóch plików — a lista nazw obejmuje tylko te loggery,
+  o których ktoś pomyślał. Filtr eksportu działa teraz na wadze rekordu: `zdrovena.*`
+  (w tym `zdrovena.events`) idzie do LAW zawsze, reszta od `WARNING` w górę, więc awaria
+  zależności zostaje widoczna, a jej sukcesy nie. Handlery konsolowe nietknięte. Próg
+  konfigurowalny przez `LOG_LEVEL_AZURE_EXPORT`, lista nazw ma jedno miejsce
+  (`zdrovena/common/logging_setup.py`), a runbook `docs/devops/logging-noise.md` zawiera
+  KQL do porównania wolumenu przed i po. (#213)
+
 - **api**: Health check Fakturowni działa na deploymencie, który trzyma token wyłącznie
   w Key Vault. Flaga „skonfigurowane" brała się z samej obecności `AZURE_KEYVAULT_URL`
   — sekret nigdy nie był rozwiązywany — a klienta do wywołania live budowano z

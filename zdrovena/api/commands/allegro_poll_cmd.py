@@ -85,20 +85,9 @@ def _emit_orders_without_tracking_snapshot(
 
 
 def _setup_logging() -> None:
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        force=True,
-    )
-    _azure_log_level = os.environ.get("LOG_LEVEL_AZURE", "WARNING").upper()
-    for _name in (
-        "azure.core.pipeline.policies.http_logging_policy",
-        "azure.identity",
-        "azure.storage",
-        "azure.data.tables",
-        "azure.monitor.opentelemetry",
-    ):
-        logging.getLogger(_name).setLevel(_azure_log_level)
+    from zdrovena.common.logging_setup import configure_process_logging
+
+    configure_process_logging(log_format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
         from zdrovena.common.telemetry import configure_azure_telemetry
