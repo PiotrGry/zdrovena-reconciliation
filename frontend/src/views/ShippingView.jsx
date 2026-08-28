@@ -1389,7 +1389,8 @@ export default function ShippingView() {
             setError(null)
         }
         try {
-            const token = await getToken()
+            // A silent poll must not open a sign-in prompt — no user gesture here.
+            const token = await getToken({ interactive: !silent })
             const data = await getShippingDrafts({ token })
             setDrafts(data.drafts ?? [])
             if (silent) setError(null)
@@ -1610,7 +1611,8 @@ export default function ShippingView() {
         const ids = pendingConfirmationKey.split(',')
         const interval = setInterval(async () => {
             try {
-                const token = await getToken()
+                // Background timer: never interactive.
+                const token = await getToken({ interactive: false })
                 await Promise.all(ids.map(id =>
                     fetch(`/api/shipping/drafts/${id}/confirm`, {
                         method: 'POST',
