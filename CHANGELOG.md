@@ -5,6 +5,13 @@
 
 ### Fixed
 
+- **api**: `/health` raportuje teraz prawdziwą wersję aplikacji. `zdrovena/__init__.py`
+  i `main.py` trzymały własne literały `2.0.0`, podczas gdy `pyproject.toml` był już na 2.9.0,
+  a `version.json` z CI raportował 2.9.0 — czyli endpoint diagnostyczny kłamał o wdrożonej
+  wersji. Wersja czytana jest teraz z metadanych zainstalowanej dystrybucji, więc
+  `pyproject.toml` jest jedynym miejscem, gdzie się ją ustawia. Test polityki nie wpuści
+  drugiego literału. (#216)
+
 - **frontend**: Niedokończony moduł kosztów nie jest już osiągalny. `CostView` to placeholder
   („Moduł w przygotowaniu"), a mimo to siedział w mapie widoków bez flagi, inaczej niż
   `orders`/`products`/`users`. Pozycji w nawigacji już nie miał, ale zapamiętana strona
