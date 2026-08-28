@@ -554,7 +554,15 @@ jobs:
   teardown:
     name: Teardown staging
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Teardown is cost control, not correctness: it scales staging to zero and
+    # deletes the SWA environment. If it fails, staging stays warm and the
+    # nightly `Staging keep-alive schedule` cron (22:00 Mon-Fri) cleans it up.
+    # Blocking a production release on that would mean a slow Azure login can
+    # hold back a fix the operator is waiting for — which is exactly what
+    # happened on PR #337, where azure/login alone took 4m49s of a 5m budget.
+    continue-on-error: true
+    # Sized for a slow OIDC login, not for the ~20s of actual `az` work.
+    timeout-minutes: 12
     needs: [smoke, e2e]
     if: always()
     environment: staging

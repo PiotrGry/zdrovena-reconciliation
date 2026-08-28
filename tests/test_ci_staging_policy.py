@@ -11,6 +11,9 @@ STAGING_SCHEDULE = (REPO_ROOT / ".github" / "workflows" / "staging-schedule.yml"
     encoding="utf-8"
 )
 BACK_SYNC_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "back-sync-main.yml"
+FULL_SUITE = (REPO_ROOT / ".github" / "workflows" / "_full-test-suite.yml").read_text(
+    encoding="utf-8"
+)
 
 
 def test_full_staging_is_conditional_on_runtime_or_staging_changes() -> None:
@@ -68,3 +71,44 @@ def test_staging_shutdown_uses_valid_bounded_teardown() -> None:
 
 def test_release_flow_does_not_use_automatic_back_sync() -> None:
     assert not BACK_SYNC_WORKFLOW.exists()
+
+
+def _teardown_block() -> str:
+    """The `teardown:` job definition, up to the next top-level job key."""
+    start = FULL_SUITE.index("\n  teardown:")
+    rest = FULL_SUITE[start + 1 :]
+    lines = rest.splitlines()
+    out = [lines[0]]
+    for line in lines[1:]:
+        if line and not line.startswith("    ") and line.strip():
+            break
+        out.append(line)
+    return "\n".join(out)
+
+
+def test_teardown_failure_does_not_block_a_release() -> None:
+    """Teardown is cost control, not correctness: it scales staging to zero.
+
+    When it failed, the reusable workflow's result went red and CI Gate blocked
+    the merge — so on PR #337 a 4m49s Azure OIDC login held back a production
+    fix the operator was waiting for. The nightly staging-schedule cron cleans
+    up regardless, so a failure here costs a warm staging environment until
+    evening, not correctness.
+    """
+    assert "continue-on-error: true" in _teardown_block()
+
+
+def test_teardown_has_room_for_a_slow_azure_login() -> None:
+    """The job's real work is ~20s of `az`; the budget is dominated by login,
+    which has been observed taking almost five minutes."""
+    block = _teardown_block()
+    timeout = next(
+        int(line.split(":", 1)[1]) for line in block.splitlines() if "timeout-minutes:" in line
+    )
+    assert timeout >= 10, f"teardown timeout is {timeout}min — one slow login eats it"
+
+
+def test_the_nightly_cron_still_backs_teardown_up() -> None:
+    # This is what makes a non-blocking teardown safe rather than a gamble.
+    assert "teardown-staging.sh" in STAGING_SCHEDULE
+    assert "schedule:" in STAGING_SCHEDULE
