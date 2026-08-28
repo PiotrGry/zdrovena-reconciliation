@@ -44,19 +44,19 @@ GitHub zamyka issue tylko przy gałęzi domyślnej.
 
 ## 2. Dzień pracy
 
-- [ ] [#213](https://github.com/PiotrGry/zdrovena-reconciliation/issues/213) — **P1** szum logów Azure SDK i OTel
+- [x] [#213](https://github.com/PiotrGry/zdrovena-reconciliation/issues/213) — **P1** szum logów Azure SDK i OTel
   Ponad 99% `AppTraces` to szum. Filtry loggerów są proste; kryterium akceptacji
   wymaga porównania wolumenu w oknie czasowym, czyli czekania.
 
-- [ ] [#214](https://github.com/PiotrGry/zdrovena-reconciliation/issues/214) — **P1** alerty operacyjne
+- [x] [#214](https://github.com/PiotrGry/zdrovena-reconciliation/issues/214) — **P1** alerty operacyjne
   Odblokowane przez #310, które dostarczyło zdarzenie `storage_unavailable`.
   Głównie Terraform i reguły alertów.
 
-- [ ] [#238](https://github.com/PiotrGry/zdrovena-reconciliation/issues/238) — **P1** obraz Docker i czas builda
+- [x] [#238](https://github.com/PiotrGry/zdrovena-reconciliation/issues/238) — **P1** obraz Docker i czas builda
   **Przejrzeć zakres przed startem.** PR #334 zmienił obraz na multi-stage, czyli
   połowę tego issue. Może zostać sam audyt cache.
 
-- [ ] [#217](https://github.com/PiotrGry/zdrovena-reconciliation/issues/217) — **P2** Activity Log do LAW
+- [x] [#217](https://github.com/PiotrGry/zdrovena-reconciliation/issues/217) — **P2** Activity Log do LAW
   Terraform plus KQL do runbooka. Wymaga dostępu do subskrypcji.
 
 ## 3. Kilka dni

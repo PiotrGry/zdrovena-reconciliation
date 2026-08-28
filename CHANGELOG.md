@@ -5,6 +5,15 @@
 
 ### Added
 
+- **monitoring**: Activity Log jedzie teraz do Log Analytics. Tabela `AzureActivity`
+  była pusta, więc zapytanie o historię alertów nie odróżniało „nic się nie działo"
+  od „nigdzie tego nie zbieramy" — ta sama dwuznaczność co w #279, #278 i #310, tyle
+  że w warstwie audytu samego monitoringu. Eksportowane są cztery kategorie
+  (`Alert`, `Administrative`, `ServiceHealth`, `ResourceHealth`); pozostałe są
+  pominięte z uzasadnieniem, bo za każdy rekord płacimy. Retencja pochodzi
+  z workspace'a i nie jest nadpisywana. KQL do historii aktywacji, audytu zmian
+  konfiguracji i oszacowania wolumenu jest w `docs/devops/alerty-operacyjne.md`. (#217)
+
 - **docker**: Obraz produkcyjny schudł z 317,9 MB do 212,7 MB (−33%). 107 MB kosztował
   jeden `chown -R app:app /app` — przepisuje każdy plik do nowej warstwy, więc obraz
   niósł drugą, pełną kopię virtualenva różniącą się wyłącznie właścicielem; własność

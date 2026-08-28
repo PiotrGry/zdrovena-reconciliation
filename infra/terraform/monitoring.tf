@@ -554,3 +554,53 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "kaucja_divergence" {
 
   tags = local.tags
 }
+
+# ── Activity Log → Log Analytics ─────────────────────────────────────────────
+#
+# Bez tego `AzureActivity` jest pustą tabelą, a pusty wynik zapytania o historię
+# alertów nie odróżnia „nic się nie działo" od „Activity Log nigdzie nie leci".
+# Dokładnie ta dwuznaczność, którą leczyły #279, #278 i #310, tyle że w warstwie
+# audytu monitoringu: reguły alertów z tego pliku istnieją, ale ich aktywacji
+# i rozwiązań nie da się prześledzić wstecz (#217).
+#
+# Zakres kategorii jest celowo wąski — płacimy za ingestię każdego rekordu:
+#
+#   Alert           — sedno sprawy: aktywacja i rozwiązanie każdej reguły wyżej.
+#   Administrative  — kto i kiedy zmienił regułę, action group albo Container App.
+#                     Bez tego historia alertów kłamie po każdej zmianie konfiguracji.
+#   ServiceHealth   — awarie po stronie Azure; wyjaśniają nasze alerty bez zgadywania.
+#   ResourceHealth  — to samo, ale dla konkretnego zasobu.
+#
+# Świadomie NIE eksportujemy:
+#   Security        — nie prowadzimy tu Defendera; szum bez odbiorcy.
+#   Policy          — nie mamy własnych przypisań polityk poza `policy.tf`, a te
+#                     nie generują zdarzeń wymagających historii.
+#   Recommendation  — Advisor, treść marketingowo-doradcza, zero wartości w triage.
+#   Autoscale       — Container Apps skalują się własnym mechanizmem, nie autoscale.
+#
+# Retencja wynika z workspace'a (`retention_in_days = 30` w main.tf) i nie jest
+# tu nadpisywana — jedno miejsce, jedna decyzja.
+
+data "azurerm_subscription" "current" {}
+
+resource "azurerm_monitor_diagnostic_setting" "activity_log" {
+  name                       = "${var.prefix}-activity-to-law"
+  target_resource_id         = data.azurerm_subscription.current.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
+
+  enabled_log {
+    category = "Alert"
+  }
+
+  enabled_log {
+    category = "Administrative"
+  }
+
+  enabled_log {
+    category = "ServiceHealth"
+  }
+
+  enabled_log {
+    category = "ResourceHealth"
+  }
+}
