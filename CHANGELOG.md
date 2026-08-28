@@ -5,6 +5,16 @@
 
 ### Fixed
 
+- **auth**: Koniec z błędem MSAL `interaction_in_progress` na stronie Wysyłki. `getToken()`
+  przy każdym niepowodzeniu cichego odświeżenia wpadało w `acquireTokenPopup` bez żadnej
+  serializacji, a MSAL dopuszcza jedną interakcję naraz — więc gdy token wygasał, dwóch
+  współbieżnych wywołujących startowało dwie i drugi dostawał ten błąd. Wysyłki obrywały
+  najczęściej: dwa niezależne timery (20 s i 5 s) plus 17 miejsc wywołania. Interakcja jest
+  teraz współdzielona przez wszystkich czekających, a powtarzalne timery w pięciu widokach nie
+  próbują już otwierać okna logowania — bez gestu użytkownika przeglądarka i tak by je
+  zablokowała, więc cichy polling po prostu odpuszcza, a kolejne kliknięcie operatora odnawia
+  sesję.
+
 - **shipping**: InPost wymaga i waliduje numer telefonu odbiorcy od 2026-09-08 — portal sprawdza
   go teraz przed wysłaniem przesyłki, zamiast czekać na odrzucenie przez ShipX. Numer jest przy
   okazji normalizowany w jedynym lejku ścieżki InPost, więc stare drafty z surową wartością też
