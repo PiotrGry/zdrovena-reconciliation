@@ -20,25 +20,25 @@ każdego z nich, nie po tytułach.
 Kod jest na produkcji. Otwarte, bo `Closes` nie działa przy merge'u do `develop` —
 GitHub zamyka issue tylko przy gałęzi domyślnej.
 
-- [ ] [#335](https://github.com/PiotrGry/zdrovena-reconciliation/issues/335) — MSAL `interaction_in_progress` (PR #336, na produkcji)
-- [ ] [#310](https://github.com/PiotrGry/zdrovena-reconciliation/issues/310) — awaria storage ≠ brak danych (PR #333, na produkcji)
-- [ ] [#278](https://github.com/PiotrGry/zdrovena-reconciliation/issues/278) — lockfile w CI i Dockerze (PR #334, **czeka na scalenie**)
+- [x] [#335](https://github.com/PiotrGry/zdrovena-reconciliation/issues/335) — MSAL `interaction_in_progress` (PR #336, na produkcji)
+- [x] [#310](https://github.com/PiotrGry/zdrovena-reconciliation/issues/310) — awaria storage ≠ brak danych (PR #333, na produkcji)
+- [x] [#278](https://github.com/PiotrGry/zdrovena-reconciliation/issues/278) — lockfile w CI i Dockerze (PR #334, **czeka na scalenie**)
 
 ---
 
 ## 1. Godzina albo mniej
 
-- [ ] [#314](https://github.com/PiotrGry/zdrovena-reconciliation/issues/314) — **P2** ukryć moduł kosztów za flagą
+- [x] [#314](https://github.com/PiotrGry/zdrovena-reconciliation/issues/314) — **P2** ukryć moduł kosztów za flagą
   Mechanizm już istnieje. `features.js` ma `orders/products/users: false`, a `App.jsx`
   opakowuje je w `...(FEATURES.x && {...})`. Tylko `costs: CostView` (App.jsx:27) nie
   jest opakowane — dlatego placeholder widać w nawigacji. Trzy linie plus test.
 
-- [ ] [#216](https://github.com/PiotrGry/zdrovena-reconciliation/issues/216) — **P2** jedno źródło wersji
+- [x] [#216](https://github.com/PiotrGry/zdrovena-reconciliation/issues/216) — **P2** jedno źródło wersji
   Cztery rozjechane miejsca: `pyproject.toml`, `zdrovena/__init__.py:3`,
   `zdrovena/api/main.py:153`, `frontend/package.json`. Odczyt runtime przez
   `importlib.metadata`. Rozjazd potwierdzony w praktyce 2026-08-27.
 
-- [ ] [#315](https://github.com/PiotrGry/zdrovena-reconciliation/issues/315) — **P2** health check Fakturowni pod Key Vault
+- [x] [#315](https://github.com/PiotrGry/zdrovena-reconciliation/issues/315) — **P2** health check Fakturowni pod Key Vault
   Pięć wystąpień `FAKTUROWNIA_API_TOKEN`. Health check ma używać tego samego
   `get_secret()`, co runtime, zamiast czytać env.
 
