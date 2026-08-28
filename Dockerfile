@@ -1,21 +1,37 @@
+# ── Builder: resolve from uv.lock, not from a fresh pip resolution ───────────
+FROM python:3.12-slim AS builder
+
+# uv reads uv.lock; pip does not. Before this, every image build resolved
+# dependencies afresh and the lockfile was never even copied into the build
+# context, so what shipped was not what CI tested (issue #278).
+COPY --from=ghcr.io/astral-sh/uv:0.11.6 /uv /usr/local/bin/uv
+
+WORKDIR /app
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
+
+# Dependencies before sources — this layer caches until pyproject/uv.lock change.
+# --locked, not --frozen: a lockfile that no longer matches pyproject.toml must
+# fail the build rather than silently install something else.
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --locked --no-install-project --no-dev \
+        --extra api --extra cloud --extra ksef
+
+# Sources last — changes here do not invalidate the dependency layer. The second
+# sync installs the project itself, which is what puts the `zdrovena` console
+# entrypoint used by Container App Jobs on the path.
+COPY zdrovena/ zdrovena/
+RUN uv sync --locked --no-editable --no-dev \
+        --extra api --extra cloud --extra ksef
+
+# ── Final: the environment only, no uv, no build tooling ─────────────────────
 FROM python:3.12-slim
 
 WORKDIR /app
-
-# Install deps BEFORE copying source — pip layer is cached until pyproject.toml changes
-COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir ".[api,cloud,ksef]"
-
-# Copy source last — changes here don't invalidate the pip layer
+COPY --from=builder /app/.venv /app/.venv
 COPY zdrovena/ zdrovena/
-# The dependency layer above is built before the package sources exist, so it
-# installs the console-script metadata but cannot install the `zdrovena`
-# package itself. Uvicorn happens to import from WORKDIR, while the
-# `/usr/local/bin/zdrovena` entrypoint used by Container App Jobs does not.
-# Install the already-resolved local project without touching dependencies.
-RUN pip install --no-cache-dir --no-deps .
 
-ENV APP_ENV=prod
+ENV PATH="/app/.venv/bin:$PATH" \
+    APP_ENV=prod
 EXPOSE 8000
 
 # Non-root user — principle of least privilege

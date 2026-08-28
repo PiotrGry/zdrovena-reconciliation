@@ -346,13 +346,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install dependencies
-        run: pip install "azure-storage-blob>=12.19.0" "azure-identity>=1.16.0"
+      # No Python step here on purpose: scripts/ci/seed-staging.sh drives the
+      # az CLI and curl only. The setup-python + pip install that used to sit
+      # here installed Azure SDK packages nothing in this job ever imported
+      # (issue #278).
 
       - name: Azure login (OIDC)
         uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
