@@ -103,3 +103,121 @@ powiadomienia" wymaga żywej infrastruktury i skrzynki odbiorczej. Najtańszy
 scenariusz to `dlq-backlog` przez istniejącą sondę. **Nie jest to zamknięte
 przez ten PR** — Terraform opisuje reguły, ale dostarczenia e-maila nie da się
 sprawdzić z repozytorium.
+
+## Historia alertów (Activity Log)
+
+Do #217 tabela `AzureActivity` była pusta, bo Activity Log nigdzie nie leciał.
+Pusty wynik zapytania o historię alertów nie odróżniał więc „nic się nie działo"
+od „nigdzie tego nie zbieramy" — ta sama dwuznaczność, którą leczyły #279, #278
+i #310, tyle że w warstwie audytu samego monitoringu.
+
+Diagnostic setting jest w `infra/terraform/monitoring.tf`
+(`azurerm_monitor_diagnostic_setting.activity_log`), na poziomie subskrypcji.
+
+### Eksportowane kategorie i dlaczego tylko te
+
+| Kategoria | Po co |
+| --- | --- |
+| `Alert` | aktywacja i rozwiązanie każdej reguły z tego pliku |
+| `Administrative` | kto i kiedy zmienił regułę, action group albo Container App |
+| `ServiceHealth` | awarie po stronie Azure, wyjaśniają nasze alerty |
+| `ResourceHealth` | to samo, ale dla konkretnego zasobu |
+
+Świadomie pominięte: `Security` (nie prowadzimy Defendera), `Policy` (brak
+własnych przypisań generujących zdarzenia), `Recommendation` (Advisor, zero
+wartości w triage), `Autoscale` (Container Apps mają własny mechanizm).
+
+`Administrative` jest tu kategorią o największym wolumenie i jedyną, która rośnie
+z aktywnością deploymentów. Zostaje mimo to, bo bez niej historia alertów kłamie
+po każdej zmianie konfiguracji: reguła wyciszona ręcznie wygląda jak reguła,
+która przestała się aktywować.
+
+### Retencja i koszt
+
+Retencja pochodzi z workspace'a — `retention_in_days = 30` w `main.tf` — i **nie
+jest** nadpisywana w diagnostic setting. Jedno miejsce, jedna decyzja.
+
+Wolumen Activity Log dla subskrypcji tej wielkości to rząd pojedynczych MB
+miesięcznie, czyli grosze przy cenniku PerGB2018 — kilka rzędów wielkości mniej
+niż `AppTraces` (patrz `logging-noise.md`). Rzeczywistą liczbę sprawdza się
+zapytaniem niżej, po pierwszym pełnym miesiącu.
+
+```kusto
+AzureActivity
+| where TimeGenerated > ago(30d)
+| summarize Rekordy = count(), MB = round(sum(_BilledSize) / 1024.0 / 1024.0, 2)
+    by CategoryValue
+| order by MB desc
+```
+
+### Historia aktywacji i rozwiązań
+
+```kusto
+AzureActivity
+| where TimeGenerated > ago(30d)
+| where CategoryValue == "Alert"
+| extend props = parse_json(Properties)
+| extend
+    Regula = tostring(props.alertName),
+    Status = tostring(props.status),
+    Opis = tostring(props.description)
+| project TimeGenerated, Regula, Status, Opis, _ResourceId, CorrelationId
+| order by TimeGenerated desc
+```
+
+`Status` przyjmuje `Activated` i `Resolved`, więc czas trwania incydentu liczy się
+z pary rekordów tej samej reguły.
+
+### Kto zmieniał konfigurację monitoringu
+
+```kusto
+AzureActivity
+| where TimeGenerated > ago(30d)
+| where CategoryValue == "Administrative"
+| where OperationNameValue has_any ("SCHEDULEDQUERYRULES", "METRICALERTS", "ACTIONGROUPS")
+| project TimeGenerated, OperationNameValue, ActivityStatusValue,
+          Kto = Caller, _ResourceId, CorrelationId
+| order by TimeGenerated desc
+```
+
+### Powiązanie z logami aplikacji
+
+`AzureActivity.CorrelationId` to identyfikator operacji **Azure Resource
+Managera**, a nie nasz `correlation_id` z `zdrovena.events` — te dwa nie łączą
+się i próba ich sklejenia daje pustą tabelę. Spina się je po czasie i zasobie:
+
+```kusto
+let okno = 15m;
+AzureActivity
+| where CategoryValue == "Alert"
+| where tostring(parse_json(Properties).status) == "Activated"
+| project AlertCzas = TimeGenerated, Regula = tostring(parse_json(Properties).alertName)
+| join kind=inner (
+    AppTraces
+    | extend Logger = tostring(Properties["logger_name"])
+    | where Logger startswith "zdrovena"
+    | project LogCzas = TimeGenerated, Message,
+              cid = tostring(parse_json(Message).correlation_id)
+  ) on $left.AlertCzas == $right.LogCzas
+| where LogCzas between (AlertCzas - okno .. AlertCzas)
+| project AlertCzas, Regula, LogCzas, cid, Message
+| order by AlertCzas desc
+```
+
+W praktyce prościej: weź `AlertCzas` z pierwszego zapytania i użyj go jako okna
+w zapytaniu triage'owym na początku tego dokumentu.
+
+### Procedura testowa
+
+1. Wywołaj kontrolowany scenariusz dowolnego alertu z tabeli scenariuszy wyżej —
+   najtaniej `dlq-backlog` przez sondę `test_probe=True`.
+2. Odczekaj na e-mail z action group, a potem jeszcze **do 15 minut**: Activity
+   Log trafia do LAW z opóźnieniem i rekord `Activated` nie pojawia się
+   natychmiast po powiadomieniu.
+3. Uruchom zapytanie „Historia aktywacji i rozwiązań" — musi zwrócić rekord
+   `Activated` dla tej reguły.
+4. Poczekaj na samoczynne rozwiązanie (`auto_mitigation_enabled = true`)
+   i potwierdź, że dochodzi rekord `Resolved`.
+
+Krok 3 i 4 wymagają żywej subskrypcji i nie są zamknięte przez PR wprowadzający
+diagnostic setting.

@@ -65,3 +65,38 @@ def test_every_alert_rule_is_wired_to_the_action_group():
     assert len(rules) == action_blocks, (
         f"{len(rules)} alert rules but {action_blocks} references to the action group"
     )
+
+
+def test_activity_log_is_exported_to_the_workspace():
+    """An empty `AzureActivity` cannot tell "nothing happened" from "not collected".
+
+    Alert history is the audit trail for every rule in this file; without the
+    diagnostic setting the rules exist but their activations cannot be traced
+    (issue #217).
+    """
+    text = MONITORING_TF.read_text(encoding="utf-8")
+
+    assert 'resource "azurerm_monitor_diagnostic_setting" "activity_log"' in text
+    assert "log_analytics_workspace_id" in text
+
+    exported = set(re.findall(r'enabled_log\s*\{\s*category\s*=\s*"([^"]+)"', text))
+    assert "Alert" in exported, "alert history is the whole point of the export"
+    assert "Administrative" in exported, (
+        "without it, a rule silenced by hand looks like a rule that stopped firing"
+    )
+
+    # Paid per ingested record: an unjustified category is a standing cost.
+    assert exported <= {"Alert", "Administrative", "ServiceHealth", "ResourceHealth"}, (
+        f"undocumented Activity Log categories exported: "
+        f"{sorted(exported - {'Alert', 'Administrative', 'ServiceHealth', 'ResourceHealth'})}"
+    )
+
+
+def test_retention_is_decided_in_one_place():
+    """Overriding retention on the diagnostic setting would create a second,
+    silently diverging source of truth next to the workspace's own setting."""
+    text = MONITORING_TF.read_text(encoding="utf-8")
+    activity = text.split('resource "azurerm_monitor_diagnostic_setting" "activity_log"')[-1]
+
+    assert "retention_policy" not in activity
+    assert "retention_in_days" not in activity
