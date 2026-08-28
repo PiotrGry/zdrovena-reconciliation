@@ -1,6 +1,8 @@
 import { PublicClientApplication } from '@azure/msal-browser'
 import { createContext, useContext, useState, useEffect } from 'react'
 
+import { acquireApiToken } from './authToken'
+
 const DEV_AUTH_DISABLED = import.meta.env.VITE_AUTH_DISABLED === 'true'
 
 // Trim env vars: GitHub Secrets sometimes carry trailing newlines that break
@@ -65,15 +67,13 @@ export function AuthProvider({ children }) {
         ? setAccount(null)
         : msalInstance.logoutRedirect({ account })
 
-    const getToken = async () => {
+    // interactive:false for background timers — see authToken.js. Callers that
+    // run without a user gesture must not try to open a sign-in prompt: MSAL
+    // allows one interaction at a time and the browser blocks gesture-less
+    // popups anyway.
+    const getToken = async ({ interactive = true } = {}) => {
         if (DEV_AUTH_DISABLED) return 'dev-token'
-        try {
-            const r = await msalInstance.acquireTokenSilent({ ...TOKEN_REQUEST, account })
-            return r.accessToken
-        } catch {
-            const r = await msalInstance.acquireTokenPopup({ ...TOKEN_REQUEST, account })
-            return r.accessToken
-        }
+        return acquireApiToken(msalInstance, { ...TOKEN_REQUEST, account }, { interactive })
     }
 
     return (

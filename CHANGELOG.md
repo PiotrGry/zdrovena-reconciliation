@@ -5,6 +5,15 @@
 
 ### Fixed
 
+- **auth**: Koniec z błędem MSAL `interaction_in_progress` na stronie Wysyłki. `getToken()`
+  przy każdym niepowodzeniu cichego odświeżenia wpadało w `acquireTokenPopup` bez żadnej
+  serializacji, a MSAL dopuszcza jedną interakcję naraz — więc gdy token wygasał, dwóch
+  współbieżnych wywołujących startowało dwie i drugi dostawał ten błąd. Wysyłki obrywały
+  najczęściej: dwa niezależne timery (20 s i 5 s) plus 17 miejsc wywołania. Interakcja jest
+  teraz współdzielona przez wszystkich czekających, a powtarzalne timery w pięciu widokach nie
+  próbują już otwierać okna logowania — bez gestu użytkownika przeglądarka i tak by je
+  zablokowała, więc cichy polling po prostu odpuszcza, a kolejne kliknięcie operatora odnawia
+  sesję.
 - **build**: CI i obraz produkcyjny instalują teraz z `uv.lock`. Wcześniej oba używały pipa, który
   lockfile'a nie czyta — `Dockerfile` nawet go nie kopiował do kontekstu budowy, więc każdy build
   rozwiązywał zależności od nowa. Zmierzone przed zmianą: **46 z 78** wspólnych pakietów jechało na
