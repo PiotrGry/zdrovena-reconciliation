@@ -2912,6 +2912,44 @@ class TestUpdateDraftRecipientPhone:
         assert receiver["locker_id"] == "WAW99Z"
 
 
+class TestStorageOutageSurfacesAs503:
+    """Issue #310 acceptance: an outage must answer consistently across the
+    surfaces, and must never be mistaken for 404 or an empty collection."""
+
+    @pytest.mark.parametrize(
+        "path, method_name",
+        [
+            ("/api/shipping/drafts", "list_drafts"),
+            ("/api/shipping/drafts/dlq", "list_dlq"),
+        ],
+    )
+    def test_an_outage_is_503_not_an_empty_list(self, client, store, path, method_name):
+        from zdrovena.common.exceptions import storage_unavailable
+
+        def _boom(*args, **kwargs):
+            raise storage_unavailable("shipping", method_name, RuntimeError("timeout"))
+
+        with patch.object(type(store), method_name, _boom):
+            resp = client.get(path)
+
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["error_code"] == "StorageUnavailableError"
+        assert body["correlation_id"]
+
+    def test_an_outage_on_a_single_draft_is_503_not_404(self, client, store):
+        # The dangerous confusion: 404 tells the operator the draft is gone.
+        from zdrovena.common.exceptions import storage_unavailable
+
+        def _boom(*args, **kwargs):
+            raise storage_unavailable("shipping", "get_draft", RuntimeError("timeout"))
+
+        with patch.object(type(store), "get_draft", _boom):
+            resp = client.get("/api/shipping/drafts/whatever/label?courier=inpost")
+
+        assert resp.status_code == 503
+
+
 class TestRunInPostRecipientPhone:
     """InPost enforces a valid recipient phone from 2026-09-08 (issue #294).
 

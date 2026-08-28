@@ -29,6 +29,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from zdrovena.api.observability import get_correlation_id
+from zdrovena.common.exceptions import StorageUnavailableError
 from zdrovena.common.shipping_exceptions import (
     CancellationError,
     CourierAuthError,
@@ -173,6 +174,25 @@ def install_exception_handlers(app: FastAPI) -> None:
                 error_code=type(exc).__name__,
                 message_pl=message_pl,
                 details=_details(exc),
+            ),
+        )
+
+    @app.exception_handler(StorageUnavailableError)
+    async def _storage_unavailable_handler(  # pyright: ignore[reportUnusedFunction]
+        request: Request, exc: StorageUnavailableError
+    ) -> JSONResponse:
+        # The raw Azure text goes to the log, never to the operator.
+        logger.exception(
+            "Storage unavailable (%s.%s) on %s", exc.store, exc.operation, request.url.path
+        )
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=_envelope(
+                error_code="StorageUnavailableError",
+                message_pl=(
+                    "Magazyn danych jest chwilowo niedostępny — to nie znaczy, że danych nie ma. "
+                    "Spróbuj ponownie za chwilę i nie ponawiaj operacji zapisu."
+                ),
             ),
         )
 
