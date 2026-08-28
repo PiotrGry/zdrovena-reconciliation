@@ -12,6 +12,8 @@ import logging
 import os
 from typing import Any
 
+from zdrovena.common.logging_setup import install_export_filter
+
 logger = logging.getLogger("zdrovena.common.telemetry")
 
 
@@ -40,6 +42,16 @@ def configure_azure_telemetry(*, default_service_name: str) -> bool:
     except Exception as exc:
         logger.warning("Azure Monitor configuration failed (non-fatal): %s", exc)
         return False
+
+    # configure_azure_monitor attaches its exporting handler to the ROOT logger
+    # (logger_name defaults to ""), so without this filter every INFO record from
+    # every library in the process is ingested and billed (issue #213).
+    filtered = install_export_filter()
+    if not filtered:
+        logger.warning(
+            "Azure Monitor exporting handler not found — third-party log noise "
+            "will be ingested unfiltered."
+        )
 
     logger.info("Azure Monitor OpenTelemetry configured (service.name=%s).", service_name)
     return True
