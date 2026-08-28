@@ -130,6 +130,29 @@ trivy
 
 The frontend has its own lint gate (`cd frontend && npm run lint`) run via pre-commit.
 
+## Storage error handling
+
+A storage failure must never be answered with the value that means *absence*. Returning `None` or
+`[]` when Azure is unreachable makes an outage read as "the record does not exist", and a caller
+acting on that picture can write a duplicate — that is what issue #310 was about.
+
+The rule, in two shapes:
+
+- **Single-entity reads** catch `ResourceNotFoundError` from `azure.core.exceptions` and return
+  `None`. Every other exception raises `storage_unavailable(store, operation, exc)`.
+- **List reads** have no not-found case — an empty partition returns an empty result without
+  raising — so *every* exception is an outage and raises.
+
+`StorageUnavailableError` maps to **HTTP 503** with a correlation id, and
+`storage_unavailable()` emits a `storage_unavailable` event for alerting. Never catch bare
+`Exception` on a read path and return an empty value.
+
+`zdrovena/common/shopify_dedup_store.py` is the reference implementation.
+
+The local JSON backend is deliberately different: a mangled file reads as empty and the next
+write rewrites it, so a developer is never stuck with an unusable store. Azure has no equivalent
+self-healing, which is why the table paths raise.
+
 ## Local dev
 
 ```bash

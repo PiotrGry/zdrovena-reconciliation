@@ -15,6 +15,8 @@ from fcntl import LOCK_EX, LOCK_UN, flock
 from pathlib import Path
 from typing import Any
 
+from zdrovena.common.exceptions import storage_unavailable
+
 logger = logging.getLogger("zdrovena.common.damage_store")
 
 TABLE_NAME = "damagecases"
@@ -181,9 +183,13 @@ class DamageStore:
     def get_case(self, case_id: str) -> dict[str, Any] | None:
         if self._use_table:
             try:
+                from azure.core.exceptions import ResourceNotFoundError
+
                 entity = self._table_client().get_entity(CASES_PARTITION, case_id)
-            except Exception:
+            except ResourceNotFoundError:
                 return None
+            except Exception as exc:
+                raise storage_unavailable("damage", "get_case", exc) from exc
             return _deserialize(dict(entity))
         return self._load_local()["cases"].get(case_id)
 
@@ -201,8 +207,10 @@ class DamageStore:
                 )
                 records = [_deserialize(dict(entity)) for entity in entities]
             except Exception as exc:
-                logger.warning("Damage case list failed: %s", exc)
-                return []
+                # A list read has no not-found case, so every exception is an
+                # outage. Returning [] here let find_case_by_fingerprint answer
+                # "no existing case" and invite a duplicate (issue #310).
+                raise storage_unavailable("damage", "list_cases", exc) from exc
         else:
             records = list(self._load_local()["cases"].values())
         records.sort(
