@@ -5,6 +5,14 @@
 
 ### Fixed
 
+- **ci**: Nieudany teardown stagingu nie blokuje już wydania produkcyjnego. Teardown to kontrola
+  kosztów — skaluje staging do zera — a jego porażka wywracała wynik całego workflow i `CI Gate`
+  blokował merge. Na PR #337 samo `azure/login` zajęło 4 m 49 s z pięciominutowego budżetu joba,
+  przez co naprawa czekająca na operatora stanęła z powodu zadyszki Azure. Job dostaje teraz
+  `continue-on-error` oraz timeout 12 minut, dopasowany do wolnego logowania, a nie do ~20 sekund
+  faktycznej pracy. Nocny cron `Staging keep-alive schedule` i tak sprząta, więc najgorszy skutek
+  to ciepły staging do wieczora.
+
 - **auth**: Koniec z błędem MSAL `interaction_in_progress` na stronie Wysyłki. `getToken()`
   przy każdym niepowodzeniu cichego odświeżenia wpadało w `acquireTokenPopup` bez żadnej
   serializacji, a MSAL dopuszcza jedną interakcję naraz — więc gdy token wygasał, dwóch
