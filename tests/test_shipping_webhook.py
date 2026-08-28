@@ -6264,3 +6264,88 @@ class TestAllegroPayloadPlan:
         )
         with pytest.raises(CourierTransientError):
             allegro_delivery_payload_plan(_ALLEGRO_DRAFT, client)
+
+
+class TestShopifySyncIsIdempotent:
+    """The Shopify half of #316, end to end against a real store.
+
+    The sync used to build its dedup index from list_drafts(limit=10_000); a
+    store larger than the limit hid the oldest drafts, so an order that already
+    had one read as new and was written again. Reproducing that here would need
+    10_000 rows, so the truncation mechanism itself is pinned cheaply at store
+    level (TestFindDraftByExternalId). What this test proves is the property
+    that matters to the caller: syncing the same order twice, across a store
+    large enough to be sorted and sliced, yields exactly one draft.
+    """
+
+    def _order(self, order_id: int) -> dict:
+        return {
+            "id": order_id,
+            "order_number": order_id,
+            "shipping_lines": [{"title": "DPD Kurier"}],
+            "shipping_address": {
+                "first_name": "Jan",
+                "last_name": "Kowalski",
+                "address1": "Kwiatowa 1",
+                "city": "Warszawa",
+                "zip": "00-001",
+            },
+            "customer": {"email": "jan@example.com", "phone": "500000000"},
+        }
+
+    def test_syncing_the_same_order_twice_yields_one_draft(self, tmp_path):
+        from responses import RequestsMock
+
+        from zdrovena.api.routers.webhooks import _sync_shopify_orders_from_api
+        from zdrovena.common.storage import LocalStorageService
+
+        store = ShippingStore(local_root=tmp_path / "store")
+        storage = LocalStorageService(root=tmp_path / "storage")
+
+        with RequestsMock() as rsps:
+            rsps.add(
+                rsps.GET,
+                "https://shop.myshopify.com/admin/api/2024-01/orders.json",
+                json={"orders": [self._order(4242)]},
+                status=200,
+            )
+            first = _sync_shopify_orders_from_api(
+                shop_domain="shop.myshopify.com",
+                api_token="tok",
+                shipping_store=store,
+                storage=storage,
+            )
+        assert first["created"] == 1
+
+        # Bury it under more rows than any list limit would return, all newer.
+        for i in range(300):
+            store.upsert_draft(
+                {
+                    "id": f"filler-{i}",
+                    "created_at": "2030-01-01T00:00:00+00:00",
+                    "source": "shopify",
+                    "external_order_id": f"filler-order-{i}",
+                    "shopify_order_id": f"filler-order-{i}",
+                    "status": "pending",
+                }
+            )
+
+        with RequestsMock() as rsps:
+            rsps.add(
+                rsps.GET,
+                "https://shop.myshopify.com/admin/api/2024-01/orders.json",
+                json={"orders": [self._order(4242)]},
+                status=200,
+            )
+            second = _sync_shopify_orders_from_api(
+                shop_domain="shop.myshopify.com",
+                api_token="tok",
+                shipping_store=store,
+                storage=storage,
+            )
+
+        assert second["created"] == 0, "the order already had a draft"
+        drafts_for_order = [
+            d for d in store.list_drafts(limit=10_000) if str(d.get("external_order_id")) == "4242"
+        ]
+        assert len(drafts_for_order) == 1
