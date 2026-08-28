@@ -5,6 +5,13 @@
 
 ### Fixed
 
+- **frontend**: Niedokończony moduł kosztów nie jest już osiągalny. `CostView` to placeholder
+  („Moduł w przygotowaniu"), a mimo to siedział w mapie widoków bez flagi, inaczej niż
+  `orders`/`products`/`users`. Pozycji w nawigacji już nie miał, ale zapamiętana strona
+  w `localStorage` nadal potrafiła wysadzić operatora na martwym ekranie. Teraz jest za flagą
+  `FEATURES.costs`, a istniejący fallback `VIEWS[page] ?? FilesView` odsyła taką sesję na Pliki.
+  (#314)
+
 - **ci**: Nieudany teardown stagingu nie blokuje już wydania produkcyjnego. Teardown to kontrola
   kosztów — skaluje staging do zera — a jego porażka wywracała wynik całego workflow i `CI Gate`
   blokował merge. Na PR #337 samo `azure/login` zajęło 4 m 49 s z pięciominutowego budżetu joba,
