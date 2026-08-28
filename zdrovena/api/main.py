@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from zdrovena import __version__
 from zdrovena.api.errors import install_exception_handlers
 from zdrovena.api.observability import CorrelationIdFilter, correlation_id_middleware
 from zdrovena.api.routers import (
@@ -150,7 +151,7 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
 app = FastAPI(
     lifespan=lifespan,
     title="Zdrovena Reconciliation API",
-    version="2.0.0",
+    version=__version__,
     description=(
         "REST API for the Zdrovena monthly accounting close pipeline. "
         "All endpoints require a valid Azure Entra ID JWT (Bearer token). "
