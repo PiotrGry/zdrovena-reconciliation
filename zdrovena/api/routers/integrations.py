@@ -16,6 +16,7 @@ from zdrovena.api.auth import Principal, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, StorageDep
 from zdrovena.common.appenv import UNKNOWN_ENV, resolve_app_env
 from zdrovena.common.correlation import get_correlation_id
+from zdrovena.common.secrets import get_secret
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -70,11 +71,32 @@ def _truthy(name: str) -> bool:
 
 
 def _secret_source(*env_names: str) -> tuple[bool, list[str]]:
-    missing = [name for name in env_names if not _env(name)]
-    if not missing:
+    """Report whether every named secret actually resolves.
+
+    This used to answer "configured" whenever AZURE_KEYVAULT_URL was set,
+    without ever looking the secret up — so a secret genuinely missing from the
+    vault read as configured until the live call failed. Resolution goes through
+    get_secret(), the same path runtime uses, so the dashboard and the
+    application cannot disagree about what is available (issue #315).
+
+    The value itself is never returned, logged, or reported.
+    """
+    from_env = [name for name in env_names if _env(name)]
+    if len(from_env) == len(env_names):
         return True, ["configured from environment"]
+
+    missing = []
+    for name in env_names:
+        if name in from_env:
+            continue
+        if get_secret(name.lower(), required=False):
+            continue
+        missing.append(name)
+
+    if not missing:
+        return True, ["resolved via Azure Key Vault"]
     if _env("AZURE_KEYVAULT_URL"):
-        return True, ["Azure Key Vault configured", f"not set as env: {', '.join(missing)}"]
+        return False, [f"not resolvable from env or Key Vault: {', '.join(missing)}"]
     return False, [f"missing: {', '.join(missing)}"]
 
 
@@ -329,7 +351,10 @@ def _fakturownia_item(
             from zdrovena.common.fakturownia import FakturowniaClient
 
             base_url = _env("FAKTUROWNIA_BASE_URL") or f"https://{DEFAULT_DOMAIN}"
-            client = FakturowniaClient(base_url=base_url, api_token=_env("FAKTUROWNIA_API_TOKEN"))
+            # Same resolution as runtime — reading the env directly is what
+            # made a Key-Vault-only deployment look broken (issue #315).
+            api_token = get_secret("fakturownia_api_token", required=False) or ""
+            client = FakturowniaClient(base_url=base_url, api_token=api_token)
             invoices = client.list_invoices(page=1, per_page=1, include_positions=False)
             checks.append(f"read ok: {len(invoices)} invoice sample entries")
             message = "Read-only invoice list check succeeded"

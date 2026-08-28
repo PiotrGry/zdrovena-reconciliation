@@ -260,3 +260,110 @@ def test_allegro_live_check_does_not_rotate_refresh_token(monkeypatch):
     item = _by_key(response.json())["allegro"]
     assert item["status"] == "degraded"
     assert "refresh token rotation is not safe" in item["message"]
+
+
+# ── Fakturownia secret resolution (issue #315) ────────────────────────────────
+#
+# The live check used to build its client from FAKTUROWNIA_API_TOKEN in the env
+# while the "configured" flag came from a different path. On a Key-Vault-only
+# deployment the integration worked at runtime and the health check reported a
+# failure.
+
+
+def test_fakturownia_live_check_uses_the_shared_secret_resolution(monkeypatch):
+    """Key-Vault-only deployment: no env token, but get_secret() resolves it."""
+    seen: dict[str, str] = {}
+
+    class _Client:
+        def __init__(self, *, base_url: str, api_token: str) -> None:
+            seen["token"] = api_token
+
+        def list_invoices(self, **_kwargs):
+            return [{"id": 1}]
+
+    def _fake_get_secret(service, required=True):
+        return "kv-token" if service == "fakturownia_api_token" else None
+
+    monkeypatch.setattr("zdrovena.common.fakturownia.FakturowniaClient", _Client)
+    monkeypatch.setattr("zdrovena.api.routers.integrations.get_secret", _fake_get_secret)
+    # The Key Vault item runs its own live lookups; without this it would spend
+    # ~40s resolving vault.test eight times over.
+    monkeypatch.setattr("zdrovena.common.secrets.get_secret", _fake_get_secret)
+
+    response = _health(
+        monkeypatch,
+        roles=["zdrovena-admin"],
+        query="?run_checks=true",
+        APP_ENV="development",
+        AZURE_AUTH_DISABLED="true",
+        AZURE_KEYVAULT_URL="https://vault.test",
+        FAKTUROWNIA_BASE_URL="http://fake-providers.test/fakturownia",
+    )
+
+    item = _by_key(response.json())["fakturownia"]
+    assert item["status"] == "healthy", item
+    assert seen["token"] == "kv-token"
+
+
+def test_fakturownia_reports_not_configured_when_the_secret_is_absent(monkeypatch):
+    """A Key Vault URL alone is not evidence the secret is in it.
+
+    The old check answered "configured" on the presence of AZURE_KEYVAULT_URL,
+    never resolving the value — so a genuinely missing secret looked healthy
+    until the live call failed.
+    """
+    monkeypatch.setattr(
+        "zdrovena.api.routers.integrations.get_secret",
+        lambda service, required=True: None,
+    )
+
+    response = _health(
+        monkeypatch,
+        APP_ENV="development",
+        AZURE_AUTH_DISABLED="true",
+        AZURE_KEYVAULT_URL="https://vault.test",
+        FAKTUROWNIA_BASE_URL="http://fake-providers.test/fakturownia",
+    )
+
+    item = _by_key(response.json())["fakturownia"]
+    assert item["status"] == "not_configured", item
+
+
+def test_fakturownia_env_configuration_still_works(monkeypatch):
+    class _Client:
+        def __init__(self, *, base_url: str, api_token: str) -> None:
+            assert api_token == "env-token"
+
+        def list_invoices(self, **_kwargs):
+            return [{"id": 1}]
+
+    monkeypatch.setattr("zdrovena.common.fakturownia.FakturowniaClient", _Client)
+
+    response = _health(
+        monkeypatch,
+        roles=["zdrovena-admin"],
+        query="?run_checks=true",
+        AZURE_AUTH_DISABLED="true",
+        FAKTUROWNIA_API_TOKEN="env-token",
+        FAKTUROWNIA_BASE_URL="http://fake-providers.test/fakturownia",
+    )
+
+    item = _by_key(response.json())["fakturownia"]
+    assert item["status"] == "healthy", item
+
+
+def test_the_token_never_reaches_the_response(monkeypatch):
+    monkeypatch.setattr(
+        "zdrovena.api.routers.integrations.get_secret",
+        lambda service, required=True: "super-secret-token",
+    )
+
+    response = _health(
+        monkeypatch,
+        APP_ENV="development",
+        AZURE_AUTH_DISABLED="true",
+        AZURE_KEYVAULT_URL="https://vault.test",
+        FAKTUROWNIA_BASE_URL="http://fake-providers.test/fakturownia",
+    )
+
+    assert "super-secret-token" not in response.text
