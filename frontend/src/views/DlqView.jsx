@@ -45,7 +45,8 @@ export default function DlqView() {
             setError(null)
         }
         try {
-            const token = await getToken()
+            // A silent poll must not open a sign-in prompt — no user gesture here.
+            const token = await getToken({ interactive: !silent })
             const data = await getDlqEntries({ token })
             setEntries(data.entries ?? [])
             if (silent) setError(null)

@@ -5,6 +5,15 @@
 
 ### Fixed
 
+- **auth**: Koniec z błędem MSAL `interaction_in_progress` na stronie Wysyłki. `getToken()`
+  przy każdym niepowodzeniu cichego odświeżenia wpadało w `acquireTokenPopup` bez żadnej
+  serializacji, a MSAL dopuszcza jedną interakcję naraz — więc gdy token wygasał, dwóch
+  współbieżnych wywołujących startowało dwie i drugi dostawał ten błąd. Wysyłki obrywały
+  najczęściej: dwa niezależne timery (20 s i 5 s) plus 17 miejsc wywołania. Interakcja jest
+  teraz współdzielona przez wszystkich czekających, a powtarzalne timery w pięciu widokach nie
+  próbują już otwierać okna logowania — bez gestu użytkownika przeglądarka i tak by je
+  zablokowała, więc cichy polling po prostu odpuszcza, a kolejne kliknięcie operatora odnawia
+  sesję.
 - **storage**: Awaria Azure Table Storage nie wygląda już jak brak danych. Sześć ścieżek odczytu
   w `ShippingStore` i `DamageStore` łapało gołe `Exception` i odpowiadało `None` albo pustą listą,
   więc timeout, throttling czy wygasłe poświadczenia były nieodróżnialne od rekordu, którego
