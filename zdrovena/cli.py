@@ -25,6 +25,7 @@ _env_file = Path(__file__).resolve().parent.parent / ".env"
 if _env_file.is_file():
     load_dotenv(_env_file)
 
+from zdrovena import __version__  # noqa: E402
 from zdrovena.api.commands import (  # noqa: E402
     allegro_auth_cmd,
     allegro_poll_cmd,
@@ -106,7 +107,7 @@ def main() -> None:
         "--version",
         "-V",
         action="version",
-        version="%(prog)s 2.0.0",
+        version=f"%(prog)s {__version__}",
     )
 
     subparsers = parser.add_subparsers(

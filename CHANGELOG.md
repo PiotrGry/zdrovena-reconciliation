@@ -5,6 +5,17 @@
 
 ### Added
 
+- **docker**: Obraz produkcyjny schudł z 317,9 MB do 212,7 MB (−33%). 107 MB kosztował
+  jeden `chown -R app:app /app` — przepisuje każdy plik do nowej warstwy, więc obraz
+  niósł drugą, pełną kopię virtualenva różniącą się wyłącznie właścicielem; własność
+  ustawiana jest teraz przez `COPY --chown` w tej samej warstwie. Kolejne 3,2 MB to była
+  druga kopia pakietu: `COPY zdrovena/` w etapie finalnym **przesłaniało** wersję
+  zainstalowaną przez `uv sync --no-editable`, bo `WORKDIR` jest na `sys.path` — kod,
+  który się uruchamiał, nie był artefaktem, który zbudowano i przeskanowano. Build zimny
+  17 s → 12 s, ciepły przy zmianie w kodzie 12 s → 4 s. Etykiety OCI dodane wprost do
+  istniejącego wywołania buildx, bez brania zależności od `metadata-action`
+  (uzasadnienie w `docs/devops/obraz-docker.md`). (#238)
+
 - **monitoring**: Pięć nowych alertów operacyjnych: awaria magazynu stanu
   (`storage_unavailable`, odblokowane przez #310), błędy zależności zewnętrznych,
   synchronizacja zakończona błędem Allegro/Shopify, draft zakleszczony w stanie
@@ -20,6 +31,11 @@
   taki alert nigdy by nie zadziałał i w nieskończoność raportował zdrowie. (#214)
 
 ### Fixed
+
+- **cli**: `zdrovena --version` zgłaszało 2.0.0, podczas gdy pakiet był na 2.9.0.
+  Trzeci literał wersji, którego #216 nie znalazło, bo strażnik przeszukiwał tylko
+  te dwa pliki, o których już wiedziano, że są zepsute. Strażnik obejmuje teraz
+  cały pakiet. (#238)
 
 - **observability**: Ponad 99% rekordów `AppTraces` to był szum bibliotek, nie logi
   aplikacji. Przyczyna: Azure Monitor distro podpina handler eksportujący pod **root

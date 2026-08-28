@@ -43,16 +43,22 @@ class TestSingleVersionSource:
         # never be mistaken for a real version the way a stale 2.0.0 was.
         sentinel = "0.0.0+unknown"
 
+        # Scanning the whole package, not just the files already known to be
+        # wrong: the first version of this guard looked only at __init__.py and
+        # main.py and therefore could not have found the third literal, which
+        # sat in cli.py making `zdrovena --version` print 2.0.0 (#238).
         offenders = []
-        for path in (
-            REPO_ROOT / "zdrovena" / "__init__.py",
-            REPO_ROOT / "zdrovena" / "api" / "main.py",
-        ):
+        # fake_providers is an emulator of somebody else's API; the version
+        # it declares is the emulated provider's, not ours.
+        for path in sorted((REPO_ROOT / "zdrovena").rglob("*.py")):
+            if "fake_providers" in path.parts:
+                continue
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 if sentinel in line:
                     continue
-                if re.search(r'(__version__|version)\s*=\s*["\']\d+\.\d+', line):
-                    offenders.append(f"{path.name}:{number}: {line.strip()}")
+                if re.search(r'version[^=\n]*=\s*["\'][^"\']*\d+\.\d+\.\d+', line):
+                    rel = path.relative_to(REPO_ROOT).as_posix()
+                    offenders.append(f"{rel}:{number}: {line.strip()}")
 
         assert offenders == [], (
             "version must come from importlib.metadata, not a literal (#216):\n"
