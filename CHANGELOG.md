@@ -3,6 +3,22 @@
 
 ## Unreleased
 
+### Added
+
+- **monitoring**: Pięć nowych alertów operacyjnych: awaria magazynu stanu
+  (`storage_unavailable`, odblokowane przez #310), błędy zależności zewnętrznych,
+  synchronizacja zakończona błędem Allegro/Shopify, draft zakleszczony w stanie
+  `executing` ponad 4h oraz rozjazd źródeł kaucji. Poller emituje nową migawkę
+  `shipping.stuck_execution_snapshot` — `executing` to atomowe roszczenie liczone
+  w sekundach, więc draft siedzący w nim godzinami oznacza proces zabity między
+  zajęciem a zakończeniem: żaden request nie padł, nic nie trafiło do DLQ i żadna
+  dotychczasowa reguła tego nie widziała. Progi są uzasadnione po kolei
+  w `docs/devops/alerty-operacyjne.md` — w szczególności wykluczenie kodów 404/409/412
+  z alertu zależności, bo to normalny przepływ sterowania (w tym przegrany wyścig
+  o ETag, czyli działająca ochrona przed podwójną przesyłką), a nie awarie. Test
+  polityki nie wpuści reguły filtrującej po nazwie zdarzenia, którego kod nie emituje —
+  taki alert nigdy by nie zadziałał i w nieskończoność raportował zdrowie. (#214)
+
 ### Fixed
 
 - **observability**: Ponad 99% rekordów `AppTraces` to był szum bibliotek, nie logi
