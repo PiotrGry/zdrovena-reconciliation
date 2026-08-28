@@ -41,6 +41,20 @@
 
 ### Fixed
 
+- **shipping**: Deduplikacja draftów nie buduje już indeksu z `list_drafts()`. Ta lista
+  sortuje malejąco po dacie i ucina — więc gdy sklep przerósł limit, najstarsze rekordy
+  z niej znikały, zamówienie, które **miało** draft, czytało się jako nowe i było zapisywane
+  drugi raz. Duplikat wchodził z `created_at=now` do okna „najnowsze N", wypychał kolejny
+  stary rekord i duplikował w następnym cyklu — pętla podtrzymująca samą siebie, która
+  zrobiła ok. 70 zduplikowanych draftów Allegro. Lookup idzie teraz przez
+  `find_draft_by_external_id()`: filtr po stronie serwera, kompletny, bez ucinania.
+  Zabezpieczenie przy zapisie kluczowało się dotąd na `shopify_order_id`, które dla
+  każdego drafta Allegro jest `None` — czyli Allegro nie miało go wcale; klucz to teraz
+  `(source, external_order_id)`, ze starym kluczem zachowanym dla rekordów sprzed
+  wprowadzenia `external_order_id`. Drafty zastępcze celowo dzielą numer zamówienia
+  i są wyłączone z obu ścieżek. Nowe zdarzenie `storage.partition_scan` pokazuje koszt
+  odczytu całej partycji, zanim zacznie boleć. (#316)
+
 - **cli**: `zdrovena --version` zgłaszało 2.0.0, podczas gdy pakiet był na 2.9.0.
   Trzeci literał wersji, którego #216 nie znalazło, bo strażnik przeszukiwał tylko
   te dwa pliki, o których już wiedziano, że są zepsute. Strażnik obejmuje teraz

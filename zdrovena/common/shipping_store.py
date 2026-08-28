@@ -25,6 +25,9 @@ from zdrovena.common.exceptions import storage_unavailable
 logger = logging.getLogger("zdrovena.common.shipping_store")
 
 TABLE_NAME = "shippingdrafts"
+#: Reading at least this many rows to answer one list is worth reporting.
+_PARTITION_SCAN_ALARM_ROWS = 2_000
+
 PARTITION_KEY = "drafts"
 _LOCAL_FILE_NAME = "shipping-drafts.json"
 _DEFAULT_ROOT = Path.home() / ".zdrovena" / "storage"
@@ -194,22 +197,12 @@ class ShippingStore:
     def upsert_draft(self, record: dict[str, Any]) -> None:
         if self._use_table:
             client = self._table_client()
-            shopify_order_id = record.get("shopify_order_id")
-            if shopify_order_id:
-                escaped = str(shopify_order_id).replace("'", "''")
-                query_filter = (
-                    f"PartitionKey eq '{PARTITION_KEY}' and "
-                    f"shopify_order_id eq '{escaped}' and "
-                    f"RowKey ne '{record['id']}'"
-                )
+            for existing in self._duplicate_rows_for(record):
                 try:
-                    for existing in client.query_entities(query_filter=query_filter):
-                        client.delete_entity(existing["PartitionKey"], existing["RowKey"])
+                    client.delete_entity(existing["PartitionKey"], existing["RowKey"])
                 except Exception as exc:
                     logger.warning(
-                        "Table dedup lookup failed for shopify_order_id %s: %s",
-                        shopify_order_id,
-                        exc,
+                        "Table dedup delete failed for draft %s: %s", existing["RowKey"], exc
                     )
             try:
                 client.upsert_entity(_serialize(record))
@@ -220,15 +213,163 @@ class ShippingStore:
             lock_fd = self._acquire_lock()
             try:
                 data = self._local_load()
-                shopify_order_id = record.get("shopify_order_id")
-                if shopify_order_id:
-                    for existing_id, existing_record in list(data.items()):
-                        if existing_record.get("shopify_order_id") == shopify_order_id:
-                            del data[existing_id]
+                for existing_id in self._local_duplicate_ids(data, record):
+                    del data[existing_id]
                 data[record["id"]] = record
                 self._local_save(data)
             finally:
                 self._release_lock(lock_fd)
+
+    # ── Targeted order lookup (issue #316) ─────────────────────────────────────
+    #
+    # Table Storage has no secondary index: a filter on a non-key property is
+    # still evaluated across the partition. What it does buy is completeness and
+    # a small transfer -- the server returns only matching rows, and nothing is
+    # truncated. That is the half that matters here. Building a dedup index out
+    # of list_drafts() misses every row past its limit, so an order that exists
+    # reads as new and is written again; the duplicate carries created_at=now,
+    # enters the newest-first window, evicts another old row, and duplicates on
+    # the next cycle. That loop produced roughly 70 Allegro drafts.
+
+    @staticmethod
+    def _quote(value: Any) -> str:
+        return str(value).replace("'", "''")
+
+    def _external_id_filter(self, source: str, external_order_id: str) -> str:
+        return (
+            f"PartitionKey eq '{PARTITION_KEY}' and "
+            f"source eq '{self._quote(source)}' and "
+            f"external_order_id eq '{self._quote(external_order_id)}'"
+        )
+
+    def _order_filters(self, record: dict[str, Any]) -> list[str]:
+        """Every filter identifying "the same external order" as this record.
+
+        Two keys, not one. ``(source, external_order_id)`` is the current shape
+        and the only one that covers Allegro. ``shopify_order_id`` is kept for
+        rows written before ``external_order_id`` existed: dropping it would
+        quietly stop deduplicating exactly the oldest records, which is the
+        failure this issue is about.
+        """
+        filters: list[str] = []
+        source = record.get("source")
+        external_order_id = record.get("external_order_id")
+        if source and external_order_id:
+            filters.append(self._external_id_filter(str(source), str(external_order_id)))
+        shopify_order_id = record.get("shopify_order_id")
+        if shopify_order_id:
+            filters.append(
+                f"PartitionKey eq '{PARTITION_KEY}' and "
+                f"shopify_order_id eq '{self._quote(shopify_order_id)}'"
+            )
+        return filters
+
+    def find_drafts_by_external_id(
+        self, *, source: str, external_order_id: str
+    ) -> list[dict[str, Any]]:
+        """Every non-replacement draft for one external order. Never truncated.
+
+        Replacements are excluded in Python rather than in the filter: most rows
+        have no ``is_replacement`` property at all, and a Table Storage filter on
+        an absent property matches nothing, so ``is_replacement eq false`` would
+        silently return an empty set.
+        """
+        if not source or not external_order_id:
+            return []
+
+        if self._use_table:
+            query_filter = self._external_id_filter(source, external_order_id)
+            try:
+                entities = list(self._table_client().query_entities(query_filter=query_filter))
+            except Exception as exc:
+                # Same rule as every other list read (#310): there is no
+                # not-found case, so any exception is an outage. Answering
+                # "no match" here would create a duplicate draft.
+                raise storage_unavailable("shipping", "find_drafts_by_external_id", exc) from exc
+            candidates = [_deserialize(dict(e)) for e in entities]
+        else:
+            candidates = [
+                record
+                for record in self._local_load().values()
+                if record.get("source") == source
+                and str(record.get("external_order_id", "")) == str(external_order_id)
+            ]
+
+        return [record for record in candidates if not record.get("is_replacement")]
+
+    def find_draft_by_external_id(
+        self, *, source: str, external_order_id: str
+    ) -> dict[str, Any] | None:
+        """The draft for one external order, preferring a non-errored one.
+
+        A draft left in ``error`` is a failed attempt at the same order; callers
+        want to retry it rather than create a second one, but a healthy draft
+        always wins.
+        """
+        matches = self.find_drafts_by_external_id(
+            source=source, external_order_id=external_order_id
+        )
+        if not matches:
+            return None
+        for record in matches:
+            if record.get("status") != "error":
+                return record
+        return matches[0]
+
+    def _duplicate_rows_for(self, record: dict[str, Any]) -> list[dict[str, Any]]:
+        """Rows for the same external order that this write supersedes.
+
+        Keyed on (source, external_order_id), not on shopify_order_id as before:
+        that field is None on every Allegro draft, so Allegro had no write-time
+        protection at all. Replacement drafts share the external order id on
+        purpose and must survive.
+        """
+        if record.get("is_replacement"):
+            return []
+
+        client = self._table_client()
+        duplicates: dict[str, dict[str, Any]] = {}
+        for query_filter in self._order_filters(record):
+            try:
+                entities = list(client.query_entities(query_filter=query_filter))
+            except Exception as exc:
+                # Best effort: failing the lookup must not fail the write. The
+                # targeted read in find_draft_by_external_id is what prevents the
+                # duplicate; this is the last-line cleanup.
+                logger.warning("Table dedup lookup failed for draft %s: %s", record["id"], exc)
+                continue
+            for entity in entities:
+                if entity["RowKey"] == record["id"] or entity.get("is_replacement"):
+                    continue
+                duplicates[str(entity["RowKey"])] = dict(entity)
+        return list(duplicates.values())
+
+    def _local_duplicate_ids(self, data: dict[str, Any], record: dict[str, Any]) -> list[str]:
+        if record.get("is_replacement"):
+            return []
+        source = record.get("source")
+        external_order_id = record.get("external_order_id")
+        shopify_order_id = record.get("shopify_order_id")
+
+        def is_same_order(existing: dict[str, Any]) -> bool:
+            matches_external = bool(
+                source
+                and external_order_id
+                and existing.get("source") == source
+                and str(existing.get("external_order_id", "")) == str(external_order_id)
+            )
+            matches_shopify = bool(
+                shopify_order_id and existing.get("shopify_order_id") == shopify_order_id
+            )
+            return matches_external or matches_shopify
+
+        return [
+            existing_id
+            for existing_id, existing in data.items()
+            if existing_id != record["id"]
+            and not existing.get("is_replacement")
+            and is_same_order(existing)
+        ]
 
     def update_draft(self, draft_id: str, fields: dict[str, Any]) -> bool:
         """Merge-update specific fields of a draft. Returns False if not found (local only)."""
@@ -617,6 +758,21 @@ class ShippingStore:
         else:
             records = list(self._local_load().values())
         records.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+        if len(records) >= _PARTITION_SCAN_ALARM_ROWS:
+            # Table Storage cannot sort, so "newest N" still reads the whole
+            # partition. Make that cost visible before it hurts, rather than
+            # discovering it from a latency graph (#316).
+            from zdrovena.common.events import log_event
+
+            log_event(
+                "storage.partition_scan",
+                level=logging.WARNING,
+                store="shipping",
+                operation="list_drafts",
+                rows_read=len(records),
+                rows_returned=min(len(records), limit),
+                threshold=_PARTITION_SCAN_ALARM_ROWS,
+            )
         if len(records) > limit:
             # Truncation is newest-first, so the rows dropped here are the
             # oldest. Any caller building a lookup index from this list will

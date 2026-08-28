@@ -258,22 +258,15 @@ def _sync_shopify_orders_from_api(
     if not orders:
         return stats
 
-    # High limit: list_drafts fetches all Table Storage rows anyway; the cap
-    # only affects the returned slice. 10_000 covers any realistic store size
-    # and prevents silent duplicate-draft creation on stores with >200 total orders.
-    existing_drafts = shipping_store.list_drafts(limit=10_000)
-    existing_by_order_id = {
-        str(d.get("external_order_id", "")): d
-        for d in existing_drafts
-        if d.get("source") == "shopify"
-        and d.get("external_order_id")
-        and not d.get("is_replacement")
-    }
-
     for order in orders:
         order_id = str(order.get("id", ""))
         try:
-            existing = existing_by_order_id.get(order_id)
+            # Targeted lookup, not an index built from list_drafts: that index
+            # silently omitted every row past its limit, so an order that
+            # existed read as new and was written again (#316).
+            existing = shipping_store.find_draft_by_external_id(
+                source="shopify", external_order_id=order_id
+            )
             changed = draft_application.sync_draft_from_order(
                 order,
                 shipping_store,

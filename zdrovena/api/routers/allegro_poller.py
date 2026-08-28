@@ -146,22 +146,6 @@ def poll_orders_once(
     if not forms:
         return stats
 
-    try:
-        # High limit, for the same reason the Shopify sync uses one: list_drafts
-        # reads every row anyway and the cap only slices the result, but the
-        # default 200 is a dedup trap. Sorted newest-first, it hides the oldest
-        # drafts once the store passes 200 rows, so _existing_allegro_draft finds
-        # nothing and the order is created again. Each duplicate is written with
-        # created_at=now, entering the window and evicting another old row, which
-        # duplicates on the next cycle — a self-sustaining loop.
-        drafts = shipping_store.list_drafts(limit=10_000)
-    except Exception:
-        # Without the snapshot there is no idempotency decision. Keep the
-        # scheduler healthy, but fail this cycle closed before any order effect.
-        logger.exception("shipping_store.list_drafts failed")
-        stats["errors"] += 1
-        return stats
-
     for form in forms:
         allegro_id = str(form.get("id", ""))
         if not allegro_id:
@@ -169,7 +153,22 @@ def poll_orders_once(
             stats["errors"] += 1
             continue
 
-        existing = _existing_allegro_draft(drafts, allegro_id)
+        try:
+            # Targeted lookup per order. This used to build an index from
+            # list_drafts(limit=10_000): sorted newest-first, it hid the oldest
+            # rows once the store outgrew the limit, so the order was created
+            # again — and the duplicate, written with created_at=now, evicted
+            # another old row and duplicated on the next cycle (#316).
+            existing = shipping_store.find_draft_by_external_id(
+                source="allegro", external_order_id=allegro_id
+            )
+        except Exception:
+            # Without a definite answer there is no idempotency decision.
+            # Fail this order closed rather than risk a duplicate.
+            logger.exception("Draft lookup failed for Allegro order %s", allegro_id)
+            stats["errors"] += 1
+            continue
+
         is_new = existing is None
         try:
             shopify_like = allegro_to_shopify_order(form)
