@@ -71,7 +71,7 @@ GitHub zamyka issue tylko przy gałęzi domyślnej.
 - [x] [#308](https://github.com/PiotrGry/zdrovena-reconciliation/issues/308) — **P2** audyt magazynowy przy zamknięciu miesiąca
   Nowa logika biznesowa, nie poprawka.
 
-- [ ] [#138](https://github.com/PiotrGry/zdrovena-reconciliation/issues/138) — **P1** zmienne Terraform i approval flow
+- [x] [#138](https://github.com/PiotrGry/zdrovena-reconciliation/issues/138) — **P1** zmienne Terraform i approval flow
 - [ ] [#215](https://github.com/PiotrGry/zdrovena-reconciliation/issues/215) — **P1** prywatna sieć w Terraformie
   Oba wymagają dostępu do Azure i ostrożności.
 
