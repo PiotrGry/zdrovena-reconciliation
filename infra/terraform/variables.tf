@@ -91,7 +91,7 @@ variable "shopify_allowed_domains" {
 }
 
 variable "enable_private_network" {
-  description = "Enable VNet + Service Endpoints for Storage and Key Vault (cost-optimized). Cost: ~€3/month (VNet traffic only). Service Endpoints = FREE (vs €14/month for Private Endpoints). Traffic via Microsoft backbone, firewall default_action=Deny, RBAC enforced. Sufficient for business data; upgrade to Private Endpoints if HIPAA/PCI-DSS compliance required."
+  description = "Enable VNet + Service Endpoints for Storage and Key Vault. Creates NO Private Endpoints — see ADR 0003 for why that model was rejected. Cost: ~€3/month (VNet traffic only); Service Endpoints themselves are free. Sets default_action=Deny on both Storage and Key Vault, allowing only the Container Apps subnet. Enabling this moves the Container Apps Environment into the VNet, which recreates the environment rather than updating it in place."
   type        = bool
   default     = false
 }
