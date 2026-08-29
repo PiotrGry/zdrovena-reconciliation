@@ -140,6 +140,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/close/workflow/email-attempt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve a send attempt whose outcome is unknown
+         * @description Settle an ambiguous send so the period can move on.
+         *
+         *     A crash between SMTP accepting the message and the workflow recording it
+         *     leaves a state nobody on our side can read. `delivered=true` closes the
+         *     period without a second mail to the accountant; `delivered=false` unblocks
+         *     a retry (#312).
+         */
+        post: operations["resolve_close_email_attempt_api_close_workflow_email_attempt_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/close/workflow/reset": {
         parameters: {
             query?: never;
@@ -364,6 +389,30 @@ export interface paths {
         put?: never;
         /** Prepare a replacement draft without creating a courier shipment */
         post: operations["prepare_replacement_api_damage_cases__case_id__prepare_replacement_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/damage-cases/{case_id}/resolve-email-attempt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve an email attempt whose outcome is unknown
+         * @description Record what actually happened to an ambiguous send.
+         *
+         *     Only a person can settle this: from our side an accepted-then-lost message
+         *     and a never-sent one look identical. `delivered=true` closes the case
+         *     without a second message; `delivered=false` is what unblocks a retry.
+         */
+        post: operations["resolve_email_attempt_api_damage_cases__case_id__resolve_email_attempt_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -946,6 +995,23 @@ export interface components {
             /** Service */
             service?: string | null;
         };
+        /**
+         * CloseEmailAttemptResolution
+         * @description An operator's decision about a send whose outcome nobody can read.
+         */
+        CloseEmailAttemptResolution: {
+            /** Delivered */
+            delivered: boolean;
+            /** Month */
+            month: number;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /** Year */
+            year: number;
+        };
         /** CloseRequest */
         CloseRequest: {
             /**
@@ -1164,6 +1230,16 @@ export interface components {
         ConfirmDamageRequest: {
             /** Note */
             note?: string | null;
+        };
+        /** EmailAttemptResolution */
+        EmailAttemptResolution: {
+            /** Delivered */
+            delivered: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** EmailDraftUpdate */
         EmailDraftUpdate: {
@@ -1596,6 +1672,46 @@ export interface operations {
                 };
             };
             /** @description Another action already owns this period */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_close_email_attempt_api_close_workflow_email_attempt_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseEmailAttemptResolution"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseWorkflowRunResponse"];
+                };
+            };
+            /** @description No unresolved attempt, or another action owns this period */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -2092,6 +2208,50 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_email_attempt_api_damage_cases__case_id__resolve_email_attempt_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailAttemptResolution"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description No unresolved attempt to resolve */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

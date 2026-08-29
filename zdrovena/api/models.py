@@ -91,6 +91,15 @@ class CloseWorkflowActionRequest(BaseModel):
         return self
 
 
+class CloseEmailAttemptResolution(BaseModel):
+    """An operator's decision about a send whose outcome nobody can read."""
+
+    year: int = Field(..., ge=2020)
+    month: int = Field(..., ge=1, le=12)
+    delivered: bool
+    note: str = ""
+
+
 class CloseWorkflowWaiverRequest(BaseModel):
     """Ask for one failed stage or one issue to stop gating the run."""
 

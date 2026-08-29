@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import smtplib
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -25,7 +26,9 @@ from zdrovena.api.damage_detection import (
     scan_zoho_damage_cases,
 )
 from zdrovena.api.deps import DamageStoreDep, ShippingStoreDep, StorageDep
+from zdrovena.common import send_attempt
 from zdrovena.common.config import KEYCHAIN_SERVICE_ZOHO_SMTP
+from zdrovena.common.events import log_event
 from zdrovena.common.secrets import get_secret
 from zdrovena.month_closing.config import ZOHO_EMAIL
 from zdrovena.month_closing.email_service import EmailService
@@ -490,7 +493,22 @@ def send_customer_email(
             status_code=409,
             detail=(f"{CUSTOMER_EMAIL_FROM} is not configured as an active Zoho From address"),
         )
-    if not damage_store.try_claim_email(case_id):
+    # Refuse before touching SMTP if a previous attempt is unresolved. An
+    # ambiguous attempt is the one case where re-sending is the wrong guess.
+    allowed, reason = send_attempt.may_send(
+        send_attempt.SendAttempt.from_dict(case.get("email_attempt"))
+    )
+    if not allowed:
+        raise HTTPException(status_code=409, detail=reason)
+
+    # Durable BEFORE SMTP: written in the same atomic update as the claim, so
+    # the message can never be accepted with nothing on disk to say so (#312).
+    attempt = send_attempt.begin(
+        recipients=[str(email_draft["to"])],
+        subject=str(email_draft["subject"]),
+        artifact=str(email_draft["body"]),
+    )
+    if not damage_store.try_claim_email(case_id, attempt.to_dict()):
         raise HTTPException(
             status_code=409,
             detail="Email is already being sent or has already been sent",
@@ -503,6 +521,14 @@ def send_customer_email(
         )
     except Exception as exc:
         logger.exception("Could not send damage-case email %s", case_id)
+        # A refusal we saw. Anything the client did not see — a timeout, a dead
+        # socket — leaves the attempt pending, and it ages into `unknown` rather
+        # than being recorded as a clean failure that invites an auto-retry.
+        settled = (
+            send_attempt.fail(attempt, str(exc))
+            if isinstance(exc, smtplib.SMTPResponseException)
+            else attempt
+        )
         _save_case(
             damage_store,
             case_id,
@@ -510,7 +536,16 @@ def send_customer_email(
                 "email_error": str(exc),
                 "email_last_attempt_at": _now(),
                 "email_sending": False,
+                "email_attempt": settled.to_dict(),
             },
+        )
+        log_event(
+            "damage.email_send_failed",
+            level=logging.ERROR,
+            case_id=case_id,
+            attempt_id=attempt.id,
+            state=settled.state,
+            error_type=type(exc).__name__,
         )
         raise HTTPException(status_code=502, detail="Zoho Mail could not send the message") from exc
     sent_at = _now()
@@ -528,9 +563,65 @@ def send_customer_email(
             "email_provider_message_id": message_id,
             "email_error": None,
             "email_sending": False,
+            "email_attempt": send_attempt.confirm(
+                attempt, provider_message_id=str(message_id) if message_id else None
+            ).to_dict(),
         },
     )
+    log_event(
+        "damage.email_sent",
+        case_id=case_id,
+        attempt_id=attempt.id,
+        fingerprint=attempt.fingerprint,
+    )
     return {"case": updated, "email_draft": updated_draft}
+
+
+class EmailAttemptResolution(BaseModel):
+    delivered: bool
+    note: str = ""
+
+
+@router.post(
+    "/damage-cases/{case_id}/resolve-email-attempt",
+    summary="Resolve an email attempt whose outcome is unknown",
+    responses={409: {"description": "No unresolved attempt to resolve"}},
+)
+def resolve_email_attempt(
+    case_id: str,
+    body: EmailAttemptResolution,
+    damage_store: DamageStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    """Record what actually happened to an ambiguous send.
+
+    Only a person can settle this: from our side an accepted-then-lost message
+    and a never-sent one look identical. `delivered=true` closes the case
+    without a second message; `delivered=false` is what unblocks a retry.
+    """
+    case = _case_or_404(damage_store, case_id)
+    attempt = send_attempt.SendAttempt.from_dict(case.get("email_attempt"))
+    state = send_attempt.classify(attempt)
+    if attempt is None or state not in (send_attempt.UNKNOWN, send_attempt.PENDING):
+        raise HTTPException(status_code=409, detail="No unresolved email attempt on this case")
+
+    resolved = send_attempt.resolve(
+        attempt, delivered=body.delivered, by=principal.email or principal.sub, note=body.note
+    )
+    fields: dict[str, Any] = {"email_attempt": resolved.to_dict(), "email_sending": False}
+    if body.delivered:
+        fields["email_sent_at"] = case.get("email_sent_at") or _now()
+        fields["email_sent_by"] = principal.email
+        fields["status"] = "customer_notified"
+    updated = _save_case(damage_store, case_id, fields)
+    log_event(
+        "damage.email_attempt_resolved",
+        case_id=case_id,
+        attempt_id=attempt.id,
+        delivered=body.delivered,
+        resolved_by=principal.email or principal.sub,
+    )
+    return {"case": updated, "attempt": resolved.to_dict()}
 
 
 @router.post("/damage-cases/{case_id}/close", summary="Close a damage case")
