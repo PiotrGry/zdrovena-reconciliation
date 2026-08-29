@@ -166,7 +166,7 @@
   a treść zgłoszenia i tak prosiła zatwierdzającego o „przejrzenie planu w podlinkowanym
   runie". Teraz plan powstaje przed approvalem, jego podsumowanie ląduje w treści zgłoszenia,
   a `apply` wykonuje **zapisany** plan, nie przeliczony na nowo. Job `apply` dostał
-  `environment: production-infra`, którego nie miał, mimo że komentarz w nagłówku twierdził
+  `environment: production`, którego nie miał, mimo że komentarz w nagłówku twierdził
   inaczej — bez tego nie widział zmiennych środowiska, a claim OIDC mógł się nie zgadzać.
   Adres alertowy pochodzi wyłącznie z `vars.OPS_ALERT_EMAIL` (zmienne ustawione w obu
   środowiskach), binarny `tfplan` przestał być publikowany jako artefakt PR-a, a duplikat
