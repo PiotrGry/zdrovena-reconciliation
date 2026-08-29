@@ -225,7 +225,7 @@ class TestDlqEndpoints:
             "source": "shopify",
         }
 
-        with patch("zdrovena.api.routers.webhooks.log_event") as event:
+        with patch("zdrovena.api.routers.shipping.test_support.log_event") as event:
             resp = client.post("/api/__test__/shipping/dlq", json=body)
 
         assert resp.status_code == 200
