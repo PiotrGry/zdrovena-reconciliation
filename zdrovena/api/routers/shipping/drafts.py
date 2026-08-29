@@ -14,6 +14,11 @@ from fastapi import (
 
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep
+from zdrovena.api.models import (
+    ApaczkaServicesResponse,
+    ShippingDraftModel,
+    ShippingDraftsResponse,
+)
 from zdrovena.common.shipping_format import normalize_pl_phone
 
 logger = logging.getLogger("zdrovena.api.routers.shipping.drafts")
@@ -29,6 +34,8 @@ _MATCH_MANUAL = "manual"
     "/shipping/drafts",
     summary="List shipping drafts",
     responses={403: {"description": "Insufficient role"}},
+    response_model=ShippingDraftsResponse,
+    response_model_exclude_unset=True,
 )
 def list_drafts(
     shipping_store: ShippingStoreDep,
@@ -42,6 +49,8 @@ def list_drafts(
     "/shipping/apaczka-services",
     summary="List the curated Apaczka courier services available for draft selection",
     responses={403: {"description": "Insufficient role"}},
+    response_model=ApaczkaServicesResponse,
+    response_model_exclude_unset=True,
 )
 def list_apaczka_services(
     principal: Annotated[Principal, Depends(require_viewer_or_above)],
@@ -123,6 +132,8 @@ def _validated_breakdown(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         404: {"description": "Draft not found"},
         400: {"description": "Invalid service for courier"},
     },
+    response_model=ShippingDraftModel,
+    response_model_exclude_unset=True,
 )
 def update_draft(
     draft_id: str,

@@ -95,3 +95,67 @@ class TestTheContractStoppedBeingEmpty:
                     unconstrained.append(f"{method.upper()} {path}")
 
         assert unconstrained == []
+
+
+class TestPublishingASchemaChangesNothingOnTheWire:
+    """A response model does not only filter fields out — it also ADDS every
+    declared field the payload lacked, as null. That is a wire change for
+    something meant to be purely documentary, so every route passes
+    `response_model_exclude_unset=True` (#356, #358)."""
+
+    def test_every_typed_route_excludes_unset_fields(self):
+        import ast
+
+        roots = [
+            REPO_ROOT / "zdrovena" / "api" / "routers" / "damage.py",
+            *sorted((REPO_ROOT / "zdrovena" / "api" / "routers" / "shipping").glob("*.py")),
+        ]
+        offenders = []
+        for path in roots:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for decorator in node.decorator_list:
+                    source = ast.unparse(decorator)
+                    if "response_model=" not in source:
+                        continue
+                    if "response_model_exclude_unset=True" not in source:
+                        offenders.append(f"{path.name}:{node.name}")
+
+        assert offenders == [], f"routes that would add null fields: {offenders}"
+
+    def test_an_absent_field_stays_absent(self):
+        from zdrovena.api.models import ShippingDraftModel
+
+        dumped = ShippingDraftModel.model_validate({"id": "d-1"}).model_dump(exclude_unset=True)
+
+        assert dumped == {"id": "d-1"}
+
+    def test_a_provider_identifier_may_be_a_number(self):
+        """Fakturownia returns an int id and also uses the sentinel "pending".
+        Pinning these to `str` turned a working response into a 500."""
+        from zdrovena.api.models import InvoiceActionResponse
+
+        assert (
+            InvoiceActionResponse.model_validate(
+                {"status": "created", "fakturownia_invoice_id": 42}
+            ).fakturownia_invoice_id
+            == 42
+        )
+        assert (
+            InvoiceActionResponse.model_validate(
+                {"status": "pending", "fakturownia_invoice_id": "pending"}
+            ).fakturownia_invoice_id
+            == "pending"
+        )
+
+    def test_carrier_specific_draft_fields_survive(self):
+        from zdrovena.api.models import ShippingDraftModel
+
+        dumped = ShippingDraftModel.model_validate(
+            {"id": "d-1", "allegro_sending_method": "parcel_locker", "inpost_service": "paczkomat"}
+        ).model_dump(exclude_unset=True)
+
+        assert dumped["allegro_sending_method"] == "parcel_locker"
+        assert dumped["inpost_service"] == "paczkomat"

@@ -951,6 +951,22 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ApaczkaServiceModel */
+        ApaczkaServiceModel: {
+            /** Label */
+            label?: string | null;
+            /** Service Id */
+            service_id?: number | string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ApaczkaServicesResponse */
+        ApaczkaServicesResponse: {
+            /** Services */
+            services: components["schemas"]["ApaczkaServiceModel"][];
+        } & {
+            [key: string]: unknown;
+        };
         /** Body_batch_labels_api_shipping_labels_batch_post */
         Body_batch_labels_api_shipping_labels_batch_post: {
             /** Draft Ids */
@@ -1279,7 +1295,7 @@ export interface components {
             /** Operator Note */
             operator_note?: string | null;
             /** Order Number */
-            order_number?: string | null;
+            order_number?: number | string | null;
             /** Replacement Created At */
             replacement_created_at?: string | null;
             /** Replacement Draft Id */
@@ -1358,6 +1374,28 @@ export interface components {
             /** Needs Review */
             needs_review: number;
         };
+        /** DlqEntriesResponse */
+        DlqEntriesResponse: {
+            /** Entries */
+            entries: {
+                [key: string]: unknown;
+            }[];
+        } & {
+            [key: string]: unknown;
+        };
+        /** DlqRetryResponse */
+        DlqRetryResponse: {
+            /** Draft Id */
+            draft_id?: number | string | null;
+            /** Entry Id */
+            entry_id?: number | string | null;
+            /** Error */
+            error?: string | null;
+            /** Status */
+            status?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** EmailAttemptResolution */
         EmailAttemptResolution: {
             /** Delivered */
@@ -1392,6 +1430,16 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HealthResponse
+         * @description Liveness plus the version actually running — see #216 for why that matters.
+         */
+        HealthResponse: {
+            /** Status */
+            status: string;
+            /** Version */
+            version: string;
         };
         /** IntegrationHealthItem */
         IntegrationHealthItem: {
@@ -1431,6 +1479,23 @@ export interface components {
             /** Operations */
             operations: components["schemas"]["OperationHealthItem"][];
         };
+        /** InvoiceActionResponse */
+        InvoiceActionResponse: {
+            /** Buyer Name */
+            buyer_name?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Fakturownia Invoice Id */
+            fakturownia_invoice_id?: number | string | null;
+            /** Fakturownia Invoice Number */
+            fakturownia_invoice_number?: number | string | null;
+            /** Pending */
+            pending?: boolean | null;
+            /** Status */
+            status?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** InvoiceItem */
         InvoiceItem: {
             /** Buyer Name */
@@ -1455,6 +1520,25 @@ export interface components {
             sell_date: string | null;
             /** Status */
             status: string | null;
+        };
+        /** MarkFulfilledResponse */
+        MarkFulfilledResponse: {
+            /** Created */
+            created?: boolean | null;
+            /** Draft Id */
+            draft_id?: number | string | null;
+            /** External Order Id */
+            external_order_id?: number | string | null;
+            /** Shopify Fulfillment Id */
+            shopify_fulfillment_id?: number | string | null;
+            /** Skipped */
+            skipped?: string | null;
+            /** Source */
+            source?: string | null;
+            /** Status */
+            status?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /** OperationHealthItem */
         OperationHealthItem: {
@@ -1514,6 +1598,120 @@ export interface components {
             price_gross: string | null;
             /** Price Net */
             price_net: string | null;
+        };
+        /**
+         * ShipmentActionResponse
+         * @description Result of executing, confirming or cancelling courier work on a draft.
+         */
+        ShipmentActionResponse: {
+            /** Dispatch Id */
+            dispatch_id?: string | null;
+            /** Draft Id */
+            draft_id?: number | string | null;
+            /** Error */
+            error?: string | null;
+            /** Shipment Id */
+            shipment_id?: number | string | null;
+            /** Status */
+            status?: string | null;
+            /** Tracking Number */
+            tracking_number?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ShippingDraftModel
+         * @description One shipping draft. Documents the fields the portal reads.
+         *
+         *     Identifiers minted by a provider are typed `int | str` on purpose: each
+         *     courier decides its own representation, and Fakturownia additionally uses
+         *     the sentinel `"pending"` in an otherwise numeric field. Pinning them to
+         *     `str` turns a working response into a 500 at validation time — which is how
+         *     this was found.
+         */
+        ShippingDraftModel: {
+            /** Apaczka Service Id */
+            apaczka_service_id?: number | string | null;
+            /** Courier */
+            courier?: string | null;
+            /** Courier Draft Id */
+            courier_draft_id?: number | string | null;
+            /** Courier Shipments */
+            courier_shipments?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Customer Name */
+            customer_name?: string | null;
+            /** Dispatch Order Id */
+            dispatch_order_id?: number | string | null;
+            /** Error */
+            error?: string | null;
+            /** Execution Started At */
+            execution_started_at?: string | null;
+            /** External Order Id */
+            external_order_id?: number | string | null;
+            /** Fulfillment Status */
+            fulfillment_status?: string | null;
+            /** Id */
+            id: string;
+            /** Is Replacement */
+            is_replacement?: boolean | null;
+            /** Order Number */
+            order_number?: number | string | null;
+            /** Packages Breakdown */
+            packages_breakdown?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Packages Count */
+            packages_count?: number | null;
+            /** Pickup Ordered */
+            pickup_ordered?: boolean | null;
+            /** Receiver */
+            receiver?: {
+                [key: string]: unknown;
+            } | null;
+            /** Service */
+            service?: string | null;
+            /** Shopify Order Id */
+            shopify_order_id?: number | string | null;
+            /** Shopify Order Number */
+            shopify_order_number?: number | string | null;
+            /** Source */
+            source?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Tracking Company */
+            tracking_company?: string | null;
+            /** Tracking Number */
+            tracking_number?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ShippingDraftsResponse */
+        ShippingDraftsResponse: {
+            /** Drafts */
+            drafts: components["schemas"]["ShippingDraftModel"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /** ShippingSyncResponse */
+        ShippingSyncResponse: {
+            /** Created */
+            created?: number | null;
+            /** Errors */
+            errors?: number | null;
+            /** Fetched */
+            fetched?: number | null;
+            /** Unchanged */
+            unchanged?: number | null;
+            /** Updated */
+            updated?: number | null;
+        } & {
+            [key: string]: unknown;
         };
         /** ValidationError */
         ValidationError: {
@@ -2823,9 +3021,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ApaczkaServicesResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -2852,9 +3048,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShippingDraftsResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -2881,9 +3075,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DlqEntriesResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -2955,9 +3147,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DlqRetryResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -3013,9 +3203,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShippingDraftModel"];
                 };
             };
             /** @description Invalid service for courier */
@@ -3067,7 +3255,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ShipmentActionResponse"];
                 };
             };
             /** @description Still pending */
@@ -3133,9 +3321,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["InvoiceActionResponse"];
                 };
             };
             /** @description Not an Allegro draft */
@@ -3187,9 +3373,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShipmentActionResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -3252,9 +3436,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShipmentActionResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -3310,9 +3492,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShipmentActionResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -3357,9 +3537,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["InvoiceActionResponse"];
                 };
             };
             /** @description Not an Allegro draft */
@@ -3459,9 +3637,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["MarkFulfilledResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -3592,9 +3768,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShipmentActionResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -3705,9 +3879,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShippingSyncResponse"];
                 };
             };
         };
@@ -3727,9 +3899,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["HealthResponse"];
                 };
             };
         };

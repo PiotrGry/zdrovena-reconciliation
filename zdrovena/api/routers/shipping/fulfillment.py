@@ -20,6 +20,9 @@ from pydantic import BaseModel
 from zdrovena.api import shipping_execution_composition as execution_composition
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above
 from zdrovena.api.deps import ShippingStoreDep, StorageDep
+from zdrovena.api.models import (
+    ShipmentActionResponse,
+)
 from zdrovena.api.routers.shipping import deps
 from zdrovena.common.shipping_exceptions import (
     AllegroAuthError,
@@ -50,6 +53,7 @@ class PickupPendingResponse(BaseModel):
     "/shipping/drafts/{draft_id}/pickup",
     summary="Order InPost kurier pickup for an executed draft",
     response_model=PickupOrderedResponse,
+    response_model_exclude_unset=True,
     responses={
         202: {"model": PickupPendingResponse, "description": "Allegro pickup still pending"},
         403: {"description": "Insufficient role"},
@@ -199,6 +203,8 @@ def order_pickup(
         409: {"description": "No Allegro shipment to cancel"},
         502: {"description": "Allegro API error"},
     },
+    response_model=ShipmentActionResponse,
+    response_model_exclude_unset=True,
 )
 def cancel_shipment(
     draft_id: str,
@@ -248,6 +254,8 @@ def cancel_shipment(
         409: {"description": "No Allegro dispatch to cancel"},
         502: {"description": "Allegro API error"},
     },
+    response_model=ShipmentActionResponse,
+    response_model_exclude_unset=True,
 )
 def cancel_dispatch(
     draft_id: str,

@@ -17,6 +17,10 @@ from zdrovena.api import shipping_draft_composition as draft_composition
 from zdrovena.api import shipping_execution_composition as execution_composition
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, StorageDep
+from zdrovena.api.models import (
+    DlqEntriesResponse,
+    DlqRetryResponse,
+)
 from zdrovena.common.shipping_exceptions import (
     ZdrovenaShippingError,
 )
@@ -35,6 +39,8 @@ router = APIRouter(tags=["shipping"])
     "/shipping/drafts/dlq",
     summary="List failed draft-creation attempts (DLQ)",
     responses={403: {"description": "Insufficient role"}},
+    response_model=DlqEntriesResponse,
+    response_model_exclude_unset=True,
 )
 def list_dlq(
     shipping_store: ShippingStoreDep,
@@ -51,6 +57,8 @@ def list_dlq(
         404: {"description": "DLQ entry not found"},
         502: {"description": "Retry failed — entry left in DLQ with updated error"},
     },
+    response_model=DlqRetryResponse,
+    response_model_exclude_unset=True,
 )
 def retry_dlq_entry(
     entry_id: str,

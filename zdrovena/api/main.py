@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from zdrovena import __version__
 from zdrovena.api.errors import install_exception_handlers
+from zdrovena.api.models import HealthResponse
 from zdrovena.api.observability import CorrelationIdFilter, correlation_id_middleware
 from zdrovena.api.routers import (
     close,
@@ -185,6 +186,6 @@ if _azure_telemetry_enabled:
     instrument_fastapi_app(app)
 
 
-@app.get("/health", tags=["health"])
+@app.get("/health", tags=["health"], response_model=HealthResponse)
 def health() -> dict:
     return {"status": "ok", "version": app.version}

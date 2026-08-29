@@ -18,6 +18,10 @@ from fastapi.responses import JSONResponse
 from zdrovena.api import shipping_execution_composition as execution_composition
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above
 from zdrovena.api.deps import ShippingStoreDep, StorageDep
+from zdrovena.api.models import (
+    MarkFulfilledResponse,
+    ShipmentActionResponse,
+)
 from zdrovena.api.routers.shipping import deps
 from zdrovena.common.shipping_exceptions import (
     AllegroAuthError,
@@ -128,6 +132,8 @@ def _sync_shopify_fulfillment(
         403: {"description": "Insufficient role"},
         404: {"description": "Draft not found"},
     },
+    response_model=ShipmentActionResponse,
+    response_model_exclude_unset=True,
 )
 def preview_execute_draft(
     draft_id: str,
@@ -161,6 +167,8 @@ def preview_execute_draft(
         404: {"description": "Draft not found"},
         409: {"description": "Draft already executed"},
     },
+    response_model=ShipmentActionResponse,
+    response_model_exclude_unset=True,
 )
 def execute_draft(
     draft_id: str,
@@ -200,6 +208,8 @@ def execute_draft(
         202: {"description": "Still pending"},
         502: {"description": "Allegro API error"},
     },
+    response_model=ShipmentActionResponse,
+    response_model_exclude_unset=True,
 )
 def confirm_pending_command(
     draft_id: str,
@@ -234,6 +244,8 @@ def confirm_pending_command(
         409: {"description": "Allegro draft has no external Allegro order id"},
         502: {"description": "Allegro API error (only for Allegro drafts)"},
     },
+    response_model=MarkFulfilledResponse,
+    response_model_exclude_unset=True,
 )
 def mark_fulfilled(
     draft_id: str,
