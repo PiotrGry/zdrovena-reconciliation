@@ -52,6 +52,18 @@
 
 ### Fixed
 
+- **infra**: Model sieci prywatnej opisany w trzech miejscach na trzy różne sposoby jest
+  wreszcie jeden. Nagłówek `network.tf` reklamował Service Endpoints jako **tańszą
+  alternatywę** dla Private Endpointów i podawał oszczędność €29/mies., podczas gdy ten sam
+  plik tworzył również Private Endpointy i strefy Private DNS. Komentarz w `storage.tf`
+  mówił „dostęp wyłącznie przez Private Endpoint", a napisana pod nim ACL używa
+  `virtual_network_subnet_ids`, czyli mechanizmu Service Endpoint. Key Vault **nie miał
+  w ogóle gałęzi** dla trybu prywatnego — włączenie flagi zbudowałoby dla niego Private
+  Endpoint, zostawiając firewall vaultu otwarty. Decyzja zapisana w ADR 0003: Service
+  Endpoints, bez Private Endpointów; zasoby PE i strefy DNS usunięte, Key Vault dostał
+  warunkową ACL taką samą jak Storage. Flaga nadal domyślnie `false`. RBAC, TLS 1.2
+  i zakaz Shared Key nietknięte. (#215)
+
 - **ci**: Zatwierdzenie produkcyjnego `terraform apply` dotyczy wreszcie konkretnego planu.
   Kolejność była odwrotna — approval szedł pierwszy, plan nie istniał jeszcze w ogóle,
   a treść zgłoszenia i tak prosiła zatwierdzającego o „przejrzenie planu w podlinkowanym

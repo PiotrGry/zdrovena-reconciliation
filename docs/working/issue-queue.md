@@ -72,7 +72,7 @@ GitHub zamyka issue tylko przy gałęzi domyślnej.
   Nowa logika biznesowa, nie poprawka.
 
 - [x] [#138](https://github.com/PiotrGry/zdrovena-reconciliation/issues/138) — **P1** zmienne Terraform i approval flow
-- [ ] [#215](https://github.com/PiotrGry/zdrovena-reconciliation/issues/215) — **P1** prywatna sieć w Terraformie
+- [x] [#215](https://github.com/PiotrGry/zdrovena-reconciliation/issues/215) — **P1** prywatna sieć w Terraformie
   Oba wymagają dostępu do Azure i ostrożności.
 
 ## 4. Największe

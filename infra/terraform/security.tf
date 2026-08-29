@@ -19,15 +19,23 @@ resource "azurerm_key_vault" "kv" {
   purge_protection_enabled   = false
   tags                       = local.tags
 
-  # Network access: Allow from all IPs — RBAC (Key Vault Secrets User role) is the
-  # real access boundary. AzureServices bypass does NOT cover Consumption-tier Container
-  # Apps with dynamic egress IPs, causing ForbiddenByFirewall at startup despite valid
-  # RBAC credentials. VNet integration would fix this properly; until then, RBAC-only.
+  # Public mode: Allow from all IPs — RBAC (Key Vault Secrets User role) is the
+  # real access boundary. The AzureServices bypass does NOT cover Consumption-tier
+  # Container Apps with dynamic egress IPs, causing ForbiddenByFirewall at startup
+  # despite valid RBAC credentials.
+  #
+  # Private mode: the VNet integration this comment used to describe as the proper
+  # fix. The Service Endpoint on the Container Apps subnet is what makes a subnet
+  # rule work where an IP allowlist could not.
+  #
+  # Until #215 this block had no private branch at all: enabling the flag built a
+  # Key Vault Private Endpoint and DNS zone while leaving the vault firewall wide
+  # open, so the isolation being paid for did nothing (ADR 0003).
   network_acls {
-    default_action             = "Allow"
+    default_action             = var.enable_private_network ? "Deny" : "Allow"
     bypass                     = "AzureServices"
     ip_rules                   = []
-    virtual_network_subnet_ids = []
+    virtual_network_subnet_ids = var.enable_private_network ? [azurerm_subnet.container_apps[0].id] : []
   }
 
   # Allow Terraform operator (current CLI identity) to manage secrets
