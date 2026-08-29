@@ -2553,7 +2553,7 @@
             "description": "Invalid key"
           },
           "403": {
-            "description": "Insufficient role"
+            "description": "Insufficient role, or key belongs to internal storage"
           },
           "404": {
             "description": "File not found"
@@ -2654,7 +2654,7 @@
             "description": "Invalid key"
           },
           "403": {
-            "description": "Insufficient role"
+            "description": "Insufficient role, or key belongs to internal storage"
           },
           "422": {
             "content": {
