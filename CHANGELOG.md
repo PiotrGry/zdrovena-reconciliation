@@ -5,6 +5,17 @@
 
 ### Added
 
+- **month-close**: Kontrola wstępna sprawdza wreszcie stronę magazynową. Audyt WZ
+  istniał od dawna, ale wyłącznie w osobnej komendzie `zdrovena audit`, którą trzeba było
+  pamiętać, żeby uruchomić — więc miesiąc dało się zamknąć i wysłać księgowej z fakturą
+  bez WZ albo z WZ, za które nikt nie wystawił faktury. Obie kontrole trafiają teraz na
+  listę problemów operatora, z tym samym mechanizmem „Zignoruj", co numeracja. Domyślna
+  severity to `warning`, nie `blocker`: issue warunkowało `blocker` policzeniem, ile
+  ostatnich miesięcy już nie przechodzi, a tego nie da się zrobić bez danych z produkcji —
+  ostrzejsze ustawienie jest o jedną zmienną `MONTH_CLOSE_WAREHOUSE_SEVERITY` dalej.
+  Awaria dostawcy zgłaszana jest jako osobny problem, bo pusta lista mówiłaby „magazyn
+  czysty" o czymś, czego w ogóle nie sprawdzono. (#308)
+
 - **monitoring**: Activity Log jedzie teraz do Log Analytics. Tabela `AzureActivity`
   była pusta, więc zapytanie o historię alertów nie odróżniało „nic się nie działo"
   od „nigdzie tego nie zbieramy" — ta sama dwuznaczność co w #279, #278 i #310, tyle

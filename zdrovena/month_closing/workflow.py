@@ -31,6 +31,7 @@ from zdrovena.month_closing.package_integrity import (
 )
 from zdrovena.month_closing.preflight import pko_matches_month
 from zdrovena.month_closing.run_store import CloseRunStore, RunBusyError
+from zdrovena.month_closing.warehouse_audit import warehouse_issues
 
 logger = logging.getLogger("zdrovena.month_closing.workflow")
 
@@ -285,6 +286,11 @@ class MonthCloseInspector:
                         f"Duplikaty numeracji /{series.series}: {series.duplicates}",
                     )
                 )
+
+        # The warehouse side. Until #308 nothing in month-close asked whether an
+        # invoice had a WZ behind it, so a month could be closed and mailed with
+        # goods shipped and never billed, or billed and never shipped.
+        issues.extend(warehouse_issues(client, self.year, self.month))
 
         documents.extend(self._cost_documents(costs, month_files, issues))
         return {

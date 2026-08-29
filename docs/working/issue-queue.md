@@ -61,14 +61,14 @@ GitHub zamyka issue tylko przy gałęzi domyślnej.
 
 ## 3. Kilka dni
 
-- [ ] [#316](https://github.com/PiotrGry/zdrovena-reconciliation/issues/316) — **P1** full-partition scan w ShippingStore
+- [x] [#316](https://github.com/PiotrGry/zdrovena-reconciliation/issues/316) — **P1** full-partition scan w ShippingStore
   Pięć miejsc robi dziś pełny skan partycji. Trzeba zaprojektować targeted lookup
   i klucze deduplikacji.
 
-- [ ] [#311](https://github.com/PiotrGry/zdrovena-reconciliation/issues/311) — **P1** integralność paczki month-close
+- [x] [#311](https://github.com/PiotrGry/zdrovena-reconciliation/issues/311) — **P1** integralność paczki month-close
   Wysokie stawki: ta paczka idzie do księgowej.
 
-- [ ] [#308](https://github.com/PiotrGry/zdrovena-reconciliation/issues/308) — **P2** audyt magazynowy przy zamknięciu miesiąca
+- [x] [#308](https://github.com/PiotrGry/zdrovena-reconciliation/issues/308) — **P2** audyt magazynowy przy zamknięciu miesiąca
   Nowa logika biznesowa, nie poprawka.
 
 - [ ] [#138](https://github.com/PiotrGry/zdrovena-reconciliation/issues/138) — **P1** zmienne Terraform i approval flow
