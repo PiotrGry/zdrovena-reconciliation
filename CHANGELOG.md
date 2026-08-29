@@ -5,6 +5,17 @@
 
 ### Changed
 
+- **api**: Wszystkie endpointy publikują już schematy odpowiedzi — zostało **zero**
+  zwracających obiekt bez struktury (było 32). Shipping i `/health` dołączyły do Damage
+  z #356. Dwie rzeczy wyszły dopiero przy implementacji i obie były pułapkami:
+  **(1)** walidacja odpowiedzi jest surowa co do typów, nie tylko obecności — Fakturownia
+  zwraca `fakturownia_invoice_id` jako liczbę i używa wartownika `"pending"` w tym samym
+  polu, więc przypięcie go do `str` zamieniało działającą odpowiedź w 500; identyfikatory
+  bite przez dostawcę są teraz `int | str`. **(2)** model odpowiedzi nie tylko odfiltrowuje
+  pola — **dokłada** też każde zadeklarowane, którego zabrakło, jako `null`. Wszystkie
+  trasy używają więc `response_model_exclude_unset=True`, dzięki czemu bajty na drucie są
+  identyczne jak przedtem, a schemat jest wyłącznie dokumentacją. Pilnują tego testy. (#358)
+
 - **frontend**: `ShippingView.jsx` (2047 linii) rozbity na komponenty i moduły
   odpowiadające konkretnym odpowiedzialnościom — widok ma teraz 774 linie i pełni rolę
   kompozycyjną. Requesty Close, Settings i faktur shippingowych przeniesione do

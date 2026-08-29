@@ -1,6 +1,55 @@
 {
   "components": {
     "schemas": {
+      "ApaczkaServiceModel": {
+        "additionalProperties": true,
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "service_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Id"
+          }
+        },
+        "title": "ApaczkaServiceModel",
+        "type": "object"
+      },
+      "ApaczkaServicesResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/ApaczkaServiceModel"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "required": [
+          "services"
+        ],
+        "title": "ApaczkaServicesResponse",
+        "type": "object"
+      },
       "Body_batch_labels_api_shipping_labels_batch_post": {
         "properties": {
           "draft_ids": {
@@ -1026,6 +1075,9 @@
           "order_number": {
             "anyOf": [
               {
+                "type": "integer"
+              },
+              {
                 "type": "string"
               },
               {
@@ -1271,6 +1323,81 @@
         "title": "DamageSummaryResponse",
         "type": "object"
       },
+      "DlqEntriesResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "entries": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "title": "DlqEntriesResponse",
+        "type": "object"
+      },
+      "DlqRetryResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "draft_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Id"
+          },
+          "entry_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "DlqRetryResponse",
+        "type": "object"
+      },
       "EmailAttemptResolution": {
         "properties": {
           "delivered": {
@@ -1355,6 +1482,25 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "Liveness plus the version actually running — see #216 for why that matters.",
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "title": "HealthResponse",
         "type": "object"
       },
       "IntegrationHealthItem": {
@@ -1465,6 +1611,85 @@
           "operations"
         ],
         "title": "IntegrationsHealthResponse",
+        "type": "object"
+      },
+      "InvoiceActionResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "buyer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buyer Name"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "fakturownia_invoice_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fakturownia Invoice Id"
+          },
+          "fakturownia_invoice_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fakturownia Invoice Number"
+          },
+          "pending": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "InvoiceActionResponse",
         "type": "object"
       },
       "InvoiceItem": {
@@ -1584,6 +1809,99 @@
           "status"
         ],
         "title": "InvoiceItem",
+        "type": "object"
+      },
+      "MarkFulfilledResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "created": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created"
+          },
+          "draft_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Id"
+          },
+          "external_order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Order Id"
+          },
+          "shopify_fulfillment_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shopify Fulfillment Id"
+          },
+          "skipped": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skipped"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "MarkFulfilledResponse",
         "type": "object"
       },
       "OperationHealthItem": {
@@ -1754,6 +2072,485 @@
           "active"
         ],
         "title": "ProductItem",
+        "type": "object"
+      },
+      "ShipmentActionResponse": {
+        "additionalProperties": true,
+        "description": "Result of executing, confirming or cancelling courier work on a draft.",
+        "properties": {
+          "dispatch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispatch Id"
+          },
+          "draft_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "shipment_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipment Id"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "tracking_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracking Number"
+          }
+        },
+        "title": "ShipmentActionResponse",
+        "type": "object"
+      },
+      "ShippingDraftModel": {
+        "additionalProperties": true,
+        "description": "One shipping draft. Documents the fields the portal reads.\n\nIdentifiers minted by a provider are typed `int | str` on purpose: each\ncourier decides its own representation, and Fakturownia additionally uses\nthe sentinel `\"pending\"` in an otherwise numeric field. Pinning them to\n`str` turns a working response into a 500 at validation time — which is how\nthis was found.",
+        "properties": {
+          "apaczka_service_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apaczka Service Id"
+          },
+          "courier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Courier"
+          },
+          "courier_draft_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Courier Draft Id"
+          },
+          "courier_shipments": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Courier Shipments"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "customer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Name"
+          },
+          "dispatch_order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispatch Order Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "execution_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Started At"
+          },
+          "external_order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Order Id"
+          },
+          "fulfillment_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fulfillment Status"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_replacement": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Replacement"
+          },
+          "order_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Number"
+          },
+          "packages_breakdown": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packages Breakdown"
+          },
+          "packages_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packages Count"
+          },
+          "pickup_ordered": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup Ordered"
+          },
+          "receiver": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receiver"
+          },
+          "service": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service"
+          },
+          "shopify_order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shopify Order Id"
+          },
+          "shopify_order_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shopify Order Number"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "tracking_company": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracking Company"
+          },
+          "tracking_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracking Number"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "ShippingDraftModel",
+        "type": "object"
+      },
+      "ShippingDraftsResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "drafts": {
+            "items": {
+              "$ref": "#/components/schemas/ShippingDraftModel"
+            },
+            "title": "Drafts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "drafts"
+        ],
+        "title": "ShippingDraftsResponse",
+        "type": "object"
+      },
+      "ShippingSyncResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "created": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created"
+          },
+          "errors": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errors"
+          },
+          "fetched": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fetched"
+          },
+          "unchanged": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unchanged"
+          },
+          "updated": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated"
+          }
+        },
+        "title": "ShippingSyncResponse",
         "type": "object"
       },
       "ValidationError": {
@@ -3556,9 +4353,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Apaczka Services Api Shipping Apaczka Services Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ApaczkaServicesResponse"
                 }
               }
             },
@@ -3587,9 +4382,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Drafts Api Shipping Drafts Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShippingDraftsResponse"
                 }
               }
             },
@@ -3618,9 +4411,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Dlq Api Shipping Drafts Dlq Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DlqEntriesResponse"
                 }
               }
             },
@@ -3706,9 +4497,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Retry Dlq Entry Api Shipping Drafts Dlq  Entry Id  Retry Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DlqRetryResponse"
                 }
               }
             },
@@ -3773,9 +4562,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Update Draft Api Shipping Drafts  Draft Id  Patch",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShippingDraftModel"
                 }
               }
             },
@@ -3832,7 +4619,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "title": "Response Confirm Pending Command Api Shipping Drafts  Draft Id  Confirm Post"
+                  "$ref": "#/components/schemas/ShipmentActionResponse"
                 }
               }
             },
@@ -3894,9 +4681,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Draft Invoice Api Shipping Drafts  Draft Id  Create Invoice Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/InvoiceActionResponse"
                 }
               }
             },
@@ -3953,9 +4738,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Cancel Dispatch Api Shipping Drafts  Draft Id  Dispatch Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShipmentActionResponse"
                 }
               }
             },
@@ -4023,9 +4806,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Execute Draft Api Shipping Drafts  Draft Id  Execute Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShipmentActionResponse"
                 }
               }
             },
@@ -4129,9 +4910,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Preview Execute Draft Api Shipping Drafts  Draft Id  Execute Preview Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShipmentActionResponse"
                 }
               }
             },
@@ -4184,9 +4963,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Invoice Preview Api Shipping Drafts  Draft Id  Invoice Preview Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/InvoiceActionResponse"
                 }
               }
             },
@@ -4305,9 +5082,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Mark Fulfilled Api Shipping Drafts  Draft Id  Mark Fulfilled Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MarkFulfilledResponse"
                 }
               }
             },
@@ -4445,9 +5220,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Cancel Shipment Api Shipping Drafts  Draft Id  Shipment Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShipmentActionResponse"
                 }
               }
             },
@@ -4549,9 +5322,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Sync Orders Api Shipping Sync Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShippingSyncResponse"
                 }
               }
             },
@@ -4577,9 +5348,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Health Health Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HealthResponse"
                 }
               }
             },

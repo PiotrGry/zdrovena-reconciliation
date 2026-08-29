@@ -16,6 +16,9 @@ from fastapi import (
 from zdrovena.api import shipping_execution_composition as execution_composition
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep
+from zdrovena.api.models import (
+    InvoiceActionResponse,
+)
 from zdrovena.api.routers.shipping import deps
 from zdrovena.common.exceptions import MissingSecretError
 
@@ -50,6 +53,8 @@ def _get_fakturownia_invoice_client() -> Any | None:
         404: {"description": "Draft not found"},
         503: {"description": "Allegro credentials not configured"},
     },
+    response_model=InvoiceActionResponse,
+    response_model_exclude_unset=True,
 )
 def get_invoice_preview(
     draft_id: str,
@@ -162,6 +167,8 @@ def get_invoice_preview(
         404: {"description": "Draft not found"},
         503: {"description": "Credentials not configured"},
     },
+    response_model=InvoiceActionResponse,
+    response_model_exclude_unset=True,
 )
 def create_draft_invoice(
     draft_id: str,

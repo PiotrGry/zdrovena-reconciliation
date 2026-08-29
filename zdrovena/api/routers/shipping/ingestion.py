@@ -22,6 +22,9 @@ from zdrovena.api import shipping_draft_composition as draft_composition
 from zdrovena.api import shipping_execution_composition as execution_composition
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above
 from zdrovena.api.deps import ShippingStoreDep, ShopifyDedupStoreDep, StorageDep
+from zdrovena.api.models import (
+    ShippingSyncResponse,
+)
 from zdrovena.api.observability import get_correlation_id
 from zdrovena.api.routers.shipping import deps
 from zdrovena.common.events import log_event
@@ -289,6 +292,8 @@ async def shopify_order_created(
     "/shipping/sync",
     status_code=status.HTTP_200_OK,
     summary="Manually trigger order sync from Allegro and Shopify",
+    response_model=ShippingSyncResponse,
+    response_model_exclude_unset=True,
 )
 def sync_orders(
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],

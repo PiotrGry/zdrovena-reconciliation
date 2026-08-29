@@ -100,6 +100,7 @@ def _send_email_with_configured_zoho_smtp(
     "/damage-cases",
     summary="List damaged-shipment cases",
     response_model=DamageCasesResponse,
+    response_model_exclude_unset=True,
 )
 def list_damage_cases(
     damage_store: DamageStoreDep,
@@ -121,6 +122,7 @@ def list_damage_cases(
     "/damage-cases/summary",
     summary="Count damage cases requiring attention",
     response_model=DamageSummaryResponse,
+    response_model_exclude_unset=True,
 )
 def damage_case_summary(
     damage_store: DamageStoreDep,
@@ -134,6 +136,7 @@ def damage_case_summary(
     "/damage-cases/{case_id}",
     summary="Get a damaged-shipment case",
     response_model=DamageCaseModel,
+    response_model_exclude_unset=True,
 )
 def get_damage_case(
     case_id: str,
@@ -148,6 +151,7 @@ def get_damage_case(
     "/damage-cases/refresh",
     summary="Fetch Allegro and Zoho damage signals",
     response_model=DamageRefreshResponse,
+    response_model_exclude_unset=True,
 )
 def refresh_damage_cases(
     damage_store: DamageStoreDep,
@@ -279,6 +283,7 @@ def _http(exc: DamageWorkflowError) -> HTTPException:
     "/damage-cases/{case_id}/confirm",
     summary="Confirm parcel damage",
     response_model=DamageCaseModel,
+    response_model_exclude_unset=True,
 )
 def confirm_damage_case(
     case_id: str,
@@ -296,6 +301,7 @@ def confirm_damage_case(
     "/damage-cases/{case_id}/ignore",
     summary="Ignore a false-positive case",
     response_model=DamageCaseModel,
+    response_model_exclude_unset=True,
 )
 def ignore_damage_case(
     case_id: str,
@@ -312,6 +318,7 @@ def ignore_damage_case(
     "/damage-cases/{case_id}/prepare-replacement",
     summary="Prepare a replacement draft without creating a courier shipment",
     response_model=DamageCaseWithDraftResponse,
+    response_model_exclude_unset=True,
 )
 def prepare_replacement(
     case_id: str,
@@ -330,6 +337,7 @@ def prepare_replacement(
     "/damage-cases/{case_id}/create-replacement",
     summary="Create the previously prepared courier shipment",
     response_model=DamageCaseWithDraftResponse,
+    response_model_exclude_unset=True,
 )
 def create_replacement(
     case_id: str,
@@ -349,6 +357,7 @@ def create_replacement(
     "/damage-cases/{case_id}/confirm-replacement",
     summary="Poll a pending Allegro replacement shipment",
     response_model=DamageCaseWithDraftResponse,
+    response_model_exclude_unset=True,
 )
 def confirm_replacement(
     case_id: str,
@@ -367,6 +376,7 @@ def confirm_replacement(
     "/damage-cases/{case_id}/email-draft",
     summary="Prepare customer email",
     response_model=DamageCaseWithDraftResponse,
+    response_model_exclude_unset=True,
 )
 def prepare_email_draft(
     case_id: str,
@@ -385,6 +395,7 @@ def prepare_email_draft(
     "/damage-cases/{case_id}/email-draft",
     summary="Edit customer email draft",
     response_model=DamageCaseWithDraftResponse,
+    response_model_exclude_unset=True,
 )
 def update_email_draft(
     case_id: str,
@@ -405,6 +416,7 @@ def update_email_draft(
     "/damage-cases/{case_id}/send-email",
     summary="Send approved customer email",
     response_model=DamageCaseWithDraftResponse,
+    response_model_exclude_unset=True,
 )
 def send_customer_email(
     case_id: str,
@@ -439,6 +451,7 @@ class EmailAttemptResolution(BaseModel):
     summary="Resolve an email attempt whose outcome is unknown",
     responses={409: {"description": "No unresolved attempt to resolve"}},
     response_model=DamageCaseWithDraftResponse,
+    response_model_exclude_unset=True,
 )
 def resolve_email_attempt(
     case_id: str,
@@ -473,6 +486,7 @@ def resolve_email_attempt(
     "/damage-cases/{case_id}/close",
     summary="Close a damage case",
     response_model=DamageCaseModel,
+    response_model_exclude_unset=True,
 )
 def close_damage_case(
     case_id: str,
