@@ -10,10 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from zdrovena.api.routers.webhooks import (
-    _is_production_env,
-    _is_shopify_domain_allowed,
-)
+from zdrovena.api.routers.shipping.deps import _is_production_env
+from zdrovena.api.routers.shipping.ingestion import _is_shopify_domain_allowed
 
 
 class TestIsProductionEnv:

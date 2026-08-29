@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from zdrovena.api.routers.webhooks import confirm_pending_command
+from zdrovena.api.routers.shipping.execution import confirm_pending_command
 from zdrovena.api.shipping_execution_composition import (
     _run_allegro_delivery,
 )

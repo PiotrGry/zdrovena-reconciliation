@@ -5,6 +5,16 @@
 
 ### Changed
 
+- **api**: `webhooks.py` (2056 linii) rozbity na routery według odpowiedzialności:
+  ingestion Shopify, drafty, wykonanie, odbiór i anulowania, etykiety, faktury, DLQ oraz
+  wsparcie testów E2E. Największy moduł ma teraz 391 linii. Ścieżki URL, tagi, modele
+  odpowiedzi i strażnicy uprawnień bez zmian — **wygenerowany kontrakt OpenAPI jest
+  bajt w bajt identyczny**, co jest tu głównym dowodem, że to podział pliku, a nie API.
+  Wspólna kompozycja (sekrety, klienci dostawców, bramkowanie środowiska) wylądowała
+  w `deps.py`, żeby każdy router nie hodował własnej. Testy fitness pilnują kierunku
+  zależności, wielkości modułów i tego, że endpointy testowe nie przestaną być
+  bramkowane fail-closed. (#313)
+
 - **damage**: Workflow uszkodzonych przesyłek wyjęty z routera HTTP do warstwy aplikacji
   (`zdrovena/damage/application`). Router mapuje request, woła serwis i tłumaczy błędy
   domenowe na kody HTTP — nie klonuje już draftu zastępczego, nie składa maila i nie
