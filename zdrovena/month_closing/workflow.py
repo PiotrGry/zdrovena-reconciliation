@@ -12,6 +12,7 @@ from typing import Any
 
 from zdrovena.audit.sections import check_numbering
 from zdrovena.common import FakturowniaClient
+from zdrovena.common.events import log_event
 from zdrovena.common.storage import StorageService, get_storage_service
 from zdrovena.month_closing.close_history import append_close_history, build_history_entry
 from zdrovena.month_closing.config import (
@@ -23,6 +24,11 @@ from zdrovena.month_closing.config import (
 )
 from zdrovena.month_closing.console import ConsoleReporter
 from zdrovena.month_closing.orchestrator import CloseReport, MonthCloseOrchestrator
+from zdrovena.month_closing.package_integrity import (
+    PackageIntegrityError,
+    build_package_artifact,
+    verify_package_artifact,
+)
 from zdrovena.month_closing.preflight import pko_matches_month
 from zdrovena.month_closing.run_store import CloseRunStore, RunBusyError
 
@@ -755,6 +761,10 @@ class MonthCloseWorkflow:
                 confirm,
                 override_reason,
             )
+            if not prerequisite_error and action == "send":
+                # Last gate before the bytes leave: the reviewed package and the
+                # one about to be attached must be the same (#311).
+                prerequisite_error = self._package_blocking_reason(run)
             if prerequisite_error:
                 run["issues"] = [issue for issue in run["issues"] if issue.get("stage") != action]
                 run["issues"].append(
@@ -875,6 +885,35 @@ class MonthCloseWorkflow:
                 return "Wysyłka z ostrzeżeniami wymaga podania powodu."
         return None
 
+    def _package_blocking_reason(self, run: dict[str, Any]) -> str | None:
+        """Refuse to send a package that is not the one that was reviewed.
+
+        Kept out of _validate_action because it needs storage, and separate
+        because it is the only check here that reads the artefact rather than
+        the run state (#311).
+        """
+        artifact = next(
+            (a for a in run.get("artifacts", []) if a.get("kind") == "package"),
+            None,
+        )
+        reason = verify_package_artifact(self.storage, artifact)
+        if reason:
+            log_event(
+                "close.package_verification_failed",
+                level=logging.ERROR,
+                key=(artifact or {}).get("key"),
+                artifact_id=(artifact or {}).get("artifact_id"),
+                reason=reason,
+            )
+            return reason
+
+        log_event(
+            "close.package_verified",
+            key=(artifact or {}).get("key"),
+            artifact_id=(artifact or {}).get("artifact_id"),
+        )
+        return None
+
     @staticmethod
     def _stage_result(action: str, report: CloseReport) -> tuple[bool, str]:
         if report.errors:
@@ -914,8 +953,8 @@ class MonthCloseWorkflow:
             return "awaiting_review"
         return "collecting"
 
-    @staticmethod
     def _apply_report(
+        self,
         run: dict[str, Any],
         action: str,
         report: CloseReport,
@@ -950,13 +989,33 @@ class MonthCloseWorkflow:
             run["artifacts"] = [
                 artifact for artifact in run["artifacts"] if artifact.get("kind") != "package"
             ]
-            run["artifacts"].append(
-                {
-                    "kind": "package",
-                    "key": str(report.zip_path),
-                    "files": report.zip_files or [],
-                }
-            )
+            run["artifacts"].append(self._package_artifact(report))
+
+    def _package_artifact(self, report: CloseReport) -> dict[str, Any]:
+        """Record the package strongly enough to recognise it again at send.
+
+        A failure to hash is recorded without one rather than raised: the
+        package itself was built successfully, and send refuses an artefact
+        with no hash anyway, so the operator gets a clear "rebuild it" instead
+        of a stack trace on a step that worked.
+        """
+        key = str(report.zip_path)
+        files = list(report.zip_files or [])
+        try:
+            artifact = build_package_artifact(self.storage, key=key, files=files)
+        except PackageIntegrityError as exc:
+            logger.warning("Could not hash the package at %s: %s", key, exc)
+            return {"kind": "package", "key": key, "files": sorted(files)}
+
+        log_event(
+            "close.package_built",
+            key=key,
+            artifact_id=artifact["artifact_id"],
+            sha256=artifact["sha256"],
+            size_bytes=artifact["size_bytes"],
+            file_count=len(artifact["files"]),
+        )
+        return artifact
 
     @staticmethod
     def _apply_known_email_sources(run: dict[str, Any]) -> None:

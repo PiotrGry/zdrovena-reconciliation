@@ -41,6 +41,26 @@
 
 ### Fixed
 
+- **security**: Files API nie sięga już do stanu wewnętrznych workflowów. Sprawdzanie
+  roli tego nie zamykało — operator **ma** mieć rolę księgowego, więc jeden pomylony klucz
+  kasował stan systemowy i dostawał w odpowiedzi 204. Zablokowane dla PUT/DELETE są
+  `apaczka/` (cache providera) oraz każdy segment ścieżki zaczynający się kropką
+  (`.state.json`, `.file_hashes.json`). Reguły są celowo wąskie: zablokowanie całego
+  `faktury/` byłoby prostsze i błędne, bo wgrywanie brakujących faktur pod tym prefiksem
+  to dokładnie to, do czego Files UI służy. Wszystkie warianty zakodowane i traversal
+  sprowadzane są do jednej postaci przed decyzją — w tym podwójne kodowanie `%252F`,
+  które przy pojedynczym dekodowaniu przeszłoby obok sprawdzenia prefiksu. (#311)
+
+- **month-close**: Wysyłka odmawia paczki innej niż przejrzana. Zapisywany był tylko
+  klucz bloba i lista plików, a `send` pobierał blob po tym kluczu — więc cokolwiek
+  potrafiło pod ten klucz zapisać, decydowało, co wychodzi na zewnątrz, i nic tego nie
+  odnotowywało. Paczka zapisuje teraz SHA-256, rozmiar i manifest; hash pełni rolę
+  niezmiennego ID artefaktu, bo identyfikator wyprowadzony z treści nie może nazwać
+  dwóch różnych bajtów. Weryfikacja jest fail-closed: brak bloba, niedostępny magazyn
+  albo run spakowany przed wprowadzeniem hashowania blokują wysyłkę. Manifest jest
+  porównywany z rzeczywistą listą wpisów archiwum, bo porównanie listy z samą sobą
+  niczego by nie dowodziło. (#311)
+
 - **shipping**: Deduplikacja draftów nie buduje już indeksu z `list_drafts()`. Ta lista
   sortuje malejąco po dacie i ucina — więc gdy sklep przerósł limit, najstarsze rekordy
   z niej znikały, zamówienie, które **miało** draft, czytało się jako nowe i było zapisywane
