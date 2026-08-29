@@ -13,7 +13,7 @@ from zdrovena.month_closing.fakturownia_reports import _get_credentials
 from zdrovena.month_closing.preflight import PreflightChecker
 
 
-def _make_checker(tmp_path: Path, *, no_browser: bool) -> tuple[PreflightChecker, Path]:
+def _make_checker(tmp_path: Path) -> tuple[PreflightChecker, Path]:
     inbox = tmp_path / "inbox"
     inbox.mkdir()
     month_dir = tmp_path / "month"
@@ -27,36 +27,29 @@ def _make_checker(tmp_path: Path, *, no_browser: bool) -> tuple[PreflightChecker
         cost_date_to="2026-04-01",
         dry_run=True,
         get_secret=lambda _service, required=True: None,
-        no_browser=no_browser,
     )
     return checker, inbox
 
 
 class TestPreflightReportBoundary:
-    def test_missing_reports_calls_autodownload_when_browser_enabled(self, tmp_path):
-        """When no_browser=False and reports absent, missing_reports populated for orchestrator."""
-        checker, inbox = _make_checker(tmp_path, no_browser=False)
+    def test_absent_reports_are_reported_as_missing(self, tmp_path):
+        """Preflight identifies what is missing; downloading is the orchestrator's job.
+
+        Three tests here used to be named after an autodownload that preflight
+        does not perform, and two of them patched
+        `download_fakturownia_reports` — which `_check_reports` never calls. The
+        assertions held because the call never happened, not because anything
+        was handled.
+        """
+        checker, inbox = _make_checker(tmp_path)
         with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
             checker._check_reports()
-        # Auto-download is orchestrator's responsibility; preflight identifies missing reports
-        assert len(checker.result.missing_reports) == 3
-        assert checker.no_browser is False
 
-    def test_no_browser_skips_autodownload(self, tmp_path):
-        checker, inbox = _make_checker(tmp_path, no_browser=True)
-        with (
-            patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox),
-            patch(
-                "zdrovena.month_closing.fakturownia_reports.download_fakturownia_reports",
-            ) as mock_download,
-        ):
-            checker._check_reports()
-        assert not mock_download.called
         assert len(checker.result.missing_reports) == 3
 
-    def test_successful_autodownload_moves_report_to_matches(self, tmp_path):
+    def test_a_report_already_in_the_watch_dir_counts_as_present(self, tmp_path):
         """Files found via glob in watch_dir are added to result.matches."""
-        checker, inbox = _make_checker(tmp_path, no_browser=False)
+        checker, inbox = _make_checker(tmp_path)
         # Place a file matching the JPK_FA glob pattern
         jpk_fa_file = inbox / "zdrovena-2026-03-jpk_fa.xml"
         jpk_fa_file.write_text("x" * 120)
@@ -69,21 +62,9 @@ class TestPreflightReportBoundary:
         missing_names = [r["name"] for r in checker.result.missing_reports]
         assert "JPK_FA" not in missing_names
 
-    def test_autodownload_exception_falls_back_to_manual_missing(self, tmp_path):
-        checker, inbox = _make_checker(tmp_path, no_browser=False)
-        with (
-            patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox),
-            patch(
-                "zdrovena.month_closing.fakturownia_reports.download_fakturownia_reports",
-                side_effect=RuntimeError("boom"),
-            ),
-        ):
-            checker._check_reports()
-        assert len(checker.result.missing_reports) == 3
-
-    def test_autodownload_empty_prints_playwright_install_hint(self, tmp_path, capsys):
+    def test_missing_reports_print_their_manual_download_urls(self, tmp_path, capsys):
         """Missing reports show manual download URLs in the preflight output."""
-        checker, inbox = _make_checker(tmp_path, no_browser=False)
+        checker, inbox = _make_checker(tmp_path)
         with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
             checker._check_reports()
         out = capsys.readouterr().out

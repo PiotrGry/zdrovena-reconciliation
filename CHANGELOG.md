@@ -41,6 +41,13 @@
 
 ### Added
 
+- **tooling**: `scripts/quality/find_vacuous_patches.py` — wykrywa testy, które wstrzykują
+  awarię przez `side_effect`, ale nigdy nie docierają do podmienionego miejsca. Taki test
+  przechodzi dlatego, że awaria się nie wydarzyła, a nie dlatego, że kod ją przeżył. Tym
+  narzędziem znaleziono opisane wyżej testy preflightu. Nie jest wpięte w bramkę: część
+  trafień to celowe „drutu ostrzegawcze" (`side_effect=AssertionError` znaczy „wywołanie
+  tego jest regresją"), a odróżnić je może tylko człowiek.
+
 - **month-close**: Kontrola wstępna sprawdza wreszcie stronę magazynową. Audyt WZ
   istniał od dawna, ale wyłącznie w osobnej komendzie `zdrovena audit`, którą trzeba było
   pamiętać, żeby uruchomić — więc miesiąc dało się zamknąć i wysłać księgowej z fakturą
@@ -87,6 +94,23 @@
   taki alert nigdy by nie zadziałał i w nieskończoność raportował zdrowie. (#214)
 
 ### Fixed
+
+- **api**: Endpointy Damage publikują wreszcie schematy odpowiedzi. Zwracały
+  `dict[str, Any]`, więc OpenAPI opisywał obiekt bez struktury, a wygenerowany typ
+  TypeScript to było dosłownie `{ [key: string]: unknown }` — frontend nie miał z czego
+  korzystać i musiał zawężać typy lokalnie. Modele są **celowo permisywne**
+  (`extra="allow"`, wszystkie pola opcjonalne): FastAPI **odfiltrowuje** pola
+  niezadeklarowane w `response_model`, a sprawa uszkodzenia niesie kontekst od dostawców
+  o niestałym zestawie kluczy — model z podzbiorem pól po cichu urwałby dane, które
+  czyta ekran operatora. Test pilnuje, że nic nie znika. (#356)
+
+- **tests**: Trzy testy weryfikowały autodownload, którego preflight nigdy nie wykonywał.
+  `PreflightChecker` przyjmował i zapisywał `no_browser`, po czym **nigdy tego pola nie
+  czytał** — decyzja o pobieraniu należy do orkiestratora. Dwa z tych testów podmieniały
+  `download_fakturownia_reports`, funkcję której `_check_reports` w ogóle nie woła, więc
+  asercje przechodziły dlatego, że wywołanie nigdy nie nastąpiło. Martwy parametr usunięty,
+  testy nazwane tym, co faktycznie sprawdzają, flaga CLI `--no-browser` nadal przyjmowana
+  (żeby nie psuć istniejących wywołań), ale jej opis przestał kłamać.
 
 - **email**: Awaria procesu po przyjęciu wiadomości przez SMTP nie prowadzi już do drugiej
   wysyłki. Blokada współbieżności powstrzymywała dwa kliknięcia, ale nie domykała okna między

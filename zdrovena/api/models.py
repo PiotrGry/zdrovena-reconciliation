@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CloseRequest(BaseModel):
@@ -227,3 +227,94 @@ class ProductItem(BaseModel):
             currency=p.get("currency", "PLN"),
             active=not p.get("disabled", False),
         )
+
+
+# ── Damage cases ──────────────────────────────────────────────────────────────
+#
+# These endpoints used to be annotated `dict[str, Any]`, so OpenAPI published an
+# unconstrained object and the generated TypeScript was literally
+# `{ [key: string]: unknown }` — nothing for the frontend to hold on to (#356).
+#
+# Two properties make declaring a schema safe here, and both are load-bearing:
+#
+#   extra="allow"  — FastAPI FILTERS OUT fields a response model does not
+#                    declare. A case record is assembled from detection context
+#                    and provider payloads, so its exact key set is not fixed;
+#                    without this, publishing a schema would silently truncate
+#                    responses the operator screen reads.
+#   every field optional — response validation runs on the way out, so a record
+#                    missing a field would become a 500 rather than a response.
+#
+# The result documents the fields the UI relies on without narrowing the payload.
+
+
+class DamageCaseModel(BaseModel):
+    """One damaged-shipment case. Documents known fields, passes the rest through."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    status: str | None = None
+    classification: str | None = None
+    confidence: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    detected_at: str | None = None
+    tracking_number: str | None = None
+    order_number: str | None = None
+    customer_name: str | None = None
+    customer_email: str | None = None
+    sources: list[str] | None = None
+    evidence: list[dict[str, Any]] | None = None
+    shipping_draft_id: str | None = None
+    replacement_draft_id: str | None = None
+    replacement_tracking_number: str | None = None
+    replacement_created_at: str | None = None
+    email_draft: dict[str, Any] | None = None
+    email_sent_at: str | None = None
+    email_sent_by: str | None = None
+    email_error: str | None = None
+    email_attempt: dict[str, Any] | None = None
+    confirmed_at: str | None = None
+    confirmed_by: str | None = None
+    operator_note: str | None = None
+    closed_at: str | None = None
+    closed_by: str | None = None
+
+
+class DamageCasesResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    cases: list[DamageCaseModel]
+    needs_review: int
+
+
+class DamageSummaryResponse(BaseModel):
+    needs_review: int
+
+
+class DamageCaseWithDraftResponse(BaseModel):
+    """A case plus whatever the step produced alongside it."""
+
+    model_config = ConfigDict(extra="allow")
+
+    case: DamageCaseModel
+    draft: dict[str, Any] | None = None
+    email_draft: dict[str, Any] | None = None
+    created: bool | None = None
+    attempt: dict[str, Any] | None = None
+
+
+class DamageRefreshResponse(BaseModel):
+    """Result of polling the providers for damage signals.
+
+    Each provider key is either its scan summary or `{"error": ...}` — a failure
+    on one side must not hide the other's result, which is why they are separate
+    keys rather than one status.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    allegro: dict[str, Any] | None = None
+    zoho: dict[str, Any] | None = None
+    needs_review: int | None = None

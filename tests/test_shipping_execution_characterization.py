@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 
-from zdrovena.api import shipping_execution_composition as webhooks
+from zdrovena.api import shipping_execution_composition as execution
 from zdrovena.api.main import app
 from zdrovena.common.shipping_exceptions import AllegroCommandPending, InPostBusinessError
 from zdrovena.common.shipping_store import DLQ_KIND_EXECUTION, ShippingStore
@@ -94,7 +94,7 @@ def _execute_application(
     storage: Any,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    return webhooks.execute_shipping_draft(
+    return execution.execute_shipping_draft(
         draft_id,
         repository,
         storage,
@@ -167,11 +167,11 @@ class TestExecutionFingerprintCharacterization:
 
         with (
             patch.object(
-                webhooks,
+                execution,
                 "execution_preview",
                 return_value={"fingerprint": "current", "sender": _SENDER},
             ),
-            patch.object(webhooks, "_run_inpost") as run_inpost,
+            patch.object(execution, "_run_inpost") as run_inpost,
             pytest.raises(execution_workflow.PreviewFingerprintMismatchError) as caught,
         ):
             _execute_application(
@@ -198,9 +198,11 @@ class TestExecutionFingerprintCharacterization:
         }
 
         with (
-            patch.object(webhooks, "execution_preview", side_effect=AssertionError),
-            patch.object(webhooks, "get_sender", return_value=_SENDER),
-            patch.object(webhooks, "_run_inpost", return_value=provider_patch) as run_inpost,
+            # Tripwire, not a failure injection: rebuilding the preview here would
+            # be the regression, so being called at all must fail the test.
+            patch.object(execution, "execution_preview", side_effect=AssertionError),
+            patch.object(execution, "get_sender", return_value=_SENDER),
+            patch.object(execution, "_run_inpost", return_value=provider_patch) as run_inpost,
         ):
             result = _execute_application(draft["id"], store, object())
 
@@ -237,11 +239,11 @@ class TestExecutionClaimCharacterization:
         repository.try_claim_execution.side_effect = claim
 
         with (
-            patch.object(webhooks, "get_sender", return_value=_SENDER),
-            patch.object(webhooks, "_run_inpost", side_effect=run_provider),
-            patch.object(webhooks, "log_event"),
-            patch.object(webhooks, "emit_tracking_assigned"),
-            patch.object(webhooks, "push_tracking_to_allegro"),
+            patch.object(execution, "get_sender", return_value=_SENDER),
+            patch.object(execution, "_run_inpost", side_effect=run_provider),
+            patch.object(execution, "log_event"),
+            patch.object(execution, "emit_tracking_assigned"),
+            patch.object(execution, "push_tracking_to_allegro"),
         ):
             _execute_application(draft["id"], repository, object())
 
@@ -255,7 +257,7 @@ class TestExecutionClaimCharacterization:
         repository.try_claim_execution.return_value = False
 
         with (
-            patch.object(webhooks, "_run_inpost") as run_inpost,
+            patch.object(execution, "_run_inpost") as run_inpost,
             pytest.raises(execution_workflow.ExecutionClaimConflictError) as caught,
         ):
             _execute_application(draft["id"], repository, object())
@@ -300,8 +302,8 @@ class TestPartialShipmentPersistenceCharacterization:
         store.upsert_draft(draft)
 
         with (
-            patch.object(webhooks, "get_sender", return_value=_SENDER),
-            patch.object(webhooks, "get_secret", return_value="token"),
+            patch.object(execution, "get_sender", return_value=_SENDER),
+            patch.object(execution, "get_secret", return_value="token"),
             patch(
                 "zdrovena.common.inpost.InPostClient.create_kurier_shipment",
                 side_effect=[
@@ -328,8 +330,8 @@ class TestPartialShipmentPersistenceCharacterization:
         ]
 
         with (
-            patch.object(webhooks, "get_sender", return_value=_SENDER),
-            patch.object(webhooks, "get_secret", return_value="token"),
+            patch.object(execution, "get_sender", return_value=_SENDER),
+            patch.object(execution, "get_secret", return_value="token"),
             patch(
                 "zdrovena.common.inpost.InPostClient.create_kurier_shipment",
                 return_value={"id": "shipment-second", "tracking_number": "TRACK-2"},
@@ -357,8 +359,8 @@ class TestExecutionFailureAndDlqCharacterization:
         )
 
         with (
-            patch.object(webhooks, "get_sender", return_value=_SENDER),
-            patch.object(webhooks, "_run_inpost", side_effect=provider_error),
+            patch.object(execution, "get_sender", return_value=_SENDER),
+            patch.object(execution, "_run_inpost", side_effect=provider_error),
         ):
             response = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
 
@@ -380,8 +382,8 @@ class TestExecutionFailureAndDlqCharacterization:
         store.upsert_draft(draft)
 
         with (
-            patch.object(webhooks, "get_sender", return_value=_SENDER),
-            patch.object(webhooks, "_run_inpost", side_effect=RuntimeError("provider exploded")),
+            patch.object(execution, "get_sender", return_value=_SENDER),
+            patch.object(execution, "_run_inpost", side_effect=RuntimeError("provider exploded")),
         ):
             response = client.post(f"/api/shipping/drafts/{draft['id']}/execute")
 
@@ -406,8 +408,8 @@ class TestExecutionFailureAndDlqCharacterization:
         )
 
         with (
-            patch.object(webhooks, "get_sender", return_value=_SENDER),
-            patch.object(webhooks, "_run_inpost", side_effect=RuntimeError("retry failed")),
+            patch.object(execution, "get_sender", return_value=_SENDER),
+            patch.object(execution, "_run_inpost", side_effect=RuntimeError("retry failed")),
             pytest.raises(execution_workflow.ExecutionCommunicationError),
         ):
             _execute_application(
@@ -433,8 +435,8 @@ class TestExecutionFailureAndDlqCharacterization:
         )
 
         with (
-            patch.object(webhooks, "get_sender", return_value=_SENDER),
-            patch.object(webhooks, "_run_inpost", side_effect=provider_error),
+            patch.object(execution, "get_sender", return_value=_SENDER),
+            patch.object(execution, "_run_inpost", side_effect=provider_error),
             patch.object(store, "enqueue_dlq", side_effect=RuntimeError("DLQ unavailable")),
             pytest.raises(InPostBusinessError) as caught,
         ):
@@ -472,10 +474,12 @@ class TestProviderDispatchCharacterization:
         }
 
         with (
-            patch.object(webhooks, "get_sender", return_value=_SENDER),
-            patch.object(webhooks, "_run_inpost", return_value=provider_patch) as inpost,
-            patch.object(webhooks, "_run_apaczka", return_value=provider_patch) as apaczka,
-            patch.object(webhooks, "_run_allegro_delivery", return_value=provider_patch) as allegro,
+            patch.object(execution, "get_sender", return_value=_SENDER),
+            patch.object(execution, "_run_inpost", return_value=provider_patch) as inpost,
+            patch.object(execution, "_run_apaczka", return_value=provider_patch) as apaczka,
+            patch.object(
+                execution, "_run_allegro_delivery", return_value=provider_patch
+            ) as allegro,
         ):
             _execute_application(draft["id"], store, object())
 
@@ -501,8 +505,8 @@ class TestPendingExecutionCharacterization:
         store.upsert_draft(draft)
 
         with (
-            patch.object(webhooks, "get_sender", return_value=_SENDER),
-            patch.object(webhooks, "get_secret", return_value="token"),
+            patch.object(execution, "get_sender", return_value=_SENDER),
+            patch.object(execution, "get_secret", return_value="token"),
             patch(
                 "zdrovena.common.inpost.InPostClient.get_shipment",
                 return_value={"id": "existing-shipx-id", "tracking_number": "TRACK-RESUMED"},
@@ -527,8 +531,8 @@ class TestPendingExecutionCharacterization:
         store.upsert_draft(draft)
 
         with (
-            patch.object(webhooks, "get_sender", return_value=_SENDER),
-            patch.object(webhooks, "get_allegro_client") as get_client,
+            patch.object(execution, "get_sender", return_value=_SENDER),
+            patch.object(execution, "get_allegro_client") as get_client,
         ):
             allegro = get_client.return_value
             allegro.get_delivery_proposal.return_value = {
@@ -629,20 +633,20 @@ class TestExecutionFinalizationCharacterization:
         repository.update_draft.side_effect = update_draft
 
         with (
-            patch.object(webhooks, "get_sender", return_value=_SENDER),
-            patch.object(webhooks, "_run_inpost", side_effect=run_provider),
+            patch.object(execution, "get_sender", return_value=_SENDER),
+            patch.object(execution, "_run_inpost", side_effect=run_provider),
             patch.object(
-                webhooks,
+                execution,
                 "log_event",
                 side_effect=lambda name, **_fields: events.append(name),
             ),
             patch.object(
-                webhooks,
+                execution,
                 "emit_tracking_assigned",
                 side_effect=lambda *_args: events.append("tracking"),
             ),
             patch.object(
-                webhooks,
+                execution,
                 "push_tracking_to_allegro",
                 side_effect=lambda _draft: events.append("allegro-sync"),
             ),
@@ -662,9 +666,9 @@ class TestExecutionFinalizationCharacterization:
         allegro.create_shipment.side_effect = RuntimeError("Allegro tracking API unavailable")
 
         with (
-            patch.object(webhooks, "get_sender", return_value=_SENDER),
+            patch.object(execution, "get_sender", return_value=_SENDER),
             patch.object(
-                webhooks,
+                execution,
                 "_run_inpost",
                 return_value={
                     "courier_draft_id": "shipment-with-local-success",
@@ -673,7 +677,7 @@ class TestExecutionFinalizationCharacterization:
                     "error": None,
                 },
             ),
-            patch.object(webhooks, "get_allegro_client", return_value=allegro),
+            patch.object(execution, "get_allegro_client", return_value=allegro),
         ):
             result = _execute_application(draft["id"], store, object())
 

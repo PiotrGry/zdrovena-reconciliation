@@ -1,5 +1,5 @@
 import { fetchJson } from '../api.js'
-import type { paths } from './generated/schema'
+import type { components, paths } from './generated/schema'
 
 type FetchOptions = RequestInit & { token?: string }
 type JsonFetch = <T>(url: string, options?: FetchOptions) => Promise<T>
@@ -20,30 +20,17 @@ export type ShippingSyncResponse =
 export type DlqRetryResponse =
     paths['/api/shipping/drafts/dlq/{entry_id}/retry']['post']['responses'][200]['content']['application/json']
 
-// The damage endpoints return `dict[str, Any]` on the backend, so the generated
-// schema gives `{ [key: string]: unknown }` and there is no shape to project.
-// `DamageCase` narrows that for the fields the UI reads; it is a local
-// assumption, not a contract, and it is annotated as such on purpose. Removing
-// it would lose editor help without gaining safety, and inventing a fuller type
-// would be a hand-duplicated contract that drifts silently.
-//
-// The real fix is response models on the backend — see the #318 PR note.
+// Damage now publishes real response models (#356), so these come from the
+// generated schema rather than being narrowed by hand here. The backend models
+// are permissive by design — a case carries provider context whose key set is
+// not fixed — so extra keys still arrive; they are simply not documented.
+export type DamageCase = components['schemas']['DamageCaseModel']
+export type DamageCasesResponse = components['schemas']['DamageCasesResponse']
+export type DamageSummaryResponse = components['schemas']['DamageSummaryResponse']
 export type DamageActionResponse =
-    paths['/api/damage-cases/{case_id}/confirm']['post']['responses'][200]['content']['application/json']
-
-export type DamageCase = DamageActionResponse & {
-    id: string
-    status: string
-    tracking_number?: string | null
-    order_number?: string | null
-    customer_name?: string | null
-    sources?: string[]
-    evidence?: Array<Record<string, unknown>>
-    email_draft?: Record<string, unknown> | null
-}
-
-export type DamageCasesResponse = { cases: DamageCase[]; needs_review: number }
-export type DamageSummaryResponse = { needs_review: number }
+    | DamageCase
+    | components['schemas']['DamageCaseWithDraftResponse']
+export type DamageRefreshResponse = components['schemas']['DamageRefreshResponse']
 
 export function getHealth(): Promise<HealthResponse> {
     return request<HealthResponse>('/health')
@@ -109,8 +96,8 @@ export function getDamageSummary({ token }: { token: string }): Promise<DamageSu
     return request<DamageSummaryResponse>('/api/damage-cases/summary', { token })
 }
 
-export function refreshDamageCases({ token }: { token: string }): Promise<Record<string, unknown>> {
-    return request<Record<string, unknown>>('/api/damage-cases/refresh', { method: 'POST', token })
+export function refreshDamageCases({ token }: { token: string }): Promise<DamageRefreshResponse> {
+    return request<DamageRefreshResponse>('/api/damage-cases/refresh', { method: 'POST', token })
 }
 
 export function damageAction({

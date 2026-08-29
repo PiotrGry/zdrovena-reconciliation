@@ -205,7 +205,6 @@ class MonthCloseOrchestrator:
             cost_date_to=self.cost_date_to,
             dry_run=self.dry_run,
             get_secret=self._get_secret,
-            no_browser=self.non_interactive,
             storage=self.storage,
             blob_inbox_prefix=self.inbox_prefix,
             out_fn=self.out.plain,

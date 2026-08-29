@@ -1231,6 +1231,133 @@ export interface components {
             /** Note */
             note?: string | null;
         };
+        /**
+         * DamageCaseModel
+         * @description One damaged-shipment case. Documents known fields, passes the rest through.
+         */
+        DamageCaseModel: {
+            /** Classification */
+            classification?: string | null;
+            /** Closed At */
+            closed_at?: string | null;
+            /** Closed By */
+            closed_by?: string | null;
+            /** Confidence */
+            confidence?: string | null;
+            /** Confirmed At */
+            confirmed_at?: string | null;
+            /** Confirmed By */
+            confirmed_by?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Customer Email */
+            customer_email?: string | null;
+            /** Customer Name */
+            customer_name?: string | null;
+            /** Detected At */
+            detected_at?: string | null;
+            /** Email Attempt */
+            email_attempt?: {
+                [key: string]: unknown;
+            } | null;
+            /** Email Draft */
+            email_draft?: {
+                [key: string]: unknown;
+            } | null;
+            /** Email Error */
+            email_error?: string | null;
+            /** Email Sent At */
+            email_sent_at?: string | null;
+            /** Email Sent By */
+            email_sent_by?: string | null;
+            /** Evidence */
+            evidence?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Id */
+            id: string;
+            /** Operator Note */
+            operator_note?: string | null;
+            /** Order Number */
+            order_number?: string | null;
+            /** Replacement Created At */
+            replacement_created_at?: string | null;
+            /** Replacement Draft Id */
+            replacement_draft_id?: string | null;
+            /** Replacement Tracking Number */
+            replacement_tracking_number?: string | null;
+            /** Shipping Draft Id */
+            shipping_draft_id?: string | null;
+            /** Sources */
+            sources?: string[] | null;
+            /** Status */
+            status?: string | null;
+            /** Tracking Number */
+            tracking_number?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * DamageCaseWithDraftResponse
+         * @description A case plus whatever the step produced alongside it.
+         */
+        DamageCaseWithDraftResponse: {
+            /** Attempt */
+            attempt?: {
+                [key: string]: unknown;
+            } | null;
+            case: components["schemas"]["DamageCaseModel"];
+            /** Created */
+            created?: boolean | null;
+            /** Draft */
+            draft?: {
+                [key: string]: unknown;
+            } | null;
+            /** Email Draft */
+            email_draft?: {
+                [key: string]: unknown;
+            } | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** DamageCasesResponse */
+        DamageCasesResponse: {
+            /** Cases */
+            cases: components["schemas"]["DamageCaseModel"][];
+            /** Needs Review */
+            needs_review: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * DamageRefreshResponse
+         * @description Result of polling the providers for damage signals.
+         *
+         *     Each provider key is either its scan summary or `{"error": ...}` — a failure
+         *     on one side must not hide the other's result, which is why they are separate
+         *     keys rather than one status.
+         */
+        DamageRefreshResponse: {
+            /** Allegro */
+            allegro?: {
+                [key: string]: unknown;
+            } | null;
+            /** Needs Review */
+            needs_review?: number | null;
+            /** Zoho */
+            zoho?: {
+                [key: string]: unknown;
+            } | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** DamageSummaryResponse */
+        DamageSummaryResponse: {
+            /** Needs Review */
+            needs_review: number;
+        };
         /** EmailAttemptResolution */
         EmailAttemptResolution: {
             /** Delivered */
@@ -1864,9 +1991,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCasesResponse"];
                 };
             };
         };
@@ -1886,9 +2011,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageRefreshResponse"];
                 };
             };
         };
@@ -1908,9 +2031,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: number;
-                    };
+                    "application/json": components["schemas"]["DamageSummaryResponse"];
                 };
             };
         };
@@ -1932,9 +2053,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseModel"];
                 };
             };
             /** @description Validation Error */
@@ -1965,9 +2084,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseModel"];
                 };
             };
             /** @description Validation Error */
@@ -2002,9 +2119,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseModel"];
                 };
             };
             /** @description Validation Error */
@@ -2035,9 +2150,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseWithDraftResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2068,9 +2181,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseWithDraftResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2101,9 +2212,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseWithDraftResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2138,9 +2247,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseWithDraftResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2171,9 +2278,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseModel"];
                 };
             };
             /** @description Validation Error */
@@ -2204,9 +2309,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseWithDraftResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2241,9 +2344,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseWithDraftResponse"];
                 };
             };
             /** @description No unresolved attempt to resolve */
@@ -2281,9 +2382,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseWithDraftResponse"];
                 };
             };
             /** @description Validation Error */

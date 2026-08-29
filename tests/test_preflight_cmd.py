@@ -99,15 +99,16 @@ class TestPreflightCheckerContract:
 
     @patch("zdrovena.month_closing.commands.preflight_cmd._get_secret", return_value=None)
     @patch("zdrovena.month_closing.preflight.PreflightChecker")
-    def test_no_browser_flag_is_forwarded(self, mock_checker_cls, mock_secret):
+    def test_no_browser_flag_is_accepted_but_inert(self, mock_checker_cls, mock_secret):
         mock_checker_cls.return_value.run.return_value = _mock_result()
 
         from zdrovena.month_closing.commands.preflight_cmd import _run
 
         _run(_make_args(period="2025-03", no_browser=True))
 
-        call_kwargs = mock_checker_cls.call_args.kwargs
-        assert call_kwargs["no_browser"] is True
+        # The flag is accepted for compatibility and reaches nothing: preflight
+        # never auto-downloaded, so PreflightChecker has no such parameter.
+        assert "no_browser" not in mock_checker_cls.call_args.kwargs
 
 
 class TestPreflightPeriodParsing:
