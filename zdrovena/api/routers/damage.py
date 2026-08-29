@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import logging
-import uuid
-from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from zdrovena.api import shipping_execution_composition as execution_composition
@@ -25,8 +23,27 @@ from zdrovena.api.damage_detection import (
     scan_zoho_damage_cases,
 )
 from zdrovena.api.deps import DamageStoreDep, ShippingStoreDep, StorageDep
+from zdrovena.api.models import (
+    DamageCaseModel,
+    DamageCasesResponse,
+    DamageCaseWithDraftResponse,
+    DamageRefreshResponse,
+    DamageSummaryResponse,
+)
 from zdrovena.common.config import KEYCHAIN_SERVICE_ZOHO_SMTP
+from zdrovena.common.events import log_event
 from zdrovena.common.secrets import get_secret
+from zdrovena.damage.application import (
+    CaseNotFound,
+    CorrelationFailed,
+    DamageWorkflow,
+    DamageWorkflowError,
+    InvalidTransition,
+    MailNotConfigured,
+    MailSenderNotAllowed,
+    SendBlocked,
+)
+from zdrovena.damage.application.errors import MailDeliveryFailed
 from zdrovena.month_closing.config import ZOHO_EMAIL
 from zdrovena.month_closing.email_service import EmailService
 
@@ -64,111 +81,6 @@ def _save_case(damage_store: Any, case_id: str, fields: dict[str, Any]) -> dict[
     return _case_or_404(damage_store, case_id)
 
 
-def _find_original_draft(case: dict[str, Any], shipping_store: Any) -> dict[str, Any] | None:
-    draft_id = case.get("shipping_draft_id")
-    if draft_id:
-        draft = shipping_store.get_draft(str(draft_id))
-        if draft:
-            return draft
-    tracking = str(case.get("tracking_number") or "").strip().upper()
-    for draft in shipping_store.list_drafts(limit=500):
-        if str(draft.get("tracking_number") or "").strip().upper() == tracking:
-            return draft
-    return None
-
-
-def _clone_replacement_draft(original: dict[str, Any], case: dict[str, Any]) -> dict[str, Any]:
-    now = _now()
-    replacement = deepcopy(original)
-    replacement.update(
-        {
-            "id": str(uuid.uuid4()),
-            "created_at": now,
-            "updated_at": now,
-            "shopify_order_id": None,
-            "status": "needs_review",
-            "tracking_number": None,
-            "tracking_company": None,
-            "tracking_carrier_id": None,
-            "courier_draft_id": None,
-            "courier_shipments": [],
-            "dispatch_order_id": None,
-            "allegro_shipment_id": None,
-            "allegro_dispatch_id": None,
-            "allegro_pickup_command_id": None,
-            "allegro_command_id": None,
-            "pickup_ordered": False,
-            "shipment_origin": None,
-            "error": None,
-            "fulfillment_status": None,
-            "source_fulfillment_status": None,
-            "fulfilled_at": None,
-            "fulfilled_by": None,
-            "shopify_fulfillment_id": None,
-            "allegro_fulfillment_status": None,
-            "allegro_marked_processed_at": None,
-            "allegro_marked_processed_by": None,
-            "fakturownia_invoice_id": None,
-            "fakturownia_invoice_number": None,
-            "fakturownia_invoice_error": None,
-            "fakturownia_invoice_attempts": 0,
-            "fakturownia_invoice_attempted_at": None,
-            "is_replacement": True,
-            "replacement_for_damage_case_id": case["id"],
-            "replacement_for_draft_id": original.get("id"),
-            "replacement_for_tracking_number": case.get("tracking_number"),
-        }
-    )
-    for key in (
-        "allegro_order_shipment_id",
-        "shipment_id",
-        "package_id",
-        "label_url",
-    ):
-        replacement.pop(key, None)
-    return replacement
-
-
-def _build_customer_email(case: dict[str, Any], draft: dict[str, Any]) -> dict[str, Any]:
-    receiver = draft.get("receiver") or {}
-    to_address = str(case.get("customer_email") or receiver.get("email") or "").strip()
-    if not to_address:
-        raise HTTPException(status_code=409, detail="Customer email is missing")
-    first_name = str(receiver.get("first_name") or "").strip()
-    greeting = f"Dzień dobry {first_name}," if first_name else "Dzień dobry,"
-    order_number = str(case.get("order_number") or "").strip()
-    original_tracking = str(case.get("tracking_number") or "").strip()
-    replacement_tracking = str(draft.get("tracking_number") or "").strip()
-    if not replacement_tracking:
-        raise HTTPException(
-            status_code=409,
-            detail="Replacement parcel has no tracking number yet",
-        )
-    subject_order = f" {order_number}" if order_number else ""
-    body = (
-        f"{greeting}\n\n"
-        f"przewoźnik poinformował nas, że przesyłka {original_tracking}"
-        f" z zamówieniem {order_number or 'w naszym sklepie'} została uszkodzona "
-        "podczas transportu.\n\n"
-        "Przygotowaliśmy dla Ciebie nową paczkę. "
-        f"Jej numer śledzenia to {replacement_tracking}.\n\n"
-        "Nie musisz podejmować żadnych dodatkowych działań. "
-        "Przepraszamy za opóźnienie i niedogodności.\n\n"
-        "Pozdrawiamy\n"
-        "Zespół HUMIO\n"
-        f"{CUSTOMER_EMAIL_FROM}"
-    )
-    return {
-        "from": CUSTOMER_EMAIL_FROM,
-        "to": to_address,
-        "subject": f"Wysyłamy ponownie Twoje zamówienie{subject_order}",
-        "body": body,
-        "status": "ready",
-        "created_at": _now(),
-        "updated_at": _now(),
-    }
-
-
 def _send_email_with_configured_zoho_smtp(
     *, to_address: str, subject: str, content: str
 ) -> dict[str, Any]:
@@ -184,7 +96,12 @@ def _send_email_with_configured_zoho_smtp(
     return {"data": {"transport": "smtp"}}
 
 
-@router.get("/damage-cases", summary="List damaged-shipment cases")
+@router.get(
+    "/damage-cases",
+    summary="List damaged-shipment cases",
+    response_model=DamageCasesResponse,
+    response_model_exclude_unset=True,
+)
 def list_damage_cases(
     damage_store: DamageStoreDep,
     principal: Annotated[Principal, Depends(require_viewer_or_above)],
@@ -201,7 +118,12 @@ def list_damage_cases(
     }
 
 
-@router.get("/damage-cases/summary", summary="Count damage cases requiring attention")
+@router.get(
+    "/damage-cases/summary",
+    summary="Count damage cases requiring attention",
+    response_model=DamageSummaryResponse,
+    response_model_exclude_unset=True,
+)
 def damage_case_summary(
     damage_store: DamageStoreDep,
     principal: Annotated[Principal, Depends(require_viewer_or_above)],
@@ -210,7 +132,12 @@ def damage_case_summary(
     return {"needs_review": damage_store.count_needs_review()}
 
 
-@router.get("/damage-cases/{case_id}", summary="Get a damaged-shipment case")
+@router.get(
+    "/damage-cases/{case_id}",
+    summary="Get a damaged-shipment case",
+    response_model=DamageCaseModel,
+    response_model_exclude_unset=True,
+)
 def get_damage_case(
     case_id: str,
     damage_store: DamageStoreDep,
@@ -220,7 +147,12 @@ def get_damage_case(
     return _case_or_404(damage_store, case_id)
 
 
-@router.post("/damage-cases/refresh", summary="Fetch Allegro and Zoho damage signals")
+@router.post(
+    "/damage-cases/refresh",
+    summary="Fetch Allegro and Zoho damage signals",
+    response_model=DamageRefreshResponse,
+    response_model_exclude_unset=True,
+)
 def refresh_damage_cases(
     damage_store: DamageStoreDep,
     shipping_store: ShippingStoreDep,
@@ -260,47 +192,133 @@ def refresh_damage_cases(
     return result
 
 
-@router.post("/damage-cases/{case_id}/confirm", summary="Confirm parcel damage")
+# ── Workflow handlers ─────────────────────────────────────────────────────────
+#
+# These map a request onto DamageWorkflow and translate domain errors into
+# status codes. The rules themselves live in zdrovena.damage.application, so they
+# can be exercised without starting HTTP and a state transition cannot be written
+# twice in two handlers (issue #317).
+
+
+def _workflow(
+    damage_store: Any,
+    shipping_store: Any = None,
+    storage: Any = None,
+) -> DamageWorkflow:
+    executor = _ShipmentExecutorAdapter(shipping_store, storage) if shipping_store else None
+    zoho = build_zoho_client()
+    return DamageWorkflow(
+        cases=damage_store,
+        drafts=shipping_store,
+        executor=executor,
+        mail=_ZohoMailAdapter(zoho) if zoho is not None else None,
+        customer_email_from=CUSTOMER_EMAIL_FROM,
+    )
+
+
+class _ShipmentExecutorAdapter:
+    """Keeps provider and HTTP mapping on this side of the port.
+
+    The composition helpers raise FastAPI exceptions; letting them travel
+    outward unchanged is what allows the application layer to stay free of any
+    web framework while the existing responses stay identical.
+    """
+
+    def __init__(self, shipping_store: Any, storage: Any) -> None:
+        self.shipping_store = shipping_store
+        self.storage = storage
+
+    def execute(self, draft_id: str) -> dict[str, Any]:
+        try:
+            return execution_composition.execute_shipping_draft(
+                draft_id, self.shipping_store, self.storage
+            )
+        except execution_composition.EXECUTION_APPLICATION_HTTP_ERRORS as exc:
+            execution_composition.raise_execution_http_exception(exc)
+            raise  # pragma: no cover - the helper always raises
+
+    def confirm(self, draft_id: str) -> dict[str, Any]:
+        try:
+            confirmation = execution_composition.confirm_shipping_draft(
+                draft_id, self.shipping_store
+            )
+        except execution_composition.ConfirmationError as exc:
+            execution_composition.raise_confirmation_http_exception(exc)
+            raise  # pragma: no cover - the helper always raises
+        return confirmation.payload
+
+
+class _ZohoMailAdapter:
+    def __init__(self, zoho: Any) -> None:
+        self.zoho = zoho
+
+    def sender_addresses(self) -> set[str]:
+        return self.zoho.sender_addresses()
+
+    def send(self, *, to: str, subject: str, body: str) -> dict[str, Any] | None:
+        return _send_email_with_configured_zoho_smtp(to_address=to, subject=subject, content=body)
+
+
+#: Domain refusal → HTTP status. One table instead of a status code repeated
+#: at every raise site.
+_ERROR_STATUS: dict[type, int] = {
+    CaseNotFound: 404,
+    InvalidTransition: 409,
+    CorrelationFailed: 409,
+    MailSenderNotAllowed: 409,
+    SendBlocked: 409,
+    MailNotConfigured: 503,
+    MailDeliveryFailed: 502,
+}
+
+
+def _http(exc: DamageWorkflowError) -> HTTPException:
+    for error_type, code in _ERROR_STATUS.items():
+        if isinstance(exc, error_type):
+            return HTTPException(status_code=code, detail=str(exc))
+    return HTTPException(status_code=409, detail=str(exc))  # pragma: no cover
+
+
+@router.post(
+    "/damage-cases/{case_id}/confirm",
+    summary="Confirm parcel damage",
+    response_model=DamageCaseModel,
+    response_model_exclude_unset=True,
+)
 def confirm_damage_case(
     case_id: str,
     body: ConfirmDamageRequest,
     damage_store: DamageStoreDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
 ) -> dict[str, Any]:
-    case = _case_or_404(damage_store, case_id)
-    if case.get("status") != "needs_review":
-        raise HTTPException(status_code=409, detail="Case is not waiting for review")
-    return _save_case(
-        damage_store,
-        case_id,
-        {
-            "status": "approved",
-            "confirmed_at": _now(),
-            "confirmed_by": principal.email,
-            "operator_note": body.note,
-        },
-    )
+    try:
+        return _workflow(damage_store).confirm(case_id, by=principal.email, note=body.note)
+    except DamageWorkflowError as exc:
+        raise _http(exc) from exc
 
 
-@router.post("/damage-cases/{case_id}/ignore", summary="Ignore a false-positive case")
+@router.post(
+    "/damage-cases/{case_id}/ignore",
+    summary="Ignore a false-positive case",
+    response_model=DamageCaseModel,
+    response_model_exclude_unset=True,
+)
 def ignore_damage_case(
     case_id: str,
     damage_store: DamageStoreDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
 ) -> dict[str, Any]:
-    case = _case_or_404(damage_store, case_id)
-    if case.get("status") in {"replacement_created", "customer_notified", "closed"}:
-        raise HTTPException(status_code=409, detail="Replacement workflow has already started")
-    return _save_case(
-        damage_store,
-        case_id,
-        {"status": "ignored", "ignored_at": _now(), "ignored_by": principal.email},
-    )
+    try:
+        return _workflow(damage_store).ignore(case_id, by=principal.email)
+    except DamageWorkflowError as exc:
+        raise _http(exc) from exc
 
 
 @router.post(
     "/damage-cases/{case_id}/prepare-replacement",
     summary="Prepare a replacement draft without creating a courier shipment",
+    response_model=DamageCaseWithDraftResponse,
+    response_model_exclude_unset=True,
 )
 def prepare_replacement(
     case_id: str,
@@ -309,38 +327,17 @@ def prepare_replacement(
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
 ) -> dict[str, Any]:
     del principal
-    case = _case_or_404(damage_store, case_id)
-    existing_id = case.get("replacement_draft_id")
-    if existing_id:
-        existing = shipping_store.get_draft(str(existing_id))
-        if existing:
-            return {"case": case, "draft": existing, "created": False}
-    if case.get("status") != "approved":
-        raise HTTPException(status_code=409, detail="Confirm damage before preparing replacement")
-    original = _find_original_draft(case, shipping_store)
-    if not original:
-        raise HTTPException(
-            status_code=409,
-            detail="Could not correlate the tracking number with a shipping draft",
-        )
-    replacement = _clone_replacement_draft(original, case)
-    shipping_store.upsert_draft(replacement)
-    updated_case = _save_case(
-        damage_store,
-        case_id,
-        {
-            "status": "replacement_prepared",
-            "shipping_draft_id": original.get("id"),
-            "replacement_draft_id": replacement["id"],
-            "replacement_prepared_at": _now(),
-        },
-    )
-    return {"case": updated_case, "draft": replacement, "created": True}
+    try:
+        return _workflow(damage_store, shipping_store).prepare_replacement(case_id)
+    except DamageWorkflowError as exc:
+        raise _http(exc) from exc
 
 
 @router.post(
     "/damage-cases/{case_id}/create-replacement",
     summary="Create the previously prepared courier shipment",
+    response_model=DamageCaseWithDraftResponse,
+    response_model_exclude_unset=True,
 )
 def create_replacement(
     case_id: str,
@@ -350,51 +347,17 @@ def create_replacement(
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
 ) -> dict[str, Any]:
     del principal
-    case = _case_or_404(damage_store, case_id)
-    replacement_id = case.get("replacement_draft_id")
-    if not replacement_id:
-        raise HTTPException(status_code=409, detail="Prepare the replacement draft first")
-    draft = shipping_store.get_draft(str(replacement_id))
-    if not draft:
-        raise HTTPException(status_code=409, detail="Replacement draft no longer exists")
-    if draft.get("status") == "created":
-        updated = _save_case(
-            damage_store,
-            case_id,
-            {
-                "status": "replacement_created",
-                "replacement_tracking_number": draft.get("tracking_number"),
-            },
-        )
-        return {"case": updated, "draft": draft}
-    if draft.get("status") == "needs_review":
-        shipping_store.update_draft(str(replacement_id), {"status": "pending"})
-
     try:
-        result = execution_composition.execute_shipping_draft(
-            str(replacement_id),
-            shipping_store,
-            storage,
-        )
-    except execution_composition.EXECUTION_APPLICATION_HTTP_ERRORS as exc:
-        execution_composition.raise_execution_http_exception(exc)
-    draft_status = result.get("status")
-    case_status = "replacement_created" if draft_status == "created" else "replacement_pending"
-    updated = _save_case(
-        damage_store,
-        case_id,
-        {
-            "status": case_status,
-            "replacement_tracking_number": result.get("tracking_number"),
-            "replacement_created_at": _now() if draft_status == "created" else None,
-        },
-    )
-    return {"case": updated, "draft": result}
+        return _workflow(damage_store, shipping_store, storage).create_replacement(case_id)
+    except DamageWorkflowError as exc:
+        raise _http(exc) from exc
 
 
 @router.post(
     "/damage-cases/{case_id}/confirm-replacement",
     summary="Poll a pending Allegro replacement shipment",
+    response_model=DamageCaseWithDraftResponse,
+    response_model_exclude_unset=True,
 )
 def confirm_replacement(
     case_id: str,
@@ -402,32 +365,19 @@ def confirm_replacement(
     shipping_store: ShippingStoreDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
 ) -> dict[str, Any]:
-    case = _case_or_404(damage_store, case_id)
-    replacement_id = case.get("replacement_draft_id")
-    if not replacement_id:
-        raise HTTPException(status_code=409, detail="Replacement draft is missing")
     del principal
     try:
-        confirmation = execution_composition.confirm_shipping_draft(
-            str(replacement_id), shipping_store
-        )
-    except execution_composition.ConfirmationError as exc:
-        execution_composition.raise_confirmation_http_exception(exc)
-    result = confirmation.payload
-    draft_status = result.get("status")
-    updated = _save_case(
-        damage_store,
-        case_id,
-        {
-            "status": "replacement_created" if draft_status == "created" else "replacement_pending",
-            "replacement_tracking_number": result.get("tracking_number"),
-            "replacement_created_at": _now() if draft_status == "created" else None,
-        },
-    )
-    return {"case": updated, "draft": result}
+        return _workflow(damage_store, shipping_store).confirm_replacement(case_id)
+    except DamageWorkflowError as exc:
+        raise _http(exc) from exc
 
 
-@router.post("/damage-cases/{case_id}/email-draft", summary="Prepare customer email")
+@router.post(
+    "/damage-cases/{case_id}/email-draft",
+    summary="Prepare customer email",
+    response_model=DamageCaseWithDraftResponse,
+    response_model_exclude_unset=True,
+)
 def prepare_email_draft(
     case_id: str,
     damage_store: DamageStoreDep,
@@ -435,17 +385,18 @@ def prepare_email_draft(
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
 ) -> dict[str, Any]:
     del principal
-    case = _case_or_404(damage_store, case_id)
-    replacement_id = case.get("replacement_draft_id")
-    draft = shipping_store.get_draft(str(replacement_id)) if replacement_id else None
-    if not draft or draft.get("status") != "created":
-        raise HTTPException(status_code=409, detail="Create the replacement parcel first")
-    email_draft = _build_customer_email(case, draft)
-    updated = _save_case(damage_store, case_id, {"email_draft": email_draft})
-    return {"case": updated, "email_draft": email_draft}
+    try:
+        return _workflow(damage_store, shipping_store).prepare_email_draft(case_id)
+    except DamageWorkflowError as exc:
+        raise _http(exc) from exc
 
 
-@router.patch("/damage-cases/{case_id}/email-draft", summary="Edit customer email draft")
+@router.patch(
+    "/damage-cases/{case_id}/email-draft",
+    summary="Edit customer email draft",
+    response_model=DamageCaseWithDraftResponse,
+    response_model_exclude_unset=True,
+)
 def update_email_draft(
     case_id: str,
     body: EmailDraftUpdate,
@@ -453,99 +404,96 @@ def update_email_draft(
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
 ) -> dict[str, Any]:
     del principal
-    case = _case_or_404(damage_store, case_id)
-    email_draft = case.get("email_draft")
-    if not isinstance(email_draft, dict):
-        raise HTTPException(status_code=409, detail="Prepare the email draft first")
-    if case.get("email_sent_at"):
-        raise HTTPException(status_code=409, detail="Email has already been sent")
-    updated_draft = {
-        **email_draft,
-        "subject": body.subject,
-        "body": body.body,
-        "updated_at": _now(),
-    }
-    updated = _save_case(damage_store, case_id, {"email_draft": updated_draft})
-    return {"case": updated, "email_draft": updated_draft}
+    try:
+        return _workflow(damage_store).update_email_draft(
+            case_id, subject=body.subject, body=body.body
+        )
+    except DamageWorkflowError as exc:
+        raise _http(exc) from exc
 
 
-@router.post("/damage-cases/{case_id}/send-email", summary="Send approved customer email")
+@router.post(
+    "/damage-cases/{case_id}/send-email",
+    summary="Send approved customer email",
+    response_model=DamageCaseWithDraftResponse,
+    response_model_exclude_unset=True,
+)
 def send_customer_email(
     case_id: str,
     damage_store: DamageStoreDep,
+    shipping_store: ShippingStoreDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
 ) -> dict[str, Any]:
-    case = _case_or_404(damage_store, case_id)
-    email_draft = case.get("email_draft")
-    if not isinstance(email_draft, dict):
-        raise HTTPException(status_code=409, detail="Prepare and review the email draft first")
-    if case.get("email_sent_at"):
-        raise HTTPException(status_code=409, detail="Email has already been sent")
-    zoho = build_zoho_client()
-    if zoho is None:
-        raise HTTPException(status_code=503, detail="Zoho Mail is not configured")
-    allowed_senders = zoho.sender_addresses()
-    if CUSTOMER_EMAIL_FROM.lower() not in allowed_senders:
-        raise HTTPException(
-            status_code=409,
-            detail=(f"{CUSTOMER_EMAIL_FROM} is not configured as an active Zoho From address"),
-        )
-    if not damage_store.try_claim_email(case_id):
-        raise HTTPException(
-            status_code=409,
-            detail="Email is already being sent or has already been sent",
-        )
     try:
-        response = _send_email_with_configured_zoho_smtp(
-            to_address=str(email_draft["to"]),
-            subject=str(email_draft["subject"]),
-            content=str(email_draft["body"]),
+        result = _workflow(damage_store, shipping_store).send_customer_email(
+            case_id, by=principal.email
         )
-    except Exception as exc:
-        logger.exception("Could not send damage-case email %s", case_id)
-        _save_case(
-            damage_store,
-            case_id,
-            {
-                "email_error": str(exc),
-                "email_last_attempt_at": _now(),
-                "email_sending": False,
-            },
+    except DamageWorkflowError as exc:
+        raise _http(exc) from exc
+    attempt = result.pop("attempt", None)
+    if attempt is not None:
+        log_event(
+            "damage.email_sent",
+            case_id=case_id,
+            attempt_id=attempt.id,
+            fingerprint=attempt.fingerprint,
         )
-        raise HTTPException(status_code=502, detail="Zoho Mail could not send the message") from exc
-    sent_at = _now()
-    data = response.get("data") if isinstance(response, dict) else None
-    message_id = data.get("messageId") if isinstance(data, dict) else None
-    updated_draft = {**email_draft, "status": "sent", "sent_at": sent_at}
-    updated = _save_case(
-        damage_store,
-        case_id,
-        {
-            "status": "customer_notified",
-            "email_draft": updated_draft,
-            "email_sent_at": sent_at,
-            "email_sent_by": principal.email,
-            "email_provider_message_id": message_id,
-            "email_error": None,
-            "email_sending": False,
-        },
+    return result
+
+
+class EmailAttemptResolution(BaseModel):
+    delivered: bool
+    note: str = ""
+
+
+@router.post(
+    "/damage-cases/{case_id}/resolve-email-attempt",
+    summary="Resolve an email attempt whose outcome is unknown",
+    responses={409: {"description": "No unresolved attempt to resolve"}},
+    response_model=DamageCaseWithDraftResponse,
+    response_model_exclude_unset=True,
+)
+def resolve_email_attempt(
+    case_id: str,
+    body: EmailAttemptResolution,
+    damage_store: DamageStoreDep,
+    principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
+) -> dict[str, Any]:
+    """Record what actually happened to an ambiguous send.
+
+    Only a person can settle this: from our side an accepted-then-lost message
+    and a never-sent one look identical. `delivered=true` closes the case
+    without a second message; `delivered=false` is what unblocks a retry.
+    """
+    by = principal.email or principal.sub
+    try:
+        result = _workflow(damage_store).resolve_email_attempt(
+            case_id, delivered=body.delivered, by=by, note=body.note
+        )
+    except DamageWorkflowError as exc:
+        raise _http(exc) from exc
+    log_event(
+        "damage.email_attempt_resolved",
+        case_id=case_id,
+        attempt_id=result["attempt"]["id"],
+        delivered=body.delivered,
+        resolved_by=by,
     )
-    return {"case": updated, "email_draft": updated_draft}
+    return result
 
 
-@router.post("/damage-cases/{case_id}/close", summary="Close a damage case")
+@router.post(
+    "/damage-cases/{case_id}/close",
+    summary="Close a damage case",
+    response_model=DamageCaseModel,
+    response_model_exclude_unset=True,
+)
 def close_damage_case(
     case_id: str,
     damage_store: DamageStoreDep,
     principal: Annotated[Principal, Depends(require_shipment_mgr_or_above)],
 ) -> dict[str, Any]:
-    case = _case_or_404(damage_store, case_id)
-    if case.get("status") not in {"replacement_created", "customer_notified"}:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="Case is not ready to close"
-        )
-    return _save_case(
-        damage_store,
-        case_id,
-        {"status": "closed", "closed_at": _now(), "closed_by": principal.email},
-    )
+    try:
+        return _workflow(damage_store).close(case_id, by=principal.email)
+    except DamageWorkflowError as exc:
+        raise _http(exc) from exc

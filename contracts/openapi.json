@@ -1,6 +1,55 @@
 {
   "components": {
     "schemas": {
+      "ApaczkaServiceModel": {
+        "additionalProperties": true,
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "service_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Id"
+          }
+        },
+        "title": "ApaczkaServiceModel",
+        "type": "object"
+      },
+      "ApaczkaServicesResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/ApaczkaServiceModel"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "required": [
+          "services"
+        ],
+        "title": "ApaczkaServicesResponse",
+        "type": "object"
+      },
       "Body_batch_labels_api_shipping_labels_batch_post": {
         "properties": {
           "draft_ids": {
@@ -193,6 +242,38 @@
           }
         },
         "title": "Body_update_draft_api_shipping_drafts__draft_id__patch",
+        "type": "object"
+      },
+      "CloseEmailAttemptResolution": {
+        "description": "An operator's decision about a send whose outcome nobody can read.",
+        "properties": {
+          "delivered": {
+            "title": "Delivered",
+            "type": "boolean"
+          },
+          "month": {
+            "maximum": 12.0,
+            "minimum": 1.0,
+            "title": "Month",
+            "type": "integer"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          },
+          "year": {
+            "minimum": 2020.0,
+            "title": "Year",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "year",
+          "month",
+          "delivered"
+        ],
+        "title": "CloseEmailAttemptResolution",
         "type": "object"
       },
       "CloseRequest": {
@@ -790,6 +871,551 @@
         "title": "ConfirmDamageRequest",
         "type": "object"
       },
+      "DamageCaseModel": {
+        "additionalProperties": true,
+        "description": "One damaged-shipment case. Documents known fields, passes the rest through.",
+        "properties": {
+          "classification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "closed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed By"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed At"
+          },
+          "confirmed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed By"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "customer_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Email"
+          },
+          "customer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Name"
+          },
+          "detected_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detected At"
+          },
+          "email_attempt": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Attempt"
+          },
+          "email_draft": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Draft"
+          },
+          "email_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Error"
+          },
+          "email_sent_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Sent At"
+          },
+          "email_sent_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Sent By"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "operator_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Note"
+          },
+          "order_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Number"
+          },
+          "replacement_created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replacement Created At"
+          },
+          "replacement_draft_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replacement Draft Id"
+          },
+          "replacement_tracking_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replacement Tracking Number"
+          },
+          "shipping_draft_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipping Draft Id"
+          },
+          "sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sources"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "tracking_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracking Number"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "DamageCaseModel",
+        "type": "object"
+      },
+      "DamageCaseWithDraftResponse": {
+        "additionalProperties": true,
+        "description": "A case plus whatever the step produced alongside it.",
+        "properties": {
+          "attempt": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "case": {
+            "$ref": "#/components/schemas/DamageCaseModel"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created"
+          },
+          "draft": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft"
+          },
+          "email_draft": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Draft"
+          }
+        },
+        "required": [
+          "case"
+        ],
+        "title": "DamageCaseWithDraftResponse",
+        "type": "object"
+      },
+      "DamageCasesResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/DamageCaseModel"
+            },
+            "title": "Cases",
+            "type": "array"
+          },
+          "needs_review": {
+            "title": "Needs Review",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cases",
+          "needs_review"
+        ],
+        "title": "DamageCasesResponse",
+        "type": "object"
+      },
+      "DamageRefreshResponse": {
+        "additionalProperties": true,
+        "description": "Result of polling the providers for damage signals.\n\nEach provider key is either its scan summary or `{\"error\": ...}` — a failure\non one side must not hide the other's result, which is why they are separate\nkeys rather than one status.",
+        "properties": {
+          "allegro": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allegro"
+          },
+          "needs_review": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs Review"
+          },
+          "zoho": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zoho"
+          }
+        },
+        "title": "DamageRefreshResponse",
+        "type": "object"
+      },
+      "DamageSummaryResponse": {
+        "properties": {
+          "needs_review": {
+            "title": "Needs Review",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "needs_review"
+        ],
+        "title": "DamageSummaryResponse",
+        "type": "object"
+      },
+      "DlqEntriesResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "entries": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "title": "DlqEntriesResponse",
+        "type": "object"
+      },
+      "DlqRetryResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "draft_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Id"
+          },
+          "entry_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "DlqRetryResponse",
+        "type": "object"
+      },
+      "EmailAttemptResolution": {
+        "properties": {
+          "delivered": {
+            "title": "Delivered",
+            "type": "boolean"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "delivered"
+        ],
+        "title": "EmailAttemptResolution",
+        "type": "object"
+      },
       "EmailDraftUpdate": {
         "properties": {
           "body": {
@@ -856,6 +1482,25 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "Liveness plus the version actually running — see #216 for why that matters.",
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "title": "HealthResponse",
         "type": "object"
       },
       "IntegrationHealthItem": {
@@ -966,6 +1611,85 @@
           "operations"
         ],
         "title": "IntegrationsHealthResponse",
+        "type": "object"
+      },
+      "InvoiceActionResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "buyer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buyer Name"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "fakturownia_invoice_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fakturownia Invoice Id"
+          },
+          "fakturownia_invoice_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fakturownia Invoice Number"
+          },
+          "pending": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "InvoiceActionResponse",
         "type": "object"
       },
       "InvoiceItem": {
@@ -1085,6 +1809,99 @@
           "status"
         ],
         "title": "InvoiceItem",
+        "type": "object"
+      },
+      "MarkFulfilledResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "created": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created"
+          },
+          "draft_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Id"
+          },
+          "external_order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Order Id"
+          },
+          "shopify_fulfillment_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shopify Fulfillment Id"
+          },
+          "skipped": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skipped"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "MarkFulfilledResponse",
         "type": "object"
       },
       "OperationHealthItem": {
@@ -1257,6 +2074,485 @@
         "title": "ProductItem",
         "type": "object"
       },
+      "ShipmentActionResponse": {
+        "additionalProperties": true,
+        "description": "Result of executing, confirming or cancelling courier work on a draft.",
+        "properties": {
+          "dispatch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispatch Id"
+          },
+          "draft_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "shipment_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipment Id"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "tracking_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracking Number"
+          }
+        },
+        "title": "ShipmentActionResponse",
+        "type": "object"
+      },
+      "ShippingDraftModel": {
+        "additionalProperties": true,
+        "description": "One shipping draft. Documents the fields the portal reads.\n\nIdentifiers minted by a provider are typed `int | str` on purpose: each\ncourier decides its own representation, and Fakturownia additionally uses\nthe sentinel `\"pending\"` in an otherwise numeric field. Pinning them to\n`str` turns a working response into a 500 at validation time — which is how\nthis was found.",
+        "properties": {
+          "apaczka_service_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apaczka Service Id"
+          },
+          "courier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Courier"
+          },
+          "courier_draft_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Courier Draft Id"
+          },
+          "courier_shipments": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Courier Shipments"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "customer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Name"
+          },
+          "dispatch_order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispatch Order Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "execution_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Started At"
+          },
+          "external_order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Order Id"
+          },
+          "fulfillment_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fulfillment Status"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_replacement": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Replacement"
+          },
+          "order_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Number"
+          },
+          "packages_breakdown": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packages Breakdown"
+          },
+          "packages_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packages Count"
+          },
+          "pickup_ordered": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup Ordered"
+          },
+          "receiver": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receiver"
+          },
+          "service": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service"
+          },
+          "shopify_order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shopify Order Id"
+          },
+          "shopify_order_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shopify Order Number"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "tracking_company": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracking Company"
+          },
+          "tracking_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracking Number"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "ShippingDraftModel",
+        "type": "object"
+      },
+      "ShippingDraftsResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "drafts": {
+            "items": {
+              "$ref": "#/components/schemas/ShippingDraftModel"
+            },
+            "title": "Drafts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "drafts"
+        ],
+        "title": "ShippingDraftsResponse",
+        "type": "object"
+      },
+      "ShippingSyncResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "created": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created"
+          },
+          "errors": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errors"
+          },
+          "fetched": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fetched"
+          },
+          "unchanged": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unchanged"
+          },
+          "updated": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated"
+          }
+        },
+        "title": "ShippingSyncResponse",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -1308,7 +2604,7 @@
   "info": {
     "description": "REST API for the Zdrovena monthly accounting close pipeline. All endpoints require a valid Azure Entra ID JWT (Bearer token). Set AZURE_AUTH_DISABLED=true for local dev.",
     "title": "Zdrovena Reconciliation API",
-    "version": "2.0.0"
+    "version": "2.10.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1695,6 +2991,56 @@
         ]
       }
     },
+    "/api/close/workflow/email-attempt": {
+      "post": {
+        "description": "Settle an ambiguous send so the period can move on.\n\nA crash between SMTP accepting the message and the workflow recording it\nleaves a state nobody on our side can read. `delivered=true` closes the\nperiod without a second mail to the accountant; `delivered=false` unblocks\na retry (#312).",
+        "operationId": "resolve_close_email_attempt_api_close_workflow_email_attempt_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseEmailAttemptResolution"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloseWorkflowRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "No unresolved attempt, or another action owns this period"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Resolve a send attempt whose outcome is unknown",
+        "tags": [
+          "close"
+        ]
+      }
+    },
     "/api/close/workflow/reset": {
       "post": {
         "operationId": "reset_close_workflow_api_close_workflow_reset_post",
@@ -1873,9 +3219,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Damage Cases Api Damage Cases Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DamageCasesResponse"
                 }
               }
             },
@@ -1901,9 +3245,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Refresh Damage Cases Api Damage Cases Refresh Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DamageRefreshResponse"
                 }
               }
             },
@@ -1929,11 +3271,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "integer"
-                  },
-                  "title": "Response Damage Case Summary Api Damage Cases Summary Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DamageSummaryResponse"
                 }
               }
             },
@@ -1970,9 +3308,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Damage Case Api Damage Cases  Case Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DamageCaseModel"
                 }
               }
             },
@@ -2019,9 +3355,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Close Damage Case Api Damage Cases  Case Id  Close Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DamageCaseModel"
                 }
               }
             },
@@ -2078,9 +3412,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Confirm Damage Case Api Damage Cases  Case Id  Confirm Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DamageCaseModel"
                 }
               }
             },
@@ -2127,9 +3459,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Confirm Replacement Api Damage Cases  Case Id  Confirm Replacement Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DamageCaseWithDraftResponse"
                 }
               }
             },
@@ -2176,9 +3506,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Replacement Api Damage Cases  Case Id  Create Replacement Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DamageCaseWithDraftResponse"
                 }
               }
             },
@@ -2235,9 +3563,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Update Email Draft Api Damage Cases  Case Id  Email Draft Patch",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DamageCaseWithDraftResponse"
                 }
               }
             },
@@ -2282,9 +3608,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Prepare Email Draft Api Damage Cases  Case Id  Email Draft Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DamageCaseWithDraftResponse"
                 }
               }
             },
@@ -2331,9 +3655,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Ignore Damage Case Api Damage Cases  Case Id  Ignore Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DamageCaseModel"
                 }
               }
             },
@@ -2380,9 +3702,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Prepare Replacement Api Damage Cases  Case Id  Prepare Replacement Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DamageCaseWithDraftResponse"
                 }
               }
             },
@@ -2410,6 +3730,67 @@
         ]
       }
     },
+    "/api/damage-cases/{case_id}/resolve-email-attempt": {
+      "post": {
+        "description": "Record what actually happened to an ambiguous send.\n\nOnly a person can settle this: from our side an accepted-then-lost message\nand a never-sent one look identical. `delivered=true` closes the case\nwithout a second message; `delivered=false` is what unblocks a retry.",
+        "operationId": "resolve_email_attempt_api_damage_cases__case_id__resolve_email_attempt_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailAttemptResolution"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DamageCaseWithDraftResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "No unresolved attempt to resolve"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Resolve an email attempt whose outcome is unknown",
+        "tags": [
+          "damaged shipments"
+        ]
+      }
+    },
     "/api/damage-cases/{case_id}/send-email": {
       "post": {
         "operationId": "send_customer_email_api_damage_cases__case_id__send_email_post",
@@ -2429,9 +3810,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Send Customer Email Api Damage Cases  Case Id  Send Email Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DamageCaseWithDraftResponse"
                 }
               }
             },
@@ -2553,7 +3932,7 @@
             "description": "Invalid key"
           },
           "403": {
-            "description": "Insufficient role"
+            "description": "Insufficient role, or key belongs to internal storage"
           },
           "404": {
             "description": "File not found"
@@ -2654,7 +4033,7 @@
             "description": "Invalid key"
           },
           "403": {
-            "description": "Insufficient role"
+            "description": "Insufficient role, or key belongs to internal storage"
           },
           "422": {
             "content": {
@@ -2974,9 +4353,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Apaczka Services Api Shipping Apaczka Services Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ApaczkaServicesResponse"
                 }
               }
             },
@@ -3005,9 +4382,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Drafts Api Shipping Drafts Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShippingDraftsResponse"
                 }
               }
             },
@@ -3036,9 +4411,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Dlq Api Shipping Drafts Dlq Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DlqEntriesResponse"
                 }
               }
             },
@@ -3124,9 +4497,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Retry Dlq Entry Api Shipping Drafts Dlq  Entry Id  Retry Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DlqRetryResponse"
                 }
               }
             },
@@ -3191,9 +4562,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Update Draft Api Shipping Drafts  Draft Id  Patch",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShippingDraftModel"
                 }
               }
             },
@@ -3250,7 +4619,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "title": "Response Confirm Pending Command Api Shipping Drafts  Draft Id  Confirm Post"
+                  "$ref": "#/components/schemas/ShipmentActionResponse"
                 }
               }
             },
@@ -3312,9 +4681,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Draft Invoice Api Shipping Drafts  Draft Id  Create Invoice Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/InvoiceActionResponse"
                 }
               }
             },
@@ -3371,9 +4738,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Cancel Dispatch Api Shipping Drafts  Draft Id  Dispatch Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShipmentActionResponse"
                 }
               }
             },
@@ -3441,9 +4806,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Execute Draft Api Shipping Drafts  Draft Id  Execute Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShipmentActionResponse"
                 }
               }
             },
@@ -3547,9 +4910,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Preview Execute Draft Api Shipping Drafts  Draft Id  Execute Preview Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShipmentActionResponse"
                 }
               }
             },
@@ -3602,9 +4963,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Invoice Preview Api Shipping Drafts  Draft Id  Invoice Preview Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/InvoiceActionResponse"
                 }
               }
             },
@@ -3723,9 +5082,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Mark Fulfilled Api Shipping Drafts  Draft Id  Mark Fulfilled Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MarkFulfilledResponse"
                 }
               }
             },
@@ -3863,9 +5220,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Cancel Shipment Api Shipping Drafts  Draft Id  Shipment Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShipmentActionResponse"
                 }
               }
             },
@@ -3967,9 +5322,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Sync Orders Api Shipping Sync Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShippingSyncResponse"
                 }
               }
             },
@@ -3995,9 +5348,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Health Health Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HealthResponse"
                 }
               }
             },

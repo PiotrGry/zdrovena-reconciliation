@@ -24,6 +24,30 @@ def _workflow(tmp_path):
     )
 
 
+def _mark_package_ready(workflow, run, *, files=("faktura.pdf",)) -> str:
+    """Put a real package in storage and record its artefact on the run.
+
+    Marking the step done without an artefact is what send now refuses (#311),
+    so tests that want to reach send have to have actually packaged something.
+    """
+    import io
+    import zipfile
+
+    from zdrovena.month_closing.package_integrity import build_package_artifact
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        for name in files:
+            archive.writestr(name, b"content")
+    key = "faktury/2026/Czerwiec/Czerwiec_2026_HUMIO.zip"
+    workflow.storage.upload_stream(io.BytesIO(buf.getvalue()), key, "application/zip")
+
+    run["steps"]["package"]["status"] = "done"
+    run["artifacts"] = [a for a in run.get("artifacts", []) if a.get("kind") != "package"]
+    run["artifacts"].append(build_package_artifact(workflow.storage, key=key, files=list(files)))
+    return key
+
+
 def test_check_persists_documents_and_blocked_status(tmp_path):
     workflow = _workflow(tmp_path)
     inspected = {
@@ -103,7 +127,7 @@ def test_sales_stage_is_independent_and_persisted(tmp_path):
 def test_send_requires_explicit_confirmation(tmp_path):
     workflow = _workflow(tmp_path)
     run = workflow.get_run(2026, 6, "owner@example.com")
-    run["steps"]["package"]["status"] = "done"
+    _mark_package_ready(workflow, run)
     workflow.store.save(run)
 
     updated = workflow.perform(2026, 6, "send", "owner@example.com", confirm=False)
@@ -115,7 +139,7 @@ def test_send_requires_explicit_confirmation(tmp_path):
 def test_send_with_warnings_requires_override_reason(tmp_path):
     workflow = _workflow(tmp_path)
     run = workflow.get_run(2026, 6, "owner@example.com")
-    run["steps"]["package"]["status"] = "done"
+    _mark_package_ready(workflow, run)
     workflow.store.save(run)
     inspected = {
         "documents": [],
@@ -272,7 +296,7 @@ def test_rerunning_preflight_drops_waivers_on_its_own_issues(tmp_path):
 def test_send_with_waived_warnings_needs_no_override_reason(tmp_path):
     workflow = _workflow(tmp_path)
     run = workflow.get_run(2026, 6, "owner@example.com")
-    run["steps"]["package"]["status"] = "done"
+    _mark_package_ready(workflow, run)
     run["issues"] = [
         {
             "id": "generated",
@@ -305,7 +329,7 @@ def test_send_with_waived_warnings_needs_no_override_reason(tmp_path):
 def test_send_records_waivers_in_close_history(tmp_path):
     workflow = _workflow(tmp_path)
     run = workflow.get_run(2026, 6, "owner@example.com")
-    run["steps"]["package"]["status"] = "done"
+    _mark_package_ready(workflow, run)
     run["issues"] = [
         {
             "id": "generated",
@@ -549,3 +573,196 @@ def test_inspector_is_not_fooled_by_a_stray_pdf(tmp_path):
 
     gap = next(issue for issue in inspected["issues"] if issue["id"] == "sales-pdfs-incomplete")
     assert "2/06/2026" in gap["message"]
+
+
+class TestSendRefusesASwappedPackage:
+    """The scenario #311 exists for: the reviewed ZIP is not the sent ZIP."""
+
+    def _ready_run(self, tmp_path):
+        workflow = _workflow(tmp_path)
+        run = workflow.get_run(2026, 6, "owner@example.com")
+        key = _mark_package_ready(workflow, run, files=("faktura.pdf", "wyciag.pdf"))
+        workflow.store.save(run)
+        return workflow, run, key
+
+    def _send(self, workflow):
+        orchestrator = MagicMock()
+        orchestrator.execute_stage.return_value = CloseReport(email_sent=True)
+        with (
+            patch(
+                "zdrovena.month_closing.workflow.MonthCloseOrchestrator",
+                return_value=orchestrator,
+            ),
+            patch(
+                "zdrovena.month_closing.workflow.MonthCloseInspector.inspect",
+                return_value={"documents": [], "issues": [], "metrics": {}},
+            ),
+        ):
+            updated = workflow.perform(2026, 6, "send", "owner@example.com", confirm=True)
+        return updated, orchestrator
+
+    def test_an_untouched_package_still_sends(self, tmp_path):
+        """The guard must not block the normal path."""
+        workflow, _run, _key = self._ready_run(tmp_path)
+
+        updated, orchestrator = self._send(workflow)
+
+        assert updated["steps"]["send"]["status"] == "done"
+        orchestrator.execute_stage.assert_called_once()
+
+    def test_a_package_replaced_after_review_is_refused(self, tmp_path):
+        import io
+        import zipfile
+
+        workflow, _run, key = self._ready_run(tmp_path)
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr("zupelnie-inna-faktura.pdf", b"swapped")
+        workflow.storage.upload_stream(io.BytesIO(buf.getvalue()), key, "application/zip")
+
+        updated, orchestrator = self._send(workflow)
+
+        assert updated["steps"]["send"]["status"] != "done"
+        orchestrator.execute_stage.assert_not_called()
+        assert "zmieni" in updated["steps"]["send"]["message"].lower()
+
+    def test_a_deleted_package_is_refused(self, tmp_path):
+        workflow, _run, key = self._ready_run(tmp_path)
+        (workflow.storage.root / key).unlink()
+
+        updated, orchestrator = self._send(workflow)
+
+        assert updated["steps"]["send"]["status"] != "done"
+        orchestrator.execute_stage.assert_not_called()
+
+    def test_a_run_packaged_before_hashing_existed_is_refused(self, tmp_path):
+        """Refusing is safe: rebuilding costs a click, sending the wrong month
+        does not."""
+        workflow, run, _key = self._ready_run(tmp_path)
+        for artifact in run["artifacts"]:
+            artifact.pop("sha256", None)
+        workflow.store.save(run)
+
+        updated, orchestrator = self._send(workflow)
+
+        assert updated["steps"]["send"]["status"] != "done"
+        orchestrator.execute_stage.assert_not_called()
+
+
+class TestCrashSafeSendInMonthClose:
+    """The same semantics as Damage, on the same module (issue #312)."""
+
+    def _ready(self, tmp_path):
+        workflow = _workflow(tmp_path)
+        run = workflow.get_run(2026, 6, "owner@example.com")
+        _mark_package_ready(workflow, run)
+        workflow.store.save(run)
+        return workflow
+
+    def _send(self, workflow, *, send_side_effect=None):
+        orchestrator = MagicMock()
+        if send_side_effect is not None:
+            orchestrator.execute_stage.side_effect = send_side_effect
+        else:
+            orchestrator.execute_stage.return_value = CloseReport(email_sent=True)
+        with (
+            patch(
+                "zdrovena.month_closing.workflow.MonthCloseOrchestrator",
+                return_value=orchestrator,
+            ),
+            patch(
+                "zdrovena.month_closing.workflow.MonthCloseInspector.inspect",
+                return_value={"documents": [], "issues": [], "metrics": {}},
+            ),
+        ):
+            return workflow.perform(
+                2026, 6, "send", "owner@example.com", confirm=True
+            ), orchestrator
+
+    def test_the_attempt_is_durable_before_the_orchestrator_runs(self, tmp_path):
+        workflow = self._ready(tmp_path)
+        seen = {}
+
+        def capture(*_a, **_k):
+            stored = workflow.store.get(2026, 6)
+            seen["attempt"] = stored.get("email_attempt")
+            return CloseReport(email_sent=True)
+
+        self._send(workflow, send_side_effect=capture)
+
+        assert seen["attempt"], "nothing on disk when SMTP could already be reached"
+        assert seen["attempt"]["state"] == "pending"
+
+    def test_a_successful_send_confirms_the_attempt(self, tmp_path):
+        workflow = self._ready(tmp_path)
+        updated, _o = self._send(workflow)
+
+        assert updated["email_attempt"]["state"] == "confirmed"
+
+    def test_a_crash_after_smtp_accepted_blocks_the_next_send(self, tmp_path):
+        workflow = self._ready(tmp_path)
+        run = workflow.store.get(2026, 6)
+        run["email_attempt"] = {
+            "id": "a-1",
+            "state": "pending",
+            "fingerprint": "f" * 64,
+            "started_at": "2020-01-01T00:00:00+00:00",
+        }
+        workflow.store.save(run)
+
+        updated, orchestrator = self._send(workflow)
+
+        assert updated["steps"]["send"]["status"] != "done"
+        orchestrator.execute_stage.assert_not_called()
+
+    def test_a_timeout_leaves_the_attempt_pending(self, tmp_path):
+        """Not a refusal we saw, so the accountant may already have the mail."""
+        workflow = self._ready(tmp_path)
+
+        self._send(workflow, send_side_effect=TimeoutError("no answer"))
+
+        assert workflow.store.get(2026, 6)["email_attempt"]["state"] == "pending"
+
+    def test_the_operator_can_record_delivery_without_resending(self, tmp_path):
+        workflow = self._ready(tmp_path)
+        run = workflow.store.get(2026, 6)
+        run["email_attempt"] = {
+            "id": "a-1",
+            "state": "unknown",
+            "fingerprint": "f" * 64,
+            "started_at": "2020-01-01T00:00:00+00:00",
+        }
+        workflow.store.save(run)
+
+        resolved = workflow.resolve_email_attempt(
+            2026, 6, delivered=True, by="owner@example.com", note="widzę w wysłanych"
+        )
+
+        assert resolved["email_attempt"]["state"] == "confirmed"
+        assert resolved["steps"]["send"]["status"] == "done"
+
+    def test_recording_non_delivery_unblocks_a_retry(self, tmp_path):
+        workflow = self._ready(tmp_path)
+        run = workflow.store.get(2026, 6)
+        run["email_attempt"] = {
+            "id": "a-1",
+            "state": "unknown",
+            "fingerprint": "f" * 64,
+            "started_at": "2020-01-01T00:00:00+00:00",
+        }
+        workflow.store.save(run)
+
+        workflow.resolve_email_attempt(2026, 6, delivered=False, by="owner@example.com")
+        updated, orchestrator = self._send(workflow)
+
+        assert updated["steps"]["send"]["status"] == "done"
+        orchestrator.execute_stage.assert_called_once()
+
+    def test_there_is_nothing_to_resolve_on_a_clean_run(self, tmp_path):
+        from zdrovena.month_closing.workflow import EmailAttemptResolutionError
+
+        workflow = self._ready(tmp_path)
+
+        with pytest.raises(EmailAttemptResolutionError):
+            workflow.resolve_email_attempt(2026, 6, delivered=True, by="owner@example.com")

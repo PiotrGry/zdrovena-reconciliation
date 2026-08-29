@@ -10,6 +10,13 @@
 # vs Private Endpoints: ~€32/month (savings: €29/month)
 # vs full private (PE + Premium ACR): ~€184/month (savings: €181/month)
 #
+# This file creates NO Private Endpoints and NO Private DNS zones. It used to
+# create both while this header claimed they were the rejected alternative,
+# so the stated saving was never real (ADR 0003, issue #215). If a compliance
+# requirement ever brings them back, read that ADR first — the subnet ACLs
+# below have to go at the same time, because a Private Endpoint bypasses the
+# account firewall and leaves those rules dead but plausible-looking.
+#
 # Benefits:
 #   ✅ Firewall: default_action=Deny, whitelist only Container Apps subnet
 #   ✅ RBAC: Managed Identity required (shared_access_key_enabled=false)
@@ -60,103 +67,6 @@ resource "azurerm_subnet" "container_apps" {
         "Microsoft.Network/virtualNetworks/subnets/join/action"
       ]
     }
-  }
-}
-
-# ── Subnet: Private Endpoints ──────────────────────────────────────────────────
-
-resource "azurerm_subnet" "private_endpoints" {
-  #checkov:skip=CKV2_AZURE_31: Private endpoints subnet — NSG not applicable. Private endpoints
-  # use their own network policies; the security boundary is the container_apps NSG.
-  count                = var.enable_private_network ? 1 : 0
-  name                 = "private-endpoints-subnet"
-  resource_group_name  = azurerm_resource_group.rg.name
-  virtual_network_name = azurerm_virtual_network.vnet[0].name
-  address_prefixes     = ["10.0.8.0/24"]
-}
-
-# ── Private DNS Zones ──────────────────────────────────────────────────────────
-# Only for Storage and Key Vault (ACR uses public DNS with IP whitelisting)
-
-resource "azurerm_private_dns_zone" "blob" {
-  count               = var.enable_private_network ? 1 : 0
-  name                = "privatelink.blob.core.windows.net"
-  resource_group_name = azurerm_resource_group.rg.name
-  tags                = local.tags
-}
-
-resource "azurerm_private_dns_zone" "keyvault" {
-  count               = var.enable_private_network ? 1 : 0
-  name                = "privatelink.vaultcore.azure.net"
-  resource_group_name = azurerm_resource_group.rg.name
-  tags                = local.tags
-}
-
-# Link DNS zones to VNet
-
-resource "azurerm_private_dns_zone_virtual_network_link" "blob" {
-  count                 = var.enable_private_network ? 1 : 0
-  name                  = "${var.prefix}-blob-dns-link"
-  resource_group_name   = azurerm_resource_group.rg.name
-  private_dns_zone_name = azurerm_private_dns_zone.blob[0].name
-  virtual_network_id    = azurerm_virtual_network.vnet[0].id
-  tags                  = local.tags
-}
-
-resource "azurerm_private_dns_zone_virtual_network_link" "keyvault" {
-  count                 = var.enable_private_network ? 1 : 0
-  name                  = "${var.prefix}-kv-dns-link"
-  resource_group_name   = azurerm_resource_group.rg.name
-  private_dns_zone_name = azurerm_private_dns_zone.keyvault[0].name
-  virtual_network_id    = azurerm_virtual_network.vnet[0].id
-  tags                  = local.tags
-}
-
-
-
-# ── Private Endpoint: Storage Account (Blob) ───────────────────────────────────
-
-resource "azurerm_private_endpoint" "storage_blob" {
-  count               = var.enable_private_network ? 1 : 0
-  name                = "${var.prefix}-storage-blob-pe"
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = azurerm_resource_group.rg.location
-  subnet_id           = azurerm_subnet.private_endpoints[0].id
-  tags                = local.tags
-
-  private_service_connection {
-    name                           = "${var.prefix}-storage-blob-psc"
-    private_connection_resource_id = azurerm_storage_account.storage.id
-    is_manual_connection           = false
-    subresource_names              = ["blob"]
-  }
-
-  private_dns_zone_group {
-    name                 = "blob-dns-zone-group"
-    private_dns_zone_ids = [azurerm_private_dns_zone.blob[0].id]
-  }
-}
-
-# ── Private Endpoint: Key Vault ───────────────────────────────────────────────
-
-resource "azurerm_private_endpoint" "keyvault" {
-  count               = var.enable_private_network ? 1 : 0
-  name                = "${var.prefix}-kv-pe"
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = azurerm_resource_group.rg.location
-  subnet_id           = azurerm_subnet.private_endpoints[0].id
-  tags                = local.tags
-
-  private_service_connection {
-    name                           = "${var.prefix}-kv-psc"
-    private_connection_resource_id = azurerm_key_vault.kv.id
-    is_manual_connection           = false
-    subresource_names              = ["vault"]
-  }
-
-  private_dns_zone_group {
-    name                 = "kv-dns-zone-group"
-    private_dns_zone_ids = [azurerm_private_dns_zone.keyvault[0].id]
   }
 }
 

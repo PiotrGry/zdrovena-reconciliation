@@ -26,16 +26,24 @@ RUN uv sync --locked --no-editable --no-dev \
 # ── Final: the environment only, no uv, no build tooling ─────────────────────
 FROM python:3.12-slim
 
+# The user is created BEFORE anything is copied, so ownership is set by COPY
+# --chown as each layer is written. A trailing `chown -R app:app /app` instead
+# rewrites every file it touches into a new layer: it cost 107 MB of a 318 MB
+# image, a second full copy of the virtualenv (issue #238).
+RUN useradd -r -s /bin/false app
 WORKDIR /app
-COPY --from=builder /app/.venv /app/.venv
-COPY zdrovena/ zdrovena/
+RUN chown app:app /app
+
+# No `COPY zdrovena/` here on purpose. `uv sync --no-editable` in the builder
+# installed the package into the virtualenv, and a copy at /app/zdrovena would
+# SHADOW it — WORKDIR is on sys.path, so the shipped-and-verified artifact
+# would not be the code that runs.
+COPY --from=builder --chown=app:app /app/.venv /app/.venv
 
 ENV PATH="/app/.venv/bin:$PATH" \
     APP_ENV=prod
 EXPOSE 8000
 
-# Non-root user — principle of least privilege
-RUN useradd -r -s /bin/false app && chown -R app:app /app
 USER app
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

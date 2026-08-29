@@ -3,7 +3,255 @@
 
 ## Unreleased
 
+## v2.10.0 (2026-08-29)
+
+### Changed
+
+- **api**: Wszystkie endpointy publikują już schematy odpowiedzi — zostało **zero**
+  zwracających obiekt bez struktury (było 32). Shipping i `/health` dołączyły do Damage
+  z #356. Dwie rzeczy wyszły dopiero przy implementacji i obie były pułapkami:
+  **(1)** walidacja odpowiedzi jest surowa co do typów, nie tylko obecności — Fakturownia
+  zwraca `fakturownia_invoice_id` jako liczbę i używa wartownika `"pending"` w tym samym
+  polu, więc przypięcie go do `str` zamieniało działającą odpowiedź w 500; identyfikatory
+  bite przez dostawcę są teraz `int | str`. **(2)** model odpowiedzi nie tylko odfiltrowuje
+  pola — **dokłada** też każde zadeklarowane, którego zabrakło, jako `null`. Wszystkie
+  trasy używają więc `response_model_exclude_unset=True`, dzięki czemu bajty na drucie są
+  identyczne jak przedtem, a schemat jest wyłącznie dokumentacją. Pilnują tego testy. (#358)
+
+- **frontend**: `ShippingView.jsx` (2047 linii) rozbity na komponenty i moduły
+  odpowiadające konkretnym odpowiedzialnościom — widok ma teraz 774 linie i pełni rolę
+  kompozycyjną. Requesty Close, Settings i faktur shippingowych przeniesione do
+  otypowanej warstwy `api/endpoints.ts`; typy odpowiedzi wyprowadzane są z wygenerowanego
+  schematu OpenAPI, nie pisane ręcznie. Zachowanie operatorskie bez zmian. Testy pilnują,
+  że widok nie omija warstwy endpointów i że żaden typ odpowiedzi nie jest ręcznie
+  duplikowany.
+
+  **Uwaga:** 32 endpointy backendu (w tym całe Damage) zwracają `dict[str, Any]`, więc
+  OpenAPI publikuje dla nich obiekt bez struktury, a wygenerowany typ to dosłownie
+  `{ [key: string]: unknown }`. `Record<string, unknown>` jest tam **poprawny** —
+  usunięcie go wymagałoby modeli odpowiedzi po stronie backendu, co zmienia kontrakt
+  i jest osobną pracą. (#318)
+
+- **api**: `webhooks.py` (2056 linii) rozbity na routery według odpowiedzialności:
+  ingestion Shopify, drafty, wykonanie, odbiór i anulowania, etykiety, faktury, DLQ oraz
+  wsparcie testów E2E. Największy moduł ma teraz 391 linii. Ścieżki URL, tagi, modele
+  odpowiedzi i strażnicy uprawnień bez zmian — **wygenerowany kontrakt OpenAPI jest
+  bajt w bajt identyczny**, co jest tu głównym dowodem, że to podział pliku, a nie API.
+  Wspólna kompozycja (sekrety, klienci dostawców, bramkowanie środowiska) wylądowała
+  w `deps.py`, żeby każdy router nie hodował własnej. Testy fitness pilnują kierunku
+  zależności, wielkości modułów i tego, że endpointy testowe nie przestaną być
+  bramkowane fail-closed. (#313)
+
+- **damage**: Workflow uszkodzonych przesyłek wyjęty z routera HTTP do warstwy aplikacji
+  (`zdrovena/damage/application`). Router mapuje request, woła serwis i tłumaczy błędy
+  domenowe na kody HTTP — nie klonuje już draftu zastępczego, nie składa maila i nie
+  zarządza przejściami stanów. Reguły dało się dotąd sprawdzić wyłącznie startując
+  FastAPI, a decyzja „kiedy sprawa liczy się jako wysłana" była rozpisana w dwóch
+  handlerach, czyli o jedną edycję od rozjazdu. Zewnętrzne zależności wchodzą przez
+  protokoły z `ports.py`, więc warstwa aplikacji nie importuje ani frameworku webowego,
+  ani klienta Azure/SMTP. Zachowanie endpointów bez zmian. Test fitness nie wpuści
+  logiki workflow z powrotem do routera. (#317)
+
+### Added
+
+- **tooling**: `scripts/quality/find_vacuous_patches.py` — wykrywa testy, które wstrzykują
+  awarię przez `side_effect`, ale nigdy nie docierają do podmienionego miejsca. Taki test
+  przechodzi dlatego, że awaria się nie wydarzyła, a nie dlatego, że kod ją przeżył. Tym
+  narzędziem znaleziono opisane wyżej testy preflightu. Nie jest wpięte w bramkę: część
+  trafień to celowe „drutu ostrzegawcze" (`side_effect=AssertionError` znaczy „wywołanie
+  tego jest regresją"), a odróżnić je może tylko człowiek.
+
+- **month-close**: Kontrola wstępna sprawdza wreszcie stronę magazynową. Audyt WZ
+  istniał od dawna, ale wyłącznie w osobnej komendzie `zdrovena audit`, którą trzeba było
+  pamiętać, żeby uruchomić — więc miesiąc dało się zamknąć i wysłać księgowej z fakturą
+  bez WZ albo z WZ, za które nikt nie wystawił faktury. Obie kontrole trafiają teraz na
+  listę problemów operatora, z tym samym mechanizmem „Zignoruj", co numeracja. Domyślna
+  severity to `warning`, nie `blocker`: issue warunkowało `blocker` policzeniem, ile
+  ostatnich miesięcy już nie przechodzi, a tego nie da się zrobić bez danych z produkcji —
+  ostrzejsze ustawienie jest o jedną zmienną `MONTH_CLOSE_WAREHOUSE_SEVERITY` dalej.
+  Awaria dostawcy zgłaszana jest jako osobny problem, bo pusta lista mówiłaby „magazyn
+  czysty" o czymś, czego w ogóle nie sprawdzono. (#308)
+
+- **monitoring**: Activity Log jedzie teraz do Log Analytics. Tabela `AzureActivity`
+  była pusta, więc zapytanie o historię alertów nie odróżniało „nic się nie działo"
+  od „nigdzie tego nie zbieramy" — ta sama dwuznaczność co w #279, #278 i #310, tyle
+  że w warstwie audytu samego monitoringu. Eksportowane są cztery kategorie
+  (`Alert`, `Administrative`, `ServiceHealth`, `ResourceHealth`); pozostałe są
+  pominięte z uzasadnieniem, bo za każdy rekord płacimy. Retencja pochodzi
+  z workspace'a i nie jest nadpisywana. KQL do historii aktywacji, audytu zmian
+  konfiguracji i oszacowania wolumenu jest w `docs/devops/alerty-operacyjne.md`. (#217)
+
+- **docker**: Obraz produkcyjny schudł z 317,9 MB do 212,7 MB (−33%). 107 MB kosztował
+  jeden `chown -R app:app /app` — przepisuje każdy plik do nowej warstwy, więc obraz
+  niósł drugą, pełną kopię virtualenva różniącą się wyłącznie właścicielem; własność
+  ustawiana jest teraz przez `COPY --chown` w tej samej warstwie. Kolejne 3,2 MB to była
+  druga kopia pakietu: `COPY zdrovena/` w etapie finalnym **przesłaniało** wersję
+  zainstalowaną przez `uv sync --no-editable`, bo `WORKDIR` jest na `sys.path` — kod,
+  który się uruchamiał, nie był artefaktem, który zbudowano i przeskanowano. Build zimny
+  17 s → 12 s, ciepły przy zmianie w kodzie 12 s → 4 s. Etykiety OCI dodane wprost do
+  istniejącego wywołania buildx, bez brania zależności od `metadata-action`
+  (uzasadnienie w `docs/devops/obraz-docker.md`). (#238)
+
+- **monitoring**: Pięć nowych alertów operacyjnych: awaria magazynu stanu
+  (`storage_unavailable`, odblokowane przez #310), błędy zależności zewnętrznych,
+  synchronizacja zakończona błędem Allegro/Shopify, draft zakleszczony w stanie
+  `executing` ponad 4h oraz rozjazd źródeł kaucji. Poller emituje nową migawkę
+  `shipping.stuck_execution_snapshot` — `executing` to atomowe roszczenie liczone
+  w sekundach, więc draft siedzący w nim godzinami oznacza proces zabity między
+  zajęciem a zakończeniem: żaden request nie padł, nic nie trafiło do DLQ i żadna
+  dotychczasowa reguła tego nie widziała. Progi są uzasadnione po kolei
+  w `docs/devops/alerty-operacyjne.md` — w szczególności wykluczenie kodów 404/409/412
+  z alertu zależności, bo to normalny przepływ sterowania (w tym przegrany wyścig
+  o ETag, czyli działająca ochrona przed podwójną przesyłką), a nie awarie. Test
+  polityki nie wpuści reguły filtrującej po nazwie zdarzenia, którego kod nie emituje —
+  taki alert nigdy by nie zadziałał i w nieskończoność raportował zdrowie. (#214)
+
 ### Fixed
+
+- **damage**: Zgłoszenie uszkodzenia od pracownika oddziału InPost tworzy wreszcie sprawę
+  w portalu. Allowlista nadawców przyjmowała wyłącznie adresy, których część lokalna
+  **zaczyna się od „uszkodz"**, plus jeden adres centralny — a prawdziwe zgłoszenia
+  przychodzą od imiennych pracowników (`alaszkowska@inpost.pl`, Oddział Grudziądz).
+  Wiadomość z 21.08.2026 o przesyłce uszkodzonej w transporcie odpadała na pierwszym
+  sprawdzeniu, po cichu; sprawa wypłynęła dopiero po pięciu dniach, gdy przesłano ją
+  ręcznie. Wszystko dalej działało poprawnie — treść dopasowywała się do wzorca
+  uszkodzenia, a numer wyciągał się z tematu, który był samym numerem. Zaufana jest teraz
+  cała domena `inpost.pl` wraz z subdomenami; reszta bramek bez zmian: wiadomość nadal
+  musi opisywać uszkodzenie i nieść numer korelujący z naszą przesyłką, a sprawa nadal
+  powstaje w `needs_review`, więc nic nie jedzie bez potwierdzenia operatora. (#359)
+
+- **api**: Endpointy Damage publikują wreszcie schematy odpowiedzi. Zwracały
+  `dict[str, Any]`, więc OpenAPI opisywał obiekt bez struktury, a wygenerowany typ
+  TypeScript to było dosłownie `{ [key: string]: unknown }` — frontend nie miał z czego
+  korzystać i musiał zawężać typy lokalnie. Modele są **celowo permisywne**
+  (`extra="allow"`, wszystkie pola opcjonalne): FastAPI **odfiltrowuje** pola
+  niezadeklarowane w `response_model`, a sprawa uszkodzenia niesie kontekst od dostawców
+  o niestałym zestawie kluczy — model z podzbiorem pól po cichu urwałby dane, które
+  czyta ekran operatora. Test pilnuje, że nic nie znika. (#356)
+
+- **tests**: Trzy testy weryfikowały autodownload, którego preflight nigdy nie wykonywał.
+  `PreflightChecker` przyjmował i zapisywał `no_browser`, po czym **nigdy tego pola nie
+  czytał** — decyzja o pobieraniu należy do orkiestratora. Dwa z tych testów podmieniały
+  `download_fakturownia_reports`, funkcję której `_check_reports` w ogóle nie woła, więc
+  asercje przechodziły dlatego, że wywołanie nigdy nie nastąpiło. Martwy parametr usunięty,
+  testy nazwane tym, co faktycznie sprawdzają, flaga CLI `--no-browser` nadal przyjmowana
+  (żeby nie psuć istniejących wywołań), ale jej opis przestał kłamać.
+
+- **email**: Awaria procesu po przyjęciu wiadomości przez SMTP nie prowadzi już do drugiej
+  wysyłki. Blokada współbieżności powstrzymywała dwa kliknięcia, ale nie domykała okna między
+  „SMTP przyjął" a „zdążyliśmy to zapisać" — i to właśnie jej własna reguła wygaśnięcia po
+  dziesięciu minutach zamieniała awarię w duplikat, bo blokada wygasająca po cichu zakłada,
+  że nic się nie wydarzyło. Porzucona próba przechodzi teraz w stan `unknown`, który blokuje
+  wysyłkę i czeka na decyzję operatora: z naszej strony „przyjęte i zgubione" jest nie do
+  odróżnienia od „nigdy nie wysłane". Rekord próby jest trwały **przed** kontaktem z SMTP,
+  a `failed` zapisujemy wyłącznie przy odmowie, którą faktycznie zobaczyliśmy — timeout
+  zostawia `pending`, bo wiadomość mogła zostać przyjęta. Wspólna semantyka dla Uszkodzeń
+  i Zamknięcia miesiąca, procedura recovery w `docs/devops/wysylka-maili-recovery.md`.
+  Odcisk próby to SHA-256 — adres, temat ani treść nie są zapisywane. (#312)
+
+- **infra**: Model sieci prywatnej opisany w trzech miejscach na trzy różne sposoby jest
+  wreszcie jeden. Nagłówek `network.tf` reklamował Service Endpoints jako **tańszą
+  alternatywę** dla Private Endpointów i podawał oszczędność €29/mies., podczas gdy ten sam
+  plik tworzył również Private Endpointy i strefy Private DNS. Komentarz w `storage.tf`
+  mówił „dostęp wyłącznie przez Private Endpoint", a napisana pod nim ACL używa
+  `virtual_network_subnet_ids`, czyli mechanizmu Service Endpoint. Key Vault **nie miał
+  w ogóle gałęzi** dla trybu prywatnego — włączenie flagi zbudowałoby dla niego Private
+  Endpoint, zostawiając firewall vaultu otwarty. Decyzja zapisana w ADR 0003: Service
+  Endpoints, bez Private Endpointów; zasoby PE i strefy DNS usunięte, Key Vault dostał
+  warunkową ACL taką samą jak Storage. Flaga nadal domyślnie `false`. RBAC, TLS 1.2
+  i zakaz Shared Key nietknięte. (#215)
+
+- **ci**: Zatwierdzenie produkcyjnego `terraform apply` dotyczy wreszcie konkretnego planu.
+  Kolejność była odwrotna — approval szedł pierwszy, plan nie istniał jeszcze w ogóle,
+  a treść zgłoszenia i tak prosiła zatwierdzającego o „przejrzenie planu w podlinkowanym
+  runie". Teraz plan powstaje przed approvalem, jego podsumowanie ląduje w treści zgłoszenia,
+  a `apply` wykonuje **zapisany** plan, nie przeliczony na nowo. Job `apply` dostał
+  `environment: production-infra`, którego nie miał, mimo że komentarz w nagłówku twierdził
+  inaczej — bez tego nie widział zmiennych środowiska, a claim OIDC mógł się nie zgadzać.
+  Adres alertowy pochodzi wyłącznie z `vars.OPS_ALERT_EMAIL` (zmienne ustawione w obu
+  środowiskach), binarny `tfplan` przestał być publikowany jako artefakt PR-a, a duplikat
+  kroku sanityzacji poświadczeń zastąpiła jedna akcja composite. (#138)
+
+- **security**: Files API nie sięga już do stanu wewnętrznych workflowów. Sprawdzanie
+  roli tego nie zamykało — operator **ma** mieć rolę księgowego, więc jeden pomylony klucz
+  kasował stan systemowy i dostawał w odpowiedzi 204. Zablokowane dla PUT/DELETE są
+  `apaczka/` (cache providera) oraz każdy segment ścieżki zaczynający się kropką
+  (`.state.json`, `.file_hashes.json`). Reguły są celowo wąskie: zablokowanie całego
+  `faktury/` byłoby prostsze i błędne, bo wgrywanie brakujących faktur pod tym prefiksem
+  to dokładnie to, do czego Files UI służy. Wszystkie warianty zakodowane i traversal
+  sprowadzane są do jednej postaci przed decyzją — w tym podwójne kodowanie `%252F`,
+  które przy pojedynczym dekodowaniu przeszłoby obok sprawdzenia prefiksu. (#311)
+
+- **month-close**: Wysyłka odmawia paczki innej niż przejrzana. Zapisywany był tylko
+  klucz bloba i lista plików, a `send` pobierał blob po tym kluczu — więc cokolwiek
+  potrafiło pod ten klucz zapisać, decydowało, co wychodzi na zewnątrz, i nic tego nie
+  odnotowywało. Paczka zapisuje teraz SHA-256, rozmiar i manifest; hash pełni rolę
+  niezmiennego ID artefaktu, bo identyfikator wyprowadzony z treści nie może nazwać
+  dwóch różnych bajtów. Weryfikacja jest fail-closed: brak bloba, niedostępny magazyn
+  albo run spakowany przed wprowadzeniem hashowania blokują wysyłkę. Manifest jest
+  porównywany z rzeczywistą listą wpisów archiwum, bo porównanie listy z samą sobą
+  niczego by nie dowodziło. (#311)
+
+- **shipping**: Deduplikacja draftów nie buduje już indeksu z `list_drafts()`. Ta lista
+  sortuje malejąco po dacie i ucina — więc gdy sklep przerósł limit, najstarsze rekordy
+  z niej znikały, zamówienie, które **miało** draft, czytało się jako nowe i było zapisywane
+  drugi raz. Duplikat wchodził z `created_at=now` do okna „najnowsze N", wypychał kolejny
+  stary rekord i duplikował w następnym cyklu — pętla podtrzymująca samą siebie, która
+  zrobiła ok. 70 zduplikowanych draftów Allegro. Lookup idzie teraz przez
+  `find_draft_by_external_id()`: filtr po stronie serwera, kompletny, bez ucinania.
+  Zabezpieczenie przy zapisie kluczowało się dotąd na `shopify_order_id`, które dla
+  każdego drafta Allegro jest `None` — czyli Allegro nie miało go wcale; klucz to teraz
+  `(source, external_order_id)`, ze starym kluczem zachowanym dla rekordów sprzed
+  wprowadzenia `external_order_id`. Drafty zastępcze celowo dzielą numer zamówienia
+  i są wyłączone z obu ścieżek. Nowe zdarzenie `storage.partition_scan` pokazuje koszt
+  odczytu całej partycji, zanim zacznie boleć. (#316)
+
+- **cli**: `zdrovena --version` zgłaszało 2.0.0, podczas gdy pakiet był na 2.9.0.
+  Trzeci literał wersji, którego #216 nie znalazło, bo strażnik przeszukiwał tylko
+  te dwa pliki, o których już wiedziano, że są zepsute. Strażnik obejmuje teraz
+  cały pakiet. (#238)
+
+- **observability**: Ponad 99% rekordów `AppTraces` to był szum bibliotek, nie logi
+  aplikacji. Przyczyna: Azure Monitor distro podpina handler eksportujący pod **root
+  loggera** (`logger_name` domyślnie `""`), więc każdy rekord INFO z dowolnej biblioteki
+  w procesie leciał do Log Analytics i był fakturowany. Obroną była lista pięciu nazw
+  loggerów, skopiowana do dwóch plików — a lista nazw obejmuje tylko te loggery,
+  o których ktoś pomyślał. Filtr eksportu działa teraz na wadze rekordu: `zdrovena.*`
+  (w tym `zdrovena.events`) idzie do LAW zawsze, reszta od `WARNING` w górę, więc awaria
+  zależności zostaje widoczna, a jej sukcesy nie. Handlery konsolowe nietknięte. Próg
+  konfigurowalny przez `LOG_LEVEL_AZURE_EXPORT`, lista nazw ma jedno miejsce
+  (`zdrovena/common/logging_setup.py`), a runbook `docs/devops/logging-noise.md` zawiera
+  KQL do porównania wolumenu przed i po. (#213)
+
+- **api**: Health check Fakturowni działa na deploymencie, który trzyma token wyłącznie
+  w Key Vault. Flaga „skonfigurowane" brała się z samej obecności `AZURE_KEYVAULT_URL`
+  — sekret nigdy nie był rozwiązywany — a klienta do wywołania live budowano z
+  `FAKTUROWNIA_API_TOKEN` z env. Integracja działała w runtime, a dashboard pokazywał
+  awarię. Obie ścieżki idą teraz przez `get_secret()`, czyli to samo rozwiązywanie
+  sekretów co runtime, więc panel i aplikacja nie mogą się już rozjechać. Sam token
+  nigdy nie trafia do odpowiedzi. (#315)
+
+- **api**: `/health` raportuje teraz prawdziwą wersję aplikacji. `zdrovena/__init__.py`
+  i `main.py` trzymały własne literały `2.0.0`, podczas gdy `pyproject.toml` był już na 2.9.0,
+  a `version.json` z CI raportował 2.9.0 — czyli endpoint diagnostyczny kłamał o wdrożonej
+  wersji. Wersja czytana jest teraz z metadanych zainstalowanej dystrybucji, więc
+  `pyproject.toml` jest jedynym miejscem, gdzie się ją ustawia. Test polityki nie wpuści
+  drugiego literału. (#216)
+
+- **frontend**: Niedokończony moduł kosztów nie jest już osiągalny. `CostView` to placeholder
+  („Moduł w przygotowaniu"), a mimo to siedział w mapie widoków bez flagi, inaczej niż
+  `orders`/`products`/`users`. Pozycji w nawigacji już nie miał, ale zapamiętana strona
+  w `localStorage` nadal potrafiła wysadzić operatora na martwym ekranie. Teraz jest za flagą
+  `FEATURES.costs`, a istniejący fallback `VIEWS[page] ?? FilesView` odsyła taką sesję na Pliki.
+  (#314)
+
+- **ci**: Nieudany teardown stagingu nie blokuje już wydania produkcyjnego. Teardown to kontrola
+  kosztów — skaluje staging do zera — a jego porażka wywracała wynik całego workflow i `CI Gate`
+  blokował merge. Na PR #337 samo `azure/login` zajęło 4 m 49 s z pięciominutowego budżetu joba,
+  przez co naprawa czekająca na operatora stanęła z powodu zadyszki Azure. Job dostaje teraz
+  `continue-on-error` oraz timeout 12 minut, dopasowany do wolnego logowania, a nie do ~20 sekund
+  faktycznej pracy. Nocny cron `Staging keep-alive schedule` i tak sprząta, więc najgorszy skutek
+  to ciepły staging do wieczora.
 
 - **auth**: Koniec z błędem MSAL `interaction_in_progress` na stronie Wysyłki. `getToken()`
   przy każdym niepowodzeniu cichego odświeżenia wpadało w `acquireTokenPopup` bez żadnej

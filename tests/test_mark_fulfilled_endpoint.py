@@ -272,9 +272,9 @@ class TestMarkFulfilledShopify:
         )
 
         with (
-            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"),
             patch(
-                "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                "zdrovena.api.routers.shipping.deps._allowed_shopify_domains",
                 return_value=frozenset(["myshop.myshopify.com"]),
             ),
         ):
@@ -313,9 +313,9 @@ class TestMarkFulfilledShopify:
         )
 
         with (
-            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"),
             patch(
-                "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                "zdrovena.api.routers.shipping.deps._allowed_shopify_domains",
                 return_value=frozenset(["myshop.myshopify.com"]),
             ),
         ):
@@ -328,7 +328,7 @@ class TestMarkFulfilledShopify:
     def test_shopify_not_configured_returns_skipped(self, client, store):
         draft_id = self._shopify_draft(store)
 
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value=None):
+        with patch("zdrovena.api.routers.shipping.deps.get_secret", return_value=None):
             resp = client.post(f"/api/shipping/drafts/{draft_id}/mark-fulfilled")
 
         assert resp.status_code == 200
@@ -349,9 +349,9 @@ class TestMarkFulfilledShopify:
         )
 
         with (
-            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"),
             patch(
-                "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                "zdrovena.api.routers.shipping.deps._allowed_shopify_domains",
                 return_value=frozenset(["myshop.myshopify.com"]),
             ),
         ):

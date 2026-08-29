@@ -19,6 +19,8 @@ from fastapi.testclient import TestClient
 # Ensure auth is disabled globally for the test module
 os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 
+from typing import ClassVar
+
 from zdrovena.api.auth import Principal, get_current_principal
 from zdrovena.api.main import app
 from zdrovena.common.storage import LocalStorageService
@@ -180,6 +182,70 @@ class TestFilesUpload:
         # our own validation or a 404 from the collapsed route is acceptable.
         resp = c.put("/api/files/../etc/passwd", content=b"x")
         assert resp.status_code in (400, 404)
+
+
+class TestFilesSystemNamespaceBoundary:
+    """The Files API must not reach workflow-owned storage (#311).
+
+    The role check cannot cover this: the operator is *supposed* to hold the
+    accountant role. A generic write over the whole container means one mistyped
+    key destroys internal state with a 204 in reply.
+    """
+
+    SYSTEM_KEYS: ClassVar[list[str]] = [
+        "apaczka/service_structure.json",
+        "apaczka/points/parcel_locker.json",
+        "apaczka%2Fservice_structure.json",
+        "apaczka%252Fservice_structure.json",
+        "APACZKA/service_structure.json",
+        "faktury/2026/Kwiecie%C5%84/.state.json",
+    ]
+
+    @pytest.mark.parametrize("key", SYSTEM_KEYS)
+    def test_upload_to_internal_storage_is_refused(self, api, key):
+        c, storage = api
+        resp = c.put(f"/api/files/{key}", content=b"tampered")
+
+        assert resp.status_code == 403, resp.text
+        assert not list(storage.root.rglob("service_structure.json"))
+
+    @pytest.mark.parametrize("key", SYSTEM_KEYS)
+    def test_delete_of_internal_storage_is_refused(self, api, key):
+        c, _ = api
+        resp = c.delete(f"/api/files/{key}")
+
+        assert resp.status_code == 403, resp.text
+
+    def test_a_refused_delete_leaves_the_blob_in_place(self, api):
+        c, storage = api
+        target = storage.root / "apaczka" / "service_structure.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"real cache")
+
+        assert c.delete("/api/files/apaczka/service_structure.json").status_code == 403
+        assert target.read_bytes() == b"real cache"
+
+    def test_operator_documents_are_unaffected(self, api):
+        """Blocking these would break the workflow the Files UI exists for."""
+        c, storage = api
+
+        assert c.put("/api/files/faktury/2026/faktura-001.pdf", content=b"pdf").status_code == 204
+        assert (storage.root / "faktury/2026/faktura-001.pdf").read_bytes() == b"pdf"
+        assert c.delete("/api/files/faktury/2026/faktura-001.pdf").status_code == 204
+
+    def test_a_prefix_that_merely_starts_the_same_is_writable(self, api):
+        c, _ = api
+
+        assert c.put("/api/files/apaczka-manual/notatka.pdf", content=b"x").status_code == 204
+
+    def test_internal_storage_is_still_readable(self, api):
+        """Read is not the risk; the operator needs to download the package."""
+        c, storage = api
+        target = storage.root / "apaczka" / "service_structure.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"{}")
+
+        assert c.get("/api/files/apaczka/service_structure.json").status_code == 200
 
 
 # ── /files — auth enforcement ─────────────────────────────────────────────────

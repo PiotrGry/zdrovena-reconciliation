@@ -1,0 +1,52 @@
+name: Azure Terraform credentials
+description: >
+  Trim Azure OIDC credentials and export them as ARM_*/TF_VAR_* for Terraform.
+  Extracted because the identical block lived in both the plan and apply jobs,
+  where two copies drift and the one nobody remembers is the one in production
+  (issue #138).
+
+inputs:
+  tenant-id:
+    description: Azure tenant id (may carry a trailing newline)
+    required: true
+  client-id:
+    description: Azure client id of the deploying service principal
+    required: true
+  subscription-id:
+    description: Azure subscription id
+    required: true
+  api-client-id:
+    description: Entra application id of the API, used for JWT audience validation
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Some Azure secrets in this repo were stored with trailing newlines.
+    # azure/login (a JS action) trims internally; Terraform's ARM_* env vars do
+    # not — a stray \n breaks URL parsing (net/url: invalid control character
+    # in URL). Trim once and export so every later Terraform step sees clean
+    # values.
+    - shell: bash
+      env:
+        RAW_TENANT_ID: ${{ inputs.tenant-id }}
+        RAW_CLIENT_ID: ${{ inputs.client-id }}
+        RAW_SUBSCRIPTION_ID: ${{ inputs.subscription-id }}
+        RAW_API_CLIENT_ID: ${{ inputs.api-client-id }}
+      run: |
+        TENANT=$(printf '%s' "$RAW_TENANT_ID" | tr -d '[:space:]')
+        CLIENT=$(printf '%s' "$RAW_CLIENT_ID" | tr -d '[:space:]')
+        SUB=$(printf '%s' "$RAW_SUBSCRIPTION_ID" | tr -d '[:space:]')
+        API_CLIENT=$(printf '%s' "$RAW_API_CLIENT_ID" | tr -d '[:space:]')
+        echo "::add-mask::$TENANT"
+        echo "::add-mask::$CLIENT"
+        echo "::add-mask::$SUB"
+        echo "::add-mask::$API_CLIENT"
+        {
+          echo "ARM_TENANT_ID=$TENANT"
+          echo "ARM_CLIENT_ID=$CLIENT"
+          echo "ARM_SUBSCRIPTION_ID=$SUB"
+          echo "TF_VAR_subscription_id=$SUB"
+          echo "TF_VAR_azure_tenant_id=$TENANT"
+          echo "TF_VAR_azure_client_id_entra=$API_CLIENT"
+        } >> "$GITHUB_ENV"

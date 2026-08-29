@@ -3,6 +3,10 @@ export const FEATURES = {
     orders: false,
     products: false,
     users: false,
+    // CostView is a placeholder — no KSeF integration, no OCR, no data.
+    // Kept out of the router so a stale zdrovena_page cannot land the
+    // operator on a dead screen (#314).
+    costs: false,
     shipping: true,
     dlq: true,
     damage: true,

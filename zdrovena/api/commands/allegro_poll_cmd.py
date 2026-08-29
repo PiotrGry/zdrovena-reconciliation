@@ -24,6 +24,7 @@ from typing import Any
 logger = logging.getLogger("zdrovena.api.commands.allegro_poll")
 
 _TRACKING_OVERDUE_HOURS = 48
+_STUCK_EXECUTION_HOURS = 4
 
 
 def _parse_utc_timestamp(value: Any) -> datetime | None:
@@ -85,25 +86,72 @@ def _emit_orders_without_tracking_snapshot(
 
 
 def _setup_logging() -> None:
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        force=True,
-    )
-    _azure_log_level = os.environ.get("LOG_LEVEL_AZURE", "WARNING").upper()
-    for _name in (
-        "azure.core.pipeline.policies.http_logging_policy",
-        "azure.identity",
-        "azure.storage",
-        "azure.data.tables",
-        "azure.monitor.opentelemetry",
-    ):
-        logging.getLogger(_name).setLevel(_azure_log_level)
+    from zdrovena.common.logging_setup import configure_process_logging
+
+    configure_process_logging(log_format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
         from zdrovena.common.telemetry import configure_azure_telemetry
 
         configure_azure_telemetry(default_service_name="zdrovena-allegro-poller")
+
+
+def _emit_stuck_execution_snapshot(shipping_store: Any, *, now: datetime | None = None) -> int:
+    """Emit the current count of drafts stuck in the execution claim state.
+
+    ``executing`` is the atomic claim taken under optimistic concurrency right
+    before the courier call, so it is measured in seconds. A draft still sitting
+    in it hours later means the worker died between claiming and completing:
+    no request failed, no DLQ entry was written, and nothing else in the system
+    notices.
+
+    Read from the authoritative store rather than reconstructed from history,
+    for the same reason as the no-tracking snapshot: an operator moving a draft
+    by hand must be reflected, and Azure log alerts cannot look back far enough.
+
+    ``execution_started_at`` records when execution *first* started and is
+    deliberately preserved across retries, so a draft re-claimed after an old
+    failure carries an old timestamp for the seconds it is in flight. The alert
+    rule requires the condition to hold across consecutive snapshots, which that
+    momentary state cannot do. The snapshot is emitted on every cycle, including
+    when the count is zero, so silence means "the poller did not run" rather
+    than "nothing is stuck".
+    """
+    try:
+        drafts = shipping_store.list_drafts()
+    except Exception:
+        logger.exception("Failed to read drafts for the stuck-execution snapshot")
+        return 0
+
+    from zdrovena.common.shipping_state import EXECUTING
+
+    observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    stuck: list[tuple[str, float]] = []
+    for draft in drafts:
+        if draft.get("status") != EXECUTING:
+            continue
+        started_at = _parse_utc_timestamp(draft.get("execution_started_at"))
+        if started_at is None:
+            # A claim without a usable timestamp cannot prove staleness.
+            logger.warning("Draft %s is executing without a valid claim time", draft.get("id"))
+            continue
+        age_hours = (observed_at - started_at).total_seconds() / 3600
+        if age_hours >= _STUCK_EXECUTION_HOURS:
+            stuck.append((str(draft.get("id") or ""), age_hours))
+
+    from zdrovena.common.events import log_event
+
+    stuck.sort(key=lambda item: item[1], reverse=True)
+    log_event(
+        "shipping.stuck_execution_snapshot",
+        level=logging.ERROR,
+        stuck_count=len(stuck),
+        draft_ids=[draft_id for draft_id, _age in stuck[:50]],
+        oldest_age_hours=round(stuck[0][1], 1) if stuck else 0,
+        threshold_hours=_STUCK_EXECUTION_HOURS,
+        snapshot_truncated=len(stuck) > 50,
+    )
+    return len(stuck)
 
 
 def _build_allegro_client():
@@ -214,6 +262,9 @@ def _run_cycle(args: argparse.Namespace) -> None:
 
     overdue_count = _emit_orders_without_tracking_snapshot(shipping_store)
     logger.info("Orders without tracking after 48h: %d", overdue_count)
+
+    stuck_count = _emit_stuck_execution_snapshot(shipping_store)
+    logger.info("Drafts stuck in execution over %dh: %d", _STUCK_EXECUTION_HOURS, stuck_count)
 
     # Detection only: create manual-review cases, never replacement shipments
     # and never customer emails. A detection failure must not invalidate the

@@ -15,8 +15,28 @@ from fastapi.responses import StreamingResponse
 
 from zdrovena.api.auth import Principal, require_accountant_or_admin, require_viewer_or_above
 from zdrovena.api.deps import StorageDep
+from zdrovena.common.storage_namespaces import SystemKeyError, require_user_key
 
 router = APIRouter(prefix="/files", tags=["files"])
+
+
+def _writable_key(key: str) -> str:
+    """Normalise and authorise a key for a write. 400 malformed, 403 internal.
+
+    The role check is not enough on its own: the operator is supposed to hold
+    the accountant role, so a generic write over the whole container lets one
+    mistyped key destroy workflow state (#311). Every encoded and traversal
+    variant is reduced to a single form before the decision.
+    """
+    try:
+        return require_user_key(key)
+    except SystemKeyError as exc:
+        if "internal storage" in str(exc):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This key belongs to internal storage and cannot be modified here.",
+            ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid key") from exc
 
 
 # NOTE: "" must be registered BEFORE "/{key:path}".
@@ -138,7 +158,7 @@ def download_file(
     responses={
         204: {"description": "Uploaded successfully"},
         400: {"description": "Invalid key"},
-        403: {"description": "Insufficient role"},
+        403: {"description": "Insufficient role, or key belongs to internal storage"},
     },
 )
 async def upload_file(
@@ -148,9 +168,7 @@ async def upload_file(
     principal: Annotated[Principal, Depends(require_accountant_or_admin)],
 ) -> None:
     """Upload a file to storage. Requires accountant or admin role."""
-    normalised = urllib.parse.unquote(key)
-    if not normalised or ".." in normalised or normalised.startswith("/"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid key")
+    normalised = _writable_key(key)
     content_type = request.headers.get("content-type", "application/octet-stream")
     # Spool to disk past 10MiB instead of buffering the whole body in memory —
     # a large upload would otherwise be read fully into RAM before storage
@@ -172,7 +190,7 @@ async def upload_file(
     responses={
         204: {"description": "Deleted successfully"},
         400: {"description": "Invalid key"},
-        403: {"description": "Insufficient role"},
+        403: {"description": "Insufficient role, or key belongs to internal storage"},
         404: {"description": "File not found"},
     },
 )
@@ -182,9 +200,7 @@ def delete_file(
     principal: Annotated[Principal, Depends(require_accountant_or_admin)],
 ) -> None:
     """Delete a file from storage. Requires accountant or admin role."""
-    normalised = urllib.parse.unquote(key)
-    if not normalised or ".." in normalised or normalised.startswith("/"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid key")
+    normalised = _writable_key(key)
     if not storage.exists(normalised):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Not found: {key!r}")
     storage.delete(normalised)

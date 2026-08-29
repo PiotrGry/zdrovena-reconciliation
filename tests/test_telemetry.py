@@ -99,3 +99,26 @@ def test_force_flush_is_non_fatal_when_one_exporter_fails(monkeypatch):
     monkeypatch.setattr("opentelemetry._logs.get_logger_provider", lambda: object())
 
     assert force_flush_azure_telemetry() is False
+
+
+def test_configuring_telemetry_installs_the_export_filter(monkeypatch):
+    """The exporter must not ship third-party INFO chatter (issue #213)."""
+    monkeypatch.setenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "InstrumentationKey=test")
+    monkeypatch.setattr("azure.monitor.opentelemetry.configure_azure_monitor", Mock())
+    install = Mock(return_value=1)
+    monkeypatch.setattr("zdrovena.common.telemetry.install_export_filter", install)
+
+    assert configure_azure_telemetry(default_service_name="zdrovena-api") is True
+    install.assert_called_once_with()
+
+
+def test_a_missing_export_handler_is_reported(monkeypatch, caplog):
+    """Silent failure here would mean paying to ingest noise with no signal."""
+    monkeypatch.setenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "InstrumentationKey=test")
+    monkeypatch.setattr("azure.monitor.opentelemetry.configure_azure_monitor", Mock())
+    monkeypatch.setattr("zdrovena.common.telemetry.install_export_filter", Mock(return_value=0))
+
+    with caplog.at_level("WARNING", logger="zdrovena.common.telemetry"):
+        assert configure_azure_telemetry(default_service_name="zdrovena-api") is True
+
+    assert "exporting handler not found" in caplog.text

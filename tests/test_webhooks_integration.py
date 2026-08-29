@@ -73,7 +73,7 @@ def _configure_webhook_secret():
     so we patch the secret to a known value and sign bodies with it. Tests that
     verify HMAC behaviour itself re-patch the secret inside the test body.
     """
-    with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_SECRET):
+    with patch("zdrovena.api.routers.shipping.ingestion._get_webhook_secret", return_value=_SECRET):
         yield
 
 
@@ -151,7 +151,7 @@ class TestInPostKurierFullFlow:
 
         # Now fetch the label — InPostClient.get_label returns bytes
         fake_pdf = b"%PDF-1.4 inpost-label"
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"):
             with patch("zdrovena.common.inpost.InPostClient.get_label", return_value=fake_pdf):
                 resp = client.get(f"/api/shipping/drafts/{draft_id}/label")
 
@@ -189,7 +189,9 @@ class TestHmacEndToEnd:
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
         secret = "live-secret-xyz"
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=secret):
+        with patch(
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret", return_value=secret
+        ):
             resp = client.post(
                 "/api/webhooks/shopify/order-create",
                 content=body,
@@ -201,7 +203,9 @@ class TestHmacEndToEnd:
     def test_invalid_signature_does_not_persist_draft(self, client, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")
         body = json.dumps(order).encode()
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value="real"):
+        with patch(
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret", return_value="real"
+        ):
             resp = client.post(
                 "/api/webhooks/shopify/order-create",
                 content=body,

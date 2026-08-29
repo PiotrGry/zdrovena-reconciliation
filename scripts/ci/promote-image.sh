@@ -36,6 +36,8 @@ else
         --cache-from type=gha \
         --cache-to  type=gha,mode=max \
         --label "git.sha=$PROD_SHA" \
+        --label "org.opencontainers.image.revision=$PROD_SHA" \
+        --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         -t "$IMAGE:$STAGING_SHA" \
         -t "$IMAGE:$PROD_SHA" \
         -t "$IMAGE:latest" \

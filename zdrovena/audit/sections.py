@@ -29,6 +29,7 @@ from zdrovena.audit.api import (
     sell_date_of,
 )
 from zdrovena.audit.bottles import BOTTLE_ALIASES, BOTTLE_PRODUCTS, invoice_bottles, wz_bottles
+from zdrovena.audit.warehouse_checks import find_invoices_without_wz, find_orphan_wz
 from zdrovena.common.formatting import MONTHS_PL
 
 if TYPE_CHECKING:
@@ -160,12 +161,8 @@ def section_orphan_wz(
     doc_actions: dict[int, list[dict]],
     verdict: Verdict,
 ) -> list[dict]:
-    """§3 — WZ documents without a linked invoice."""
-    orphans: list[dict] = []
-    for wz in wz_docs:
-        if wz["id"] not in inv_by_wz:
-            p, g = wz_bottles(wz["id"], doc_actions)
-            orphans.append({"wz": wz, "plastic": p, "glass": g, "total": p + g})
+    """§3 — WZ documents without a linked invoice. Prints; computes in checks."""
+    orphans = find_orphan_wz(wz_docs, inv_by_wz, doc_actions)
 
     if orphans:
         for o in orphans:
@@ -192,16 +189,8 @@ def section_no_wz(
     inv_by_wz: dict[int, dict],
     verdict: Verdict,
 ) -> list[dict]:
-    """§4 — Invoices with bottle positions but no linked WZ."""
-    wz_linked_ids = {inv["id"] for inv in inv_by_wz.values()}
-    no_wz: list[dict] = []
-
-    for inv in invoices:
-        if inv["id"] in wz_linked_ids:
-            continue
-        p, g = invoice_bottles(inv)
-        if p + g > 0:
-            no_wz.append({"inv": inv, "plastic": p, "glass": g, "total": p + g})
+    """§4 — Invoices with bottle positions but no linked WZ. Prints; computes in checks."""
+    no_wz = find_invoices_without_wz(invoices, inv_by_wz)
 
     if no_wz:
         for item in no_wz:

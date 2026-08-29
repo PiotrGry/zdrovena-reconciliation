@@ -12,7 +12,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from zdrovena import __version__
 from zdrovena.api.errors import install_exception_handlers
+from zdrovena.api.models import HealthResponse
 from zdrovena.api.observability import CorrelationIdFilter, correlation_id_middleware
 from zdrovena.api.routers import (
     close,
@@ -24,33 +26,17 @@ from zdrovena.api.routers import (
     webhooks,
 )
 from zdrovena.common.appenv import UNKNOWN_ENV, is_production_env, resolve_app_env
+from zdrovena.common.logging_setup import configure_process_logging
 from zdrovena.common.provider_safety import ProviderSafetyError, assert_provider_write_safety
 from zdrovena.common.telemetry import configure_azure_telemetry, instrument_fastapi_app
 
-logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO"),
-    format="%(asctime)s %(levelname)s %(name)s [%(correlation_id)s]: %(message)s",
-    force=True,
+# Without the correlation filter, %(correlation_id)s in the format string would
+# raise KeyError for records emitted outside a request (startup, libraries).
+# Attaching it to the root handler guarantees EVERY record carries the attribute.
+configure_process_logging(
+    log_format="%(asctime)s %(levelname)s %(name)s [%(correlation_id)s]: %(message)s",
+    filters=(CorrelationIdFilter(),),
 )
-# Bez tego filtra %(correlation_id)s w formacie rzuciłby KeyError dla rekordów
-# spoza żądania (start aplikacji, logi bibliotek). Filtr na handlerze root
-# gwarantuje, że KAŻDY rekord ma atrybut correlation_id.
-for _root_handler in logging.getLogger().handlers:
-    _root_handler.addFilter(CorrelationIdFilter())
-
-# Azure SDK's http_logging_policy emits every request/response header at INFO,
-# which floods the console during dev (~30 lines per Azurite/Table call). Pin
-# the noisy Azure SDK loggers to a configurable level (default WARNING). Set
-# LOG_LEVEL_AZURE=DEBUG when you actually need to inspect HTTP traffic.
-_azure_log_level = os.environ.get("LOG_LEVEL_AZURE", "WARNING").upper()
-for _name in (
-    "azure.core.pipeline.policies.http_logging_policy",
-    "azure.identity",
-    "azure.storage",
-    "azure.data.tables",
-    "azure.monitor.opentelemetry",
-):
-    logging.getLogger(_name).setLevel(_azure_log_level)
 
 logger = logging.getLogger("zdrovena.api.main")
 
@@ -150,7 +136,7 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
 app = FastAPI(
     lifespan=lifespan,
     title="Zdrovena Reconciliation API",
-    version="2.0.0",
+    version=__version__,
     description=(
         "REST API for the Zdrovena monthly accounting close pipeline. "
         "All endpoints require a valid Azure Entra ID JWT (Bearer token). "
@@ -200,6 +186,6 @@ if _azure_telemetry_enabled:
     instrument_fastapi_app(app)
 
 
-@app.get("/health", tags=["health"])
+@app.get("/health", tags=["health"], response_model=HealthResponse)
 def health() -> dict:
     return {"status": "ok", "version": app.version}

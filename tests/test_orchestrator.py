@@ -81,7 +81,12 @@ class TestNonInteractive:
         assert orch.non_interactive is False
 
     @patch("zdrovena.month_closing.orchestrator.PreflightChecker")
-    def test_step0_preflight_forwards_non_interactive_as_no_browser(self, mock_checker_cls):
+    def test_step0_preflight_does_not_pass_a_browser_flag(self, mock_checker_cls):
+        """Preflight never auto-downloaded; the orchestrator owns that decision.
+
+        This test used to assert the flag was forwarded to a parameter
+        PreflightChecker stored and never read.
+        """
         orch = _make_orchestrator(non_interactive=True)
         mock_checker = MagicMock()
         mock_checker.run.return_value = SimpleNamespace(
@@ -93,14 +98,8 @@ class TestNonInteractive:
 
         orch._step_0_preflight()
 
-        call_kwargs = mock_checker_cls.call_args.kwargs
-        assert call_kwargs["no_browser"] is True
+        assert "no_browser" not in mock_checker_cls.call_args.kwargs
 
-
-# ── Constructor validation ────────────────────────────────────────────────────
-
-
-class TestOrchestratorInit:
     def test_invalid_month(self):
         with pytest.raises(ValueError, match="Invalid month"):
             MonthCloseOrchestrator(year=2025, month=13)

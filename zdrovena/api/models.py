@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CloseRequest(BaseModel):
@@ -89,6 +89,15 @@ class CloseWorkflowActionRequest(BaseModel):
         if self.year < 2020:
             raise ValueError(f"Suspicious year: {self.year}")
         return self
+
+
+class CloseEmailAttemptResolution(BaseModel):
+    """An operator's decision about a send whose outcome nobody can read."""
+
+    year: int = Field(..., ge=2020)
+    month: int = Field(..., ge=1, le=12)
+    delivered: bool
+    note: str = ""
 
 
 class CloseWorkflowWaiverRequest(BaseModel):
@@ -218,3 +227,236 @@ class ProductItem(BaseModel):
             currency=p.get("currency", "PLN"),
             active=not p.get("disabled", False),
         )
+
+
+# ── Damage cases ──────────────────────────────────────────────────────────────
+#
+# These endpoints used to be annotated `dict[str, Any]`, so OpenAPI published an
+# unconstrained object and the generated TypeScript was literally
+# `{ [key: string]: unknown }` — nothing for the frontend to hold on to (#356).
+#
+# Two properties make declaring a schema safe here, and both are load-bearing:
+#
+#   extra="allow"  — FastAPI FILTERS OUT fields a response model does not
+#                    declare. A case record is assembled from detection context
+#                    and provider payloads, so its exact key set is not fixed;
+#                    without this, publishing a schema would silently truncate
+#                    responses the operator screen reads.
+#   every field optional — response validation runs on the way out, so a record
+#                    missing a field would become a 500 rather than a response.
+#
+# The result documents the fields the UI relies on without narrowing the payload.
+
+
+class DamageCaseModel(BaseModel):
+    """One damaged-shipment case. Documents known fields, passes the rest through."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    status: str | None = None
+    classification: str | None = None
+    confidence: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    detected_at: str | None = None
+    tracking_number: str | None = None
+    order_number: int | str | None = None
+    customer_name: str | None = None
+    customer_email: str | None = None
+    sources: list[str] | None = None
+    evidence: list[dict[str, Any]] | None = None
+    shipping_draft_id: str | None = None
+    replacement_draft_id: str | None = None
+    replacement_tracking_number: str | None = None
+    replacement_created_at: str | None = None
+    email_draft: dict[str, Any] | None = None
+    email_sent_at: str | None = None
+    email_sent_by: str | None = None
+    email_error: str | None = None
+    email_attempt: dict[str, Any] | None = None
+    confirmed_at: str | None = None
+    confirmed_by: str | None = None
+    operator_note: str | None = None
+    closed_at: str | None = None
+    closed_by: str | None = None
+
+
+class DamageCasesResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    cases: list[DamageCaseModel]
+    needs_review: int
+
+
+class DamageSummaryResponse(BaseModel):
+    needs_review: int
+
+
+class DamageCaseWithDraftResponse(BaseModel):
+    """A case plus whatever the step produced alongside it."""
+
+    model_config = ConfigDict(extra="allow")
+
+    case: DamageCaseModel
+    draft: dict[str, Any] | None = None
+    email_draft: dict[str, Any] | None = None
+    created: bool | None = None
+    attempt: dict[str, Any] | None = None
+
+
+class DamageRefreshResponse(BaseModel):
+    """Result of polling the providers for damage signals.
+
+    Each provider key is either its scan summary or `{"error": ...}` — a failure
+    on one side must not hide the other's result, which is why they are separate
+    keys rather than one status.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    allegro: dict[str, Any] | None = None
+    zoho: dict[str, Any] | None = None
+    needs_review: int | None = None
+
+
+# Every route using these passes `response_model_exclude_unset=True`. Without it
+# a response model does not only filter fields out — it also ADDS every declared
+# field the payload lacked, as null. That is a wire change for something meant to
+# be purely documentary, and it broke a test asserting an exact payload. With it,
+# the bytes on the wire are identical to before and the schema is just published.
+#
+# ── Shipping ──────────────────────────────────────────────────────────────────
+#
+# Same shape and same reasoning as the damage models above (#358): a draft
+# carries carrier-dependent fields — InPost, Apaczka and Allegro Delivery each
+# add their own — so the key set is not fixed. `extra="allow"` keeps them;
+# without it FastAPI would filter every undocumented field out of the shipping
+# screen's payload, and nothing would fail while it happened.
+
+
+class ShippingDraftModel(BaseModel):
+    """One shipping draft. Documents the fields the portal reads.
+
+    Identifiers minted by a provider are typed `int | str` on purpose: each
+    courier decides its own representation, and Fakturownia additionally uses
+    the sentinel `"pending"` in an otherwise numeric field. Pinning them to
+    `str` turns a working response into a 500 at validation time — which is how
+    this was found.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    status: str | None = None
+    source: str | None = None
+    external_order_id: int | str | None = None
+    shopify_order_id: int | str | None = None
+    shopify_order_number: int | str | None = None
+    order_number: int | str | None = None
+    customer_name: str | None = None
+    courier: str | None = None
+    service: str | None = None
+    apaczka_service_id: int | str | None = None
+    tracking_number: str | None = None
+    tracking_company: str | None = None
+    courier_draft_id: int | str | None = None
+    courier_shipments: list[dict[str, Any]] | None = None
+    dispatch_order_id: int | str | None = None
+    packages_count: int | None = None
+    packages_breakdown: list[dict[str, Any]] | None = None
+    pickup_ordered: bool | None = None
+    receiver: dict[str, Any] | None = None
+    error: str | None = None
+    is_replacement: bool | None = None
+    fulfillment_status: str | None = None
+    execution_started_at: str | None = None
+
+
+class ShippingDraftsResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    drafts: list[ShippingDraftModel]
+
+
+class ApaczkaServiceModel(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    service_id: int | str | None = None
+    label: str | None = None
+
+
+class ApaczkaServicesResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    services: list[ApaczkaServiceModel]
+
+
+class DlqEntriesResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    entries: list[dict[str, Any]]
+
+
+class DlqRetryResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    entry_id: int | str | None = None
+    status: str | None = None
+    draft_id: int | str | None = None
+    error: str | None = None
+
+
+class ShipmentActionResponse(BaseModel):
+    """Result of executing, confirming or cancelling courier work on a draft."""
+
+    model_config = ConfigDict(extra="allow")
+
+    draft_id: int | str | None = None
+    status: str | None = None
+    tracking_number: str | None = None
+    shipment_id: int | str | None = None
+    dispatch_id: str | None = None
+    error: str | None = None
+
+
+class MarkFulfilledResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    draft_id: int | str | None = None
+    status: str | None = None
+    source: str | None = None
+    external_order_id: int | str | None = None
+    shopify_fulfillment_id: int | str | None = None
+    created: bool | None = None
+    skipped: str | None = None
+
+
+class InvoiceActionResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    status: str | None = None
+    pending: bool | None = None
+    buyer_name: str | None = None
+    fakturownia_invoice_id: int | str | None = None
+    fakturownia_invoice_number: int | str | None = None
+    error: str | None = None
+
+
+class ShippingSyncResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    fetched: int | None = None
+    created: int | None = None
+    updated: int | None = None
+    unchanged: int | None = None
+    errors: int | None = None
+
+
+class HealthResponse(BaseModel):
+    """Liveness plus the version actually running — see #216 for why that matters."""
+
+    status: str
+    version: str
