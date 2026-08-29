@@ -117,7 +117,8 @@ export default function DamageView({ onNavigate, onDamageChanged }) {
             setError(null)
         }
         try {
-            const token = await getToken()
+            // A silent poll must not open a sign-in prompt — no user gesture here.
+            const token = await getToken({ interactive: !silent })
             const data = await getDamageCases({ token })
             setCases(data.cases ?? [])
             onDamageChanged?.()

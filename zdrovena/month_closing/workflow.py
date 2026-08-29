@@ -5,16 +5,19 @@ from __future__ import annotations
 import calendar
 import fnmatch
 import logging
+import smtplib
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Any
 
 from zdrovena.audit.sections import check_numbering
-from zdrovena.common import FakturowniaClient
+from zdrovena.common import FakturowniaClient, send_attempt
+from zdrovena.common.events import log_event
 from zdrovena.common.storage import StorageService, get_storage_service
 from zdrovena.month_closing.close_history import append_close_history, build_history_entry
 from zdrovena.month_closing.config import (
+    ACCOUNTANT_EMAIL,
     BASE_DIR,
     EXPECTED_VENDORS,
     FAKTUROWNIA_REPORTS,
@@ -23,10 +26,21 @@ from zdrovena.month_closing.config import (
 )
 from zdrovena.month_closing.console import ConsoleReporter
 from zdrovena.month_closing.orchestrator import CloseReport, MonthCloseOrchestrator
+from zdrovena.month_closing.package_integrity import (
+    PackageIntegrityError,
+    build_package_artifact,
+    verify_package_artifact,
+)
 from zdrovena.month_closing.preflight import pko_matches_month
 from zdrovena.month_closing.run_store import CloseRunStore, RunBusyError
+from zdrovena.month_closing.warehouse_audit import warehouse_issues
 
 logger = logging.getLogger("zdrovena.month_closing.workflow")
+
+
+class EmailAttemptResolutionError(RuntimeError):
+    """There is no unresolved send attempt to settle."""
+
 
 COLLECTION_ACTIONS = ("sales", "costs", "reports", "bank")
 
@@ -279,6 +293,11 @@ class MonthCloseInspector:
                         f"Duplikaty numeracji /{series.series}: {series.duplicates}",
                     )
                 )
+
+        # The warehouse side. Until #308 nothing in month-close asked whether an
+        # invoice had a WZ behind it, so a month could be closed and mailed with
+        # goods shipped and never billed, or billed and never shipped.
+        issues.extend(warehouse_issues(client, self.year, self.month))
 
         documents.extend(self._cost_documents(costs, month_files, issues))
         return {
@@ -755,6 +774,18 @@ class MonthCloseWorkflow:
                 confirm,
                 override_reason,
             )
+            if not prerequisite_error and action == "send":
+                # Last gate before the bytes leave: the reviewed package and the
+                # one about to be attached must be the same (#311).
+                prerequisite_error = self._package_blocking_reason(run)
+                if not prerequisite_error:
+                    # An unresolved previous attempt means the accountant may
+                    # already have the mail. Re-sending is the wrong guess (#312).
+                    allowed, reason = send_attempt.may_send(
+                        send_attempt.SendAttempt.from_dict(run.get("email_attempt"))
+                    )
+                    if not allowed:
+                        prerequisite_error = reason
             if prerequisite_error:
                 run["issues"] = [issue for issue in run["issues"] if issue.get("stage") != action]
                 run["issues"].append(
@@ -767,6 +798,21 @@ class MonthCloseWorkflow:
                     message=prerequisite_error,
                     status="needs_input",
                 )
+
+            attempt: send_attempt.SendAttempt | None = None
+            if action == "send":
+                package = next(
+                    (a for a in run.get("artifacts", []) if a.get("kind") == "package"), {}
+                )
+                attempt = send_attempt.begin(
+                    recipients=[ACCOUNTANT_EMAIL],
+                    subject=f"{year}-{month:02d}",
+                    artifact=str(package.get("sha256") or package.get("key") or ""),
+                )
+                run["email_attempt"] = attempt.to_dict()
+                # Persisted BEFORE the orchestrator can reach SMTP. Writing it
+                # afterwards leaves an accepted message with nothing on disk.
+                self.store.save(run)
 
             buffer = StringIO()
             orchestrator = MonthCloseOrchestrator(
@@ -814,6 +860,8 @@ class MonthCloseWorkflow:
                     }
                 )
             status = self._next_status(run, action)
+            if action == "send" and attempt is not None:
+                run["email_attempt"] = send_attempt.confirm(attempt).to_dict()
             if action == "send":
                 append_close_history(
                     self.storage,
@@ -836,6 +884,16 @@ class MonthCloseWorkflow:
             )
         except Exception as exc:
             logger.exception("Month-close action %s failed", action)
+            # Only a refusal we actually saw counts as a failure. Anything else
+            # — a timeout, a dead socket — leaves the attempt pending so it ages
+            # into `unknown` and waits for a person, instead of inviting an
+            # automatic second mail to the accountant.
+            if (
+                action == "send"
+                and attempt is not None
+                and isinstance(exc, smtplib.SMTPResponseException)
+            ):
+                run["email_attempt"] = send_attempt.fail(attempt, str(exc)).to_dict()
             run["issues"] = [issue for issue in run["issues"] if issue.get("stage") != action]
             run["issues"].append(_issue(f"{action}-error", "error", str(exc), stage=action))
             return self._finish(
@@ -873,6 +931,67 @@ class MonthCloseWorkflow:
                 override_reason and override_reason.strip()
             ):
                 return "Wysyłka z ostrzeżeniami wymaga podania powodu."
+        return None
+
+    def resolve_email_attempt(
+        self, year: int, month: int, *, delivered: bool, by: str, note: str = ""
+    ) -> dict[str, Any]:
+        """Record what actually happened to an ambiguous send (#312).
+
+        Only a person can settle this: from our side an accepted-then-lost
+        message and a never-sent one look identical. ``delivered=True`` closes
+        the period without a second mail to the accountant; ``delivered=False``
+        is what unblocks a retry.
+        """
+        run = self.get_run(year, month, by)
+        attempt = send_attempt.SendAttempt.from_dict(run.get("email_attempt"))
+        state = send_attempt.classify(attempt)
+        if attempt is None or state not in (send_attempt.UNKNOWN, send_attempt.PENDING):
+            raise EmailAttemptResolutionError("Brak nierozstrzygniętej próby wysyłki.")
+
+        resolved = send_attempt.resolve(attempt, delivered=delivered, by=by, note=note)
+        run["email_attempt"] = resolved.to_dict()
+        if delivered:
+            run["steps"]["send"]["status"] = "done"
+            run["status"] = "completed"
+        self.store.save(run)
+        log_event(
+            "close.email_attempt_resolved",
+            year=year,
+            month=month,
+            attempt_id=attempt.id,
+            delivered=delivered,
+            resolved_by=by,
+        )
+        return run
+
+    def _package_blocking_reason(self, run: dict[str, Any]) -> str | None:
+        """Refuse to send a package that is not the one that was reviewed.
+
+        Kept out of _validate_action because it needs storage, and separate
+        because it is the only check here that reads the artefact rather than
+        the run state (#311).
+        """
+        artifact = next(
+            (a for a in run.get("artifacts", []) if a.get("kind") == "package"),
+            None,
+        )
+        reason = verify_package_artifact(self.storage, artifact)
+        if reason:
+            log_event(
+                "close.package_verification_failed",
+                level=logging.ERROR,
+                key=(artifact or {}).get("key"),
+                artifact_id=(artifact or {}).get("artifact_id"),
+                reason=reason,
+            )
+            return reason
+
+        log_event(
+            "close.package_verified",
+            key=(artifact or {}).get("key"),
+            artifact_id=(artifact or {}).get("artifact_id"),
+        )
         return None
 
     @staticmethod
@@ -914,8 +1033,8 @@ class MonthCloseWorkflow:
             return "awaiting_review"
         return "collecting"
 
-    @staticmethod
     def _apply_report(
+        self,
         run: dict[str, Any],
         action: str,
         report: CloseReport,
@@ -950,13 +1069,33 @@ class MonthCloseWorkflow:
             run["artifacts"] = [
                 artifact for artifact in run["artifacts"] if artifact.get("kind") != "package"
             ]
-            run["artifacts"].append(
-                {
-                    "kind": "package",
-                    "key": str(report.zip_path),
-                    "files": report.zip_files or [],
-                }
-            )
+            run["artifacts"].append(self._package_artifact(report))
+
+    def _package_artifact(self, report: CloseReport) -> dict[str, Any]:
+        """Record the package strongly enough to recognise it again at send.
+
+        A failure to hash is recorded without one rather than raised: the
+        package itself was built successfully, and send refuses an artefact
+        with no hash anyway, so the operator gets a clear "rebuild it" instead
+        of a stack trace on a step that worked.
+        """
+        key = str(report.zip_path)
+        files = list(report.zip_files or [])
+        try:
+            artifact = build_package_artifact(self.storage, key=key, files=files)
+        except PackageIntegrityError as exc:
+            logger.warning("Could not hash the package at %s: %s", key, exc)
+            return {"kind": "package", "key": key, "files": sorted(files)}
+
+        log_event(
+            "close.package_built",
+            key=key,
+            artifact_id=artifact["artifact_id"],
+            sha256=artifact["sha256"],
+            size_bytes=artifact["size_bytes"],
+            file_count=len(artifact["files"]),
+        )
+        return artifact
 
     @staticmethod
     def _apply_known_email_sources(run: dict[str, Any]) -> None:

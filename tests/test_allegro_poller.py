@@ -18,6 +18,35 @@ from zdrovena.api.routers.allegro_poller import poll_orders_once
 from zdrovena.common.shipping_store import ShippingStore
 
 
+def _mock_store() -> MagicMock:
+    """A store double whose targeted lookup answers from the stubbed list.
+
+    The poller no longer builds a dedup index from list_drafts (#316), but every
+    test here still expresses "what is already in the store" as a list. Wiring
+    the two keeps each test's intent while exercising the new seam.
+    """
+    store = MagicMock()
+
+    def _find(*, source: str, external_order_id: str):
+        stubbed = store.list_drafts.return_value
+        if not isinstance(stubbed, list):
+            return None
+        matches = [
+            d
+            for d in stubbed
+            if d.get("source") == source
+            and str(d.get("external_order_id", "")) == str(external_order_id)
+            and not d.get("is_replacement")
+        ]
+        for draft in matches:
+            if draft.get("status") != "error":
+                return draft
+        return matches[0] if matches else None
+
+    store.find_draft_by_external_id.side_effect = _find
+    return store
+
+
 def _form(order_id: str, sku: str = "HUMIO-PET-6-001") -> dict:
     return {
         "id": order_id,
@@ -60,7 +89,7 @@ class TestPollOrdersOnce:
     def test_no_orders_returns_zero(self):
         client = MagicMock()
         client.list_orders.return_value = []
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = []
         stats = poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
         assert stats["fetched"] == 0
@@ -72,7 +101,7 @@ class TestPollOrdersOnce:
         monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = []
         poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
         assert store.upsert_draft.call_count == 1
@@ -86,7 +115,7 @@ class TestPollOrdersOnce:
         monkeypatch.setenv("ALLEGRO_MARK_ON_DRAFT", "1")
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = []
         poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
         client.mark_order_processed.assert_called_once_with("af1")
@@ -94,7 +123,7 @@ class TestPollOrdersOnce:
     def test_idempotency_skips_existing_allegro_draft(self):
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = [
             {
                 "id": "draft-af1",
@@ -160,7 +189,7 @@ class TestPollOrdersOnce:
     def test_error_draft_is_reused_as_retry_target_without_creating_new_record(self):
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = [
             {
                 "id": "draft-af1-error",
@@ -184,7 +213,7 @@ class TestPollOrdersOnce:
     def test_non_error_draft_wins_when_legacy_duplicate_error_record_exists(self):
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = [
             {
                 "id": "duplicate-error",
@@ -210,7 +239,7 @@ class TestPollOrdersOnce:
     def test_replacement_draft_does_not_shadow_original_order_import(self):
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = [
             {
                 "id": "replacement-af1",
@@ -232,7 +261,7 @@ class TestPollOrdersOnce:
         # A Shopify draft with the same numeric id must NOT prevent Allegro create
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = [
             {"source": "shopify", "external_order_id": "af1", "status": "pending"}
         ]
@@ -243,7 +272,7 @@ class TestPollOrdersOnce:
         monkeypatch.setenv("ALLEGRO_MARK_ON_DRAFT", "1")
         client = MagicMock()
         client.list_orders.return_value = [_form("af1"), _form("af2"), _form("af3")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = []
         # simulate storage error on second upsert
         store.upsert_draft.side_effect = [None, RuntimeError("boom"), None]
@@ -259,7 +288,7 @@ class TestPollOrdersOnce:
     def test_uses_ready_for_processing_status_filter(self):
         client = MagicMock()
         client.list_orders.return_value = []
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = []
         poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
         kwargs = client.list_orders.call_args.kwargs
@@ -268,7 +297,7 @@ class TestPollOrdersOnce:
     def test_uses_new_fulfillment_status_filter_by_default(self):
         client = MagicMock()
         client.list_orders.return_value = []
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = []
         poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
         kwargs = client.list_orders.call_args.kwargs
@@ -280,16 +309,22 @@ class TestPollOrdersOnce:
     def test_list_orders_exception_returns_error_stats(self):
         client = MagicMock()
         client.list_orders.side_effect = RuntimeError("network")
-        store = MagicMock()
+        store = _mock_store()
         stats = poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
         assert stats["errors"] >= 1
         assert stats["created"] == 0
 
-    def test_dedup_snapshot_failure_fails_closed_without_per_order_effects(self):
+    def test_dedup_lookup_failure_fails_closed_without_per_order_effects(self):
+        """No definite answer means no idempotency decision.
+
+        The lookup is now per order rather than one snapshot per cycle, so the
+        failure is scoped to the order — but it must still fail closed, because
+        proceeding would write a second draft for an order that already has one.
+        """
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
-        store.list_drafts.side_effect = RuntimeError("dedup store unavailable")
+        store = _mock_store()
+        store.find_draft_by_external_id.side_effect = RuntimeError("dedup store unavailable")
         fakturownia = MagicMock()
 
         with (
@@ -318,7 +353,7 @@ class TestPollOrdersOnce:
         client = MagicMock()
         # single page — poller invokes once for the default cycle
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = []
         poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
         assert client.list_orders.call_count == 1
@@ -328,7 +363,7 @@ class TestExternalOrderIdOnDraft:
     def test_external_order_id_set_for_allegro(self):
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = []
         poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
         saved = store.upsert_draft.call_args.args[0]
@@ -337,7 +372,7 @@ class TestExternalOrderIdOnDraft:
     def test_shopify_order_id_absent_or_matches_external(self):
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = []
         poll_orders_once(client=client, shipping_store=store, storage=MagicMock())
         saved = store.upsert_draft.call_args.args[0]
@@ -350,7 +385,7 @@ class TestInvoiceCreationWiring:
         monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = []
         fakturownia = MagicMock()
 
@@ -380,7 +415,7 @@ class TestInvoiceCreationWiring:
         monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = [
             {
                 "id": "draft-af1",
@@ -421,7 +456,7 @@ class TestInvoiceCreationWiring:
         monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = [
             {
                 "id": "draft-af1",
@@ -455,7 +490,7 @@ class TestInvoiceCreationWiring:
         monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = [
             {
                 "id": "draft-af1",
@@ -482,7 +517,7 @@ class TestInvoiceCreationWiring:
         monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = [
             {
                 "id": "draft-af1",
@@ -509,7 +544,7 @@ class TestInvoiceCreationWiring:
         monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = []
         store.upsert_draft.side_effect = RuntimeError("store down")
         fakturownia = MagicMock()
@@ -528,7 +563,7 @@ class TestInvoiceCreationWiring:
         monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = [
             {
                 "id": "draft-af1",
@@ -558,7 +593,7 @@ class TestInvoiceCreationWiring:
         form["updatedAt"] = "2026-07-15T10:00:00Z"
         client = MagicMock()
         client.list_orders.return_value = [form]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = [
             {
                 "id": "draft-af1",
@@ -587,7 +622,7 @@ class TestInvoiceCreationWiring:
         form["updatedAt"] = "2026-07-15T10:00:00Z"
         client = MagicMock()
         client.list_orders.return_value = [form]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = [
             {
                 "id": "draft-af1",
@@ -616,7 +651,7 @@ class TestInvoiceCreationWiring:
         monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
         client = MagicMock()
         client.list_orders.return_value = [_form("af1"), _form("af2")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = []
         fakturownia = MagicMock()
 
@@ -641,7 +676,7 @@ class TestInvoiceCreationWiring:
         monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = []
 
         with patch("zdrovena.api.routers.allegro_poller.create_invoice_for_order") as mock_invoicer:
@@ -658,7 +693,7 @@ class TestInvoiceCreationWiring:
         monkeypatch.delenv("ALLEGRO_MARK_ON_DRAFT", raising=False)
         client = MagicMock()
         client.list_orders.return_value = [_form("af1")]
-        store = MagicMock()
+        store = _mock_store()
         store.list_drafts.return_value = []
         fakturownia = MagicMock()
 

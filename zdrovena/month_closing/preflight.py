@@ -52,7 +52,6 @@ class PreflightChecker:
         cost_date_to: str,
         dry_run: bool,
         get_secret: Callable[..., str | None],
-        no_browser: bool = False,
         storage: StorageService | None = None,
         blob_inbox_prefix: str = "faktury/inbox",
         out_fn: Callable[[str], None] | None = None,
@@ -65,7 +64,6 @@ class PreflightChecker:
         self.cost_date_to = cost_date_to
         self.dry_run = dry_run
         self._get_secret = get_secret
-        self.no_browser = no_browser
         self._storage = storage
         self._blob_inbox_prefix = blob_inbox_prefix
         self._blob_downloads: list[tuple[str, Path]] = []

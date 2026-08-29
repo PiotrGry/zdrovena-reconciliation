@@ -3,7 +3,7 @@ import { useAuth } from '../../auth'
 import { useToast } from '../../components/Toast'
 import { Icon } from '../../components/Icon'
 import { fmtBytes, fmtDate } from '../../data'
-import { fetchJson } from '../../api'
+import { deleteFile as deleteStoredFile, listFiles, uploadFile } from '../../api/endpoints'
 
 const INBOX_PREFIX = 'faktury/inbox'
 
@@ -42,10 +42,7 @@ export function DocChecklist({ onStatusChange }) {
         setLoading(true)
         try {
             const token = await getToken()
-            const data = await fetchJson(
-                `/api/files?prefix=${encodeURIComponent(INBOX_PREFIX)}`,
-                { token },
-            )
+            const data = await listFiles({ prefix: INBOX_PREFIX, token })
             setItems((data.items ?? data).filter(i =>
                 !(i.is_directory || (i.key ?? i.name ?? '').endsWith('/'))
             ))
@@ -68,11 +65,11 @@ export function DocChecklist({ onStatusChange }) {
     const upload = useCallback(async (file) => {
         try {
             const token = await getToken()
-            await fetchJson(`/api/files/${encodeURIComponent(`${INBOX_PREFIX}/${file.name}`)}`, {
-                method: 'PUT',
-                token,
-                headers: { 'Content-Type': file.type || 'application/octet-stream' },
+            await uploadFile({
+                key: `${INBOX_PREFIX}/${file.name}`,
                 body: file,
+                contentType: file.type || 'application/octet-stream',
+                token,
             })
             load()
         } catch (e) {
@@ -84,10 +81,7 @@ export function DocChecklist({ onStatusChange }) {
         if (!window.confirm(`Usuń "${key.split('/').pop()}" z inbox?`)) return
         try {
             const token = await getToken()
-            await fetchJson(`/api/files/${encodeURIComponent(key)}`, {
-                method: 'DELETE',
-                token,
-            })
+            await deleteStoredFile({ key, token })
             load()
         } catch (e) {
             pushToast({ kind: 'error', msg: `Błąd usuwania: ${e.message}` })

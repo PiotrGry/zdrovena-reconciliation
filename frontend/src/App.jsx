@@ -20,11 +20,11 @@ import LoginScreen from './views/LoginScreen'
 import { getDamageSummary } from './api/endpoints'
 import { usePolling } from './hooks/usePolling'
 
-const VIEWS = {
+export const VIEWS = {
     files: FilesView,
     close: CloseView,
     sales: SalesView,
-    costs: CostView,
+    ...(FEATURES.costs && { costs: CostView }),
     ...(FEATURES.products && { products: ProductsView }),
     ...(FEATURES.orders && { orders: OrdersView }),
     ...(FEATURES.users && { users: UsersView }),

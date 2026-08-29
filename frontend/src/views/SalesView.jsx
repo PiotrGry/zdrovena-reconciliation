@@ -41,7 +41,8 @@ export default function SalesView() {
             setError(null)
         }
         try {
-            const token = await getToken()
+            // A silent poll must not open a sign-in prompt — no user gesture here.
+            const token = await getToken({ interactive: !silent })
             setItems(await getSalesInvoices({ year, month, token }))
         } catch (e) {
             if (!silent) {

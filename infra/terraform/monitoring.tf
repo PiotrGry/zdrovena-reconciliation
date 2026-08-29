@@ -281,3 +281,326 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "allegro_poller_failin
 
   tags = local.tags
 }
+
+# ── Alert: awaria magazynu stanu (nie „brak danych") ─────────────────────────
+#
+# Do #310 warstwa persistence mapowała każdy błąd odczytu na None/pustą listę,
+# więc niedostępny Table Storage wyglądał identycznie jak brak rekordów: portal
+# pokazywał zero draftów i nikt nie widział różnicy. Po #310 taki odczyt rzuca
+# StorageUnavailableError i emituje zdarzenie `storage_unavailable`.
+#
+# Próg 0 (każde wystąpienie) jest tu uzasadniony inaczej niż w regułach niżej:
+# to zdarzenie z konstrukcji nie powstaje przy normalnej pracy. Brak encji to
+# ResourceNotFound obsługiwany osobno i NIE emitujący tego zdarzenia.
+
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "storage_unavailable" {
+  name                = "${var.prefix}-alert-storage-unavailable"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  description         = "Magazyn stanu (Table Storage) niedostępny — odczyt zawiódł, to nie jest brak danych"
+  severity            = 1
+
+  evaluation_frequency = "PT5M"
+  window_duration      = "PT15M"
+  scopes               = [azurerm_application_insights.ai.id]
+
+  criteria {
+    query                   = <<-KQL
+      traces
+      | extend payload = parse_json(message)
+      | where tostring(payload.event) == "storage_unavailable"
+      | project timestamp, cloud_RoleName,
+                store = tostring(payload.store),
+                operation = tostring(payload.operation),
+                error_type = tostring(payload.error_type),
+                correlation_id = tostring(payload.correlation_id)
+    KQL
+    time_aggregation_method = "Count"
+    threshold               = 0
+    operator                = "GreaterThan"
+
+    failing_periods {
+      minimum_failing_periods_to_trigger_alert = 1
+      number_of_evaluation_periods             = 1
+    }
+  }
+
+  auto_mitigation_enabled = true
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+
+  tags = local.tags
+}
+
+# ── Alert: zależności zewnętrzne sypią błędami ───────────────────────────────
+#
+# Szeroka sieć na Key Vault, Blob/Table Storage i wywołania HTTP do przewoźników.
+# Uzupełnia regułę wyżej: tamta łapie moment, w którym odczyt stanu zawiódł,
+# ta widzi zależność psującą się jeszcze zanim przełoży się na błąd aplikacji.
+#
+# Wykluczone kody odpowiedzi to NIE tłumienie błędów, tylko normalny przepływ
+# sterowania tego kodu:
+#   404 — `get_entity` dla nieistniejącego drafta; wzorzec „spróbuj odczytać,
+#         obsłuż brak" jest tu wszędzie i zwraca 404 dziesiątki razy na minutę,
+#   409 — konflikt przy upsercie, ponawiany,
+#   412 — przegrany wyścig o ETag w `try_claim_execution`; to działający
+#         mechanizm zapobiegania podwójnej przesyłce, a nie awaria.
+# Bez tego wykluczenia reguła alarmowałaby non stop i zostałaby wyciszona,
+# czyli byłaby gorsza niż jej brak.
+#
+# Próg > 5 w oknie 15 minut przepuszcza pojedynczy timeout dostawcy (ponawiany
+# w następnym cyklu), a systematyczną awarię łapie w pierwszym oknie.
+
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dependency_failures" {
+  name                = "${var.prefix}-alert-dependency-failures"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  description         = "Zależności zewnętrzne (Key Vault, Storage, HTTP przewoźników) zwracają błędy"
+  severity            = 2
+
+  evaluation_frequency = "PT5M"
+  window_duration      = "PT15M"
+  scopes               = [azurerm_application_insights.ai.id]
+
+  criteria {
+    query                   = <<-KQL
+      dependencies
+      | where success == false
+      | where resultCode !in ("404", "409", "412")
+      | project timestamp, cloud_RoleName, type, target, name, resultCode, operation_Id
+    KQL
+    time_aggregation_method = "Count"
+    threshold               = 5
+    operator                = "GreaterThan"
+
+    failing_periods {
+      minimum_failing_periods_to_trigger_alert = 1
+      number_of_evaluation_periods             = 1
+    }
+  }
+
+  auto_mitigation_enabled = true
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+
+  tags = local.tags
+}
+
+# ── Alert: synchronizacja zakończona błędem ──────────────────────────────────
+#
+# `sync.completed` powstaje ZAWSZE, także gdy jedno ze źródeł się wywaliło —
+# wyjątek jest łapany i ląduje w payloadzie jako `allegro.error` / `shopify.error`.
+# Samo wystąpienie zdarzenia nie mówi więc nic o powodzeniu; trzeba zajrzeć do
+# środka. Operator klikający „synchronizuj" widzi wynik na ekranie, ale nikt tego
+# nie zauważa, gdy klika i odchodzi od komputera.
+#
+# `shopify.skipped` to nie błąd (integracja nieskonfigurowana) i nie alarmuje.
+# `allegro.error == "credentials_not_configured"` alarmuje świadomie: synchronizacja,
+# która po cichu nic nie robi, jest gorsza od takiej, która głośno pada.
+
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "sync_failed" {
+  name                = "${var.prefix}-alert-sync-failed"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  description         = "Ręczna synchronizacja zakończyła się błędem Allegro lub Shopify"
+  severity            = 2
+
+  evaluation_frequency = "PT15M"
+  window_duration      = "PT1H"
+  scopes               = [azurerm_application_insights.ai.id]
+
+  criteria {
+    query                   = <<-KQL
+      traces
+      | extend payload = parse_json(message)
+      | where tostring(payload.event) == "sync.completed"
+      | extend allegro_error = tostring(payload.allegro.error),
+               shopify_error = tostring(payload.shopify.error)
+      | where isnotempty(allegro_error) or isnotempty(shopify_error)
+      | project timestamp, allegro_error, shopify_error,
+                correlation_id = tostring(payload.correlation_id)
+    KQL
+    time_aggregation_method = "Count"
+    threshold               = 0
+    operator                = "GreaterThan"
+
+    failing_periods {
+      minimum_failing_periods_to_trigger_alert = 1
+      number_of_evaluation_periods             = 1
+    }
+  }
+
+  auto_mitigation_enabled = true
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+
+  tags = local.tags
+}
+
+# ── Alert: draft zakleszczony w stanie roszczenia ────────────────────────────
+#
+# `executing` to atomowe roszczenie brane pod optimistic concurrency tuż przed
+# wywołaniem przewoźnika — liczone w sekundach. Draft siedzący w nim godzinami
+# oznacza, że proces zginął między zajęciem a zakończeniem: żaden request nie
+# padł, żaden wpis nie trafił do DLQ, żadna inna reguła w tym pliku tego nie widzi.
+#
+# Stan czytany jest ze sklepu draftów przez poller (co 20 minut), a nie
+# rekonstruowany z historii zdarzeń — dzięki temu ręczna zmiana statusu przez
+# operatora jest uwzględniona natychmiast.
+#
+# Wymóg DWÓCH kolejnych migawek to obrona przed jedynym znanym fałszywym
+# alarmem: `execution_started_at` zapisuje moment PIERWSZEGO startu i jest
+# celowo zachowywane przy ponowieniu (pinuje to test
+# `test_retry_preserves_original_execution_start`), więc draft ponawiany po
+# starej porażce przez kilka sekund niesie stary znacznik. Kilka sekund nie
+# przeżyje dwóch cykli pollera; realne zakleszczenie przeżyje każdy.
+
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "stuck_execution" {
+  name                = "${var.prefix}-alert-stuck-execution"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  description         = "Draft tkwi w stanie 'executing' ponad 4h — proces zginął po zajęciu roszczenia"
+  severity            = 1
+
+  evaluation_frequency = "PT30M"
+  window_duration      = "PT1H"
+  scopes               = [azurerm_application_insights.ai.id]
+
+  criteria {
+    query                   = <<-KQL
+      traces
+      | where cloud_RoleName == "${var.prefix}-allegro-poller"
+      | extend payload = parse_json(message)
+      | where tostring(payload.event) == "shipping.stuck_execution_snapshot"
+      | extend stuck_count = toint(payload.stuck_count)
+      | where stuck_count > 0
+      | project timestamp, stuck_count,
+                draft_ids = tostring(payload.draft_ids),
+                oldest_age_hours = todouble(payload.oldest_age_hours)
+    KQL
+    time_aggregation_method = "Count"
+    threshold               = 1
+    operator                = "GreaterThan"
+
+    failing_periods {
+      minimum_failing_periods_to_trigger_alert = 1
+      number_of_evaluation_periods             = 1
+    }
+  }
+
+  auto_mitigation_enabled = true
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+
+  tags = local.tags
+}
+
+# ── Alert: rozjazd źródeł kaucji ─────────────────────────────────────────────
+#
+# Natywna kaucja z Allegro jest autorytatywna, heurystyka „liczba butelek PET"
+# to kontrola krzyżowa. Rozjazd oznacza, że jedno z założeń przestało być
+# prawdziwe — najczęściej po zmianie katalogu produktów (patrz sierpień 2026,
+# przemianowanie na „szklanych"/„12 szt.").
+#
+# Severity 3, nie 1: nic nie jest zepsute dla klienta w momencie alertu, ale
+# faktury mogą wychodzić z błędną kwotą kaucji i im dłużej to trwa, tym więcej
+# jest do skorygowania. To sygnał „sprawdź w tym tygodniu", nie „wstawaj w nocy".
+
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "kaucja_divergence" {
+  name                = "${var.prefix}-alert-kaucja-divergence"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  description         = "Natywna kaucja Allegro rozjechała się z heurystyką — prawdopodobna zmiana katalogu"
+  severity            = 3
+
+  evaluation_frequency = "PT30M"
+  window_duration      = "PT6H"
+  scopes               = [azurerm_application_insights.ai.id]
+
+  criteria {
+    query                   = <<-KQL
+      traces
+      | extend payload = parse_json(message)
+      | where tostring(payload.event) == "kaucja_source_divergence"
+      | project timestamp,
+                invoice_number = tostring(payload.invoice_number),
+                native_kaucja = tostring(payload.native_kaucja),
+                heuristic_kaucja = tostring(payload.heuristic_kaucja),
+                pet_bottles = toint(payload.pet_bottles)
+    KQL
+    time_aggregation_method = "Count"
+    threshold               = 0
+    operator                = "GreaterThan"
+
+    failing_periods {
+      minimum_failing_periods_to_trigger_alert = 1
+      number_of_evaluation_periods             = 1
+    }
+  }
+
+  auto_mitigation_enabled = true
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+
+  tags = local.tags
+}
+
+# ── Activity Log → Log Analytics ─────────────────────────────────────────────
+#
+# Bez tego `AzureActivity` jest pustą tabelą, a pusty wynik zapytania o historię
+# alertów nie odróżnia „nic się nie działo" od „Activity Log nigdzie nie leci".
+# Dokładnie ta dwuznaczność, którą leczyły #279, #278 i #310, tyle że w warstwie
+# audytu monitoringu: reguły alertów z tego pliku istnieją, ale ich aktywacji
+# i rozwiązań nie da się prześledzić wstecz (#217).
+#
+# Zakres kategorii jest celowo wąski — płacimy za ingestię każdego rekordu:
+#
+#   Alert           — sedno sprawy: aktywacja i rozwiązanie każdej reguły wyżej.
+#   Administrative  — kto i kiedy zmienił regułę, action group albo Container App.
+#                     Bez tego historia alertów kłamie po każdej zmianie konfiguracji.
+#   ServiceHealth   — awarie po stronie Azure; wyjaśniają nasze alerty bez zgadywania.
+#   ResourceHealth  — to samo, ale dla konkretnego zasobu.
+#
+# Świadomie NIE eksportujemy:
+#   Security        — nie prowadzimy tu Defendera; szum bez odbiorcy.
+#   Policy          — nie mamy własnych przypisań polityk poza `policy.tf`, a te
+#                     nie generują zdarzeń wymagających historii.
+#   Recommendation  — Advisor, treść marketingowo-doradcza, zero wartości w triage.
+#   Autoscale       — Container Apps skalują się własnym mechanizmem, nie autoscale.
+#
+# Retencja wynika z workspace'a (`retention_in_days = 30` w main.tf) i nie jest
+# tu nadpisywana — jedno miejsce, jedna decyzja.
+
+data "azurerm_subscription" "current" {}
+
+resource "azurerm_monitor_diagnostic_setting" "activity_log" {
+  name                       = "${var.prefix}-activity-to-law"
+  target_resource_id         = data.azurerm_subscription.current.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
+
+  enabled_log {
+    category = "Alert"
+  }
+
+  enabled_log {
+    category = "Administrative"
+  }
+
+  enabled_log {
+    category = "ServiceHealth"
+  }
+
+  enabled_log {
+    category = "ResourceHealth"
+  }
+}

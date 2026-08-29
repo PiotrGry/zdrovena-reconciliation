@@ -9,10 +9,15 @@ Hierarchy::
     ZdrovenaError
     ├── MissingSecretError   — Keychain / credential lookup failure
     ├── APIError             — HTTP / REST API failure (Fakturownia, Zoho, KSeF)
-    └── PipelineAbortError   — Month-close pipeline abort (blockers, warnings gate)
+    ├── PipelineAbortError   — Month-close pipeline abort (blockers, warnings gate)
+    └── StorageUnavailableError — Azure Table Storage unreachable (NOT "no data")
 """
 
 from __future__ import annotations
+
+import logging
+
+from zdrovena.common.events import log_event
 
 
 class ZdrovenaError(Exception):
@@ -64,3 +69,38 @@ class PipelineAbortError(ZdrovenaError):
         self.reason = reason
         self.blockers = blockers or []
         super().__init__(reason)
+
+
+class StorageUnavailableError(ZdrovenaError):
+    """Azure Table Storage could not answer - which is not the same as "no data".
+
+    Read paths used to catch bare ``Exception`` and return ``None`` / ``[]``, so a
+    timeout looked exactly like a record that is genuinely absent. That made an
+    outage read as "the draft does not exist" and let a fingerprint lookup answer
+    "no existing case", inviting a duplicate write (issue #310).
+    """
+
+    def __init__(self, store: str, operation: str, cause: BaseException) -> None:
+        super().__init__(f"{store} storage unavailable during {operation}: {cause!r}")
+        self.store = store
+        self.operation = operation
+        self.cause = cause
+
+
+def storage_unavailable(
+    store: str, operation: str, cause: BaseException
+) -> StorageUnavailableError:
+    """Build the error to raise, emitting the event alerting can key on.
+
+    Telemetry lives here rather than at each of the six call sites so an outage
+    always produces the same signal. Issue #214 wants operational alerts; an
+    empty-list metric would be full of false positives, this is not.
+    """
+    log_event(
+        "storage_unavailable",
+        level=logging.ERROR,
+        store=store,
+        operation=operation,
+        error_type=type(cause).__name__,
+    )
+    return StorageUnavailableError(store=store, operation=operation, cause=cause)

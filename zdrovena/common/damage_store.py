@@ -10,10 +10,12 @@ import json
 import logging
 import os
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from fcntl import LOCK_EX, LOCK_UN, flock
 from pathlib import Path
 from typing import Any
+
+from zdrovena.common.exceptions import storage_unavailable
 
 logger = logging.getLogger("zdrovena.common.damage_store")
 
@@ -181,9 +183,13 @@ class DamageStore:
     def get_case(self, case_id: str) -> dict[str, Any] | None:
         if self._use_table:
             try:
+                from azure.core.exceptions import ResourceNotFoundError
+
                 entity = self._table_client().get_entity(CASES_PARTITION, case_id)
-            except Exception:
+            except ResourceNotFoundError:
                 return None
+            except Exception as exc:
+                raise storage_unavailable("damage", "get_case", exc) from exc
             return _deserialize(dict(entity))
         return self._load_local()["cases"].get(case_id)
 
@@ -201,8 +207,10 @@ class DamageStore:
                 )
                 records = [_deserialize(dict(entity)) for entity in entities]
             except Exception as exc:
-                logger.warning("Damage case list failed: %s", exc)
-                return []
+                # A list read has no not-found case, so every exception is an
+                # outage. Returning [] here let find_case_by_fingerprint answer
+                # "no existing case" and invite a duplicate (issue #310).
+                raise storage_unavailable("damage", "list_cases", exc) from exc
         else:
             records = list(self._load_local()["cases"].values())
         records.sort(
@@ -217,24 +225,34 @@ class DamageStore:
             for case in self.list_cases(limit=500)
         )
 
-    def try_claim_email(self, case_id: str) -> bool:
-        """Atomically claim a customer email send and prevent double clicks.
+    def try_claim_email(self, case_id: str, attempt: dict[str, Any] | None = None) -> bool:
+        """Atomically claim a customer email send, recording the attempt.
 
-        A claim older than ten minutes is considered abandoned so a process
-        crash cannot block the case forever.
+        The claim used to treat itself as abandoned after ten minutes so a crash
+        could not block the case forever. That rule is exactly what turned a
+        crash into a duplicate: a claim taken, SMTP accepting the message, the
+        process dying before the write, and ten minutes later the case looking
+        free again (#312).
+
+        A stranded attempt now ages into ``unknown``, which blocks sending and
+        waits for an operator decision instead of quietly freeing the case.
+        ``attempt`` is the durable record written in the same atomic update as
+        the claim, so SMTP is never contacted without something on disk saying
+        so.
         """
+        from zdrovena.common.send_attempt import SendAttempt, may_send
 
         def can_claim(case: dict[str, Any]) -> bool:
             if case.get("email_sent_at"):
                 return False
-            if not case.get("email_sending"):
-                return True
-            raw_claimed_at = case.get("email_sending_at")
-            try:
-                claimed_at = datetime.fromisoformat(str(raw_claimed_at))
-                return datetime.now(timezone.utc) - claimed_at > timedelta(minutes=10)
-            except (TypeError, ValueError):
+            allowed, _reason = may_send(SendAttempt.from_dict(case.get("email_attempt")))
+            if not allowed:
                 return False
+            # Legacy cases predate email_attempt: fall back to the old flag so a
+            # claim taken by a still-running process is still respected.
+            if case.get("email_attempt"):
+                return True
+            return not case.get("email_sending")
 
         claimed_at = datetime.now(timezone.utc).isoformat()
         if self._use_table:
@@ -252,6 +270,11 @@ class DamageStore:
                 "email_sending": True,
                 "email_sending_at": claimed_at,
             }
+            if attempt is not None:
+                # Table Storage has no dict column; _serialize JSON-encodes
+                # nested values and _deserialize reverses it. This patch bypasses
+                # _serialize, so it must encode the same way.
+                patch["email_attempt"] = json.dumps(attempt, ensure_ascii=False)
             try:
                 from azure.core import MatchConditions
 
@@ -271,6 +294,8 @@ class DamageStore:
                 return False
             case["email_sending"] = True
             case["email_sending_at"] = claimed_at
+            if attempt is not None:
+                case["email_attempt"] = attempt
             return True
 
         return bool(self._locked_local_update(update))

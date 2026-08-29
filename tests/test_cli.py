@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 import sys
 
+from zdrovena import __version__
+
 
 class TestCLIVersion:
     def test_version_flag(self):
@@ -13,7 +15,9 @@ class TestCLIVersion:
             capture_output=True,
             text=True,
         )
-        assert "2.0.0" in result.stdout
+        # Asserting the literal is what let the CLI drift to 2.0.0 while the
+        # package was on 2.9.0 -- compare against the single source (#238).
+        assert __version__ in result.stdout
 
     def test_short_version_flag(self):
         result = subprocess.run(
@@ -21,7 +25,9 @@ class TestCLIVersion:
             capture_output=True,
             text=True,
         )
-        assert "2.0.0" in result.stdout
+        # Asserting the literal is what let the CLI drift to 2.0.0 while the
+        # package was on 2.9.0 -- compare against the single source (#238).
+        assert __version__ in result.stdout
 
 
 class TestCLIHelp:

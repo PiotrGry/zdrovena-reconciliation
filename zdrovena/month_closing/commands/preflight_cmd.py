@@ -72,7 +72,10 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> None:
     sp.add_argument(
         "--no-browser",
         action="store_true",
-        help="Skip Playwright auto-download of Fakturownia reports",
+        # Kept so existing invocations keep working. Preflight never downloaded
+        # anything — the Playwright auto-download belongs to the month-close
+        # orchestrator, which decides from its own non-interactive flag.
+        help="Accepted for compatibility; preflight performs no auto-download",
     )
     sp.set_defaults(func=_run)
 
@@ -122,7 +125,6 @@ def _run(args: argparse.Namespace) -> None:
     print()
 
     try:
-        no_browser = getattr(args, "no_browser", False)
         checker = PreflightChecker(
             year=year,
             month=month,
@@ -132,7 +134,6 @@ def _run(args: argparse.Namespace) -> None:
             cost_date_to=cost_date_to,
             dry_run=True,
             get_secret=_get_secret,
-            no_browser=no_browser,
             storage=get_storage_service(),
         )
         result = checker.run()

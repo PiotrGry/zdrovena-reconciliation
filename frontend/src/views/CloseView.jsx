@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fetchJson } from '../api'
+import {
+    addCloseWaiver,
+    getCloseHistory,
+    getCloseWorkflow,
+    removeCloseWaiver,
+    resetCloseWorkflow,
+    runCloseAction,
+} from '../api/endpoints'
 import { useAuth } from '../auth'
 import { Icon } from '../components/Icon'
 import { useToast } from '../components/Toast'
@@ -28,8 +35,10 @@ export default function CloseView() {
     const loadRun = useCallback(async () => {
         setLoading(true)
         try {
-            const token = await getToken()
-            const data = await fetchJson(`/api/close/workflow?year=${year}&month=${month}`, { token })
+            // Driven by a 2s setInterval, so never interactive: a popup without a
+            // user gesture is blocked by the browser anyway.
+            const token = await getToken({ interactive: false })
+            const data = await getCloseWorkflow({ year, month, token })
             setRun(data)
         } catch (error) {
             pushToast({ kind: 'error', msg: `Nie udało się wczytać workflow: ${error.message}` })
@@ -54,7 +63,7 @@ export default function CloseView() {
         const loadHistory = async () => {
             try {
                 const token = await getToken()
-                const history = await fetchJson('/api/close/history?limit=1', { token })
+                const history = await getCloseHistory({ limit: 1, token })
                 if (cancelled || !history?.length) return
                 const item = history[0]
                 setLastClose({
@@ -97,16 +106,15 @@ export default function CloseView() {
         } : previous)
         try {
             const token = await getToken()
-            const data = await fetchJson(`/api/close/workflow/actions/${action}`, {
-                method: 'POST',
+            const data = await runCloseAction({
+                action,
                 token,
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+                body: {
                     year,
                     month,
                     confirm: action === 'send',
                     override_reason: overrideReason,
-                }),
+                },
             })
             setRun(data)
             const step = data.steps?.[action]
@@ -127,17 +135,11 @@ export default function CloseView() {
         try {
             const token = await getToken()
             const data = waived
-                ? await fetchJson('/api/close/workflow/waivers', {
-                    method: 'POST',
+                ? await addCloseWaiver({ token, body: { year, month, target } })
+                : await removeCloseWaiver({
                     token,
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ year, month, target }),
+                    query: `year=${year}&month=${month}&target=${encodeURIComponent(target)}`,
                 })
-                : await fetchJson(
-                    `/api/close/workflow/waivers?year=${year}&month=${month}`
-                    + `&target=${encodeURIComponent(target)}`,
-                    { method: 'DELETE', token }
-                )
             setRun(data)
         } catch (error) {
             pushToast({ kind: 'error', msg: `Nie udało się zmienić odstępstwa: ${error.message}` })
@@ -151,12 +153,7 @@ export default function CloseView() {
         if (!window.confirm('Rozpocząć nowy run dla tego miesiąca? Pobrane pliki nie zostaną usunięte.')) return
         try {
             const token = await getToken()
-            const data = await fetchJson('/api/close/workflow/reset', {
-                method: 'POST',
-                token,
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ year, month }),
-            })
+            const data = await resetCloseWorkflow({ token, body: { year, month } })
             setRun(data)
         } catch (error) {
             pushToast({ kind: 'error', msg: `Nie udało się zresetować workflow: ${error.message}` })

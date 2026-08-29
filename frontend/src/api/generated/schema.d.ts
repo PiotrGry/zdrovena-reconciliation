@@ -140,6 +140,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/close/workflow/email-attempt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve a send attempt whose outcome is unknown
+         * @description Settle an ambiguous send so the period can move on.
+         *
+         *     A crash between SMTP accepting the message and the workflow recording it
+         *     leaves a state nobody on our side can read. `delivered=true` closes the
+         *     period without a second mail to the accountant; `delivered=false` unblocks
+         *     a retry (#312).
+         */
+        post: operations["resolve_close_email_attempt_api_close_workflow_email_attempt_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/close/workflow/reset": {
         parameters: {
             query?: never;
@@ -364,6 +389,30 @@ export interface paths {
         put?: never;
         /** Prepare a replacement draft without creating a courier shipment */
         post: operations["prepare_replacement_api_damage_cases__case_id__prepare_replacement_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/damage-cases/{case_id}/resolve-email-attempt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve an email attempt whose outcome is unknown
+         * @description Record what actually happened to an ambiguous send.
+         *
+         *     Only a person can settle this: from our side an accepted-then-lost message
+         *     and a never-sent one look identical. `delivered=true` closes the case
+         *     without a second message; `delivered=false` is what unblocks a retry.
+         */
+        post: operations["resolve_email_attempt_api_damage_cases__case_id__resolve_email_attempt_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -630,7 +679,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Update draft metadata (packages_breakdown, service, locker_id) */
+        /** Update draft metadata (packages_breakdown, service, locker_id, receiver_phone) */
         patch: operations["update_draft_api_shipping_drafts__draft_id__patch"];
         trace?: never;
     };
@@ -902,6 +951,22 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ApaczkaServiceModel */
+        ApaczkaServiceModel: {
+            /** Label */
+            label?: string | null;
+            /** Service Id */
+            service_id?: number | string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ApaczkaServicesResponse */
+        ApaczkaServicesResponse: {
+            /** Services */
+            services: components["schemas"]["ApaczkaServiceModel"][];
+        } & {
+            [key: string]: unknown;
+        };
         /** Body_batch_labels_api_shipping_labels_batch_post */
         Body_batch_labels_api_shipping_labels_batch_post: {
             /** Draft Ids */
@@ -939,10 +1004,29 @@ export interface components {
             }[] | null;
             /** Packages Count */
             packages_count?: number | null;
+            /** Receiver Phone */
+            receiver_phone?: string | null;
             /** Reviewed */
             reviewed?: boolean | null;
             /** Service */
             service?: string | null;
+        };
+        /**
+         * CloseEmailAttemptResolution
+         * @description An operator's decision about a send whose outcome nobody can read.
+         */
+        CloseEmailAttemptResolution: {
+            /** Delivered */
+            delivered: boolean;
+            /** Month */
+            month: number;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /** Year */
+            year: number;
         };
         /** CloseRequest */
         CloseRequest: {
@@ -1163,6 +1247,165 @@ export interface components {
             /** Note */
             note?: string | null;
         };
+        /**
+         * DamageCaseModel
+         * @description One damaged-shipment case. Documents known fields, passes the rest through.
+         */
+        DamageCaseModel: {
+            /** Classification */
+            classification?: string | null;
+            /** Closed At */
+            closed_at?: string | null;
+            /** Closed By */
+            closed_by?: string | null;
+            /** Confidence */
+            confidence?: string | null;
+            /** Confirmed At */
+            confirmed_at?: string | null;
+            /** Confirmed By */
+            confirmed_by?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Customer Email */
+            customer_email?: string | null;
+            /** Customer Name */
+            customer_name?: string | null;
+            /** Detected At */
+            detected_at?: string | null;
+            /** Email Attempt */
+            email_attempt?: {
+                [key: string]: unknown;
+            } | null;
+            /** Email Draft */
+            email_draft?: {
+                [key: string]: unknown;
+            } | null;
+            /** Email Error */
+            email_error?: string | null;
+            /** Email Sent At */
+            email_sent_at?: string | null;
+            /** Email Sent By */
+            email_sent_by?: string | null;
+            /** Evidence */
+            evidence?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Id */
+            id: string;
+            /** Operator Note */
+            operator_note?: string | null;
+            /** Order Number */
+            order_number?: number | string | null;
+            /** Replacement Created At */
+            replacement_created_at?: string | null;
+            /** Replacement Draft Id */
+            replacement_draft_id?: string | null;
+            /** Replacement Tracking Number */
+            replacement_tracking_number?: string | null;
+            /** Shipping Draft Id */
+            shipping_draft_id?: string | null;
+            /** Sources */
+            sources?: string[] | null;
+            /** Status */
+            status?: string | null;
+            /** Tracking Number */
+            tracking_number?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * DamageCaseWithDraftResponse
+         * @description A case plus whatever the step produced alongside it.
+         */
+        DamageCaseWithDraftResponse: {
+            /** Attempt */
+            attempt?: {
+                [key: string]: unknown;
+            } | null;
+            case: components["schemas"]["DamageCaseModel"];
+            /** Created */
+            created?: boolean | null;
+            /** Draft */
+            draft?: {
+                [key: string]: unknown;
+            } | null;
+            /** Email Draft */
+            email_draft?: {
+                [key: string]: unknown;
+            } | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** DamageCasesResponse */
+        DamageCasesResponse: {
+            /** Cases */
+            cases: components["schemas"]["DamageCaseModel"][];
+            /** Needs Review */
+            needs_review: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * DamageRefreshResponse
+         * @description Result of polling the providers for damage signals.
+         *
+         *     Each provider key is either its scan summary or `{"error": ...}` — a failure
+         *     on one side must not hide the other's result, which is why they are separate
+         *     keys rather than one status.
+         */
+        DamageRefreshResponse: {
+            /** Allegro */
+            allegro?: {
+                [key: string]: unknown;
+            } | null;
+            /** Needs Review */
+            needs_review?: number | null;
+            /** Zoho */
+            zoho?: {
+                [key: string]: unknown;
+            } | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** DamageSummaryResponse */
+        DamageSummaryResponse: {
+            /** Needs Review */
+            needs_review: number;
+        };
+        /** DlqEntriesResponse */
+        DlqEntriesResponse: {
+            /** Entries */
+            entries: {
+                [key: string]: unknown;
+            }[];
+        } & {
+            [key: string]: unknown;
+        };
+        /** DlqRetryResponse */
+        DlqRetryResponse: {
+            /** Draft Id */
+            draft_id?: number | string | null;
+            /** Entry Id */
+            entry_id?: number | string | null;
+            /** Error */
+            error?: string | null;
+            /** Status */
+            status?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** EmailAttemptResolution */
+        EmailAttemptResolution: {
+            /** Delivered */
+            delivered: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /** EmailDraftUpdate */
         EmailDraftUpdate: {
             /** Body */
@@ -1187,6 +1430,16 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HealthResponse
+         * @description Liveness plus the version actually running — see #216 for why that matters.
+         */
+        HealthResponse: {
+            /** Status */
+            status: string;
+            /** Version */
+            version: string;
         };
         /** IntegrationHealthItem */
         IntegrationHealthItem: {
@@ -1226,6 +1479,23 @@ export interface components {
             /** Operations */
             operations: components["schemas"]["OperationHealthItem"][];
         };
+        /** InvoiceActionResponse */
+        InvoiceActionResponse: {
+            /** Buyer Name */
+            buyer_name?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Fakturownia Invoice Id */
+            fakturownia_invoice_id?: number | string | null;
+            /** Fakturownia Invoice Number */
+            fakturownia_invoice_number?: number | string | null;
+            /** Pending */
+            pending?: boolean | null;
+            /** Status */
+            status?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** InvoiceItem */
         InvoiceItem: {
             /** Buyer Name */
@@ -1250,6 +1520,25 @@ export interface components {
             sell_date: string | null;
             /** Status */
             status: string | null;
+        };
+        /** MarkFulfilledResponse */
+        MarkFulfilledResponse: {
+            /** Created */
+            created?: boolean | null;
+            /** Draft Id */
+            draft_id?: number | string | null;
+            /** External Order Id */
+            external_order_id?: number | string | null;
+            /** Shopify Fulfillment Id */
+            shopify_fulfillment_id?: number | string | null;
+            /** Skipped */
+            skipped?: string | null;
+            /** Source */
+            source?: string | null;
+            /** Status */
+            status?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /** OperationHealthItem */
         OperationHealthItem: {
@@ -1309,6 +1598,120 @@ export interface components {
             price_gross: string | null;
             /** Price Net */
             price_net: string | null;
+        };
+        /**
+         * ShipmentActionResponse
+         * @description Result of executing, confirming or cancelling courier work on a draft.
+         */
+        ShipmentActionResponse: {
+            /** Dispatch Id */
+            dispatch_id?: string | null;
+            /** Draft Id */
+            draft_id?: number | string | null;
+            /** Error */
+            error?: string | null;
+            /** Shipment Id */
+            shipment_id?: number | string | null;
+            /** Status */
+            status?: string | null;
+            /** Tracking Number */
+            tracking_number?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ShippingDraftModel
+         * @description One shipping draft. Documents the fields the portal reads.
+         *
+         *     Identifiers minted by a provider are typed `int | str` on purpose: each
+         *     courier decides its own representation, and Fakturownia additionally uses
+         *     the sentinel `"pending"` in an otherwise numeric field. Pinning them to
+         *     `str` turns a working response into a 500 at validation time — which is how
+         *     this was found.
+         */
+        ShippingDraftModel: {
+            /** Apaczka Service Id */
+            apaczka_service_id?: number | string | null;
+            /** Courier */
+            courier?: string | null;
+            /** Courier Draft Id */
+            courier_draft_id?: number | string | null;
+            /** Courier Shipments */
+            courier_shipments?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Customer Name */
+            customer_name?: string | null;
+            /** Dispatch Order Id */
+            dispatch_order_id?: number | string | null;
+            /** Error */
+            error?: string | null;
+            /** Execution Started At */
+            execution_started_at?: string | null;
+            /** External Order Id */
+            external_order_id?: number | string | null;
+            /** Fulfillment Status */
+            fulfillment_status?: string | null;
+            /** Id */
+            id: string;
+            /** Is Replacement */
+            is_replacement?: boolean | null;
+            /** Order Number */
+            order_number?: number | string | null;
+            /** Packages Breakdown */
+            packages_breakdown?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Packages Count */
+            packages_count?: number | null;
+            /** Pickup Ordered */
+            pickup_ordered?: boolean | null;
+            /** Receiver */
+            receiver?: {
+                [key: string]: unknown;
+            } | null;
+            /** Service */
+            service?: string | null;
+            /** Shopify Order Id */
+            shopify_order_id?: number | string | null;
+            /** Shopify Order Number */
+            shopify_order_number?: number | string | null;
+            /** Source */
+            source?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Tracking Company */
+            tracking_company?: string | null;
+            /** Tracking Number */
+            tracking_number?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ShippingDraftsResponse */
+        ShippingDraftsResponse: {
+            /** Drafts */
+            drafts: components["schemas"]["ShippingDraftModel"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /** ShippingSyncResponse */
+        ShippingSyncResponse: {
+            /** Created */
+            created?: number | null;
+            /** Errors */
+            errors?: number | null;
+            /** Fetched */
+            fetched?: number | null;
+            /** Unchanged */
+            unchanged?: number | null;
+            /** Updated */
+            updated?: number | null;
+        } & {
+            [key: string]: unknown;
         };
         /** ValidationError */
         ValidationError: {
@@ -1611,6 +2014,46 @@ export interface operations {
             };
         };
     };
+    resolve_close_email_attempt_api_close_workflow_email_attempt_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseEmailAttemptResolution"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseWorkflowRunResponse"];
+                };
+            };
+            /** @description No unresolved attempt, or another action owns this period */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     reset_close_workflow_api_close_workflow_reset_post: {
         parameters: {
             query?: never;
@@ -1746,9 +2189,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCasesResponse"];
                 };
             };
         };
@@ -1768,9 +2209,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageRefreshResponse"];
                 };
             };
         };
@@ -1790,9 +2229,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: number;
-                    };
+                    "application/json": components["schemas"]["DamageSummaryResponse"];
                 };
             };
         };
@@ -1814,9 +2251,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseModel"];
                 };
             };
             /** @description Validation Error */
@@ -1847,9 +2282,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseModel"];
                 };
             };
             /** @description Validation Error */
@@ -1884,9 +2317,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseModel"];
                 };
             };
             /** @description Validation Error */
@@ -1917,9 +2348,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseWithDraftResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1950,9 +2379,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseWithDraftResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1983,9 +2410,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseWithDraftResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2020,9 +2445,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseWithDraftResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2053,9 +2476,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseModel"];
                 };
             };
             /** @description Validation Error */
@@ -2086,10 +2507,50 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseWithDraftResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_email_attempt_api_damage_cases__case_id__resolve_email_attempt_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailAttemptResolution"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DamageCaseWithDraftResponse"];
+                };
+            };
+            /** @description No unresolved attempt to resolve */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -2119,9 +2580,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DamageCaseWithDraftResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2255,7 +2714,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Insufficient role */
+            /** @description Insufficient role, or key belongs to internal storage */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2298,7 +2757,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Insufficient role */
+            /** @description Insufficient role, or key belongs to internal storage */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2562,9 +3021,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ApaczkaServicesResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -2591,9 +3048,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShippingDraftsResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -2620,9 +3075,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DlqEntriesResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -2694,9 +3147,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DlqRetryResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -2752,9 +3203,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShippingDraftModel"];
                 };
             };
             /** @description Invalid service for courier */
@@ -2806,7 +3255,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ShipmentActionResponse"];
                 };
             };
             /** @description Still pending */
@@ -2872,9 +3321,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["InvoiceActionResponse"];
                 };
             };
             /** @description Not an Allegro draft */
@@ -2926,9 +3373,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShipmentActionResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -2991,9 +3436,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShipmentActionResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -3049,9 +3492,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShipmentActionResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -3096,9 +3537,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["InvoiceActionResponse"];
                 };
             };
             /** @description Not an Allegro draft */
@@ -3198,9 +3637,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["MarkFulfilledResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -3331,9 +3768,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShipmentActionResponse"];
                 };
             };
             /** @description Insufficient role */
@@ -3444,9 +3879,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShippingSyncResponse"];
                 };
             };
         };
@@ -3466,9 +3899,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["HealthResponse"];
                 };
             };
         };

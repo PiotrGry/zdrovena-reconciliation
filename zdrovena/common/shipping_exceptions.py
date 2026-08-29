@@ -277,6 +277,23 @@ class InPostInvalidServiceError(InPostBusinessError):
         )
 
 
+class InPostRecipientPhoneError(InPostBusinessError):
+    """InPost requires a valid recipient phone from 2026-09-08.
+
+    Raised before the ShipX POST rather than after: an invalid draft must cost
+    nothing, and the operator needs to know which field to fix.
+    """
+
+    def __init__(self, raw_phone: str = "", order_id: str = "") -> None:
+        super().__init__(
+            f"InPost requires a valid recipient phone; got {raw_phone!r}",
+            order_id=order_id,
+            courier="inpost",
+            action="create_shipment",
+            payload_snippet=raw_phone,
+        )
+
+
 class InPostShipmentNotCancellable(InPostBusinessError):
     """Shipment is in a status that no longer allows cancellation.
 

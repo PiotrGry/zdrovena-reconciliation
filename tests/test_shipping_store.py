@@ -14,7 +14,14 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from azure.core.exceptions import (
+    ClientAuthenticationError,
+    HttpResponseError,
+    ResourceNotFoundError,
+    ServiceRequestError,
+)
 
+from zdrovena.common.exceptions import StorageUnavailableError
 from zdrovena.common.shipping_store import ShippingStore
 
 
@@ -356,7 +363,10 @@ class _FakeTableClient:
     def get_entity(self, partition_key, row_key):
         key = (partition_key, row_key)
         if key not in self._rows:
-            raise KeyError("not found")
+            # Azure raises ResourceNotFoundError, not KeyError. A fake that
+            # invents its own exception hides the difference between "absent"
+            # and "unreachable" - which is the bug in issue #310.
+            raise ResourceNotFoundError("not found")
         return _FakeTableEntity(dict(self._rows[key]), str(self._etags[key]))
 
     def upsert_entity(self, entity):
@@ -520,3 +530,290 @@ class TestTryClaimExecution:
 
     def test_missing_draft_loses(self, store):
         assert store.try_claim_execution("does-not-exist") is False
+
+
+# ── Storage outage is not emptiness (issue #310) ──────────────────────────────
+
+_OUTAGES = [
+    ServiceRequestError("timeout"),
+    HttpResponseError("429 ServerBusy"),
+    ClientAuthenticationError("token expired"),
+]
+
+
+class _BrokenTableClient:
+    """Every call fails the way Azure fails: not with ResourceNotFoundError."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def get_entity(self, *args, **kwargs):
+        raise self._exc
+
+    def query_entities(self, *args, **kwargs):
+        raise self._exc
+
+
+def _broken_store(monkeypatch, exc: Exception) -> ShippingStore:
+    store = ShippingStore(account_url="https://fake.blob.core.windows.net")
+    broken = _BrokenTableClient(exc)
+    monkeypatch.setattr(store, "_table_client", lambda: broken)
+    monkeypatch.setattr(store, "_dlq_table_client", lambda: broken)
+    return store
+
+
+class TestOutageIsNotEmptiness:
+    @pytest.mark.parametrize("exc", _OUTAGES, ids=lambda e: type(e).__name__)
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda s: s.get_draft("d1"),
+            lambda s: s.list_drafts(),
+            lambda s: s.get_dlq_entry("e1"),
+            lambda s: s.list_dlq(),
+        ],
+        ids=["get_draft", "list_drafts", "get_dlq_entry", "list_dlq"],
+    )
+    def test_an_outage_raises_instead_of_answering_absent(self, monkeypatch, exc, call):
+        store = _broken_store(monkeypatch, exc)
+
+        with pytest.raises(StorageUnavailableError):
+            call(store)
+
+    def test_a_genuinely_missing_row_still_returns_none(self, monkeypatch):
+        # The contract for real absence is unchanged - this is what stops the
+        # fix from turning every read into an error.
+        store = _broken_store(monkeypatch, ResourceNotFoundError("no such row"))
+
+        assert store.get_draft("d1") is None
+        assert store.get_dlq_entry("e1") is None
+
+    def test_an_empty_partition_still_returns_an_empty_list(self, monkeypatch):
+        store = ShippingStore(account_url="https://fake.blob.core.windows.net")
+        empty = _FakeTableClient()
+        monkeypatch.setattr(store, "_table_client", lambda: empty)
+        monkeypatch.setattr(store, "_dlq_table_client", lambda: empty)
+
+        assert store.list_drafts() == []
+        assert store.list_dlq() == []
+
+
+# ── Targeted lookup instead of a truncated full scan (issue #316) ────────────
+#
+# list_drafts() sorts newest-first and slices. Any caller building a dedup index
+# from it misses the oldest rows once the store outgrows the limit, treats those
+# orders as new, and writes a duplicate — which enters the newest-first window
+# and evicts another old row, duplicating again next cycle. That loop produced
+# roughly 70 duplicate Allegro drafts before anyone noticed.
+
+
+def _order_draft(draft_id: str, *, source: str, external_order_id: str, **extra) -> dict:
+    return _draft(
+        draft_id,
+        source=source,
+        external_order_id=external_order_id,
+        shopify_order_id=external_order_id if source == "shopify" else None,
+        **extra,
+    )
+
+
+class TestFindDraftByExternalId:
+    def test_finds_a_draft_the_list_limit_would_have_hidden(self, table_store):
+        """The regression case: more rows than any historical lookup limit."""
+        store, _fake = table_store
+        store.upsert_draft(
+            _order_draft(
+                "oldest",
+                source="allegro",
+                external_order_id="A-1",
+                created_at="2020-01-01T00:00:00+00:00",
+            ),
+        )
+        for i in range(300):
+            store.upsert_draft(
+                _order_draft(
+                    f"newer-{i}",
+                    source="allegro",
+                    external_order_id=f"A-other-{i}",
+                    created_at=f"2026-08-{(i % 28) + 1:02d}T10:00:00+00:00",
+                ),
+            )
+
+        # Precondition: newest-first truncation really does hide it.
+        assert all(d["id"] != "oldest" for d in store.list_drafts(limit=200))
+        found = store.find_draft_by_external_id(source="allegro", external_order_id="A-1")
+
+        assert found is not None
+        assert found["id"] == "oldest"
+
+    def test_a_missing_order_is_not_an_error(self, table_store):
+        store, _fake = table_store
+
+        assert store.find_draft_by_external_id(source="allegro", external_order_id="nope") is None
+
+    def test_sources_do_not_collide(self, table_store):
+        """Shopify and Allegro number their orders independently."""
+        store, _fake = table_store
+        store.upsert_draft(_order_draft("s", source="shopify", external_order_id="7"))
+        store.upsert_draft(_order_draft("a", source="allegro", external_order_id="7"))
+
+        assert store.find_draft_by_external_id(source="shopify", external_order_id="7")["id"] == "s"
+        assert store.find_draft_by_external_id(source="allegro", external_order_id="7")["id"] == "a"
+
+    def test_replacement_drafts_are_not_returned(self, table_store):
+        """A replacement legitimately shares the external order id."""
+        store, _fake = table_store
+        store.upsert_draft(_order_draft("original", source="shopify", external_order_id="9"))
+        store.upsert_draft(
+            _order_draft(
+                "replacement", source="shopify", external_order_id="9", is_replacement=True
+            )
+        )
+
+        found = store.find_draft_by_external_id(source="shopify", external_order_id="9")
+
+        assert found is not None
+        assert found["id"] == "original"
+
+    def test_a_healthy_draft_wins_over_an_errored_one(self, table_store):
+        store, _fake = table_store
+        store.upsert_draft(
+            _order_draft("failed", source="allegro", external_order_id="A-2", status="error")
+        )
+        store.upsert_draft(
+            _order_draft("ok", source="allegro", external_order_id="A-2", status="pending")
+        )
+
+        assert (
+            store.find_draft_by_external_id(source="allegro", external_order_id="A-2")["id"] == "ok"
+        )
+
+    def test_an_errored_draft_is_returned_when_it_is_the_only_one(self, table_store):
+        store, _fake = table_store
+        store.upsert_draft(
+            _order_draft("failed", source="allegro", external_order_id="A-3", status="error")
+        )
+
+        found = store.find_draft_by_external_id(source="allegro", external_order_id="A-3")
+
+        assert found is not None
+        assert found["id"] == "failed"
+
+    def test_an_unreachable_store_is_not_reported_as_no_match(self, monkeypatch):
+        """Returning None on an outage is how #310 started: the caller would
+        treat a live order as new and create a duplicate."""
+        store = _broken_store(monkeypatch, HttpResponseError("table gone"))
+
+        with pytest.raises(StorageUnavailableError):
+            store.find_draft_by_external_id(source="allegro", external_order_id="A-4")
+
+    def test_the_query_is_filtered_server_side(self, table_store):
+        """Filtering in Python would still transfer the whole partition."""
+        store, fake = table_store
+        seen: list[str] = []
+        original = fake.query_entities
+        fake.query_entities = lambda query_filter: (  # type: ignore[method-assign]
+            seen.append(query_filter),
+            original(query_filter),
+        )[1]
+
+        store.find_draft_by_external_id(source="allegro", external_order_id="A-5")
+
+        assert seen, "no query was issued"
+        assert "source eq 'allegro'" in seen[0]
+        assert "external_order_id eq 'A-5'" in seen[0]
+
+    def test_a_quote_in_an_order_id_cannot_break_the_filter(self, table_store):
+        store, _fake = table_store
+
+        assert store.find_draft_by_external_id(source="allegro", external_order_id="a'b") is None
+
+
+class TestFindDraftByExternalIdLocal:
+    """The local JSON backend must answer identically — it is what dev runs on."""
+
+    def test_finds_the_draft(self, store):
+        store.upsert_draft(_order_draft("l-1", source="allegro", external_order_id="L-1"))
+
+        found = store.find_draft_by_external_id(source="allegro", external_order_id="L-1")
+
+        assert found is not None
+        assert found["id"] == "l-1"
+
+    def test_skips_replacements(self, store):
+        store.upsert_draft(_order_draft("l-orig", source="shopify", external_order_id="L-2"))
+        store.upsert_draft(
+            _order_draft("l-rep", source="shopify", external_order_id="L-2", is_replacement=True)
+        )
+
+        assert (
+            store.find_draft_by_external_id(source="shopify", external_order_id="L-2")["id"]
+            == "l-orig"
+        )
+
+
+class TestWriteTimeDeduplication:
+    def test_a_second_allegro_draft_for_one_order_replaces_the_first(self, table_store):
+        """Allegro had no write-time protection at all: the dedup-on-write keyed
+        on shopify_order_id, which is None for every Allegro draft."""
+        store, _fake = table_store
+        store.upsert_draft(_order_draft("first", source="allegro", external_order_id="A-9"))
+        store.upsert_draft(_order_draft("second", source="allegro", external_order_id="A-9"))
+
+        remaining = [
+            d for d in store.list_drafts(limit=1000) if d.get("external_order_id") == "A-9"
+        ]
+
+        assert len(remaining) == 1
+        assert remaining[0]["id"] == "second"
+
+    def test_writing_a_replacement_does_not_delete_the_original(self, table_store):
+        """The replacement carries the same external_order_id on purpose."""
+        store, _fake = table_store
+        store.upsert_draft(_order_draft("original", source="shopify", external_order_id="R-1"))
+        store.upsert_draft(
+            _order_draft(
+                "replacement", source="shopify", external_order_id="R-1", is_replacement=True
+            )
+        )
+
+        ids = {d["id"] for d in store.list_drafts(limit=1000)}
+
+        assert {"original", "replacement"} <= ids
+
+
+class TestPartitionScanTelemetry:
+    """Criterion: expensive/full-scan reads must be detectable (#316)."""
+
+    def test_a_large_read_is_reported(self, table_store, monkeypatch):
+        store, _fake = table_store
+        monkeypatch.setattr(
+            "zdrovena.common.shipping_store._PARTITION_SCAN_ALARM_ROWS", 5, raising=False
+        )
+        for i in range(6):
+            store.upsert_draft(_order_draft(f"p-{i}", source="allegro", external_order_id=f"P-{i}"))
+
+        events: list[tuple] = []
+        monkeypatch.setattr(
+            "zdrovena.common.events.log_event",
+            lambda event, **kw: events.append((event, kw)),
+        )
+        store.list_drafts(limit=3)
+
+        assert [e for e in events if e[0] == "storage.partition_scan"], events
+        payload = next(kw for name, kw in events if name == "storage.partition_scan")
+        assert payload["rows_read"] == 6
+        assert payload["rows_returned"] == 3
+
+    def test_a_small_read_is_silent(self, table_store, monkeypatch):
+        store, _fake = table_store
+        store.upsert_draft(_order_draft("quiet", source="allegro", external_order_id="Q-1"))
+
+        events: list[tuple] = []
+        monkeypatch.setattr(
+            "zdrovena.common.events.log_event",
+            lambda event, **kw: events.append((event, kw)),
+        )
+        store.list_drafts()
+
+        assert events == []

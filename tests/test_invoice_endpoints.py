@@ -277,7 +277,7 @@ class TestCreateInvoice:
             "zdrovena.api.shipping_execution_composition.get_allegro_client", return_value=None
         ):
             with patch(
-                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                "zdrovena.api.routers.shipping.invoices._get_fakturownia_invoice_client",
                 return_value=MagicMock(),
             ):
                 resp = client.post("/api/shipping/drafts/draft-inv-1/create-invoice")
@@ -293,7 +293,7 @@ class TestCreateInvoice:
             return_value=MagicMock(),
         ):
             with patch(
-                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                "zdrovena.api.routers.shipping.invoices._get_fakturownia_invoice_client",
                 return_value=None,
             ):
                 resp = client.post("/api/shipping/drafts/draft-inv-1/create-invoice")
@@ -312,7 +312,7 @@ class TestCreateInvoice:
             return_value=mock_allegro,
         ):
             with patch(
-                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                "zdrovena.api.routers.shipping.invoices._get_fakturownia_invoice_client",
                 return_value=mock_fakturownia,
             ):
                 with patch(
@@ -338,7 +338,7 @@ class TestCreateInvoice:
             return_value=mock_allegro,
         ):
             with patch(
-                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                "zdrovena.api.routers.shipping.invoices._get_fakturownia_invoice_client",
                 return_value=MagicMock(),
             ):
                 with patch(
@@ -368,7 +368,7 @@ class TestCreateInvoice:
             return_value=mock_allegro,
         ):
             with patch(
-                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                "zdrovena.api.routers.shipping.invoices._get_fakturownia_invoice_client",
                 return_value=MagicMock(),
             ):
                 with patch(
@@ -402,7 +402,7 @@ class TestCreateInvoice:
             return_value=mock_allegro,
         ):
             with patch(
-                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                "zdrovena.api.routers.shipping.invoices._get_fakturownia_invoice_client",
                 return_value=MagicMock(),
             ):
                 with patch(
@@ -435,7 +435,7 @@ class TestCreateInvoice:
             return_value=mock_allegro,
         ):
             with patch(
-                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                "zdrovena.api.routers.shipping.invoices._get_fakturownia_invoice_client",
                 return_value=MagicMock(),
             ):
                 with patch(

@@ -24,10 +24,12 @@ os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 from zdrovena.api import shipping_draft_composition as draft_composition
 from zdrovena.api import shipping_execution_composition as execution_composition
 from zdrovena.api.main import app
-from zdrovena.api.routers import webhooks as webhooks_router
-from zdrovena.api.routers.webhooks import _verify_shopify_hmac
+from zdrovena.api.routers.shipping import fulfillment as fulfillment_router
+from zdrovena.api.routers.shipping import labels as labels_router
+from zdrovena.api.routers.shipping.ingestion import _verify_shopify_hmac
 from zdrovena.api.shipping_draft_composition import pick_courier as _pick_courier
 from zdrovena.common.apaczka import APACZKA_CONTENT_MAX_LENGTH, ApaczkaClient
+from zdrovena.common.events import log_event
 from zdrovena.common.inpost import InPostClient
 from zdrovena.common.shipping_parcels import PARCEL_SPECS
 from zdrovena.common.shipping_store import ShippingStore
@@ -78,7 +80,7 @@ def _draft_application_kwargs() -> dict[str, Any]:
     return {
         "build_draft_record": draft_composition.build_draft_record,
         "emit_tracking_assigned": draft_composition.emit_tracking_assigned,
-        "record_event": webhooks_router.log_event,
+        "record_event": log_event,
         "send_new_order_sms": draft_composition.maybe_send_new_order_sms,
     }
 
@@ -250,7 +252,8 @@ _ORDER_WITH_SHIPPING = json.dumps(
 class TestWebhookEndpoint:
     def test_no_shipping_lines_returns_skipped(self, client):
         with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret",
+            return_value=_WEBHOOK_SECRET,
         ):
             resp = client.post(
                 "/api/webhooks/shopify/order-create",
@@ -262,7 +265,9 @@ class TestWebhookEndpoint:
 
     def test_no_secret_configured_rejects_with_503(self, client):
         """No configured secret → 503 (no unsigned bypass exists anymore)."""
-        with patch("zdrovena.api.routers.webhooks._get_webhook_secret", return_value=None):
+        with patch(
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret", return_value=None
+        ):
             resp = client.post(
                 "/api/webhooks/shopify/order-create",
                 content=_ORDER_WITH_SHIPPING,
@@ -273,7 +278,8 @@ class TestWebhookEndpoint:
 
     def test_valid_hmac_accepted(self, client):
         with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret",
+            return_value=_WEBHOOK_SECRET,
         ):
             with patch("zdrovena.shipping.application.drafts.create_draft"):
                 resp = client.post(
@@ -291,7 +297,8 @@ class TestWebhookEndpoint:
         keep working — not a breaking change.
         """
         with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret",
+            return_value=_WEBHOOK_SECRET,
         ):
             with patch("zdrovena.shipping.application.drafts.create_draft"):
                 resp = client.post(
@@ -304,7 +311,8 @@ class TestWebhookEndpoint:
 
     def test_invalid_hmac_rejected(self, client):
         with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret",
+            return_value=_WEBHOOK_SECRET,
         ):
             resp = client.post(
                 "/api/webhooks/shopify/order-create",
@@ -319,7 +327,8 @@ class TestWebhookEndpoint:
 
     def test_missing_hmac_header_with_secret_configured_rejected(self, client):
         with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret",
+            return_value=_WEBHOOK_SECRET,
         ):
             resp = client.post(
                 "/api/webhooks/shopify/order-create",
@@ -331,7 +340,8 @@ class TestWebhookEndpoint:
     def test_invalid_json_returns_400(self, client):
         bad = b"not-json"
         with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret",
+            return_value=_WEBHOOK_SECRET,
         ):
             resp = client.post(
                 "/api/webhooks/shopify/order-create",
@@ -342,7 +352,8 @@ class TestWebhookEndpoint:
 
     def test_disallowed_topic_rejected_403(self, client):
         with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret",
+            return_value=_WEBHOOK_SECRET,
         ):
             resp = client.post(
                 "/api/webhooks/shopify/order-create",
@@ -358,7 +369,8 @@ class TestWebhookEndpoint:
             "X-Shopify-Hmac-Sha256": _sign(_ORDER_WITH_SHIPPING, _WEBHOOK_SECRET),
         }
         with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret",
+            return_value=_WEBHOOK_SECRET,
         ):
             resp = client.post(
                 "/api/webhooks/shopify/order-create",
@@ -373,7 +385,8 @@ class TestWebhookEndpoint:
         Re-add it once a dedicated update handler exists.
         """
         with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret",
+            return_value=_WEBHOOK_SECRET,
         ):
             resp = client.post(
                 "/api/webhooks/shopify/order-create",
@@ -387,7 +400,8 @@ class TestWebhookEndpoint:
 
     def test_disallowed_domain_rejected_403(self, client):
         with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret",
+            return_value=_WEBHOOK_SECRET,
         ):
             with patch.dict("os.environ", {"SHOPIFY_ALLOWED_DOMAINS": "zdrovena.myshopify.com"}):
                 headers = _shopify_headers(_ORDER_WITH_SHIPPING)
@@ -402,7 +416,8 @@ class TestWebhookEndpoint:
 
     def test_allowed_domain_accepted(self, client):
         with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret",
+            return_value=_WEBHOOK_SECRET,
         ):
             with patch("zdrovena.shipping.application.drafts.create_draft"):
                 with patch.dict(
@@ -420,7 +435,8 @@ class TestWebhookEndpoint:
 
     def test_duplicate_webhook_id_returns_duplicate(self, client):
         with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret",
+            return_value=_WEBHOOK_SECRET,
         ):
             with patch("zdrovena.shipping.application.drafts.create_draft") as mock_create:
                 headers = _shopify_headers(_ORDER_WITH_SHIPPING, webhook_id="wh-dup-1")
@@ -444,7 +460,8 @@ class TestWebhookEndpoint:
     def test_missing_webhook_id_still_processes(self, client):
         """No X-Shopify-Webhook-Id → warn and continue (dedup skipped, not a hard error)."""
         with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret",
+            return_value=_WEBHOOK_SECRET,
         ):
             with patch("zdrovena.shipping.application.drafts.create_draft"):
                 resp = client.post(
@@ -462,7 +479,8 @@ class TestWebhookEndpoint:
         # The endpoint now uses the atomic check-and-set method.
         broken.mark_seen_if_new.side_effect = DedupStoreError("backend down")
         with patch(
-            "zdrovena.api.routers.webhooks._get_webhook_secret", return_value=_WEBHOOK_SECRET
+            "zdrovena.api.routers.shipping.ingestion._get_webhook_secret",
+            return_value=_WEBHOOK_SECRET,
         ):
             with patch("zdrovena.api.deps._shopify_dedup_singleton", return_value=broken):
                 resp = client.post(
@@ -755,7 +773,9 @@ class TestExecuteDraft:
             },
         ):
             with patch(
-                "zdrovena.api.routers.webhooks.log_event",
+                # The post-write event is emitted by the execution composition,
+                # not by the router — that is where the failure has to be injected.
+                "zdrovena.api.shipping_execution_composition.log_event",
                 side_effect=RuntimeError("log sink down"),
             ):
                 client.post(f"/api/shipping/drafts/{draft['id']}/execute")
@@ -1138,7 +1158,9 @@ class TestOrderPickup:
                 return_value=_ALLEGRO_PICKUP_ADDRESS,
             ),
         ):
-            result = webhooks_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)
+            result = fulfillment_router.order_pickup(
+                draft["id"], store, MagicMock(), None, None, None
+            )
 
         assert result == {"status": "pickup_ordered", "draft_id": draft["id"]}
         assert store.get_draft(draft["id"])["pickup_ordered"] is True
@@ -1192,7 +1214,7 @@ class TestOrderPickup:
                 return_value=_ALLEGRO_PICKUP_ADDRESS,
             ),
         ):
-            pending = webhooks_router.order_pickup(
+            pending = fulfillment_router.order_pickup(
                 draft["id"], store, MagicMock(), None, None, None
             )
             assert pending.status_code == 202
@@ -1202,7 +1224,7 @@ class TestOrderPickup:
             assert pending_draft["allegro_dispatch_id"] is None
             assert pending_draft["pickup_ordered"] is False
 
-            completed = webhooks_router.order_pickup(
+            completed = fulfillment_router.order_pickup(
                 draft["id"], store, MagicMock(), None, None, None
             )
             assert completed == {"status": "pickup_ordered", "draft_id": draft["id"]}
@@ -1211,7 +1233,7 @@ class TestOrderPickup:
             assert completed_draft["allegro_dispatch_id"] == "pickup-real-9"
             assert completed_draft["allegro_pickup_command_id"] is None
 
-            cancelled = webhooks_router.cancel_dispatch(draft["id"], store, MagicMock())
+            cancelled = fulfillment_router.cancel_dispatch(draft["id"], store, MagicMock())
 
         assert cancelled["status"] == "dispatch_cancelled"
         allegro.create_ship_with_allegro_pickup.assert_called_once()
@@ -1334,7 +1356,7 @@ class TestOrderPickup:
             ),
         ):
             with pytest.raises(HTTPException) as exc_info:
-                webhooks_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)
+                fulfillment_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)
 
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail == "Allegro has no pickup slot available for this shipment"
@@ -1374,7 +1396,7 @@ class TestOrderPickup:
             ),
         ):
             with pytest.raises(HTTPException) as exc_info:
-                webhooks_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)
+                fulfillment_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)
 
         assert exc_info.value.status_code == 502
         assert exc_info.value.detail == "Allegro pickup error: provider write failed"
@@ -1416,7 +1438,9 @@ class TestOrderPickup:
                 "zdrovena.api.shipping_execution_composition.get_secret", return_value="test-value"
             ),
         ):
-            result = webhooks_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)
+            result = fulfillment_router.order_pickup(
+                draft["id"], store, MagicMock(), None, None, None
+            )
         assert result == {"status": "pickup_ordered", "draft_id": draft["id"]}
         updated = store.get_draft(draft["id"])
         assert updated["pickup_ordered"] is True
@@ -2706,7 +2730,7 @@ class TestInPostPayloadPlan:
                         "first_name": "Jan",
                         "last_name": "Kowalski",
                         "email": "jan@k.pl",
-                        "phone": "600100200",
+                        "phone": "+48600100200",
                         "address": {
                             "street": "Kwiatowa 1",
                             "building_number": "1",
@@ -2802,6 +2826,218 @@ class TestInPostPayloadPlan:
                 wh._run_inpost(draft, _SENDER)
 
         assert [call.args[0] for call in mock_post.call_args_list] == [plan[0]["payload"]]
+
+
+class TestUpdateDraftRecipientPhone:
+    """Issue #294: before this field existed the operator could only wave a
+    phone-less draft through, never fix it — PATCH had no phone parameter."""
+
+    @staticmethod
+    def _seed(store, phone=None, courier="inpost", status="needs_review"):
+        draft = {
+            "id": "draft-phone-1",
+            "shopify_order_number": "1802",
+            "courier": courier,
+            "service": "inpost_courier_standard" if courier == "inpost" else "apaczka",
+            "apaczka_service_id": None if courier == "inpost" else "21",
+            "status": status,
+            "receiver": {
+                "first_name": "Jan",
+                "last_name": "K",
+                "email": "",
+                "phone": phone,
+                "locker_id": "KRA01A",
+            },
+            "courier_shipments": [],
+        }
+        store.upsert_draft(draft)
+        return draft
+
+    def test_stores_the_normalised_number(self, client, store):
+        draft = self._seed(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}", json={"receiver_phone": "600 100 200"}
+        )
+        assert resp.status_code == 200
+        assert store.get_draft(draft["id"])["receiver"]["phone"] == "+48600100200"
+
+    @pytest.mark.parametrize("raw", ["", "12345", "abc", "+1 202 555 0100"])
+    def test_rejects_a_number_inpost_will_not_accept(self, client, store, raw):
+        draft = self._seed(store, phone="+48600100200")
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"receiver_phone": raw})
+        assert resp.status_code == 400
+        # a rejected edit must leave the stored value alone
+        assert store.get_draft(draft["id"])["receiver"]["phone"] == "+48600100200"
+
+    def test_saving_a_phone_does_not_clear_needs_review(self, client, store):
+        # Clearing review stays a separate, explicit click: the operator
+        # confirms the whole draft, not one field.
+        draft = self._seed(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}", json={"receiver_phone": "600100200"}
+        )
+        assert resp.status_code == 200
+        assert store.get_draft(draft["id"])["status"] == "needs_review"
+
+    def test_keeps_the_rest_of_the_receiver(self, client, store):
+        draft = self._seed(store)
+        client.patch(f"/api/shipping/drafts/{draft['id']}", json={"receiver_phone": "600100200"})
+        receiver = store.get_draft(draft["id"])["receiver"]
+        assert receiver["first_name"] == "Jan"
+        assert receiver["locker_id"] == "KRA01A"
+
+    def test_review_cannot_be_cleared_while_an_inpost_draft_has_no_usable_phone(
+        self, client, store
+    ):
+        # Otherwise one click makes the draft executable and it ships with a
+        # null phone, which InPost rejects from 2026-09-08.
+        draft = self._seed(store, phone=None)
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"reviewed": True})
+        assert resp.status_code == 400
+        assert store.get_draft(draft["id"])["status"] == "needs_review"
+
+    def test_review_clears_once_a_usable_phone_is_present(self, client, store):
+        draft = self._seed(store, phone="+48600100200")
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"reviewed": True})
+        assert resp.status_code == 200
+        assert store.get_draft(draft["id"])["status"] == "pending"
+
+    def test_the_block_does_not_apply_to_other_carriers(self, client, store):
+        # Apaczka has announced no such enforcement; the issue scopes this to InPost.
+        draft = self._seed(store, phone=None, courier="apaczka")
+        resp = client.patch(f"/api/shipping/drafts/{draft['id']}", json={"reviewed": True})
+        assert resp.status_code == 200
+        assert store.get_draft(draft["id"])["status"] == "pending"
+
+    def test_a_phone_and_a_review_can_be_sent_together(self, client, store):
+        # The guard must read the phone from the patch, not the stored draft:
+        # supplying the number and clearing review in one request must work.
+        draft = self._seed(store, phone=None)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"receiver_phone": "600100200", "reviewed": True},
+        )
+        assert resp.status_code == 200
+        updated = store.get_draft(draft["id"])
+        assert updated["receiver"]["phone"] == "+48600100200"
+        assert updated["status"] == "pending"
+
+    def test_a_phone_and_a_locker_can_be_sent_together(self, client, store):
+        # Both branches write patch["receiver"]; whichever ran second used to
+        # discard the other one's edit.
+        draft = self._seed(store)
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"receiver_phone": "600100200", "locker_id": "WAW99Z"},
+        )
+        assert resp.status_code == 200
+        receiver = store.get_draft(draft["id"])["receiver"]
+        assert receiver["phone"] == "+48600100200"
+        assert receiver["locker_id"] == "WAW99Z"
+
+
+class TestStorageOutageSurfacesAs503:
+    """Issue #310 acceptance: an outage must answer consistently across the
+    surfaces, and must never be mistaken for 404 or an empty collection."""
+
+    @pytest.mark.parametrize(
+        "path, method_name",
+        [
+            ("/api/shipping/drafts", "list_drafts"),
+            ("/api/shipping/drafts/dlq", "list_dlq"),
+        ],
+    )
+    def test_an_outage_is_503_not_an_empty_list(self, client, store, path, method_name):
+        from zdrovena.common.exceptions import storage_unavailable
+
+        def _boom(*args, **kwargs):
+            raise storage_unavailable("shipping", method_name, RuntimeError("timeout"))
+
+        with patch.object(type(store), method_name, _boom):
+            resp = client.get(path)
+
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["error_code"] == "StorageUnavailableError"
+        assert body["correlation_id"]
+
+    def test_an_outage_on_a_single_draft_is_503_not_404(self, client, store):
+        # The dangerous confusion: 404 tells the operator the draft is gone.
+        from zdrovena.common.exceptions import storage_unavailable
+
+        def _boom(*args, **kwargs):
+            raise storage_unavailable("shipping", "get_draft", RuntimeError("timeout"))
+
+        with patch.object(type(store), "get_draft", _boom):
+            resp = client.get("/api/shipping/drafts/whatever/label?courier=inpost")
+
+        assert resp.status_code == 503
+
+
+class TestRunInPostRecipientPhone:
+    """InPost enforces a valid recipient phone from 2026-09-08 (issue #294).
+
+    The point of this class is the negative assertion: bad data must cost
+    nothing, so no ShipX shipment POST may happen.
+    """
+
+    @staticmethod
+    def _draft() -> dict[str, Any]:
+        return {
+            "id": "d-inpost-phone",
+            "shopify_order_number": "1803",
+            "courier": "inpost",
+            "service": "inpost_courier_standard",
+            "receiver": {
+                "first_name": "Jan",
+                "last_name": "Kowalski",
+                "email": "jan@example.test",
+                "phone": None,
+                "locker_id": "",
+            },
+            "shipping_address": {
+                "street": "Kwiatowa",
+                "building_number": "7",
+                "flat_number": "",
+                "city": "Warszawa",
+                "post_code": "00-001",
+            },
+            "packages_breakdown": [{"type": "1-pak", "qty": 1}],
+            "courier_shipments": [],
+        }
+
+    def test_an_unusable_phone_creates_no_inpost_shipment(self):
+        from zdrovena.api.shipping_execution_composition import _run_inpost
+        from zdrovena.common.shipping_exceptions import InPostRecipientPhoneError
+
+        with (
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch("zdrovena.common.inpost.InPostClient.create_paczkomat_shipment") as paczkomat,
+            patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as kurier,
+        ):
+            with pytest.raises(InPostRecipientPhoneError):
+                _run_inpost(self._draft(), _SENDER)
+
+        paczkomat.assert_not_called()
+        kurier.assert_not_called()
+
+    def test_a_usable_phone_still_creates_the_shipment(self):
+        from zdrovena.api.shipping_execution_composition import _run_inpost
+
+        draft = self._draft()
+        draft["receiver"] = {**draft["receiver"], "phone": "600100200"}
+
+        with (
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.inpost.InPostClient.create_kurier_shipment",
+                return_value={"id": "ship-1", "tracking_number": "620ABC"},
+            ) as kurier,
+        ):
+            result = _run_inpost(draft, _SENDER)
+
+        assert result["tracking_number"] == "620ABC"
+        assert kurier.call_args.kwargs["receiver_phone"] == "+48600100200"
 
 
 class TestRunApaczka:
@@ -3589,7 +3825,7 @@ class TestGetLabel:
 
     def test_inpost_label_returns_pdf(self, client, store):
         draft = self._seed_created_draft(store, courier="inpost")
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"):
             with patch(
                 "zdrovena.common.inpost.InPostClient.get_label", return_value=b"%PDF-1.4 fake"
             ):
@@ -3614,14 +3850,14 @@ class TestGetLabel:
         moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
 
         with (
-            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"),
             patch(
                 "zdrovena.common.inpost.InPostClient.get_label",
                 return_value=_valid_label_pdf(),
             ),
-            patch("zdrovena.api.routers.webhooks._now_warsaw", return_value=moment),
+            patch("zdrovena.api.routers.shipping.labels._now_warsaw", return_value=moment),
         ):
-            response = webhooks_router.get_label(draft["id"], store, MagicMock(), MagicMock(), None)
+            response = labels_router.get_label(draft["id"], store, MagicMock(), MagicMock(), None)
 
         assert response.status_code == 200
         disposition = response.headers["content-disposition"]
@@ -3645,13 +3881,13 @@ class TestGetLabel:
                 ]
             },
         )
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"):
             with patch(
                 "zdrovena.common.inpost.InPostClient.get_label",
                 side_effect=[b"first", b"second"],
             ) as mock_label:
                 with patch(
-                    "zdrovena.api.routers.webhooks._titled_pdf", return_value=b"merged"
+                    "zdrovena.api.routers.shipping.labels._titled_pdf", return_value=b"merged"
                 ) as merge:
                     resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
 
@@ -3662,7 +3898,7 @@ class TestGetLabel:
 
     def test_label_502_on_courier_error(self, client, store):
         draft = self._seed_created_draft(store, courier="inpost")
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"):
             with patch(
                 "zdrovena.common.inpost.InPostClient.get_label",
                 side_effect=Exception("courier down"),
@@ -3676,12 +3912,12 @@ class TestGetLabel:
         moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
 
         with (
-            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"),
             patch(
                 "zdrovena.common.inpost.InPostClient.get_label",
                 return_value=_valid_label_pdf(),
             ),
-            patch("zdrovena.api.routers.webhooks._now_warsaw", return_value=moment),
+            patch("zdrovena.api.routers.shipping.labels._now_warsaw", return_value=moment),
         ):
             resp = client.get(f"/api/shipping/drafts/{draft['id']}/label?courier=inpost")
 
@@ -3695,7 +3931,7 @@ class TestGetLabel:
         draft = self._seed_created_draft(store, courier="inpost")
 
         with (
-            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"),
             patch(
                 "zdrovena.common.inpost.InPostClient.get_label",
                 return_value=b"%PDF-1.4 not really a pdf",
@@ -3752,7 +3988,9 @@ class TestGetLabelAllegroDelivery:
                 "zdrovena.api.shipping_execution_composition.get_allegro_client",
                 return_value=allegro,
             ),
-            patch("zdrovena.api.routers.webhooks._titled_pdf", return_value=b"merged") as merge,
+            patch(
+                "zdrovena.api.routers.shipping.labels._titled_pdf", return_value=b"merged"
+            ) as merge,
         ):
             response = client.get(f"/api/shipping/drafts/{draft['id']}/label")
 
@@ -4262,7 +4500,7 @@ class TestGetLabelApaczka:
             "error": None,
         }
         store.upsert_draft(draft)
-        with patch("zdrovena.api.routers.webhooks.get_secret") as mock_get_secret:
+        with patch("zdrovena.api.routers.shipping.deps.get_secret") as mock_get_secret:
             mock_get_secret.return_value = "tok"
             with patch(
                 "zdrovena.common.apaczka.ApaczkaClient.get_label", return_value=b"%PDF-1.4 apaczka"
@@ -4656,7 +4894,7 @@ class TestCalcPackages:
 
 class TestCancelInpostShipmentEndpoint:
     def test_successful_cancel_returns_204(self, client):
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"):
             with patch(
                 "zdrovena.common.inpost.InPostClient.cancel_shipment", return_value=None
             ) as mock_cancel:
@@ -4668,7 +4906,7 @@ class TestCancelInpostShipmentEndpoint:
     def test_409_on_business_error(self, client):
         from zdrovena.common.shipping_exceptions import InPostBusinessError
 
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"):
             with patch(
                 "zdrovena.common.inpost.InPostClient.cancel_shipment",
                 side_effect=InPostBusinessError(
@@ -4681,7 +4919,7 @@ class TestCancelInpostShipmentEndpoint:
 
 class TestCancelInpostDispatchEndpoint:
     def test_successful_cancel_returns_204(self, client):
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"):
             with patch(
                 "zdrovena.common.inpost.InPostClient.cancel_dispatch_order", return_value=None
             ) as mock_cancel:
@@ -4692,7 +4930,7 @@ class TestCancelInpostDispatchEndpoint:
     def test_503_on_transient_error(self, client):
         from zdrovena.common.shipping_exceptions import CourierTimeoutError
 
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"):
             with patch(
                 "zdrovena.common.inpost.InPostClient.cancel_dispatch_order",
                 side_effect=CourierTimeoutError(courier="inpost", action="cancel_dispatch_order"),
@@ -4703,7 +4941,7 @@ class TestCancelInpostDispatchEndpoint:
 
 class TestCancelApaczkaOrderEndpoint:
     def test_successful_cancel_returns_204(self, client):
-        with patch("zdrovena.api.routers.webhooks.get_secret") as mock_get_secret:
+        with patch("zdrovena.api.routers.shipping.deps.get_secret") as mock_get_secret:
             mock_get_secret.return_value = "tok"
             with patch(
                 "zdrovena.common.apaczka.ApaczkaClient.cancel_shipment", return_value={}
@@ -4717,7 +4955,7 @@ class TestCancelApaczkaOrderEndpoint:
     def test_409_on_business_error(self, client):
         from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
 
-        with patch("zdrovena.api.routers.webhooks.get_secret") as mock_get_secret:
+        with patch("zdrovena.api.routers.shipping.deps.get_secret") as mock_get_secret:
             mock_get_secret.return_value = "tok"
             with patch(
                 "zdrovena.common.apaczka.ApaczkaClient.cancel_shipment",
@@ -4757,21 +4995,22 @@ class TestSyncOrdersEndpoint:
             return_value=mock_allegro_client,
         ):
             with patch(
-                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client"
+                "zdrovena.api.routers.shipping.invoices._get_fakturownia_invoice_client"
             ) as mock_build_fakturownia:
                 with patch(
                     "zdrovena.api.routers.allegro_poller.poll_orders_once",
                     return_value=allegro_stats,
                 ) as mock_poll:
                     with patch(
-                        "zdrovena.api.routers.webhooks._sync_shopify_orders_from_api",
+                        "zdrovena.api.routers.shipping.ingestion._sync_shopify_orders_from_api",
                         return_value=shopify_stats,
                     ):
                         with patch(
-                            "zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret
+                            "zdrovena.api.routers.shipping.deps.get_secret",
+                            side_effect=fake_get_secret,
                         ):
                             with patch(
-                                "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                                "zdrovena.api.routers.shipping.deps._allowed_shopify_domains",
                                 return_value={"shop.myshopify.com"},
                             ):
                                 resp = client.post("/api/shipping/sync")
@@ -4793,9 +5032,11 @@ class TestSyncOrdersEndpoint:
         with patch(
             "zdrovena.api.shipping_execution_composition.get_allegro_client", return_value=None
         ):
-            with patch("zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret):
+            with patch(
+                "zdrovena.api.routers.shipping.deps.get_secret", side_effect=fake_get_secret
+            ):
                 with patch(
-                    "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                    "zdrovena.api.routers.shipping.deps._allowed_shopify_domains",
                     return_value=set(),
                 ):
                     resp = client.post("/api/shipping/sync")
@@ -4816,7 +5057,7 @@ class TestSyncOrdersEndpoint:
             return_value=mock_allegro_client,
         ):
             with patch(
-                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                "zdrovena.api.routers.shipping.invoices._get_fakturownia_invoice_client",
                 return_value=None,
             ):
                 with patch(
@@ -4824,10 +5065,10 @@ class TestSyncOrdersEndpoint:
                     side_effect=RuntimeError("allegro API down"),
                 ):
                     with patch(
-                        "zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret
+                        "zdrovena.api.routers.shipping.deps.get_secret", side_effect=fake_get_secret
                     ):
                         with patch(
-                            "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                            "zdrovena.api.routers.shipping.deps._allowed_shopify_domains",
                             return_value=set(),
                         ):
                             resp = client.post("/api/shipping/sync")
@@ -4852,7 +5093,7 @@ class TestSyncOrdersEndpoint:
             return_value=mock_allegro_client,
         ):
             with patch(
-                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                "zdrovena.api.routers.shipping.invoices._get_fakturownia_invoice_client",
                 return_value=None,
             ):
                 with patch(
@@ -4860,14 +5101,15 @@ class TestSyncOrdersEndpoint:
                     return_value=allegro_stats,
                 ):
                     with patch(
-                        "zdrovena.api.routers.webhooks._sync_shopify_orders_from_api",
+                        "zdrovena.api.routers.shipping.ingestion._sync_shopify_orders_from_api",
                         side_effect=ConnectionError("shopify unreachable"),
                     ):
                         with patch(
-                            "zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret
+                            "zdrovena.api.routers.shipping.deps.get_secret",
+                            side_effect=fake_get_secret,
                         ):
                             with patch(
-                                "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                                "zdrovena.api.routers.shipping.deps._allowed_shopify_domains",
                                 return_value={"shop.myshopify.com"},
                             ):
                                 resp = client.post("/api/shipping/sync")
@@ -4892,7 +5134,7 @@ class TestSyncOrdersEndpoint:
             return_value=mock_allegro_client,
         ):
             with patch(
-                "zdrovena.api.routers.webhooks._get_fakturownia_invoice_client",
+                "zdrovena.api.routers.shipping.invoices._get_fakturownia_invoice_client",
                 return_value=None,
             ):
                 with patch(
@@ -4900,10 +5142,10 @@ class TestSyncOrdersEndpoint:
                     return_value=allegro_stats,
                 ):
                     with patch(
-                        "zdrovena.api.routers.webhooks.get_secret", side_effect=fake_get_secret
+                        "zdrovena.api.routers.shipping.deps.get_secret", side_effect=fake_get_secret
                     ):
                         with patch(
-                            "zdrovena.api.routers.webhooks._allowed_shopify_domains",
+                            "zdrovena.api.routers.shipping.deps._allowed_shopify_domains",
                             return_value={"shop.myshopify.com"},
                         ):
                             resp = client.post("/api/shipping/sync")
@@ -4938,7 +5180,7 @@ class TestSyncShopifyOrdersFromApi:
     def test_empty_orders_returns_zero_stats(self, tmp_path):
         from responses import RequestsMock
 
-        from zdrovena.api.routers.webhooks import _sync_shopify_orders_from_api
+        from zdrovena.api.routers.shipping.ingestion import _sync_shopify_orders_from_api
         from zdrovena.common.storage import LocalStorageService
 
         store = ShippingStore(local_root=tmp_path / "store")
@@ -4969,7 +5211,7 @@ class TestSyncShopifyOrdersFromApi:
     def test_existing_order_is_unchanged_when_payload_matches(self, tmp_path):
         from responses import RequestsMock
 
-        from zdrovena.api.routers.webhooks import _sync_shopify_orders_from_api
+        from zdrovena.api.routers.shipping.ingestion import _sync_shopify_orders_from_api
         from zdrovena.common.storage import LocalStorageService
 
         store = ShippingStore(local_root=tmp_path / "store")
@@ -4998,7 +5240,7 @@ class TestSyncShopifyOrdersFromApi:
     def test_existing_order_status_updates_from_pending_to_fulfilled(self, tmp_path):
         from responses import RequestsMock
 
-        from zdrovena.api.routers.webhooks import _sync_shopify_orders_from_api
+        from zdrovena.api.routers.shipping.ingestion import _sync_shopify_orders_from_api
         from zdrovena.common.storage import LocalStorageService
 
         store = ShippingStore(local_root=tmp_path / "store")
@@ -5045,7 +5287,7 @@ class TestSyncShopifyOrdersFromApi:
     def test_sync_updates_original_instead_of_replacement_draft(self, tmp_path):
         from responses import RequestsMock
 
-        from zdrovena.api.routers.webhooks import _sync_shopify_orders_from_api
+        from zdrovena.api.routers.shipping.ingestion import _sync_shopify_orders_from_api
         from zdrovena.common.storage import LocalStorageService
 
         store = ShippingStore(local_root=tmp_path / "store")
@@ -5099,7 +5341,7 @@ class TestSyncShopifyOrdersFromApi:
 
         from responses import RequestsMock
 
-        from zdrovena.api.routers.webhooks import _sync_shopify_orders_from_api
+        from zdrovena.api.routers.shipping.ingestion import _sync_shopify_orders_from_api
         from zdrovena.common.storage import LocalStorageService
 
         store = ShippingStore(local_root=tmp_path / "store")
@@ -5138,7 +5380,7 @@ class TestSyncShopifyOrdersFromApi:
     def test_sync_does_not_regress_created_draft_to_pending(self, tmp_path):
         from responses import RequestsMock
 
-        from zdrovena.api.routers.webhooks import _sync_shopify_orders_from_api
+        from zdrovena.api.routers.shipping.ingestion import _sync_shopify_orders_from_api
         from zdrovena.common.storage import LocalStorageService
 
         store = ShippingStore(local_root=tmp_path / "store")
@@ -5186,7 +5428,7 @@ class TestSyncShopifyOrdersFromApi:
         import requests
         from responses import RequestsMock
 
-        from zdrovena.api.routers.webhooks import _sync_shopify_orders_from_api
+        from zdrovena.api.routers.shipping.ingestion import _sync_shopify_orders_from_api
         from zdrovena.common.storage import LocalStorageService
 
         store = ShippingStore(local_root=tmp_path / "store")
@@ -5248,7 +5490,7 @@ class TestBatchLabels:
         self._seed(store, "b-1", courier_draft_id="cd-1")
         self._seed(store, "b-2", courier_draft_id="cd-2")
         pdf = self._valid_pdf()
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"):
             with patch("zdrovena.common.inpost.InPostClient.get_label", return_value=pdf):
                 resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ["b-1", "b-2"]})
         assert resp.status_code == 200
@@ -5259,7 +5501,7 @@ class TestBatchLabels:
         from zdrovena.common.shipping_exceptions import InPostBusinessError
 
         self._seed(store, "b-1", courier_draft_id="cd-1")
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"):
             with patch(
                 "zdrovena.common.inpost.InPostClient.get_label",
                 side_effect=InPostBusinessError("shipment not confirmed", courier="inpost"),
@@ -5283,12 +5525,12 @@ class TestBatchLabels:
         moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
 
         with (
-            patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"),
+            patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"),
             patch(
                 "zdrovena.common.inpost.InPostClient.get_label",
                 return_value=self._valid_pdf(),
             ),
-            patch("zdrovena.api.routers.webhooks._now_warsaw", return_value=moment),
+            patch("zdrovena.api.routers.shipping.labels._now_warsaw", return_value=moment),
         ):
             resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ["b-1"]})
 
@@ -5313,7 +5555,7 @@ class TestSingleLabelNotReady:
                 "shopify_order_number": "lnr-1",
             }
         )
-        with patch("zdrovena.api.routers.webhooks.get_secret", return_value="tok"):
+        with patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"):
             with patch(
                 "zdrovena.common.inpost.InPostClient.get_label",
                 side_effect=InPostBusinessError("not confirmed yet", courier="inpost"),
@@ -6052,3 +6294,88 @@ class TestAllegroPayloadPlan:
         )
         with pytest.raises(CourierTransientError):
             allegro_delivery_payload_plan(_ALLEGRO_DRAFT, client)
+
+
+class TestShopifySyncIsIdempotent:
+    """The Shopify half of #316, end to end against a real store.
+
+    The sync used to build its dedup index from list_drafts(limit=10_000); a
+    store larger than the limit hid the oldest drafts, so an order that already
+    had one read as new and was written again. Reproducing that here would need
+    10_000 rows, so the truncation mechanism itself is pinned cheaply at store
+    level (TestFindDraftByExternalId). What this test proves is the property
+    that matters to the caller: syncing the same order twice, across a store
+    large enough to be sorted and sliced, yields exactly one draft.
+    """
+
+    def _order(self, order_id: int) -> dict:
+        return {
+            "id": order_id,
+            "order_number": order_id,
+            "shipping_lines": [{"title": "DPD Kurier"}],
+            "shipping_address": {
+                "first_name": "Jan",
+                "last_name": "Kowalski",
+                "address1": "Kwiatowa 1",
+                "city": "Warszawa",
+                "zip": "00-001",
+            },
+            "customer": {"email": "jan@example.com", "phone": "500000000"},
+        }
+
+    def test_syncing_the_same_order_twice_yields_one_draft(self, tmp_path):
+        from responses import RequestsMock
+
+        from zdrovena.api.routers.shipping.ingestion import _sync_shopify_orders_from_api
+        from zdrovena.common.storage import LocalStorageService
+
+        store = ShippingStore(local_root=tmp_path / "store")
+        storage = LocalStorageService(root=tmp_path / "storage")
+
+        with RequestsMock() as rsps:
+            rsps.add(
+                rsps.GET,
+                "https://shop.myshopify.com/admin/api/2024-01/orders.json",
+                json={"orders": [self._order(4242)]},
+                status=200,
+            )
+            first = _sync_shopify_orders_from_api(
+                shop_domain="shop.myshopify.com",
+                api_token="tok",
+                shipping_store=store,
+                storage=storage,
+            )
+        assert first["created"] == 1
+
+        # Bury it under more rows than any list limit would return, all newer.
+        for i in range(300):
+            store.upsert_draft(
+                {
+                    "id": f"filler-{i}",
+                    "created_at": "2030-01-01T00:00:00+00:00",
+                    "source": "shopify",
+                    "external_order_id": f"filler-order-{i}",
+                    "shopify_order_id": f"filler-order-{i}",
+                    "status": "pending",
+                }
+            )
+
+        with RequestsMock() as rsps:
+            rsps.add(
+                rsps.GET,
+                "https://shop.myshopify.com/admin/api/2024-01/orders.json",
+                json={"orders": [self._order(4242)]},
+                status=200,
+            )
+            second = _sync_shopify_orders_from_api(
+                shop_domain="shop.myshopify.com",
+                api_token="tok",
+                shipping_store=store,
+                storage=storage,
+            )
+
+        assert second["created"] == 0, "the order already had a draft"
+        drafts_for_order = [
+            d for d in store.list_drafts(limit=10_000) if str(d.get("external_order_id")) == "4242"
+        ]
+        assert len(drafts_for_order) == 1

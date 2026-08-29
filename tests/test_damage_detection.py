@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
 from zdrovena.api.damage_detection import (
     extract_inpost_tracking,
     is_allowed_inpost_sender,
@@ -338,3 +340,111 @@ def test_zoho_tracking_fetches_provider_data_and_links_existing_order(tmp_path):
     assert set(case["correlation_matched_fields"]) >= {"email", "phone", "name"}
     assert case["inpost_shipment_id"] == 12345
     assert shipping.get_draft("shopify-1641")["tracking_number"] == case["tracking_number"]
+
+
+class TestInPostSenderAllowlist:
+    """A real damage notice arrives from a named branch employee.
+
+    August 2026: InPost Oddział Grudziądz wrote to info@wodahumio.pl about a
+    parcel damaged in transit — subject was only the tracking number, body had
+    the damage protocol and photos. The allowlist accepted addresses whose local
+    part starts with "uszkodz" plus one central address, so
+    `alaszkowska@inpost.pl` was rejected at the first check. No case, nothing in
+    the portal, five days lost before it was forwarded by hand.
+    """
+
+    @pytest.mark.parametrize(
+        "sender",
+        [
+            "alaszkowska@inpost.pl",
+            "AwizowniaGRU@inpost.pl",
+            "InterwencjeGRU@inpost.pl",
+            "kjedrzejewski@inpost.pl",
+            "  Alaszkowska@InPost.PL  ",
+            "dyspozycje_biznes@inpost.pl",
+            "uszkodzenia@inpost.pl",
+        ],
+    )
+    def test_inpost_staff_are_trusted(self, sender):
+        assert is_allowed_inpost_sender(sender) is True
+
+    @pytest.mark.parametrize(
+        "sender",
+        [
+            "",
+            "krzysztof@wodahumio.pl",
+            "ktos@gmail.com",
+            "uszkodzenia@notinpost.pl",
+            "damage@inpost.pl.evil.com",
+            "spoof@inpostpl",
+            "attacker@inpost.pl.co",
+        ],
+    )
+    def test_everyone_else_is_not(self, sender):
+        assert is_allowed_inpost_sender(sender) is False
+
+    def test_a_lookalike_domain_cannot_impersonate(self):
+        """`inpost.pl.evil.com` ends with neither the domain nor a real subdomain."""
+        assert is_allowed_inpost_sender("a@evil-inpost.pl") is False
+        assert is_allowed_inpost_sender("a@inpost.pl.evil.com") is False
+
+    def test_a_branch_subdomain_is_trusted(self):
+        assert is_allowed_inpost_sender("oddzial@grudziadz.inpost.pl") is True
+
+
+class _GrudziadzZohoStub:
+    """The message that went unseen for five days in August 2026.
+
+    Reproduced faithfully: sent by a named branch employee, subject containing
+    nothing but the tracking number, damage described only in the body.
+    """
+
+    def search_damage_notifications(self, since_ms: int = 0):
+        del since_ms
+        return [
+            {
+                "messageId": "zoho-grudziadz-1",
+                "fromAddress": "alaszkowska@inpost.pl",
+                "subject": "630015967687300036534902",
+                "content": (
+                    "Witam, Kontaktujemy się w sprawie przesyłki o numerze podanym "
+                    "w temacie. Przesyłka została uszkodzona podczas transportu na "
+                    "oddział doręczający. Protokół szkody został spisany na oddziale "
+                    "i wykonana została dokumentacja zdjęciowa. Czy wydają Państwo "
+                    "dyspozycję na Zwrot do Państwa przesyłki?"
+                ),
+                "receivedTime": "1755756991000",
+            }
+        ]
+
+
+def test_a_branch_employee_damage_notice_creates_a_case(tmp_path):
+    """The regression this fix exists for.
+
+    Everything downstream already worked — the damage wording matches, and the
+    tracking number extracts from a subject that is nothing else. Only the
+    sender check stood in the way, and it rejected the message silently.
+    """
+    shipping = ShippingStore(local_root=tmp_path / "shipping")
+    damage = DamageStore(local_root=tmp_path / "damage")
+    draft = _allegro_draft()
+    draft.update(
+        {
+            "id": "grudziadz-draft",
+            "source": "shopify",
+            "tracking_number": "630015967687300036534902",
+            "courier": "inpost",
+        }
+    )
+    shipping.upsert_draft(draft)
+
+    stats = scan_zoho_damage_cases(
+        client=_GrudziadzZohoStub(), shipping_store=shipping, damage_store=damage
+    )
+
+    assert stats["created"] == 1
+    case = damage.list_cases()[0]
+    assert case["tracking_number"] == "630015967687300036534902"
+    assert case["shipping_draft_id"] == "grudziadz-draft"
+    # Nothing ships on detection: the operator confirms first.
+    assert case["status"] == "needs_review"
