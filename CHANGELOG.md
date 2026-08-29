@@ -52,6 +52,17 @@
 
 ### Fixed
 
+- **ci**: Zatwierdzenie produkcyjnego `terraform apply` dotyczy wreszcie konkretnego planu.
+  Kolejność była odwrotna — approval szedł pierwszy, plan nie istniał jeszcze w ogóle,
+  a treść zgłoszenia i tak prosiła zatwierdzającego o „przejrzenie planu w podlinkowanym
+  runie". Teraz plan powstaje przed approvalem, jego podsumowanie ląduje w treści zgłoszenia,
+  a `apply` wykonuje **zapisany** plan, nie przeliczony na nowo. Job `apply` dostał
+  `environment: production-infra`, którego nie miał, mimo że komentarz w nagłówku twierdził
+  inaczej — bez tego nie widział zmiennych środowiska, a claim OIDC mógł się nie zgadzać.
+  Adres alertowy pochodzi wyłącznie z `vars.OPS_ALERT_EMAIL` (zmienne ustawione w obu
+  środowiskach), binarny `tfplan` przestał być publikowany jako artefakt PR-a, a duplikat
+  kroku sanityzacji poświadczeń zastąpiła jedna akcja composite. (#138)
+
 - **security**: Files API nie sięga już do stanu wewnętrznych workflowów. Sprawdzanie
   roli tego nie zamykało — operator **ma** mieć rolę księgowego, więc jeden pomylony klucz
   kasował stan systemowy i dostawał w odpowiedzi 204. Zablokowane dla PUT/DELETE są
