@@ -3,6 +3,18 @@
 
 ## Unreleased
 
+### Changed
+
+- **damage**: Workflow uszkodzonych przesyłek wyjęty z routera HTTP do warstwy aplikacji
+  (`zdrovena/damage/application`). Router mapuje request, woła serwis i tłumaczy błędy
+  domenowe na kody HTTP — nie klonuje już draftu zastępczego, nie składa maila i nie
+  zarządza przejściami stanów. Reguły dało się dotąd sprawdzić wyłącznie startując
+  FastAPI, a decyzja „kiedy sprawa liczy się jako wysłana" była rozpisana w dwóch
+  handlerach, czyli o jedną edycję od rozjazdu. Zewnętrzne zależności wchodzą przez
+  protokoły z `ports.py`, więc warstwa aplikacji nie importuje ani frameworku webowego,
+  ani klienta Azure/SMTP. Zachowanie endpointów bez zmian. Test fitness nie wpuści
+  logiki workflow z powrotem do routera. (#317)
+
 ### Added
 
 - **month-close**: Kontrola wstępna sprawdza wreszcie stronę magazynową. Audyt WZ

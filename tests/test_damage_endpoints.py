@@ -11,10 +11,10 @@ os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 
 from zdrovena.api import shipping_execution_composition
 from zdrovena.api.main import app
-from zdrovena.api.routers import damage as damage_router
 from zdrovena.common.damage_store import DamageStore
 from zdrovena.common.shipping_store import ShippingStore
 from zdrovena.common.storage import LocalStorageService
+from zdrovena.damage.application import DamageWorkflow
 
 
 @pytest.fixture()
@@ -147,7 +147,10 @@ def test_replacement_clears_full_shipping_lifecycle_and_creates_new_parcels(stor
     case = damage.get_case("case-1648")
     assert original is not None
     assert case is not None
-    replacement = damage_router._clone_replacement_draft(original, case)
+    # Cloning moved to the application layer (#317); the rule is unchanged.
+    replacement = DamageWorkflow(cases=damage, drafts=shipping).clone_replacement_draft(
+        original, case
+    )
 
     for field in (
         "courier_draft_id",
