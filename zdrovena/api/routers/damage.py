@@ -23,6 +23,13 @@ from zdrovena.api.damage_detection import (
     scan_zoho_damage_cases,
 )
 from zdrovena.api.deps import DamageStoreDep, ShippingStoreDep, StorageDep
+from zdrovena.api.models import (
+    DamageCaseModel,
+    DamageCasesResponse,
+    DamageCaseWithDraftResponse,
+    DamageRefreshResponse,
+    DamageSummaryResponse,
+)
 from zdrovena.common.config import KEYCHAIN_SERVICE_ZOHO_SMTP
 from zdrovena.common.events import log_event
 from zdrovena.common.secrets import get_secret
@@ -89,7 +96,11 @@ def _send_email_with_configured_zoho_smtp(
     return {"data": {"transport": "smtp"}}
 
 
-@router.get("/damage-cases", summary="List damaged-shipment cases")
+@router.get(
+    "/damage-cases",
+    summary="List damaged-shipment cases",
+    response_model=DamageCasesResponse,
+)
 def list_damage_cases(
     damage_store: DamageStoreDep,
     principal: Annotated[Principal, Depends(require_viewer_or_above)],
@@ -106,7 +117,11 @@ def list_damage_cases(
     }
 
 
-@router.get("/damage-cases/summary", summary="Count damage cases requiring attention")
+@router.get(
+    "/damage-cases/summary",
+    summary="Count damage cases requiring attention",
+    response_model=DamageSummaryResponse,
+)
 def damage_case_summary(
     damage_store: DamageStoreDep,
     principal: Annotated[Principal, Depends(require_viewer_or_above)],
@@ -115,7 +130,11 @@ def damage_case_summary(
     return {"needs_review": damage_store.count_needs_review()}
 
 
-@router.get("/damage-cases/{case_id}", summary="Get a damaged-shipment case")
+@router.get(
+    "/damage-cases/{case_id}",
+    summary="Get a damaged-shipment case",
+    response_model=DamageCaseModel,
+)
 def get_damage_case(
     case_id: str,
     damage_store: DamageStoreDep,
@@ -125,7 +144,11 @@ def get_damage_case(
     return _case_or_404(damage_store, case_id)
 
 
-@router.post("/damage-cases/refresh", summary="Fetch Allegro and Zoho damage signals")
+@router.post(
+    "/damage-cases/refresh",
+    summary="Fetch Allegro and Zoho damage signals",
+    response_model=DamageRefreshResponse,
+)
 def refresh_damage_cases(
     damage_store: DamageStoreDep,
     shipping_store: ShippingStoreDep,
@@ -252,7 +275,11 @@ def _http(exc: DamageWorkflowError) -> HTTPException:
     return HTTPException(status_code=409, detail=str(exc))  # pragma: no cover
 
 
-@router.post("/damage-cases/{case_id}/confirm", summary="Confirm parcel damage")
+@router.post(
+    "/damage-cases/{case_id}/confirm",
+    summary="Confirm parcel damage",
+    response_model=DamageCaseModel,
+)
 def confirm_damage_case(
     case_id: str,
     body: ConfirmDamageRequest,
@@ -265,7 +292,11 @@ def confirm_damage_case(
         raise _http(exc) from exc
 
 
-@router.post("/damage-cases/{case_id}/ignore", summary="Ignore a false-positive case")
+@router.post(
+    "/damage-cases/{case_id}/ignore",
+    summary="Ignore a false-positive case",
+    response_model=DamageCaseModel,
+)
 def ignore_damage_case(
     case_id: str,
     damage_store: DamageStoreDep,
@@ -280,6 +311,7 @@ def ignore_damage_case(
 @router.post(
     "/damage-cases/{case_id}/prepare-replacement",
     summary="Prepare a replacement draft without creating a courier shipment",
+    response_model=DamageCaseWithDraftResponse,
 )
 def prepare_replacement(
     case_id: str,
@@ -297,6 +329,7 @@ def prepare_replacement(
 @router.post(
     "/damage-cases/{case_id}/create-replacement",
     summary="Create the previously prepared courier shipment",
+    response_model=DamageCaseWithDraftResponse,
 )
 def create_replacement(
     case_id: str,
@@ -315,6 +348,7 @@ def create_replacement(
 @router.post(
     "/damage-cases/{case_id}/confirm-replacement",
     summary="Poll a pending Allegro replacement shipment",
+    response_model=DamageCaseWithDraftResponse,
 )
 def confirm_replacement(
     case_id: str,
@@ -329,7 +363,11 @@ def confirm_replacement(
         raise _http(exc) from exc
 
 
-@router.post("/damage-cases/{case_id}/email-draft", summary="Prepare customer email")
+@router.post(
+    "/damage-cases/{case_id}/email-draft",
+    summary="Prepare customer email",
+    response_model=DamageCaseWithDraftResponse,
+)
 def prepare_email_draft(
     case_id: str,
     damage_store: DamageStoreDep,
@@ -343,7 +381,11 @@ def prepare_email_draft(
         raise _http(exc) from exc
 
 
-@router.patch("/damage-cases/{case_id}/email-draft", summary="Edit customer email draft")
+@router.patch(
+    "/damage-cases/{case_id}/email-draft",
+    summary="Edit customer email draft",
+    response_model=DamageCaseWithDraftResponse,
+)
 def update_email_draft(
     case_id: str,
     body: EmailDraftUpdate,
@@ -359,7 +401,11 @@ def update_email_draft(
         raise _http(exc) from exc
 
 
-@router.post("/damage-cases/{case_id}/send-email", summary="Send approved customer email")
+@router.post(
+    "/damage-cases/{case_id}/send-email",
+    summary="Send approved customer email",
+    response_model=DamageCaseWithDraftResponse,
+)
 def send_customer_email(
     case_id: str,
     damage_store: DamageStoreDep,
@@ -392,6 +438,7 @@ class EmailAttemptResolution(BaseModel):
     "/damage-cases/{case_id}/resolve-email-attempt",
     summary="Resolve an email attempt whose outcome is unknown",
     responses={409: {"description": "No unresolved attempt to resolve"}},
+    response_model=DamageCaseWithDraftResponse,
 )
 def resolve_email_attempt(
     case_id: str,
@@ -422,7 +469,11 @@ def resolve_email_attempt(
     return result
 
 
-@router.post("/damage-cases/{case_id}/close", summary="Close a damage case")
+@router.post(
+    "/damage-cases/{case_id}/close",
+    summary="Close a damage case",
+    response_model=DamageCaseModel,
+)
 def close_damage_case(
     case_id: str,
     damage_store: DamageStoreDep,

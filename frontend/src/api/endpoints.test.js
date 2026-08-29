@@ -40,8 +40,10 @@ describe('views go through the typed endpoint layer', () => {
 describe('endpoint types come from the generated schema', () => {
     const endpoints = fs.readFileSync(path.join(SRC, 'api', 'endpoints.ts'), 'utf8')
 
-    it('derives response types from the OpenAPI paths type', () => {
-        expect(endpoints).toContain("import type { paths } from './generated/schema'")
+    it('derives response types from the generated schema', () => {
+        expect(endpoints).toMatch(
+            /import type \{[^}]*\b(paths|components)\b[^}]*\} from '\.\/generated\/schema'/,
+        )
     })
 
     it('does not hand-write a response shape for a contracted endpoint', () => {
@@ -51,8 +53,19 @@ describe('endpoint types come from the generated schema', () => {
         const declared = [...endpoints.matchAll(/export type (\w+Response)\s*=\s*([^\n]*)/g)]
 
         expect(declared.length).toBeGreaterThan(0)
+        // `paths[...]` and `components[...]` are both projections of the
+        // generated schema. A literal object type would be a second source of
+        // truth that drifts silently from the backend.
         const handWritten = declared
-            .filter(([, , rhs]) => !rhs.trim().startsWith('paths[') && !rhs.trim().startsWith('{'))
+            .filter(([, , rhs]) => {
+                const value = rhs.trim()
+                return (
+                    !value.startsWith('paths[') &&
+                    !value.startsWith('components[') &&
+                    !value.startsWith('{') &&
+                    !value.startsWith('|')
+                )
+            })
             .map(([, name]) => name)
 
         expect(handWritten).toEqual([])
