@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+## v2.10.0 (2026-08-29)
+
 ### Changed
 
 - **api**: Wszystkie endpointy publikują już schematy odpowiedzi — zostało **zero**
