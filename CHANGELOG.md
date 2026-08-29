@@ -95,6 +95,18 @@
 
 ### Fixed
 
+- **damage**: Zgłoszenie uszkodzenia od pracownika oddziału InPost tworzy wreszcie sprawę
+  w portalu. Allowlista nadawców przyjmowała wyłącznie adresy, których część lokalna
+  **zaczyna się od „uszkodz"**, plus jeden adres centralny — a prawdziwe zgłoszenia
+  przychodzą od imiennych pracowników (`alaszkowska@inpost.pl`, Oddział Grudziądz).
+  Wiadomość z 21.08.2026 o przesyłce uszkodzonej w transporcie odpadała na pierwszym
+  sprawdzeniu, po cichu; sprawa wypłynęła dopiero po pięciu dniach, gdy przesłano ją
+  ręcznie. Wszystko dalej działało poprawnie — treść dopasowywała się do wzorca
+  uszkodzenia, a numer wyciągał się z tematu, który był samym numerem. Zaufana jest teraz
+  cała domena `inpost.pl` wraz z subdomenami; reszta bramek bez zmian: wiadomość nadal
+  musi opisywać uszkodzenie i nieść numer korelujący z naszą przesyłką, a sprawa nadal
+  powstaje w `needs_review`, więc nic nie jedzie bez potwierdzenia operatora. (#359)
+
 - **api**: Endpointy Damage publikują wreszcie schematy odpowiedzi. Zwracały
   `dict[str, Any]`, więc OpenAPI opisywał obiekt bez struktury, a wygenerowany typ
   TypeScript to było dosłownie `{ [key: string]: unknown }` — frontend nie miał z czego
