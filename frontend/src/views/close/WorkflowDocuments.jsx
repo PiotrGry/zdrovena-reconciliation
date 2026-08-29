@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useAuth } from '../../auth'
-import { fetchJson } from '../../api'
+import { uploadFile } from '../../api/endpoints'
 import { Icon } from '../../components/Icon'
 import { useToast } from '../../components/Toast'
 
@@ -33,11 +33,11 @@ export function WorkflowDocuments({ year, month, documents, onUploaded }) {
         try {
             const token = await getToken()
             for (const file of files) {
-                await fetchJson(`/api/files/${encodeURIComponent(`${prefix}/${file.name}`)}`, {
-                    method: 'PUT',
-                    token,
-                    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+                await uploadFile({
+                    key: `${prefix}/${file.name}`,
                     body: file,
+                    contentType: file.type || 'application/octet-stream',
+                    token,
                 })
             }
             pushToast({ kind: 'success', msg: `Wgrano ${files.length} plików dla ${year}-${String(month).padStart(2, '0')}.` })

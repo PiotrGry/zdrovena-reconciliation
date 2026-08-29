@@ -83,7 +83,7 @@ GitHub zamyka issue tylko przy gałęzi domyślnej.
   recovery, wspólny mechanizm dla Damage i Month Close. Nie „przy okazji".
 
 - [x] [#317](https://github.com/PiotrGry/zdrovena-reconciliation/issues/317) — **P2** Damage do warstwy aplikacji (551 linii, najmniejszy z refaktorów)
-- [ ] [#318](https://github.com/PiotrGry/zdrovena-reconciliation/issues/318) — **P2** rozbić ShippingView (2047 linii; ubyło — wyciągnięte 3 komponenty)
+- [x] [#318](https://github.com/PiotrGry/zdrovena-reconciliation/issues/318) — **P2** rozbić ShippingView (2047 linii; ubyło — wyciągnięte 3 komponenty)
 - [x] [#313](https://github.com/PiotrGry/zdrovena-reconciliation/issues/313) — **P2** rozbić webhooks.py (2063 linie; **urosło** przy #294)
 
 ---

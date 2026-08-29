@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useT } from '../lang'
 import { useAuth } from '../auth'
-import { fetchJson } from '../api'
+import { getIntegrationsHealth } from '../api/endpoints'
 import { PageHead } from '../components/PageHead'
 import { Icon } from '../components/Icon'
 import { Pill } from '../components/Pill'
@@ -42,8 +42,7 @@ export default function SettingsView() {
         setHealthError('')
         try {
             const token = await getToken()
-            const suffix = runChecks ? '?run_checks=true' : ''
-            const data = await fetchJson(`/api/integrations/health${suffix}`, { token })
+            const data = await getIntegrationsHealth({ runChecks, token })
             setHealth(data)
         } catch (err) {
             setHealthError(err.message || 'Nie udało się pobrać statusu integracji.')
@@ -57,7 +56,7 @@ export default function SettingsView() {
         async function loadOnce() {
             try {
                 const token = await getToken()
-                const data = await fetchJson('/api/integrations/health', { token })
+                const data = await getIntegrationsHealth({ token })
                 if (alive) setHealth(data)
             } catch (err) {
                 if (alive) setHealthError(err.message || 'Nie udało się pobrać statusu integracji.')
