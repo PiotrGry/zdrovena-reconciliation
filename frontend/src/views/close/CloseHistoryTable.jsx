@@ -3,7 +3,7 @@ import { useAuth } from '../../auth'
 import { useToast } from '../../components/Toast'
 import { Icon } from '../../components/Icon'
 import { PIPELINE_STEPS } from '../../data'
-import { fetchJson } from '../../api'
+import { getCloseHistory, deleteCloseHistoryEntry } from '../../api/endpoints'
 import { usePolling } from '../../hooks/usePolling'
 
 const STATUS_CONFIG = {
@@ -28,7 +28,7 @@ export function CloseHistoryTable({ refreshKey = 0 }) {
     const load = useCallback(async ({ silent = false } = {}) => {
         try {
             const token = await getToken()
-            setHistory(await fetchJson('/api/close/history?limit=15', { token }))
+            setHistory(await getCloseHistory({ limit: 15, token }))
         } catch (e) {
             if (!silent) {
                 pushToast({ kind: 'error', msg: `Nie udało się wczytać historii zamknięć: ${e.message}` })
@@ -48,10 +48,7 @@ export function CloseHistoryTable({ refreshKey = 0 }) {
         if (!window.confirm('Usuń ten wpis z historii?')) return
         try {
             const token = await getToken()
-            await fetchJson(`/api/close/history/${encodeURIComponent(ts)}`, {
-                method: 'DELETE',
-                token,
-            })
+            await deleteCloseHistoryEntry({ timestamp: ts, token })
             setHistory(prev => prev.filter(h => h.ts !== ts))
         } catch (e) {
             pushToast({ kind: 'error', msg: `Nie udało się usunąć wpisu: ${e.message}` })

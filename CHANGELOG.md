@@ -5,6 +5,20 @@
 
 ### Changed
 
+- **frontend**: `ShippingView.jsx` (2047 linii) rozbity na komponenty i moduły
+  odpowiadające konkretnym odpowiedzialnościom — widok ma teraz 774 linie i pełni rolę
+  kompozycyjną. Requesty Close, Settings i faktur shippingowych przeniesione do
+  otypowanej warstwy `api/endpoints.ts`; typy odpowiedzi wyprowadzane są z wygenerowanego
+  schematu OpenAPI, nie pisane ręcznie. Zachowanie operatorskie bez zmian. Testy pilnują,
+  że widok nie omija warstwy endpointów i że żaden typ odpowiedzi nie jest ręcznie
+  duplikowany.
+
+  **Uwaga:** 32 endpointy backendu (w tym całe Damage) zwracają `dict[str, Any]`, więc
+  OpenAPI publikuje dla nich obiekt bez struktury, a wygenerowany typ to dosłownie
+  `{ [key: string]: unknown }`. `Record<string, unknown>` jest tam **poprawny** —
+  usunięcie go wymagałoby modeli odpowiedzi po stronie backendu, co zmienia kontrakt
+  i jest osobną pracą. (#318)
+
 - **api**: `webhooks.py` (2056 linii) rozbity na routery według odpowiedzialności:
   ingestion Shopify, drafty, wykonanie, odbiór i anulowania, etykiety, faktury, DLQ oraz
   wsparcie testów E2E. Największy moduł ma teraz 391 linii. Ścieżki URL, tagi, modele
