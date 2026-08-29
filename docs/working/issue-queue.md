@@ -77,7 +77,7 @@ GitHub zamyka issue tylko przy gałęzi domyślnej.
 
 ## 4. Największe
 
-- [ ] [#312](https://github.com/PiotrGry/zdrovena-reconciliation/issues/312) — **P1** duplikaty maili po crashu
+- [x] [#312](https://github.com/PiotrGry/zdrovena-reconciliation/issues/312) — **P1** duplikaty maili po crashu
   **Największa nieodwracalna szkoda z całej listy** — klient albo księgowa dostaje
   drugi mail. Trwały rekord próby ze stanami, fingerprint odbiorców, semantyka
   recovery, wspólny mechanizm dla Damage i Month Close. Nie „przy okazji".

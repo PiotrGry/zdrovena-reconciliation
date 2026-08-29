@@ -195,6 +195,38 @@
         "title": "Body_update_draft_api_shipping_drafts__draft_id__patch",
         "type": "object"
       },
+      "CloseEmailAttemptResolution": {
+        "description": "An operator's decision about a send whose outcome nobody can read.",
+        "properties": {
+          "delivered": {
+            "title": "Delivered",
+            "type": "boolean"
+          },
+          "month": {
+            "maximum": 12.0,
+            "minimum": 1.0,
+            "title": "Month",
+            "type": "integer"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          },
+          "year": {
+            "minimum": 2020.0,
+            "title": "Year",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "year",
+          "month",
+          "delivered"
+        ],
+        "title": "CloseEmailAttemptResolution",
+        "type": "object"
+      },
       "CloseRequest": {
         "properties": {
           "dry_run": {
@@ -788,6 +820,24 @@
           }
         },
         "title": "ConfirmDamageRequest",
+        "type": "object"
+      },
+      "EmailAttemptResolution": {
+        "properties": {
+          "delivered": {
+            "title": "Delivered",
+            "type": "boolean"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "delivered"
+        ],
+        "title": "EmailAttemptResolution",
         "type": "object"
       },
       "EmailDraftUpdate": {
@@ -1695,6 +1745,56 @@
         ]
       }
     },
+    "/api/close/workflow/email-attempt": {
+      "post": {
+        "description": "Settle an ambiguous send so the period can move on.\n\nA crash between SMTP accepting the message and the workflow recording it\nleaves a state nobody on our side can read. `delivered=true` closes the\nperiod without a second mail to the accountant; `delivered=false` unblocks\na retry (#312).",
+        "operationId": "resolve_close_email_attempt_api_close_workflow_email_attempt_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseEmailAttemptResolution"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloseWorkflowRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "No unresolved attempt, or another action owns this period"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Resolve a send attempt whose outcome is unknown",
+        "tags": [
+          "close"
+        ]
+      }
+    },
     "/api/close/workflow/reset": {
       "post": {
         "operationId": "reset_close_workflow_api_close_workflow_reset_post",
@@ -2405,6 +2505,69 @@
           }
         ],
         "summary": "Prepare a replacement draft without creating a courier shipment",
+        "tags": [
+          "damaged shipments"
+        ]
+      }
+    },
+    "/api/damage-cases/{case_id}/resolve-email-attempt": {
+      "post": {
+        "description": "Record what actually happened to an ambiguous send.\n\nOnly a person can settle this: from our side an accepted-then-lost message\nand a never-sent one look identical. `delivered=true` closes the case\nwithout a second message; `delivered=false` is what unblocks a retry.",
+        "operationId": "resolve_email_attempt_api_damage_cases__case_id__resolve_email_attempt_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailAttemptResolution"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Resolve Email Attempt Api Damage Cases  Case Id  Resolve Email Attempt Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "No unresolved attempt to resolve"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Resolve an email attempt whose outcome is unknown",
         "tags": [
           "damaged shipments"
         ]

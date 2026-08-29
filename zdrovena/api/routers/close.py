@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from zdrovena.api.auth import Principal, require_accountant_or_admin, require_viewer_or_above
 from zdrovena.api.models import (
+    CloseEmailAttemptResolution,
     CloseRequest,
     CloseResponse,
     CloseStateResponse,
@@ -29,7 +30,11 @@ from zdrovena.month_closing.console import ConsoleReporter
 from zdrovena.month_closing.orchestrator import MonthCloseOrchestrator
 from zdrovena.month_closing.run_store import RunBusyError, RunConflictError
 from zdrovena.month_closing.state import PipelineState
-from zdrovena.month_closing.workflow import MonthCloseWorkflow, WaiverTargetError
+from zdrovena.month_closing.workflow import (
+    EmailAttemptResolutionError,
+    MonthCloseWorkflow,
+    WaiverTargetError,
+)
 
 logger = logging.getLogger("zdrovena.api.routers.close")
 router = APIRouter(prefix="/close", tags=["close"])
@@ -218,6 +223,37 @@ def add_close_workflow_waiver(
         run = workflow.waive(req.year, req.month, req.target, principal.email)
     except WaiverTargetError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except (RunBusyError, RunConflictError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return CloseWorkflowRunResponse.model_validate(run)
+
+
+@router.post(
+    "/workflow/email-attempt",
+    response_model=CloseWorkflowRunResponse,
+    summary="Resolve a send attempt whose outcome is unknown",
+    responses={
+        409: {"description": "No unresolved attempt, or another action owns this period"},
+    },
+)
+def resolve_close_email_attempt(
+    req: CloseEmailAttemptResolution,
+    principal: Annotated[Principal, Depends(require_accountant_or_admin)],
+) -> CloseWorkflowRunResponse:
+    """Settle an ambiguous send so the period can move on.
+
+    A crash between SMTP accepting the message and the workflow recording it
+    leaves a state nobody on our side can read. `delivered=true` closes the
+    period without a second mail to the accountant; `delivered=false` unblocks
+    a retry (#312).
+    """
+    workflow = MonthCloseWorkflow()
+    try:
+        run = workflow.resolve_email_attempt(
+            req.year, req.month, delivered=req.delivered, by=principal.email, note=req.note
+        )
+    except EmailAttemptResolutionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except (RunBusyError, RunConflictError) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return CloseWorkflowRunResponse.model_validate(run)

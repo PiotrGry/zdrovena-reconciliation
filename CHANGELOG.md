@@ -52,6 +52,18 @@
 
 ### Fixed
 
+- **email**: Awaria procesu po przyjęciu wiadomości przez SMTP nie prowadzi już do drugiej
+  wysyłki. Blokada współbieżności powstrzymywała dwa kliknięcia, ale nie domykała okna między
+  „SMTP przyjął" a „zdążyliśmy to zapisać" — i to właśnie jej własna reguła wygaśnięcia po
+  dziesięciu minutach zamieniała awarię w duplikat, bo blokada wygasająca po cichu zakłada,
+  że nic się nie wydarzyło. Porzucona próba przechodzi teraz w stan `unknown`, który blokuje
+  wysyłkę i czeka na decyzję operatora: z naszej strony „przyjęte i zgubione" jest nie do
+  odróżnienia od „nigdy nie wysłane". Rekord próby jest trwały **przed** kontaktem z SMTP,
+  a `failed` zapisujemy wyłącznie przy odmowie, którą faktycznie zobaczyliśmy — timeout
+  zostawia `pending`, bo wiadomość mogła zostać przyjęta. Wspólna semantyka dla Uszkodzeń
+  i Zamknięcia miesiąca, procedura recovery w `docs/devops/wysylka-maili-recovery.md`.
+  Odcisk próby to SHA-256 — adres, temat ani treść nie są zapisywane. (#312)
+
 - **infra**: Model sieci prywatnej opisany w trzech miejscach na trzy różne sposoby jest
   wreszcie jeden. Nagłówek `network.tf` reklamował Service Endpoints jako **tańszą
   alternatywę** dla Private Endpointów i podawał oszczędność €29/mies., podczas gdy ten sam
