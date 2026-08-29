@@ -36,8 +36,19 @@ _DAMAGE_WORDS = re.compile(
     r"damaged\s+parcel|shipment\s+(?:has\s+been\s+)?damaged)",
     re.IGNORECASE,
 )
-_INPOST_DAMAGE_SENDER = re.compile(r"^uszkodz(?:on|eni)[^@]*@inpost\.pl$", re.IGNORECASE)
-_INPOST_CENTRAL_SENDER = "dyspozycje_biznes@inpost.pl"
+#: Any mailbox at InPost, including branch subdomains. Damage notices come from
+#: named branch staff (`alaszkowska@inpost.pl`, Oddział Grudziądz), not from a
+#: functional address — the previous rule required the local part to start with
+#: "uszkodz", so a real notification was rejected at the first check and never
+#: reached the portal.
+#:
+#: The From header is a weak trust anchor and always was: a spoofed
+#: `dyspozycje_biznes@inpost.pl` passed the old rule just as easily. What
+#: actually protects anything is downstream — the message must also describe
+#: damage AND carry a 24-digit tracking number that correlates to one of our
+#: shipments, and the case it creates lands in `needs_review`, so an operator
+#: confirms before any replacement parcel is created.
+_INPOST_DAMAGE_SENDER = re.compile(r"^[^@\s]+@(?:[a-z0-9-]+\.)*inpost\.pl$", re.IGNORECASE)
 _INPOST_TRACKING = re.compile(r"(?<!\d)(\d{24})(?!\d)")
 _CASE_NAMESPACE = uuid.UUID("bba9bba0-6699-4dc0-884d-f089ab85e590")
 
@@ -51,8 +62,9 @@ def is_damage_description(text: str) -> bool:
 
 
 def is_allowed_inpost_sender(address: str) -> bool:
+    """True for any mailbox at inpost.pl or one of its subdomains."""
     normalized = (address or "").strip().lower()
-    return normalized == _INPOST_CENTRAL_SENDER or bool(_INPOST_DAMAGE_SENDER.fullmatch(normalized))
+    return bool(_INPOST_DAMAGE_SENDER.fullmatch(normalized))
 
 
 def extract_inpost_tracking(subject: str, content: str) -> str | None:
