@@ -2257,7 +2257,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Insufficient role */
+            /** @description Insufficient role, or key belongs to internal storage */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2300,7 +2300,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Insufficient role */
+            /** @description Insufficient role, or key belongs to internal storage */
             403: {
                 headers: {
                     [name: string]: unknown;
