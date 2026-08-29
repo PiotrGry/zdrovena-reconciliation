@@ -41,7 +41,9 @@ class TestEnvironmentBinding:
         assert workflow["jobs"]["apply"]["environment"] == "production"
 
     def test_security_tf_has_matching_federated_credentials(self, workflow):
-        security_tf = (REPO_ROOT / "infra" / "terraform" / "security.tf").read_text(encoding="utf-8")
+        security_tf = (REPO_ROOT / "infra" / "terraform" / "security.tf").read_text(
+            encoding="utf-8"
+        )
         plan_env = workflow["jobs"]["plan"]["environment"]
         apply_env = workflow["jobs"]["apply"]["environment"]
         assert f":environment:{plan_env}" in security_tf
