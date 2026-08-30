@@ -3,6 +3,22 @@
 
 ## Unreleased
 
+### Fixed
+
+- **infra**: Poświadczenia OIDC dla CI mają wreszcie opisane, gdzie naprawdę żyją.
+  Istnieją dwa obiekty o nazwie `zdrovena-github-actions` — app registration w Entra
+  (ma rolę Contributor, to nią uwierzytelniają się workflow) oraz managed identity
+  zarządzana Terraformem, **bez żadnych przypisań ról**. Dodany po awarii OIDC zasób
+  `github_production_env` celował w tę drugą, więc tworzyłby poświadczenie na tożsamości,
+  którą GitHub Actions się nie uwierzytelnia; usunięty. Test sprawdzający, że `security.tf`
+  deklaruje poświadczenia pasujące do środowisk z workflow, przechodził i czytał się jak
+  dowód pokrycia infrastrukturą jako kodem — którego tu nie ma. Zastąpiony testem
+  sprawdzającym, że każde środowisko użyte w workflow ma **zarejestrowany subject
+  w runbooku**; strażnik złapany na tym, że przy pierwszej wersji przepuszczał dokładnie
+  tę zmianę, która wywróciła produkcję. Nowy runbook `docs/devops/oidc-poswiadczenia.md`
+  wyjaśnia, dlaczego app registration świadomie zostaje poza Terraformem (byłaby to
+  eskalacja uprawnień i zależność bootstrapowa) i co zrobić przed zmianą `environment:`.
+
 ## v2.10.0 (2026-08-29)
 
 ### Changed
@@ -166,7 +182,7 @@
   a treść zgłoszenia i tak prosiła zatwierdzającego o „przejrzenie planu w podlinkowanym
   runie". Teraz plan powstaje przed approvalem, jego podsumowanie ląduje w treści zgłoszenia,
   a `apply` wykonuje **zapisany** plan, nie przeliczony na nowo. Job `apply` dostał
-  `environment: production-infra`, którego nie miał, mimo że komentarz w nagłówku twierdził
+  `environment: production`, którego nie miał, mimo że komentarz w nagłówku twierdził
   inaczej — bez tego nie widział zmiennych środowiska, a claim OIDC mógł się nie zgadzać.
   Adres alertowy pochodzi wyłącznie z `vars.OPS_ALERT_EMAIL` (zmienne ustawione w obu
   środowiskach), binarny `tfplan` przestał być publikowany jako artefakt PR-a, a duplikat

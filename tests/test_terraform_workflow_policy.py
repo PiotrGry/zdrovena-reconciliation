@@ -8,6 +8,7 @@ not evidence that any of it is right.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -35,10 +36,44 @@ class TestEnvironmentBinding:
     def test_plan_runs_in_staging(self, workflow):
         assert workflow["jobs"]["plan"]["environment"] == "staging"
 
-    def test_apply_runs_in_production_infra(self, workflow):
-        """Without this the job cannot see production-infra variables, and the
+    def test_apply_runs_in_production(self, workflow):
+        """Without this the job cannot see production variables, and the
         OIDC subject claim does not match what Azure was told to expect."""
-        assert workflow["jobs"]["apply"]["environment"] == "production-infra"
+        assert workflow["jobs"]["apply"]["environment"] == "production"
+
+    def test_every_environment_used_has_a_documented_oidc_subject(self, workflow):
+        """Changing `environment:` changes the OIDC subject claim, and a subject
+        with no federated credential simply stops authenticating — that is how
+        `terraform apply` on main broke on 2026-08-29.
+
+        Checked against the runbook, deliberately NOT against security.tf. The
+        credentials that decide whether `azure/login` succeeds sit on the Entra
+        app registration and are managed by hand; the identity security.tf
+        manages holds no role assignments and authenticates nothing. Asserting
+        against security.tf passes while proving nothing about the workflow —
+        it reads as infrastructure-as-code coverage that does not exist.
+        """
+        runbook = (REPO_ROOT / "docs" / "devops" / "oidc-poswiadczenia.md").read_text(
+            encoding="utf-8"
+        )
+        # Only the registered-subjects table counts. Searching the whole document
+        # also matches the incident narrative, which names the very subject that
+        # had no credential — the guard would then pass on exactly the change
+        # that broke production. Found by deliberately re-breaking it.
+        table = runbook.split("## Zarejestrowane subjecty")[1].split("\n## ")[0]
+        registered = set(re.findall(r":environment:([\w-]+)`", table))
+
+        used = {
+            job["environment"]
+            for job in workflow["jobs"].values()
+            if isinstance(job.get("environment"), str)
+        }
+        undocumented = sorted(used - registered)
+
+        assert undocumented == [], (
+            f"environments with no registered OIDC subject in the runbook: {undocumented}. "
+            "Register the credential BEFORE merging the workflow change."
+        )
 
 
 class TestConfigurationSource:
