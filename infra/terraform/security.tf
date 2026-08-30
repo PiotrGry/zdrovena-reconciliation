@@ -73,6 +73,14 @@ resource "azurerm_federated_identity_credential" "github_staging_env" {
   subject                   = "repo:${var.github_owner}/${var.github_repo}:environment:staging"
 }
 
+resource "azurerm_federated_identity_credential" "github_production_env" {
+  name                      = "github-production-env"
+  user_assigned_identity_id = azurerm_user_assigned_identity.github_actions.id
+  audience                  = ["api://AzureADTokenExchange"]
+  issuer                    = "https://token.actions.githubusercontent.com"
+  subject                   = "repo:${var.github_owner}/${var.github_repo}:environment:production"
+}
+
 resource "azurerm_federated_identity_credential" "github_develop" {
   name                      = "github-develop"
   user_assigned_identity_id = azurerm_user_assigned_identity.github_actions.id

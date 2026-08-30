@@ -35,10 +35,19 @@ class TestEnvironmentBinding:
     def test_plan_runs_in_staging(self, workflow):
         assert workflow["jobs"]["plan"]["environment"] == "staging"
 
-    def test_apply_runs_in_production_infra(self, workflow):
-        """Without this the job cannot see production-infra variables, and the
+    def test_apply_runs_in_production(self, workflow):
+        """Without this the job cannot see production variables, and the
         OIDC subject claim does not match what Azure was told to expect."""
-        assert workflow["jobs"]["apply"]["environment"] == "production-infra"
+        assert workflow["jobs"]["apply"]["environment"] == "production"
+
+    def test_security_tf_has_matching_federated_credentials(self, workflow):
+        security_tf = (REPO_ROOT / "infra" / "terraform" / "security.tf").read_text(
+            encoding="utf-8"
+        )
+        plan_env = workflow["jobs"]["plan"]["environment"]
+        apply_env = workflow["jobs"]["apply"]["environment"]
+        assert f":environment:{plan_env}" in security_tf
+        assert f":environment:{apply_env}" in security_tf
 
 
 class TestConfigurationSource:

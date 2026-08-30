@@ -37,7 +37,7 @@ env:
   TF_IN_AUTOMATION: "true"
   ARM_USE_OIDC: "true"
   # Static inputs, declared once. The environment-scoped ops_alert_email stays
-  # at job level, where the binding to `staging` / `production-infra` is explicit.
+  # at job level, where the binding to `staging` / `production` is explicit.
   TF_VAR_terraform_ip_allowlist: '[]'
   TF_VAR_swa_custom_domain: portal.wodahumio.pl
 
@@ -176,11 +176,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    # Binds this job to the production-infra environment, so its variables and
+    # Binds this job to the production environment, so its variables and
     # secrets resolve and the OIDC subject claim is
-    # `…:environment:production-infra`. The header comment used to claim this
+    # `…:environment:production`. The header comment used to claim this
     # gating existed while no `environment:` was declared at all (issue #138).
-    environment: production-infra
+    environment: production
     # Approval gate: GitHub Free + private repo blocks Required reviewers, so we
     # use trstringer/manual-approval which creates an issue and pauses until the
     # listed approver comments "approve" / "approved" / "lgtm". Free, audit-trailed.
@@ -226,7 +226,7 @@ jobs:
             missing=1
           fi
           if [ -z "$TF_VAR_ops_alert_email" ]; then
-            echo "::error::OPS_ALERT_EMAIL is empty — alert rules would have no recipient, which is an alert that fires into the void. Set it as a variable on the 'production-infra' GitHub environment." >&2
+            echo "::error::OPS_ALERT_EMAIL is empty — alert rules would have no recipient, which is an alert that fires into the void. Set it as a variable on the 'production' GitHub environment." >&2
             missing=1
           fi
           exit "$missing"
