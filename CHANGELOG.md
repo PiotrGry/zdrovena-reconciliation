@@ -108,6 +108,20 @@
 
 ### Fixed
 
+- **infra**: Poświadczenia OIDC dla CI mają wreszcie opisane, gdzie naprawdę żyją.
+  Istnieją dwa obiekty o nazwie `zdrovena-github-actions` — app registration w Entra
+  (ma rolę Contributor, to nią uwierzytelniają się workflow) oraz managed identity
+  zarządzana Terraformem, **bez żadnych przypisań ról**. Dodany po awarii OIDC zasób
+  `github_production_env` celował w tę drugą, więc tworzyłby poświadczenie na tożsamości,
+  którą GitHub Actions się nie uwierzytelnia; usunięty. Test sprawdzający, że `security.tf`
+  deklaruje poświadczenia pasujące do środowisk z workflow, przechodził i czytał się jak
+  dowód pokrycia infrastrukturą jako kodem — którego tu nie ma. Zastąpiony testem
+  sprawdzającym, że każde środowisko użyte w workflow ma **zarejestrowany subject
+  w runbooku**; strażnik złapany na tym, że przy pierwszej wersji przepuszczał dokładnie
+  tę zmianę, która wywróciła produkcję. Nowy runbook `docs/devops/oidc-poswiadczenia.md`
+  wyjaśnia, dlaczego app registration świadomie zostaje poza Terraformem (byłaby to
+  eskalacja uprawnień i zależność bootstrapowa) i co zrobić przed zmianą `environment:`.
+
 - **damage**: Zgłoszenie uszkodzenia od pracownika oddziału InPost tworzy wreszcie sprawę
   w portalu. Allowlista nadawców przyjmowała wyłącznie adresy, których część lokalna
   **zaczyna się od „uszkodz"**, plus jeden adres centralny — a prawdziwe zgłoszenia
