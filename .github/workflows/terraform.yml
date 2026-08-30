@@ -175,6 +175,11 @@ jobs:
     name: Apply
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Waits for the plan job even on a push, where both would otherwise start in
+    # the same second and race for the state lock. Before the plan moved ahead of
+    # the approval (#138) there was no race: apply planned nothing and only ran
+    # after a human replied, long after the plan job had let go.
+    needs: plan
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     # Binds this job to the production environment, so its variables and
     # secrets resolve and the OIDC subject claim is
@@ -241,6 +246,11 @@ jobs:
       - name: Terraform plan
         id: plan
         run: |
+          # pipefail, or `tee` decides the step's exit status and a failed plan
+          # reports success. That is how a state-lock error became a request to
+          # approve a plan that was never written, and then an apply looking for
+          # a tfplan that did not exist.
+          set -o pipefail
           terraform plan -input=false -no-color -out=tfplan 2>&1 | tee plan.txt
           {
             echo "## Terraform plan for \`${{ github.sha }}\`"
@@ -251,6 +261,11 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           summary=$(grep -E '^Plan: |^No changes\.' plan.txt | tail -1)
           echo "summary=${summary:-plan produced, see the run summary}" >> "$GITHUB_OUTPUT"
+
+      # Cheap, but it is the check that would have stopped the approval request
+      # for a plan that did not exist.
+      - name: Verify the plan was written
+        run: test -f tfplan || { echo "::error::terraform plan produced no tfplan"; exit 1; }
 
       - name: Wait for manual approval
         uses: trstringer/manual-approval@fa642940caf8412403569b28b2db4a1df08a83a3 # v1.13.1

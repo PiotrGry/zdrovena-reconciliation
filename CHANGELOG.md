@@ -5,6 +5,18 @@
 
 ### Fixed
 
+- **ci**: `terraform apply` na `main` prosił o zatwierdzenie planu, który nigdy nie powstał.
+  Krok planu w jobie `apply` używał gołego potoku `terraform plan … | tee plan.txt`, więc
+  bash zwracał kod `tee` (zawsze 0) — błąd terraforma znikał, krok świecił na zielono,
+  operator zatwierdzał nieistniejący plan, a `apply` dopiero szukał brakującego `tfplan`.
+  Czyli dokładnie ta wada, którą #138 miało usunąć (approval bez planu), wróciła inną drogą.
+  Dodane `set -o pipefail` oraz sprawdzenie obecności `tfplan` **przed** żądaniem
+  zatwierdzenia. Sam błąd terraforma to był zamek na stanie: przeniesienie planu przed
+  approval sprawiło, że joby `plan` i `apply` startowały w tej samej sekundzie i biły się
+  o `tfstate` — wcześniej wyścigu nie było, bo `apply` planował dopiero po odpowiedzi
+  człowieka. `apply` czeka teraz na `plan` przez `needs`. Trzy strażniki, każdy sprawdzony
+  przez celowe zepsucie.
+
 - **infra**: Poświadczenia OIDC dla CI mają wreszcie opisane, gdzie naprawdę żyją.
   Istnieją dwa obiekty o nazwie `zdrovena-github-actions` — app registration w Entra
   (ma rolę Contributor, to nią uwierzytelniają się workflow) oraz managed identity
