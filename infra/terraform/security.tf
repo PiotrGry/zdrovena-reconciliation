@@ -48,6 +48,19 @@ resource "azurerm_key_vault" "kv" {
 }
 
 # ── User-Assigned Identity for GitHub Actions (OIDC) ──────────────────────────
+#
+# UWAGA: to NIE jest tożsamość, którą uwierzytelniają się dzisiejsze workflow.
+#
+# Istnieją dwa obiekty o nazwie `zdrovena-github-actions`: ta managed identity
+# oraz app registration w Entra. Sekret `AZURE_CLIENT_ID` wskazuje app
+# registration — to ona ma rolę Contributor na subskrypcji i to jej poświadczenia
+# federacyjne rozstrzygają, czy `azure/login` przejdzie. Ta managed identity nie
+# ma ŻADNYCH przypisań ról, więc nawet uwierzytelniona nic by nie zrobiła.
+#
+# Poświadczenia OIDC dla CI są więc zarządzane ręcznie, poza tym stackiem —
+# celowo, patrz docs/devops/oidc-poswiadczenia.md. Dokładanie tu poświadczeń
+# „dla porządku" tworzy zasoby, których nic nie używa, i sugeruje pokrycie
+# infrastrukturą jako kodem tam, gdzie go nie ma.
 
 resource "azurerm_user_assigned_identity" "github_actions" {
   name                = "${var.prefix}-github-actions"
@@ -71,14 +84,6 @@ resource "azurerm_federated_identity_credential" "github_staging_env" {
   audience                  = ["api://AzureADTokenExchange"]
   issuer                    = "https://token.actions.githubusercontent.com"
   subject                   = "repo:${var.github_owner}/${var.github_repo}:environment:staging"
-}
-
-resource "azurerm_federated_identity_credential" "github_production_env" {
-  name                      = "github-production-env"
-  user_assigned_identity_id = azurerm_user_assigned_identity.github_actions.id
-  audience                  = ["api://AzureADTokenExchange"]
-  issuer                    = "https://token.actions.githubusercontent.com"
-  subject                   = "repo:${var.github_owner}/${var.github_repo}:environment:production"
 }
 
 resource "azurerm_federated_identity_credential" "github_develop" {
