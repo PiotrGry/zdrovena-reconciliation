@@ -127,6 +127,43 @@ class TestApprovalCoversARealPlan:
         assert "-out=tfplan" in step["run"]
 
 
+class TestAFailedPlanCannotReachApproval:
+    """The apply job's plan step reported success while terraform had failed.
+
+    `terraform plan | tee plan.txt` returns tee's exit status, so a state-lock
+    error vanished: the step went green, a human was asked to approve a plan
+    that was never written, and only `terraform apply` noticed the missing
+    tfplan. That is the very defect #138 set out to remove — approval covering
+    no plan — reintroduced through a different mechanism.
+    """
+
+    def test_the_apply_plan_step_does_not_swallow_the_exit_code(self, workflow):
+        step = next(
+            s for s in workflow["jobs"]["apply"]["steps"] if s.get("name") == "Terraform plan"
+        )
+        run = step["run"]
+
+        assert "| tee" in run, "test assumes the plan output is still piped"
+        assert "set -o pipefail" in run or "PIPESTATUS" in run, (
+            "a piped terraform plan reports tee's exit status, so a failed plan looks green"
+        )
+
+    def test_the_plan_file_is_verified_before_asking_for_approval(self, workflow):
+        names = [s.get("name") or s.get("uses", "") for s in workflow["jobs"]["apply"]["steps"]]
+        verify = next(i for i, n in enumerate(names) if n == "Verify the plan was written")
+        approval = next(i for i, n in enumerate(names) if n == "Wait for manual approval")
+
+        assert verify < approval
+
+    def test_apply_waits_for_the_plan_job(self, workflow):
+        """Both jobs run terraform plan against one state. Started together they
+        race for the lock, and the loser fails."""
+        needs = workflow["jobs"]["apply"].get("needs")
+        needs = [needs] if isinstance(needs, str) else (needs or [])
+
+        assert "plan" in needs
+
+
 class TestPlanArtifactIsNotPublished:
     def test_no_job_uploads_the_binary_plan(self, workflow):
         """A saved plan can contain variable values, and the PR job never
