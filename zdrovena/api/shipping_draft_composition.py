@@ -198,6 +198,45 @@ def _shopify_cod_details(
     }, None
 
 
+def _line_total(item: dict[str, Any]) -> str | None:
+    """Return what one order line costs, after its own discount.
+
+    The COD split weighs parcels by the value of what is in them, so a line
+    without a readable price makes the whole draft fall back to an equal split
+    rather than guessing. Returning None says so explicitly.
+    """
+    try:
+        price = Decimal(str(item.get("price")).strip())
+        discount = Decimal(str(item.get("total_discount") or "0").strip())
+    except (InvalidOperation, ValueError, AttributeError):
+        return None
+    total = price * Decimal(str(item.get("quantity", 1))) - discount
+    if not total.is_finite() or total < 0:
+        return None
+    return format(total.quantize(Decimal("0.01")), ".2f")
+
+
+def _shipping_price(order: dict[str, Any]) -> str:
+    """Return what the customer pays for delivery, after discounts.
+
+    Shopify keeps the pre-discount price alongside the charged one; free
+    shipping shows as discounted_price "0.00" over a non-zero price, so reading
+    the wrong field would hand every parcel a share of a cost nobody paid.
+    """
+    total = Decimal("0")
+    for line in order.get("shipping_lines") or []:
+        raw = line.get("discounted_price")
+        if raw is None or str(raw).strip() == "":
+            raw = line.get("price")
+        try:
+            amount = Decimal(str(raw).strip())
+        except (InvalidOperation, ValueError, AttributeError):
+            continue
+        if amount.is_finite() and amount > 0:
+            total += amount
+    return format(total.quantize(Decimal("0.01")), ".2f")
+
+
 def _normalize_pickup_provider(value: Any) -> str | None:
     normalized = " ".join(str(value or "").strip().lower().split())
     return _PICKUP_PROVIDER_ALIASES.get(normalized)
@@ -505,9 +544,14 @@ def build_draft_record(
         "unreadable_products": unreadable,
         "total_qty": total_qty,
         "order_items": [
-            {"name": product_name(item), "quantity": item.get("quantity", 1)}
+            {
+                "name": product_name(item),
+                "quantity": item.get("quantity", 1),
+                **({"line_total": total} if (total := _line_total(item)) is not None else {}),
+            }
             for item in product_items
         ],
+        "shipping_price": _shipping_price(order),
         "pickup_ordered": False,
         "receiver": {
             "first_name": first_name,

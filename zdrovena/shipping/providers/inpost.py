@@ -11,6 +11,7 @@ from zdrovena.common.shipping_exceptions import (
 )
 from zdrovena.common.shipping_format import normalize_pl_phone
 from zdrovena.common.shipping_parcels import PARCEL_SPECS
+from zdrovena.shipping.domain.cod import CodAllocationError, cod_allocation
 from zdrovena.shipping.domain.planning import physical_parcels, shipment_reference
 
 InPostCallSpec = tuple[str, str, int, str, dict[str, Any]]
@@ -82,15 +83,27 @@ def inpost_call_specs(draft: dict[str, Any], sender: dict[str, str]) -> list[InP
 
     parcels = physical_parcels(draft)
     cod = draft.get("cod")
-    if cod and len(parcels) != 1:
-        raise InPostBusinessError(
-            "COD requires exactly one physical InPost shipment; multi-parcel COD is blocked",
-            courier="inpost",
-            action="create_shipment",
-        )
+    cod_amounts: list[str] = []
+    if cod:
+        # A locker is collected parcel by parcel, so splitting the amount there
+        # would let the customer pay for one box and leave the rest behind. A
+        # courier hands over everything in one visit, so the split is safe.
+        if inpost_service == "paczkomat" and len(parcels) != 1:
+            raise InPostBusinessError(
+                "COD to a Paczkomat locker requires exactly one physical shipment; "
+                "repack the order into one parcel or send it by courier",
+                courier="inpost",
+                action="create_shipment",
+            )
+        try:
+            cod_amounts = [str(amount) for amount in cod_allocation(draft).amounts]
+        except CodAllocationError as exc:
+            raise InPostBusinessError(
+                str(exc), courier="inpost", action="create_shipment"
+            ) from exc
 
     specs: list[InPostCallSpec] = []
-    for parcel in parcels:
+    for position, parcel in enumerate(parcels):
         package_type = parcel.package_type
         package_number = parcel.position
         package_count = parcel.count_for_type
@@ -126,7 +139,7 @@ def inpost_call_specs(draft: dict[str, Any], sender: dict[str, str]) -> list[InP
         if cod:
             kwargs.update(
                 {
-                    "cod_amount": str(cod.get("amount") or ""),
+                    "cod_amount": cod_amounts[position],
                     "cod_currency": str(cod.get("currency") or ""),
                 }
             )

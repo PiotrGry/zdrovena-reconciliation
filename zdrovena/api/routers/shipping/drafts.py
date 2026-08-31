@@ -20,6 +20,7 @@ from zdrovena.api.models import (
     ShippingDraftsResponse,
 )
 from zdrovena.common.shipping_format import normalize_pl_phone
+from zdrovena.shipping.domain.cod import CodAllocationError, cod_allocation
 
 logger = logging.getLogger("zdrovena.api.routers.shipping.drafts")
 
@@ -171,11 +172,24 @@ def update_draft(
             )
         cleaned = _validated_breakdown(packages_breakdown)
         total = sum(row["qty"] for row in cleaned)
-        if draft.get("cod") and total != 1:
-            raise HTTPException(
-                status_code=400,
-                detail="Przesyłka pobraniowa musi mieścić się w jednej paczce",
-            )
+        if draft.get("cod"):
+            if draft.get("service") == "inpost_locker_standard" and total != 1:
+                # A locker is collected parcel by parcel, so a split would let
+                # the customer pay for one box and abandon the rest.
+                raise HTTPException(
+                    status_code=400,
+                    detail="Pobranie do paczkomatu musi mieścić się w jednej paczce",
+                )
+            try:
+                # Checked against the plan being saved, not the stored one, so
+                # an impossible split is refused here rather than at execute
+                # time when the operator is waiting on labels.
+                cod_allocation({**draft, "packages_breakdown": cleaned})
+            except CodAllocationError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Nie można podzielić pobrania na te paczki: {exc}",
+                ) from exc
         logger.info(
             "Operator repacked draft %s: %s -> %s",
             draft_id,
