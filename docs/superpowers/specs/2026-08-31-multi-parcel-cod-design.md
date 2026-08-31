@@ -1,7 +1,7 @@
 # Multi-Parcel COD Split — Design Spec
 
 **Date:** 2026-08-31
-**Status:** Draft — awaiting owner review
+**Status:** Implemented
 **Reported by:** operator
 **Blocked order:** Shopify #1731 (draft `d262a79e-7dd5-4c6a-952f-fecfb728ac27`), `pending` since
 2026-08-28
@@ -110,8 +110,10 @@ Nothing in the codebase maps an order line to a parcel. `calc_packages`
 6 bottles) and greedily fills boxes; a `3-pak` is pure capacity and does not know what went into
 it. A new deterministic assignment is needed.
 
-Parcel capacity, in half-packs, added as `half_packs` to `PARCEL_SPECS`
-(`common/shipping_parcels.py`) so there is one source of truth:
+Parcel capacity, in half-packs, lives in `PARCEL_HALF_PACKS` (`common/shipping_parcels.py`) —
+deliberately beside `PARCEL_SPECS` rather than inside it, because that record is handed to the
+carriers verbatim as the parcel's `dimensions`, and a capacity key would travel as a bogus
+dimension:
 
 | type | 3-pak | 2-pak | 1-pak | pół-pak | szkło | szkło-2pak |
 |---|---|---|---|---|---|---|
@@ -155,8 +157,10 @@ order_items, packages_breakdown)`, so a repack changes it automatically — whic
 `providers/inpost.py` and `providers/apaczka.py` consume it, so the execution preview and the
 real request cannot drift.
 
-The amount actually sent is written into the `courier_shipments` checkpoint when a parcel is
-created, as an audit trail only — never read back as a source of truth.
+The design originally called for writing the amount sent into the `courier_shipments`
+checkpoint as an audit trail. Not built, and not needed: the split's inputs freeze alongside
+`cod` when execution starts, so what was sent is reproducible exactly from the stored draft. A
+second copy could only ever disagree with it.
 
 Idempotency holds without extra work: `_BREAKDOWN_LOCKED_STATUSES`
 (`drafts.py:76`) already freezes the breakdown once execution starts, so a resume after a partial
@@ -265,3 +269,24 @@ rather than a surprise.
 **Partial collection.** With per-parcel COD the customer can accept and pay for some parcels and
 refuse others. For a courier delivering everything in one visit this is largely theoretical, which
 is why the locker path stays blocked.
+
+---
+
+## Implementation notes
+
+Two things the design did not foresee, both found while building it:
+
+**The split's inputs had to freeze with the amount.** `merge_synced_draft` already froze `cod`
+once execution started, because the amount is part of the reviewed provider contract. It did not
+freeze `order_items` or `shipping_price` — which, once they became the split's inputs, meant an
+order edited in Shopify could hand a resumed parcel a different share than the label already at
+the carrier. They now freeze together.
+
+**Capacity could not live in `PARCEL_SPECS`.** A characterization test pins that record's exact
+key set and order, because `parcel_weight_and_dims` hands it to the carriers verbatim as the
+parcel's `dimensions`. `PARCEL_HALF_PACKS` keeps capacity out of the payload.
+
+Verified against the production record for #1731 before shipping: `351.00` over `3-pak ×2`
+yields two courier shipments of `175.50`, summing to `351.00`. It reports basis `equal`, because
+that draft predates the stored line values; the next Shopify sync fills them in, and for this
+single-line order the numbers are identical either way.
