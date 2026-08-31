@@ -3,6 +3,38 @@
 
 ## Unreleased
 
+## 2.11.0
+
+### Changed
+
+- **deps**: Podniesione wersje zależności z otwartych PR-ów dependabota, każda ze sprawdzeniem
+  zamiast samego bumpa manifestu — dependabot zmieniał manifest bez przeliczenia `uv.lock` /
+  `package-lock.json`, przez co strażnik locka w CI je odrzucał.
+  - `ruff` 0.16.4 → 0.16.5 — zero nowych zgłoszeń, zero przeformatowań.
+  - `typescript` 6 → 7 w `scripts/smoke` — nic nie woła `tsc`, tsx zdejmuje typy w locie.
+  - `react` / `react-dom` 18.3.1 → 19.2.8. Bundle rośnie: 297 kB → 344 kB (gzip 87 → 100 kB).
+  - `hashicorp/azurerm` ~> 4.2 → ~> 5.3.
+
+- **infra**: `azurerm_subnet` — `service_endpoints` (lista) zastąpione blokami
+  `service_endpoint`, wymóg providera 5. Te same dwa endpointy, ta sama architektura z ADR 0003.
+
+### Fixed
+
+- **infra**: Tryb autoryzacji Key Vaulta przestał dryfować. Konfiguracja nigdy nie deklarowała
+  `rbac_authorization_enabled`, więc azurerm 4 przyjmował `false`, podczas gdy wdrożony
+  `zdrovenakv` działa z `true` — a cały komentarz w `security.tf` i wszystkie przypisania ról
+  poniżej zakładają, że RBAC jest włączony. azurerm 5 wymaga tego pola jawnie, co ujawniło
+  rozbieżność. Wartość sprawdzona na żywym zasobie przed wpisaniem: przestawienie na `false`
+  przełączyłoby vault w tryb access policy i odcięło produkcję od sekretów.
+
+- **frontend**: Test `ShippingView` „polls pending confirmation" asertował na `<option>` filtra
+  statusów zamiast na plakietce wiersza. Zapytanie `findByText` trafiało w listę rozwijaną,
+  która istnieje w DOM zanim drafty się wczytają, więc kolejna asercja szukała odznaki podjazdu
+  na nieistniejącym wierszu. Przechodził wyłącznie dlatego, że React 18 zdążał wypchnąć
+  pierwszy fetch w tej samej partii; React 19 to obnażył. Zapytanie zawężone do `.pill`,
+  zgodnie z sąsiednią asercją trzy linijki niżej.
+
+
 ### Fixed
 
 - **ci**: `terraform apply` na `main` prosił o zatwierdzenie planu, który nigdy nie powstał.

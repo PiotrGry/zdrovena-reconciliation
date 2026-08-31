@@ -53,11 +53,16 @@ resource "azurerm_subnet" "container_apps" {
   virtual_network_name = azurerm_virtual_network.vnet[0].name
   address_prefixes     = ["10.0.0.0/21"]
 
-  # Service Endpoints — allow traffic to Azure services via Microsoft backbone (not public internet)
-  service_endpoints = [
-    "Microsoft.Storage",  # For Storage Account (blob containers)
-    "Microsoft.KeyVault", # For Key Vault (secrets)
-  ]
+  # Service Endpoints — allow traffic to Azure services via Microsoft backbone
+  # (not public internet). azurerm 5 replaced the `service_endpoints` list with
+  # repeatable `service_endpoint` blocks; same endpoints, same ADR 0003 design.
+  service_endpoint {
+    service = "Microsoft.Storage" # For Storage Account (blob containers)
+  }
+
+  service_endpoint {
+    service = "Microsoft.KeyVault" # For Key Vault (secrets)
+  }
 
   delegation {
     name = "container-apps-delegation"

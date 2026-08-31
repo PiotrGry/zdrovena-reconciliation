@@ -397,7 +397,18 @@ describe('ShippingView', () => {
         })
 
         renderWithProviders(<ShippingView />)
-        await screen.findByText('oczekuje na potwierdzenie')
+        // Scoped to the pill: 'oczekuje na potwierdzenie' is also a status
+        // filter <option>, which is in the DOM before the drafts have loaded.
+        // Matching it document-wide let this assertion run against an empty
+        // list — it only ever passed because React 18 happened to flush the
+        // first fetch in the same batch.
+        await screen.findByText('Anna Nowak')
+        await waitFor(() => {
+            expect(
+                screen.getAllByText('oczekuje na potwierdzenie')
+                    .some(node => node.closest('.pill')),
+            ).toBe(true)
+        })
         expect(screen.getByText('podjazd ✓')).toBeInTheDocument()
 
         await act(async () => {
