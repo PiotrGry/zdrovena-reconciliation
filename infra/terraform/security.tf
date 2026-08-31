@@ -19,6 +19,16 @@ resource "azurerm_key_vault" "kv" {
   purge_protection_enabled   = false
   tags                       = local.tags
 
+  # Every access decision on this vault is an Azure RBAC role assignment (Key
+  # Vault Secrets User), never an access policy — the comments above and the
+  # role assignments below all depend on it. azurerm 4 defaulted this to false
+  # while the live vault runs with it true, so the setting was drifting
+  # unnoticed; azurerm 5 requires it explicitly. Verified against the deployed
+  # vault before pinning: `enableRbacAuthorization = true`. Flipping this to
+  # false would switch the vault to access-policy mode and cut production off
+  # from every secret.
+  rbac_authorization_enabled = true
+
   # Public mode: Allow from all IPs — RBAC (Key Vault Secrets User role) is the
   # real access boundary. The AzureServices bypass does NOT cover Consumption-tier
   # Container Apps with dynamic egress IPs, causing ForbiddenByFirewall at startup
