@@ -230,7 +230,7 @@ def test_a_parcel_that_would_collect_nothing_is_rejected() -> None:
         order_items=[{"name": "HUMIO 36 butelek", "quantity": 1, "line_total": "300.00"}],
     )
 
-    with pytest.raises(ApaczkaBusinessError, match="0.00"):
+    with pytest.raises(ApaczkaBusinessError, match=r"0\.00"):
         apaczka_call_specs(draft, _PICKUP_ADDRESS)
 
 

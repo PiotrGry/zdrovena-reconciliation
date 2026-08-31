@@ -227,7 +227,7 @@ class TestFailClosed:
             breakdown=[{"type": "3-pak", "qty": 2}],
             items=[{"name": "HUMIO 72 butelki", "quantity": 1, "line_total": "300.00"}],
         )
-        with pytest.raises(CodAllocationError, match="(?i)shipping price"):
+        with pytest.raises(CodAllocationError, match=r"(?i)shipping price"):
             cod_allocation(draft)
 
     def test_a_parcel_worth_nothing_is_refused(self):
@@ -238,12 +238,12 @@ class TestFailClosed:
             breakdown=[{"type": "3-pak", "qty": 2}],
             items=[{"name": "HUMIO 36 butelek", "quantity": 1, "line_total": "300.00"}],
         )
-        with pytest.raises(CodAllocationError, match="0.00"):
+        with pytest.raises(CodAllocationError, match=r"0\.00"):
             cod_allocation(draft)
 
     def test_a_draft_without_cod_is_refused(self):
         draft = {"packages_breakdown": [{"type": "1-pak", "qty": 1}], "order_items": []}
-        with pytest.raises(CodAllocationError, match="no COD"):
+        with pytest.raises(CodAllocationError, match=r"no COD"):
             cod_allocation(draft)
 
 
@@ -266,7 +266,5 @@ class TestParcelCapacityTable:
         if glass:
             items.append({"name": f"HUMIO w szkle {glass * 6} butelek", "quantity": 1})
         plan = calc_packages(items)
-        capacity = sum(
-            PARCEL_HALF_PACKS[box.package_type] * box.quantity for box in plan.breakdown
-        )
+        capacity = sum(PARCEL_HALF_PACKS[box.package_type] * box.quantity for box in plan.breakdown)
         assert capacity >= plastic + glass

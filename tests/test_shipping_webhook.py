@@ -535,6 +535,57 @@ class TestListDrafts:
         assert data["drafts"][0]["id"] == "abc-123"
         assert data["drafts"][0]["packages_count"] == 1
 
+    def _cod_draft(self, store, **overrides):
+        draft = {
+            "id": "cod-listing",
+            "status": "pending",
+            "courier": "inpost",
+            "service": "inpost_courier_standard",
+            "cod": {"amount": "700.00", "currency": "PLN"},
+            "shipping_price": "0.00",
+            "order_items": [{"name": "HUMIO 42 butelki", "quantity": 1, "line_total": "700.00"}],
+            "packages_breakdown": [
+                {"type": "3-pak", "qty": 1},
+                {"type": "pół-pak", "qty": 1},
+            ],
+        }
+        draft.update(overrides)
+        store.upsert_draft(draft)
+        return draft
+
+    def test_a_multi_parcel_cod_draft_shows_what_each_parcel_collects(self, client, store):
+        # The operator has to see the split before the labels exist, not only
+        # inside the execution preview.
+        self._cod_draft(store)
+
+        listed = client.get("/api/shipping/drafts").json()["drafts"][0]
+
+        assert listed["cod_split"] == ["600.00", "100.00"]
+        assert listed["cod_split_basis"] == "value"
+
+    def test_a_single_parcel_cod_draft_has_nothing_to_split(self, client, store):
+        self._cod_draft(store, packages_breakdown=[{"type": "3-pak", "qty": 1}])
+
+        listed = client.get("/api/shipping/drafts").json()["drafts"][0]
+
+        assert "cod_split" not in listed
+
+    def test_a_draft_whose_split_is_impossible_still_lists(self, client, store):
+        # Listing is a read. A draft that cannot ship must still be visible,
+        # with its reason, rather than taking the whole screen down.
+        self._cod_draft(
+            store,
+            order_items=[{"name": "HUMIO 12 butelek", "quantity": 1, "line_total": "700.00"}],
+            packages_breakdown=[{"type": "3-pak", "qty": 1}, {"type": "3-pak", "qty": 1}],
+        )
+
+        resp = client.get("/api/shipping/drafts")
+
+        assert resp.status_code == 200
+        listed = resp.json()["drafts"][0]
+        assert "cod_split" not in listed
+        assert "0.00" in listed["cod_split_error"]
+
 
 # ── Execute draft ─────────────────────────────────────────────────────────────
 

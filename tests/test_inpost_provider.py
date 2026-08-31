@@ -161,7 +161,7 @@ def test_multi_parcel_cod_is_still_rejected_for_a_locker_shipment() -> None:
         packages_breakdown=[{"type": "1-pak", "qty": 2}],
     )
 
-    with pytest.raises(InPostBusinessError, match="(?i)paczkomat"):
+    with pytest.raises(InPostBusinessError, match=r"(?i)paczkomat"):
         inpost_call_specs(draft, _SENDER)
 
 
@@ -173,7 +173,7 @@ def test_a_parcel_that_would_collect_nothing_is_rejected() -> None:
         order_items=[{"name": "HUMIO 36 butelek", "quantity": 1, "line_total": "300.00"}],
     )
 
-    with pytest.raises(InPostBusinessError, match="0.00"):
+    with pytest.raises(InPostBusinessError, match=r"0\.00"):
         inpost_call_specs(draft, _SENDER)
 
 

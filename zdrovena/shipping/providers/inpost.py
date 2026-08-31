@@ -98,9 +98,7 @@ def inpost_call_specs(draft: dict[str, Any], sender: dict[str, str]) -> list[InP
         try:
             cod_amounts = [str(amount) for amount in cod_allocation(draft).amounts]
         except CodAllocationError as exc:
-            raise InPostBusinessError(
-                str(exc), courier="inpost", action="create_shipment"
-            ) from exc
+            raise InPostBusinessError(str(exc), courier="inpost", action="create_shipment") from exc
 
     specs: list[InPostCallSpec] = []
     for position, parcel in enumerate(parcels):

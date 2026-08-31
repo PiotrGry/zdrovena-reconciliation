@@ -205,7 +205,7 @@ def cod_allocation(draft: dict[str, Any]) -> CodAllocation:
     shipping_parts = _largest_remainder(shipping_gr, [Fraction(1)] * len(parcels))
     goods_parts = _largest_remainder(total_gr - shipping_gr, weights)
 
-    parts = [shipping + goods for shipping, goods in zip(shipping_parts, goods_parts)]
+    parts = [shipping + goods for shipping, goods in zip(shipping_parts, goods_parts, strict=True)]
     if sum(parts) != total_gr:  # pragma: no cover - guarded by construction
         raise CodAllocationError(
             f"Split of {total_gr} grosze produced {sum(parts)} — refusing to send it"
@@ -216,7 +216,5 @@ def cod_allocation(draft: dict[str, Any]) -> CodAllocation:
             f"Parcel {empty[0]} of {len(parts)} would collect 0.00 — "
             "the carrier rejects that, so repack the order or drop the empty box"
         )
-    amounts = tuple(
-        (Decimal(part) / 100).quantize(Decimal("0.01")) for part in parts
-    )
+    amounts = tuple((Decimal(part) / 100).quantize(Decimal("0.01")) for part in parts)
     return CodAllocation(amounts=amounts, basis=basis)
