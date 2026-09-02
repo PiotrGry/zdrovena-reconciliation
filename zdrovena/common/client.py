@@ -48,6 +48,10 @@ class DownloadedCostDocument:
     invoice_number: str
     vendor: str
     source_kind: str
+    #: Why the original was not used, when one existed but could not be taken.
+    #: None means no original was on offer at all — a different situation the
+    #: operator has to be able to tell apart.
+    fallback_reason: str | None = None
 
 
 class FakturowniaClient:
@@ -275,8 +279,26 @@ class FakturowniaClient:
                 if not member.is_dir() and Path(member.filename).suffix.casefold() == ".pdf"
             ]
             if not members:
+                others = sorted(
+                    {
+                        Path(m.filename).suffix.casefold().lstrip(".")
+                        for m in archive.infolist()
+                        if not m.is_dir()
+                    }
+                    - {""}
+                )
+                if "xml" in others:
+                    # Since KSeF, Fakturownia attaches the authoritative invoice
+                    # as XML. Saying "no PDF found" hid that for months; naming
+                    # what is actually in the archive is what lets an operator
+                    # act on it.
+                    raise RuntimeError(
+                        f"Original for Fakturownia invoice {invoice_id} is a KSeF XML, "
+                        f"not a PDF — attachment types: {', '.join(others)}"
+                    )
                 raise RuntimeError(
-                    f"No original PDF attachment found for Fakturownia invoice {invoice_id}"
+                    f"Brak oryginalnego załącznika PDF dla faktury {invoice_id}"
+                    + (f" — w archiwum: {', '.join(others)}" if others else "")
                 )
             for idx, member in enumerate(members, 1):
                 original_name = Path(member.filename).name
@@ -384,6 +406,7 @@ class FakturowniaClient:
             vendor = str(inv.get("buyer_name") or "unknown")
             policy = source_policy(inv) if source_policy else "original_preferred"
             has_attachments = bool(inv.get("has_attachments"))
+            fallback_reason: str | None = None
 
             if dry_run:
                 source_kind = (
@@ -401,14 +424,18 @@ class FakturowniaClient:
                         target_dir,
                         filename_prefix=safe_name,
                     )
-                except Exception:
+                except Exception as exc:
                     if policy == "original_required":
                         raise
+                    # Carried on the document rather than only logged: a warning
+                    # nobody reads is how the KSeF switch stayed invisible for
+                    # three months of packages.
+                    fallback_reason = str(exc)
                     logger.warning(
                         "Could not download original attachment for %s; "
-                        "falling back to generated PDF",
+                        "falling back to generated PDF: %s",
                         number,
-                        exc_info=True,
+                        exc,
                     )
                 else:
                     saved.extend(
@@ -450,6 +477,7 @@ class FakturowniaClient:
                     invoice_number=number,
                     vendor=vendor,
                     source_kind="generated_pdf",
+                    fallback_reason=fallback_reason,
                 )
             )
             logger.info("[%d/%d] Downloaded generated PDF: %s", idx, len(invoices), pdf_path.name)
