@@ -80,9 +80,13 @@ resource "azurerm_log_analytics_workspace" "law" {
 # ── Container Apps Environment ─────────────────────────────────────────────────
 
 resource "azurerm_container_app_environment" "env" {
-  name                       = "${var.prefix}-cae"
-  resource_group_name        = azurerm_resource_group.rg.name
-  location                   = azurerm_resource_group.rg.location
+  name                = "${var.prefix}-cae"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  # azurerm 5 refuses log_analytics_workspace_id unless the destination says so
+  # explicitly; azurerm 4 inferred it. "log-analytics" is what this environment
+  # has always done — the alerts in monitoring.tf query those very logs.
+  logs_destination           = "log-analytics"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
   infrastructure_subnet_id   = var.enable_private_network ? azurerm_subnet.container_apps[0].id : null
   tags                       = local.tags
