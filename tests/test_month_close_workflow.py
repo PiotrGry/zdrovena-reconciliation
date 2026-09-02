@@ -392,7 +392,7 @@ def test_preflight_rejects_bank_statement_from_another_period(tmp_path):
     client.fetch_cost_invoices.return_value = []
 
     with patch(
-        "zdrovena.month_closing.workflow.FakturowniaClient.from_keyring",
+        "zdrovena.month_closing.inspection.FakturowniaClient.from_keyring",
         return_value=client,
     ):
         inspected = MonthCloseInspector(2026, 6, storage=storage).inspect()
@@ -497,7 +497,7 @@ def test_inspector_blocks_when_collected_pdfs_lag_behind_fakturownia(tmp_path):
     client.fetch_cost_invoices.return_value = []
 
     with patch(
-        "zdrovena.month_closing.workflow.FakturowniaClient.from_keyring",
+        "zdrovena.month_closing.inspection.FakturowniaClient.from_keyring",
         return_value=client,
     ):
         inspected = MonthCloseInspector(2026, 6, storage=storage).inspect()
@@ -517,7 +517,7 @@ def test_inspector_stays_quiet_before_any_sales_pdf_is_collected(tmp_path):
     client.fetch_cost_invoices.return_value = []
 
     with patch(
-        "zdrovena.month_closing.workflow.FakturowniaClient.from_keyring",
+        "zdrovena.month_closing.inspection.FakturowniaClient.from_keyring",
         return_value=client,
     ):
         inspected = MonthCloseInspector(2026, 6, storage=storage).inspect()
@@ -539,7 +539,7 @@ def test_inspector_accepts_a_complete_sales_collection(tmp_path):
     client.fetch_cost_invoices.return_value = []
 
     with patch(
-        "zdrovena.month_closing.workflow.FakturowniaClient.from_keyring",
+        "zdrovena.month_closing.inspection.FakturowniaClient.from_keyring",
         return_value=client,
     ):
         inspected = MonthCloseInspector(2026, 6, storage=storage).inspect()
@@ -566,7 +566,7 @@ def test_inspector_is_not_fooled_by_a_stray_pdf(tmp_path):
     client.fetch_cost_invoices.return_value = []
 
     with patch(
-        "zdrovena.month_closing.workflow.FakturowniaClient.from_keyring",
+        "zdrovena.month_closing.inspection.FakturowniaClient.from_keyring",
         return_value=client,
     ):
         inspected = MonthCloseInspector(2026, 6, storage=storage).inspect()
