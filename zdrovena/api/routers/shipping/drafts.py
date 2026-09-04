@@ -101,6 +101,28 @@ _BREAKDOWN_LOCKED_STATUSES = frozenset(
 )
 
 
+def _breakdown_locked_reason(draft: dict[str, Any]) -> str | None:
+    """Say why this draft's parcel plan may no longer be edited, or None.
+
+    Status is the usual answer. The exception is a draft that failed halfway:
+    it lands in "error", which is editable on purpose — most failures happen
+    before anything is booked, and repacking is the operator's way out of them.
+    But the parcels created before the failure are printed and paid for, and
+    the plan is what numbers them: repacking would renumber the ones still to
+    come ("1/2" already at the carrier, "2/3" booked next) and changing a type
+    would strand the created label on a box no longer in the plan. So a label
+    at the carrier freezes the plan whatever the status says.
+    """
+    if draft.get("status") in _BREAKDOWN_LOCKED_STATUSES:
+        return "Nie można zmienić paczek po wysłaniu przesyłki do kuriera"
+    if draft.get("courier_shipments"):
+        return (
+            "Nie można zmienić paczek — część etykiet jest już u kuriera. "
+            "Dokończ wysyłkę albo anuluj draft."
+        )
+    return None
+
+
 def _validated_breakdown(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Normalise an operator parcel plan or raise a 400 the operator can read."""
     from zdrovena.common.shipping_parcels import PARCEL_SPECS
@@ -187,11 +209,9 @@ def update_draft(
                 status_code=400,
                 detail="Podaj plan paczek albo liczbę paczek, nie oba naraz",
             )
-        if draft.get("status") in _BREAKDOWN_LOCKED_STATUSES:
-            raise HTTPException(
-                status_code=409,
-                detail="Nie można zmienić paczek po wysłaniu przesyłki do kuriera",
-            )
+        locked_reason = _breakdown_locked_reason(draft)
+        if locked_reason:
+            raise HTTPException(status_code=409, detail=locked_reason)
         cleaned = _validated_breakdown(packages_breakdown)
         total = sum(row["qty"] for row in cleaned)
         if draft.get("cod"):

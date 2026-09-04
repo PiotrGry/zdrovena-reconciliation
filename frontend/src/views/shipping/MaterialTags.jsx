@@ -4,6 +4,19 @@ import { BOX_STYLE } from './parcelTypes'
 
 export const PACKAGES_LOCKED_STATUSES = new Set(['executing', 'pending_confirmation', 'created', 'cancelled'])
 
+/**
+ * Mirrors _breakdown_locked_reason on the server. A draft that failed halfway
+ * stays in "error", which is editable on purpose — but the labels it did
+ * create are already printed and paid for, and the plan is what numbers them.
+ * Without this the editor offers a save the API answers with 409.
+ */
+export function packagesLocked(draft) {
+    return (
+        PACKAGES_LOCKED_STATUSES.has(draft.status) ||
+        (draft.courier_shipments || []).length > 0
+    )
+}
+
 const _PACKAGE_UNITS = {
     '3-pak': { material: 'plastik', amount: 3 },
     '2-pak': { material: 'plastik', amount: 2 },
