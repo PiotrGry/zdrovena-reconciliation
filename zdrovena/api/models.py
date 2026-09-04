@@ -402,6 +402,10 @@ class ShippingDraftModel(BaseModel):
     pickup_ordered: bool | None = None
     receiver: dict[str, Any] | None = None
     error: str | None = None
+    # Why the draft is held, as codes the portal turns into text. Absent on
+    # drafts stored before the field existed, which the portal renders as it
+    # always did: the status alone.
+    review_reasons: list[str] | None = None
     is_replacement: bool | None = None
     fulfillment_status: str | None = None
     execution_started_at: str | None = None

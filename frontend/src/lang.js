@@ -16,6 +16,16 @@ export const I18N = {
         sh_search: 'Szukaj po numerze lub kliencie…',
         sh_filter_all_status: 'Wszystkie statusy', sh_status_pending: 'oczekujące', sh_status_created: 'nadane', sh_status_needs_review: 'do sprawdzenia', sh_status_error: 'błąd', sh_status_pending_confirmation: 'oczekuje na potwierdzenie',
         sh_confirm_pending: 'Sprawdź status', sh_confirm_pending_busy: 'Sprawdzanie…',
+        // Why a draft waits for review. Keys mirror the codes in
+        // zdrovena/api/shipping_draft_composition.py — an unknown code renders
+        // as itself rather than vanishing, so a new reason is visible before
+        // anyone gets round to naming it.
+        sh_review_unreadable_products: 'nieczytelna nazwa produktu',
+        sh_review_missing_phone: 'brak poprawnego telefonu',
+        sh_review_apaczka_service_unmatched: 'brak dopasowanej usługi Apaczki',
+        sh_review_apaczka_pickup_point_missing: 'brak punktu odbioru',
+        sh_review_cod_error: 'nieczytelna kwota pobrania',
+        sh_review_cod_multi_parcel: 'pobranie na kilka paczek',
         sh_filter_all_courier: 'Wszyscy kurierzy',
         sh_select_all: 'Zaznacz wszystkie', sh_selected_all: 'Zaznaczono wszystkie',
         sh_expand: 'Rozwiń', sh_collapse: 'Zwiń',
@@ -75,6 +85,12 @@ export const I18N = {
         shipping_drafts_count: 'drafts', shipping_errors: 'errors',
         sh_search: 'Search by order # or customer…',
         sh_filter_all_status: 'All statuses', sh_status_pending: 'pending', sh_status_created: 'created', sh_status_needs_review: 'to review', sh_status_error: 'error', sh_status_pending_confirmation: 'awaiting confirmation',
+        sh_review_unreadable_products: 'unreadable product name',
+        sh_review_missing_phone: 'no valid phone',
+        sh_review_apaczka_service_unmatched: 'no matching Apaczka service',
+        sh_review_apaczka_pickup_point_missing: 'no pickup point',
+        sh_review_cod_error: 'unreadable COD amount',
+        sh_review_cod_multi_parcel: 'COD across several parcels',
         sh_confirm_pending: 'Check status', sh_confirm_pending_busy: 'Checking…',
         sh_filter_all_courier: 'All couriers',
         sh_select_all: 'Select all', sh_selected_all: 'All selected',

@@ -2477,6 +2477,20 @@
             ],
             "title": "Receiver"
           },
+          "review_reasons": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Reasons"
+          },
           "service": {
             "anyOf": [
               {

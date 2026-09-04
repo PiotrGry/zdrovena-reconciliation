@@ -1750,6 +1750,8 @@ export interface components {
             receiver?: {
                 [key: string]: unknown;
             } | null;
+            /** Review Reasons */
+            review_reasons?: string[] | null;
             /** Service */
             service?: string | null;
             /** Shopify Order Id */

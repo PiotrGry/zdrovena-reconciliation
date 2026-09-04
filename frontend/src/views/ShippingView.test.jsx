@@ -297,6 +297,46 @@ describe('ShippingView', () => {
         expect(screen.getByRole('option', { name: 'do sprawdzenia' })).toBeInTheDocument()
     })
 
+    it('says on the row why a draft waits for review', async () => {
+        installShippingFetch({
+            drafts: [draft({
+                status: 'needs_review',
+                review_reasons: ['missing_phone', 'cod_multi_parcel'],
+            })],
+        })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+
+        expect(screen.getByText('brak poprawnego telefonu')).toBeInTheDocument()
+        expect(screen.getByText('pobranie na kilka paczek')).toBeInTheDocument()
+    })
+
+    it('shows no reasons on a draft that is not held', async () => {
+        // A reason left next to "oczekujące" would read as a problem nobody
+        // has to solve. Stale reasons on a cleared draft must not surface.
+        installShippingFetch({
+            drafts: [draft({ status: 'pending', review_reasons: ['missing_phone'] })],
+        })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+
+        expect(screen.queryByText('brak poprawnego telefonu')).not.toBeInTheDocument()
+    })
+
+    it('renders a draft stored before review reasons existed', async () => {
+        // No review_reasons field at all: the row renders as it always did,
+        // status and nothing more.
+        installShippingFetch({ drafts: [draft({ status: 'needs_review' })] })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+
+        expect(document.querySelector('.pill.warn')).toBeInTheDocument()
+        expect(screen.queryByText('brak poprawnego telefonu')).not.toBeInTheDocument()
+    })
+
     it('distinguishes pickup point delivery from a street address', async () => {
         installShippingFetch({
             drafts: [draft({

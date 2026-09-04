@@ -28,6 +28,22 @@
   Drafty sprzed tej zmiany nie mają cen pozycji i dostają podział równy — opisany w portalu
   jako równy, a nie podany za podział wg wartości.
 
+- **shipping**: Draft czekający na przegląd mówi teraz, **dlaczego** czeka. Obok plakietki
+  „do sprawdzenia" pojawiają się chipy z powodami: „brak poprawnego telefonu", „pobranie na kilka
+  paczek", „nieczytelna nazwa produktu", „brak dopasowanej usługi Apaczki", „brak punktu odbioru",
+  „nieczytelna kwota pobrania". Do tej pory status mówił operatorowi, żeby na coś spojrzał, nie
+  mówiąc na co — powód trzeba było wydedukować z wiersza.
+
+  `review_reasons()` zwraca **wszystkie** powody, nie pierwszy: operator naprawia to, co lista
+  wymienia, a jeden powód naraz kazałby mu przechodzić pętlę raz na problem. `needs_review` jest
+  teraz z tej listy wyprowadzany (`bool(powody)`), więc flaga i jej wyjaśnienie nie mogą się
+  rozjechać.
+
+  Zapisywane jako kody, nie zdania — teksty siedzą w `lang.js`, więc przeredagowanie nie wymaga
+  przepisywania zapisanych draftów, a wersja angielska dostaje je za darmo. Nieznany kod renderuje
+  się jako on sam, żeby powód dodany po stronie serwera był widoczny, zanim ktoś zdąży go nazwać.
+  Drafty zapisane wcześniej nie mają tego pola i wyglądają jak dotąd.
+
 ### Changed
 
 - **shipping**: Telefon odbiorcy przestał być edytowalny na wierszu przesyłki i przeniósł

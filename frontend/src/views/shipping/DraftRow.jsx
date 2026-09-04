@@ -11,6 +11,7 @@ import { RecipientPhone } from './RecipientPhone'
 import { ExecutePreview } from './ExecutePreview'
 import { InvoicePreviewPanel } from './InvoicePreviewPanel'
 import { MaterialTags, packagesLocked } from './MaterialTags'
+import { ReviewReasonChips } from './ReviewReasons'
 import { PickupScheduleModal } from './PickupScheduleModal'
 import { OrderNumberCell, SourceCell } from './cells'
 import { courierLabel, courierPillKind, fmtDate, matchStatusLabel, matchStatusPillKind, pickupOrderIds } from './formatting'
@@ -146,7 +147,7 @@ export function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfi
                     <span style={{ display: 'flex', gap: 4, flexWrap: 'nowrap', overflow: 'hidden' }}><MaterialTags draft={draft} /></span>
                     <span><Pill kind={courierPillKind(draft)}>{courierLabel(draft, apaczkaServices)}</Pill></span>
                     <span className="mono dim" style={{ fontSize: '0.85em' }}>{fmtDate(draft.order_date || draft.created_at)}</span>
-                    <span>
+                    <span style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
                         <Pill kind={
                             draft.status === 'created' ? 'ok'
                                 : draft.status === 'pending' ? 'default'
@@ -160,6 +161,12 @@ export function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfi
                                         : draft.status === 'pending_confirmation' ? (T.sh_status_pending_confirmation ?? 'oczekuje na potwierdzenie')
                                             : (T.sh_status_error ?? 'błąd')}
                         </Pill>
+                        {/* The status says a draft is held; these say what to fix. Only
+                            while it is actually held — a reason surviving next to
+                            "oczekujące" would read as a problem nobody has to solve. */}
+                        {draft.status === 'needs_review' && (
+                            <ReviewReasonChips reasons={draft.review_reasons} T={T} />
+                        )}
                     </span>
                     <span>
                         {draft.pickup_ordered && (
