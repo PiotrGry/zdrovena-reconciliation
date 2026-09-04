@@ -37,6 +37,34 @@
   numerem (#294), a edycja jest jedynym sposobem, żeby odblokować zamówienie, które
   przyszło ze złym numerem ze Shopify. Zamiana przypadku na czynność świadomą.
 
+### Fixed
+
+- **shipping**: Dwie zgrzewki szkła to znowu dwie paczki, dwie etykiety i dwa numery śledzenia.
+  Planer zwijał je w jeden wpis `szkło-2pak`, który oznaczał *dwa* pudełka — ale nic go nie
+  rozwijało: `physical_parcels()` rozwija tylko `qty`, więc powstawała **jedna** przesyłka
+  u kuriera, z wymiarami i wagą **jednego** pudełka. Kurier dostawał 9 kg deklaracji na dwa
+  9-kilogramowe pudła i jedną etykietę na oba. Obietnica „sent as qty=2 in parcels list"
+  wisiała w komentarzu `PARCEL_SPECS` od czerwca i nigdy nie została napisana. 29 zamówień
+  poszło tak między czerwcem a wrześniem 2026; wychwycił to operator na #1735.
+
+  Typ jest **zawieszony, nie usunięty** — przełącznik `GLASS_2PAK_SUSPENDED`
+  (`shipping/domain/planning.py`, lustrzany w `parcelTypes.js`) wyłącza go w planerze,
+  w liście wyboru operatora i włącza rozwijanie zapisanych wierszy na dwie paczki `szkło`.
+  Dzięki temu dwa oczekujące drafty ze starym typem nadadzą się poprawnie bez ruszania danych.
+  Przy przełączniku jest lista kroków do przywrócenia; pierwszy z nich to zmierzyć realny
+  karton, bo `PARCEL_SPECS["szkło-2pak"]` trzyma dziś wymiary i wagę *jednego* pudełka — i to
+  była właśnie ta pułapka.
+
+  Skutek uboczny: zamówienie COD ze szkłem 2+ zgrzewki wpada teraz w `needs_review`, tak samo
+  jak od dawna wpada plastikowe — reguła `packages_count != 1` jest starsza niż podział COD.
+
+- **shipping**: Plan paczek jest zamrożony, gdy draft padł w połowie i ma już etykiety
+  u kuriera. Status `error` zostaje edytowalny (większość awarii zdarza się zanim cokolwiek
+  zostanie zabookowane, a przepakowanie to jedyna droga wyjścia), ale utworzone wcześniej
+  etykiety są wydrukowane i opłacone, a to plan je numeruje. Bez tego przepakowanie
+  przenumerowywało paczki jeszcze niezabookowane („1/2" już u kuriera, „2/3" dobookowane),
+  a zmiana typu zostawiała opłaconą etykietę na pudełku, którego w planie już nie ma.
+
 ## 2.11.0
 
 ### Changed

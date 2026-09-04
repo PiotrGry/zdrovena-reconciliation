@@ -118,6 +118,23 @@ class TestGoodsFollowTheParcelTheyAreIn:
             amount="900.00",
             breakdown=[
                 {"type": "3-pak", "qty": 1},
+                {"type": "szkło", "qty": 3},
+            ],
+            items=[
+                {"name": _PLASTIC, "quantity": 3, "line_total": "300.00"},
+                {"name": _GLASS, "quantity": 3, "line_total": "600.00"},
+            ],
+        )
+        assert _amounts(draft) == ["300.00", "200.00", "200.00", "200.00"]
+
+    def test_a_retired_glass_2pak_row_collects_as_the_two_boxes_it_is(self):
+        # A draft stored before szkło-2pak was retired carries one row for two
+        # boxes. It ships as two parcels, so it must collect as two amounts —
+        # one row, one amount would leave a parcel asking for nothing.
+        draft = _draft(
+            amount="900.00",
+            breakdown=[
+                {"type": "3-pak", "qty": 1},
                 {"type": "szkło-2pak", "qty": 1},
                 {"type": "szkło", "qty": 1},
             ],
@@ -126,17 +143,17 @@ class TestGoodsFollowTheParcelTheyAreIn:
                 {"name": _GLASS, "quantity": 3, "line_total": "600.00"},
             ],
         )
-        assert _amounts(draft) == ["300.00", "400.00", "200.00"]
+        assert _amounts(draft) == ["300.00", "200.00", "200.00", "200.00"]
 
     def test_a_partly_empty_glass_parcel_is_normal(self):
-        # calc_packages rounds glass up: 5 half-packs of glass become 3 packs
+        # calc_packages rounds glass up: 5 half-packs of glass become 3 boxes
         # of capacity, so the last box is half empty by design, not by error.
         draft = _draft(
             amount="600.00",
-            breakdown=[{"type": "szkło-2pak", "qty": 1}, {"type": "szkło", "qty": 1}],
+            breakdown=[{"type": "szkło", "qty": 3}],
             items=[{"name": "Woda w szkle 30 butelek", "quantity": 1, "line_total": "600.00"}],
         )
-        assert _amounts(draft) == ["480.00", "120.00"]
+        assert _amounts(draft) == ["240.00", "240.00", "120.00"]
 
     def test_goods_beyond_capacity_land_in_the_last_parcel_of_that_material(self):
         # The operator repacked 12 half-packs into a single "1-pak" (capacity 2).

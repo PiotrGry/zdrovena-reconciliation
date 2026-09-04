@@ -125,12 +125,27 @@ Allegro poller ──┘         │                                          �
 `calc_packages` (`shipping/domain/planning.py`) czyta liczbę butelek z **nazwy produktu**
 (`bottles_per_unit`), zwija je do **półpaków** (1 półpak = 6 butelek) i zachłannie wypełnia pudła:
 
-| typ | 3-pak | 2-pak | 1-pak | pół-pak | szkło | szkło-2pak |
-|---|---|---|---|---|---|---|
-| półpaki | 6 | 4 | 2 | 1 | 2 | 4 |
+| typ | 3-pak | 2-pak | 1-pak | pół-pak | szkło |
+|---|---|---|---|---|---|
+| półpaki | 6 | 4 | 2 | 1 | 2 |
 
 Szkło i plastik pakowane są **osobno**. Pojemności trzyma `PARCEL_HALF_PACKS`, wymiary i wagi
 `PARCEL_SPECS` (oba w `common/shipping_parcels.py`).
+
+Zachłanne wypełnianie dotyczy tylko plastiku — **szkło jedzie po jednej zgrzewce na pudełko**,
+bo większego kartonu na szkło nie ma. Każde pudełko to osobna paczka, etykieta i numer śledzenia.
+
+> **Zawieszone: `szkło-2pak`** (wrzesień 2026). Typ oznaczał *dwa* pudełka szkła i był planowany
+> zachłannie dla 2+ zgrzewek, ale nic go nie rozwijało: kurier dostawał **jedną** etykietę i wagę
+> **jednego** pudełka (9 kg) na dwa (zamówienie #1735). Planer już go nie tworzy, a drafty zapisane
+> wcześniej `physical_parcels()` rozwija na dwie paczki `szkło`. W edytorze planu typ nie jest do
+> wyboru; na starym drafcie pokazuje się jako `szkło-2pak (wycofany)` i liczy się jako 2 paczki.
+>
+> Typ jest **zawieszony, nie usunięty** — przełącznik `GLASS_2PAK_SUSPENDED`
+> (`shipping/domain/planning.py`, lustrzany w `frontend/.../parcelTypes.js`) przywraca go
+> w jednym miejscu. Przed przywróceniem trzeba zmierzyć realny karton i poprawić
+> `PARCEL_SPECS["szkło-2pak"]` — dziś trzyma wymiary i wagę *jednego* pudełka. Pełna lista
+> kroków jest w komentarzu przy przełączniku.
 
 Gdy nazwa produktu jest nieczytelna, planer zgaduje („jedna sztuka = jedna zgrzewka") i **oznacza
 draft do przeglądu** — po tym, jak zmiana nazwy SKU szkła cicho zaklasyfikowała je jako plastik
@@ -142,6 +157,14 @@ draft do przeglądu** — po tym, jak zmiana nazwy SKU szkła cicho zaklasyfikow
 
 Po wejściu w `executing` **plan paczek jest zamrożony** (`_BREAKDOWN_LOCKED_STATUSES`) — inaczej
 zapisany plan przestałby się zgadzać z etykietami już u kuriera.
+
+Status `error` jest **celowo edytowalny**: większość awarii zdarza się zanim cokolwiek zostanie
+zabookowane (zły telefon, podział COD, którego paczkomat nie przyjmie), a przepakowanie planu to
+wtedy jedyna droga wyjścia dla operatora. Ale jeśli draft padł *w połowie* i ma już
+`courier_shipments`, plan jest zamrożony mimo statusu (`_breakdown_locked_reason`) — utworzone
+etykiety są wydrukowane i opłacone, a to plan je numeruje: przepakowanie przenumerowałoby te
+jeszcze niezabookowane („1/2" już u kuriera, „2/3" dobookowane), a zmiana typu zostawiłaby
+utworzoną etykietę na pudełku, którego w planie już nie ma.
 
 ### Niezmiennik, na którym stoi całość
 

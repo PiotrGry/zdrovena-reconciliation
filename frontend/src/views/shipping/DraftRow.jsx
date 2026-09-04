@@ -10,7 +10,7 @@ import { CodSplit } from './CodSplit'
 import { RecipientPhone } from './RecipientPhone'
 import { ExecutePreview } from './ExecutePreview'
 import { InvoicePreviewPanel } from './InvoicePreviewPanel'
-import { MaterialTags, PACKAGES_LOCKED_STATUSES } from './MaterialTags'
+import { MaterialTags, packagesLocked } from './MaterialTags'
 import { PickupScheduleModal } from './PickupScheduleModal'
 import { OrderNumberCell, SourceCell } from './cells'
 import { courierLabel, courierPillKind, fmtDate, matchStatusLabel, matchStatusPillKind, pickupOrderIds } from './formatting'
@@ -235,7 +235,7 @@ export function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfi
                             <div>
                                 <PackagesEditor
                                     breakdown={draft.packages_breakdown}
-                                    canEdit={canManage && !PACKAGES_LOCKED_STATUSES.has(draft.status)}
+                                    canEdit={canManage && !packagesLocked(draft)}
                                     saving={isBusy}
                                     onSave={rows => onSavePackages(draft, rows)}
                                 />

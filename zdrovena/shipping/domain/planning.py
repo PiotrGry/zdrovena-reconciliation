@@ -14,10 +14,38 @@ from zdrovena.shipping.domain.models import (
     PhysicalParcel,
 )
 
+# How a glass box is named on the courier reference.
 GLASS_PACKAGE_SIZES = {
     "szkło": "1-pak",
     "szkło-2pak": "2-pak",
 }
+
+GLASS_2PAK = "szkło-2pak"
+
+# Two-zgrzewka glass packing is SUSPENDED, not deleted — we may ship it again.
+#
+# While suspended: the planner never chooses this type, the operator's dropdown
+# does not offer it (mirrored by GLASS_2PAK_SUSPENDED in
+# frontend/src/views/shipping/parcelTypes.js), and a row stored before the
+# suspension means what it always meant — two separate "szkło" boxes — so
+# physical_parcels() expands it into two parcels.
+#
+# What it cost while it was on: nothing expanded the row, so one shipment was
+# booked for two boxes and one box's 9 kg was declared for both. 29 orders
+# shipped that way between 2026-06 and 2026-09, found on order #1735.
+#
+# To bring it back, all three steps, or the same bug returns:
+#   1. measure the real carton and fix PARCEL_SPECS["szkło-2pak"] — today it
+#      holds a single box's 30×30×20 / 9 kg, which cannot be right for twice
+#      the contents;
+#   2. set GLASS_2PAK_SUSPENDED = False here and in parcelTypes.js;
+#   3. decide what a stored row means. Un-suspending stops the expansion below,
+#      so every "szkło-2pak" row — including the legacy ones — becomes one
+#      physical box again.
+GLASS_2PAK_SUSPENDED = True
+
+# How many physical boxes one suspended-era "szkło-2pak" row stands for.
+_GLASS_2PAK_BOXES = 2
 
 
 def product_name(item: dict[str, Any]) -> str:
@@ -64,13 +92,16 @@ def calc_packages(product_items: list[dict[str, Any]]) -> PackagePlan:
     if plastic_half_packs % 2:
         breakdown.append(PackageBreakdownItem(package_type="pół-pak", quantity=1))
 
-    remaining_glass = (glass_half_packs + 1) // 2
-    if remaining_glass >= 2:
-        count = remaining_glass // 2
-        breakdown.append(PackageBreakdownItem(package_type="szkło-2pak", quantity=count))
-        remaining_glass -= count * 2
-    if remaining_glass > 0:
-        breakdown.append(PackageBreakdownItem(package_type="szkło", quantity=remaining_glass))
+    glass_boxes = (glass_half_packs + 1) // 2
+    if not GLASS_2PAK_SUSPENDED and glass_boxes >= _GLASS_2PAK_BOXES:
+        count = glass_boxes // _GLASS_2PAK_BOXES
+        breakdown.append(PackageBreakdownItem(package_type=GLASS_2PAK, quantity=count))
+        glass_boxes -= count * _GLASS_2PAK_BOXES
+    # Otherwise one zgrzewka of glass is one box: no greedy filling the way the
+    # plastic boxes above are filled, because while the 2-pak is suspended there
+    # is no bigger glass carton. Every box is its own parcel, label and 9 kg.
+    if glass_boxes > 0:
+        breakdown.append(PackageBreakdownItem(package_type="szkło", quantity=glass_boxes))
 
     total = sum(item.quantity for item in breakdown)
     return PackagePlan(package_count=max(total, 1), breakdown=tuple(breakdown))
@@ -95,11 +126,20 @@ def unreadable_product_names(product_items: list[dict[str, Any]]) -> list[str]:
 
 
 def physical_parcels(draft: dict[str, Any]) -> list[PhysicalParcel]:
-    """Expand a legacy package breakdown into individual physical parcels."""
+    """Expand a legacy package breakdown into individual physical parcels.
+
+    One row is one box per unit, with the suspended "szkło-2pak" as the single
+    exception: while it is suspended a stored row means the two boxes it always
+    meant, so it expands into two "szkło" parcels here rather than sending two
+    boxes under one label. See GLASS_2PAK_SUSPENDED.
+    """
     parcels: list[PhysicalParcel] = []
     for box in draft.get("packages_breakdown") or []:
         package_type = str(box.get("type") or "1-pak")
         quantity = int(box.get("qty") or 1)
+        if GLASS_2PAK_SUSPENDED and package_type == GLASS_2PAK:
+            package_type = "szkło"
+            quantity *= _GLASS_2PAK_BOXES
         parcels.extend(
             PhysicalParcel(
                 package_type=package_type,
