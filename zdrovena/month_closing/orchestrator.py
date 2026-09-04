@@ -49,6 +49,7 @@ from zdrovena.month_closing.config import (
     KSEF_ENABLED,
     POLISH_MONTHS,
     VendorConfig,
+    match_vendor,
 )
 from zdrovena.month_closing.console import ConsoleReporter
 from zdrovena.month_closing.email_service import EmailService
@@ -571,16 +572,8 @@ class MonthCloseOrchestrator:
             vendor_by_invoice: dict[int, VendorConfig] = {}
             downloadable: list[dict] = []
             for inv in fakt_invoices:
-                buyer = (inv.get("buyer_name") or "").casefold()
-                buyer_nip = (inv.get("buyer_tax_no") or "").casefold()
-                vendor_cfg = next(
-                    (
-                        cfg
-                        for cfg in EXPECTED_VENDORS
-                        if not cfg.skip
-                        and (cfg.pattern.casefold() in buyer or cfg.pattern.casefold() in buyer_nip)
-                    ),
-                    None,
+                vendor_cfg = match_vendor(
+                    inv.get("buyer_name") or "", inv.get("buyer_tax_no") or ""
                 )
                 if vendor_cfg is not None:
                     vendor_by_invoice[int(inv["id"])] = vendor_cfg

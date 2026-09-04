@@ -123,14 +123,73 @@ def test_call_specs_forward_cod_to_the_single_provider_shipment() -> None:
     assert specs[0][4]["cod_currency"] == "PLN"
 
 
-def test_multi_parcel_cod_is_rejected_before_payload_build() -> None:
+def test_multi_parcel_cod_is_split_across_the_courier_shipments() -> None:
+    # Shopify #1731: 351.00 over two "3-pak" boxes. Each box is its own ShipX
+    # shipment, so sending the full amount on both would collect 702.00.
     draft = _draft(
+        cod={"amount": "351.00", "currency": "PLN"},
+        packages_breakdown=[{"type": "3-pak", "qty": 2}],
+        order_items=[
+            {"name": "HUMIO 72 butelki", "quantity": 1, "line_total": "351.00"},
+        ],
+    )
+
+    specs = inpost_call_specs(draft, _SENDER)
+
+    assert [spec[4]["cod_amount"] for spec in specs] == ["175.50", "175.50"]
+    assert {spec[4]["cod_currency"] for spec in specs} == {"PLN"}
+
+
+def test_each_parcel_collects_what_its_own_contents_are_worth() -> None:
+    draft = _draft(
+        cod={"amount": "700.00", "currency": "PLN"},
+        packages_breakdown=[{"type": "3-pak", "qty": 1}, {"type": "pół-pak", "qty": 1}],
+        order_items=[{"name": "HUMIO 42 butelki", "quantity": 1, "line_total": "700.00"}],
+    )
+
+    specs = inpost_call_specs(draft, _SENDER)
+
+    assert [spec[4]["cod_amount"] for spec in specs] == ["600.00", "100.00"]
+
+
+def test_multi_parcel_cod_is_still_rejected_for_a_locker_shipment() -> None:
+    # At a locker each parcel is collected separately, so a split would let the
+    # customer pay for one box and abandon the other.
+    draft = _draft(
+        service="inpost_locker_standard",
         cod={"amount": "500.00", "currency": "PLN"},
         packages_breakdown=[{"type": "1-pak", "qty": 2}],
     )
 
-    with pytest.raises(InPostBusinessError, match="exactly one"):
+    with pytest.raises(InPostBusinessError, match=r"(?i)paczkomat"):
         inpost_call_specs(draft, _SENDER)
+
+
+def test_a_parcel_that_would_collect_nothing_is_rejected() -> None:
+    # Two boxes planned, only enough goods to fill one.
+    draft = _draft(
+        cod={"amount": "300.00", "currency": "PLN"},
+        packages_breakdown=[{"type": "3-pak", "qty": 2}],
+        order_items=[{"name": "HUMIO 36 butelek", "quantity": 1, "line_total": "300.00"}],
+    )
+
+    with pytest.raises(InPostBusinessError, match=r"0\.00"):
+        inpost_call_specs(draft, _SENDER)
+
+
+def test_a_resumed_parcel_keeps_the_share_it_was_first_given() -> None:
+    # Parcel 1 already exists at the carrier. Parcel 2 must still ask for its
+    # own share, not for a freshly divided whole.
+    draft = _draft(
+        cod={"amount": "700.00", "currency": "PLN"},
+        packages_breakdown=[{"type": "3-pak", "qty": 1}, {"type": "pół-pak", "qty": 1}],
+        order_items=[{"name": "HUMIO 42 butelki", "quantity": 1, "line_total": "700.00"}],
+        courier_shipments=[{"id": "ship-1", "package_type": "3-pak", "package_number": 1}],
+    )
+
+    specs = pending_inpost_call_specs(draft, _SENDER)
+
+    assert [spec[4]["cod_amount"] for spec in specs] == ["100.00"]
 
 
 def test_invalid_shopify_cod_data_is_rejected_even_after_manual_review() -> None:

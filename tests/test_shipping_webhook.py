@@ -535,6 +535,57 @@ class TestListDrafts:
         assert data["drafts"][0]["id"] == "abc-123"
         assert data["drafts"][0]["packages_count"] == 1
 
+    def _cod_draft(self, store, **overrides):
+        draft = {
+            "id": "cod-listing",
+            "status": "pending",
+            "courier": "inpost",
+            "service": "inpost_courier_standard",
+            "cod": {"amount": "700.00", "currency": "PLN"},
+            "shipping_price": "0.00",
+            "order_items": [{"name": "HUMIO 42 butelki", "quantity": 1, "line_total": "700.00"}],
+            "packages_breakdown": [
+                {"type": "3-pak", "qty": 1},
+                {"type": "pół-pak", "qty": 1},
+            ],
+        }
+        draft.update(overrides)
+        store.upsert_draft(draft)
+        return draft
+
+    def test_a_multi_parcel_cod_draft_shows_what_each_parcel_collects(self, client, store):
+        # The operator has to see the split before the labels exist, not only
+        # inside the execution preview.
+        self._cod_draft(store)
+
+        listed = client.get("/api/shipping/drafts").json()["drafts"][0]
+
+        assert listed["cod_split"] == ["600.00", "100.00"]
+        assert listed["cod_split_basis"] == "value"
+
+    def test_a_single_parcel_cod_draft_has_nothing_to_split(self, client, store):
+        self._cod_draft(store, packages_breakdown=[{"type": "3-pak", "qty": 1}])
+
+        listed = client.get("/api/shipping/drafts").json()["drafts"][0]
+
+        assert "cod_split" not in listed
+
+    def test_a_draft_whose_split_is_impossible_still_lists(self, client, store):
+        # Listing is a read. A draft that cannot ship must still be visible,
+        # with its reason, rather than taking the whole screen down.
+        self._cod_draft(
+            store,
+            order_items=[{"name": "HUMIO 12 butelek", "quantity": 1, "line_total": "700.00"}],
+            packages_breakdown=[{"type": "3-pak", "qty": 1}, {"type": "3-pak", "qty": 1}],
+        )
+
+        resp = client.get("/api/shipping/drafts")
+
+        assert resp.status_code == 200
+        listed = resp.json()["drafts"][0]
+        assert "cod_split" not in listed
+        assert "0.00" in listed["cod_split_error"]
+
 
 # ── Execute draft ─────────────────────────────────────────────────────────────
 
@@ -1946,12 +1997,100 @@ class TestUpdateDraftPackagesBreakdown:
         )
         assert resp.status_code == 409
 
-    def test_400_when_a_cod_draft_would_get_more_than_one_parcel(self, client, store):
-        # apaczka_call_specs refuses multi-parcel COD, because one full
-        # collection amount per parcel charges the customer several times.
-        # Saying so at save time beats failing at execute time.
+    def test_409_when_a_failed_draft_already_has_a_label_at_the_carrier(self, client, store):
+        # A draft that failed halfway keeps the labels it did create — they are
+        # printed and paid for. Repacking then renumbers the parcels that are
+        # still to come ("1/2" already at InPost, "2/3" and "3/3" booked next),
+        # and changing the type strands the created label on a box that no
+        # longer exists in the plan.
         draft = self._seed_pending_draft(store)
-        store.update_draft(draft["id"], {"cod": {"amount": 20030, "currency": "PLN"}})
+        store.update_draft(
+            draft["id"],
+            {
+                "status": "error",
+                "courier_shipments": [
+                    {
+                        "id": "ship-1",
+                        "tracking_number": "TRK1",
+                        "package_type": "1-pak",
+                        "package_number": "1",
+                    }
+                ],
+            },
+        )
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "1-pak", "qty": 3}]},
+        )
+        assert resp.status_code == 409
+        assert "etykiet" in resp.json()["detail"]
+
+    def test_a_failed_draft_with_no_labels_yet_is_still_repackable(self, client, store):
+        # The common failure — refused before anything was booked (bad phone,
+        # a COD split the locker will not take). Repacking is the operator's
+        # way out of it, so it must stay open.
+        draft = self._seed_pending_draft(store)
+        store.update_draft(draft["id"], {"status": "error", "error": "InPost refused the plan"})
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "1-pak", "qty": 2}]},
+        )
+        assert resp.status_code == 200
+        assert store.get_draft(draft["id"])["packages_count"] == 2
+
+    def test_a_cod_draft_may_be_repacked_into_several_parcels(self, client, store):
+        # The collection amount is divided between the parcels, so more than
+        # one box no longer charges the customer several times.
+        draft = self._seed_pending_draft(store)
+        store.update_draft(
+            draft["id"],
+            {
+                "cod": {"amount": "200.30", "currency": "PLN"},
+                "order_items": [
+                    {"name": "HUMIO 24 butelki", "quantity": 1, "line_total": "200.30"}
+                ],
+            },
+        )
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "1-pak", "qty": 2}]},
+        )
+        assert resp.status_code == 200
+
+    def test_400_when_a_repack_would_leave_a_parcel_collecting_nothing(self, client, store):
+        # Three boxes but only enough goods for one: the empty ones would ask
+        # the courier to collect 0.00, which the carrier rejects. Saying so at
+        # save time beats failing at execute time.
+        draft = self._seed_pending_draft(store)
+        store.update_draft(
+            draft["id"],
+            {
+                "cod": {"amount": "200.30", "currency": "PLN"},
+                "order_items": [
+                    {"name": "HUMIO 12 butelek", "quantity": 1, "line_total": "200.30"}
+                ],
+            },
+        )
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "1-pak", "qty": 3}]},
+        )
+        assert resp.status_code == 400
+
+    def test_400_when_a_locker_cod_draft_would_get_more_than_one_parcel(self, client, store):
+        # A locker is collected parcel by parcel, so the split stays blocked there.
+        draft = self._seed_pending_draft(store)
+        store.update_draft(
+            draft["id"],
+            {
+                "courier": "inpost",
+                "service": "inpost_locker_standard",
+                "cod": {"amount": "200.30", "currency": "PLN"},
+                "order_items": [
+                    {"name": "HUMIO 24 butelki", "quantity": 1, "line_total": "200.30"}
+                ],
+            },
+        )
         resp = client.patch(
             f"/api/shipping/drafts/{draft['id']}",
             json={"packages_breakdown": [{"type": "1-pak", "qty": 2}]},
@@ -2079,6 +2218,35 @@ class TestPhysicalParcelsCharacterization:
             PhysicalParcel(package_type="3-pak", position=1, count_for_type=2),
             PhysicalParcel(package_type="3-pak", position=2, count_for_type=2),
         ]
+
+    def test_legacy_glass_2pak_row_expands_into_two_glass_parcels(self):
+        """A stored "szkło-2pak" row is two physical boxes, so it is two parcels.
+
+        The planner stopped producing this type (glass ships one zgrzewka per
+        box), but drafts created before that still carry it. Left unexpanded it
+        produced one label and one 9 kg declaration for two boxes — order #1735.
+        """
+        draft = {"packages_breakdown": [{"type": "szkło-2pak", "qty": 1}]}
+
+        parcels = physical_parcels(draft)
+
+        assert parcels == [
+            PhysicalParcel(package_type="szkło", position=1, count_for_type=2),
+            PhysicalParcel(package_type="szkło", position=2, count_for_type=2),
+        ]
+
+    def test_legacy_glass_2pak_quantity_multiplies_the_expansion(self):
+        draft = {"packages_breakdown": [{"type": "szkło-2pak", "qty": 2}]}
+
+        parcels = physical_parcels(draft)
+
+        assert [(parcel.package_type, parcel.position) for parcel in parcels] == [
+            ("szkło", 1),
+            ("szkło", 2),
+            ("szkło", 3),
+            ("szkło", 4),
+        ]
+        assert {parcel.count_for_type for parcel in parcels} == {4}
 
     def test_blank_type_falls_back_but_unknown_type_is_preserved(self):
         draft = {
@@ -2665,7 +2833,6 @@ class TestRunInpost:
             # Glass carries its material in the type name; the reference must
             # not repeat it as "szkło | szkło".
             ("szkło", "szkło", "1-pak"),
-            ("szkło-2pak", "szkło", "2-pak"),
         ],
     )
     def test_reference_identifies_package_material(self, package_type, material, size):
@@ -2681,6 +2848,69 @@ class TestRunInpost:
                 _run_inpost(draft, _SENDER)
 
         assert mock_ship.call_args.kwargs["reference"] == f"1050 | {material} | {size}"
+
+    def test_legacy_glass_2pak_draft_books_one_shipment_per_box(self):
+        """A draft stored before the type was retired still ships two boxes.
+
+        Booked as a single shipment it declared 9 kg — one box — for two, and
+        the second box travelled without a label of its own.
+        """
+        from zdrovena.api.shipping_execution_composition import _run_inpost
+
+        draft = {
+            **_KURIER_DRAFT,
+            "packages_breakdown": [{"type": "szkło-2pak", "qty": 1}],
+        }
+        with patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"):
+            with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_ship:
+                mock_ship.side_effect = [
+                    {"id": "ship-1", "tracking_number": "TRK-1"},
+                    {"id": "ship-2", "tracking_number": "TRK-2"},
+                ]
+                _run_inpost(draft, _SENDER)
+
+        references = [call.kwargs["reference"] for call in mock_ship.call_args_list]
+        assert references == ["1050 | szkło | 1-pak 1/2", "1050 | szkło | 1-pak 2/2"]
+        assert [call.kwargs["weight_kg"] for call in mock_ship.call_args_list] == [9.0, 9.0]
+
+
+class TestReferenceFollowsTheStoredPlan:
+    """The reference is derived, never stored.
+
+    The operator repacks a draft after the plan is calculated, so a reference
+    frozen at draft creation would print a box count the parcels no longer
+    have. It is computed from packages_breakdown every time instead.
+    """
+
+    def _references(self, breakdown):
+        draft = {**_KURIER_DRAFT, "packages_breakdown": breakdown}
+        return [entry["reference"] for entry in _provider_inpost_payload_plan(draft, _SENDER)]
+
+    def test_repacking_renumbers_every_reference(self):
+        assert self._references([{"type": "szkło", "qty": 2}]) == [
+            "1050 | szkło | 1-pak 1/2",
+            "1050 | szkło | 1-pak 2/2",
+        ]
+
+        # The same draft after the operator adds a box: n/N follows the plan.
+        assert self._references([{"type": "szkło", "qty": 3}]) == [
+            "1050 | szkło | 1-pak 1/3",
+            "1050 | szkło | 1-pak 2/3",
+            "1050 | szkło | 1-pak 3/3",
+        ]
+
+    def test_repacking_to_one_box_drops_the_counter(self):
+        assert self._references([{"type": "szkło", "qty": 1}]) == ["1050 | szkło | 1-pak"]
+
+    def test_changing_the_type_changes_material_and_size(self):
+        assert self._references([{"type": "3-pak", "qty": 1}]) == ["1050 | plastik | 3-pak"]
+
+    def test_each_type_is_numbered_within_its_own_run(self):
+        assert self._references([{"type": "3-pak", "qty": 2}, {"type": "szkło", "qty": 1}]) == [
+            "1050 | plastik | 3-pak 1/2",
+            "1050 | plastik | 3-pak 2/2",
+            "1050 | szkło | 1-pak",
+        ]
 
 
 class TestInPostPayloadPlan:
@@ -3450,7 +3680,116 @@ class TestListApaczkaServices:
         assert {"service_id": "21", "label": "DPD Kurier"} in body["services"]
 
 
+class TestReviewReasons:
+    """Why a draft is held, recorded next to the fact that it is held.
+
+    The status alone told the operator to look at a draft without saying what
+    to look at — the reasons had to be guessed from the row. They are stored as
+    codes, not sentences: the wording lives in the frontend, so rephrasing it
+    never means rewriting stored drafts.
+    """
+
+    @staticmethod
+    def _reasons(**overrides):
+        from zdrovena.api.shipping_draft_composition import review_reasons
+
+        defaults = {
+            "unreadable": [],
+            "phone": "+48600100200",
+            "courier": "inpost",
+            "apaczka_service_id": None,
+            "pickup_point": None,
+            "cod": None,
+            "cod_error": None,
+            "packages_count": 1,
+        }
+        return review_reasons(**{**defaults, **overrides})
+
+    def test_a_clean_draft_has_no_reasons(self):
+        assert self._reasons() == []
+
+    def test_an_unreadable_product_name_is_a_reason(self):
+        assert self._reasons(unreadable=["Zestaw prezentowy HUMIO"]) == ["unreadable_products"]
+
+    def test_a_missing_phone_is_a_reason(self):
+        # normalize_pl_phone returns None for a number InPost will refuse.
+        assert self._reasons(phone=None) == ["missing_phone"]
+
+    def test_an_unmatched_apaczka_service_is_a_reason(self):
+        assert self._reasons(courier="apaczka", apaczka_service_id=None) == [
+            "apaczka_service_unmatched"
+        ]
+
+    def test_an_apaczka_service_needing_a_point_without_one_is_a_reason(self):
+        assert self._reasons(courier="apaczka", apaczka_service_id="23") == [
+            "apaczka_pickup_point_missing"
+        ]
+
+    def test_that_point_reason_clears_once_the_point_is_known(self):
+        assert (
+            self._reasons(courier="apaczka", apaczka_service_id="23", pickup_point={"id": "P123"})
+            == []
+        )
+
+    def test_an_unreadable_cod_amount_is_a_reason(self):
+        assert self._reasons(cod_error="total_outstanding is not a number") == ["cod_error"]
+
+    def test_cod_across_more_than_one_parcel_is_a_reason(self):
+        assert self._reasons(cod={"amount": "200.30", "currency": "PLN"}, packages_count=2) == [
+            "cod_multi_parcel"
+        ]
+
+    def test_cod_in_a_single_parcel_is_not(self):
+        assert self._reasons(cod={"amount": "200.30", "currency": "PLN"}) == []
+
+    def test_every_reason_is_reported_not_just_the_first(self):
+        # The operator fixes what the list says. Reporting one reason at a time
+        # would send them round the loop once per problem.
+        assert self._reasons(
+            unreadable=["Zestaw prezentowy HUMIO"],
+            phone=None,
+            courier="apaczka",
+            apaczka_service_id=None,
+            cod={"amount": "200.30", "currency": "PLN"},
+            packages_count=2,
+        ) == [
+            "unreadable_products",
+            "missing_phone",
+            "apaczka_service_unmatched",
+            "cod_multi_parcel",
+        ]
+
+
 class TestCreateDraft:
+    def test_review_reasons_are_stored_on_the_draft(self, store):
+        # The fixture is 2 zgrzewki of glass, which is two parcels, so adding
+        # COD to it holds the draft — and now says so.
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        order.update(
+            {
+                "payment_gateway_names": ["Cash on Delivery (COD)"],
+                "gateway": "Cash on Delivery (COD)",
+                "financial_status": "pending",
+                "total_outstanding": "200.30",
+                "currency": "PLN",
+            }
+        )
+
+        _create_draft_for_test(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["status"] == "needs_review"
+        assert draft["review_reasons"] == ["cod_multi_parcel"]
+
+    def test_a_clean_draft_stores_an_empty_reason_list(self, store):
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+
+        _create_draft_for_test(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["status"] == "pending"
+        assert draft["review_reasons"] == []
+
     def test_inpost_kurier_draft_stored_on_success(self, store, tmp_path):
 
         storage = object()
@@ -3463,8 +3802,8 @@ class TestCreateDraft:
         assert d["service"] == "inpost_courier_standard"
         assert d["status"] == "pending"
         assert d["source"] == "shopify"
-        assert d["packages_count"] == 1  # 2 zgrzewki szkła → 1×szkło-2pak
-        assert d["packages_breakdown"] == [{"type": "szkło-2pak", "qty": 1}]
+        assert d["packages_count"] == 2  # 2 zgrzewki szkła → 2×szkło
+        assert d["packages_breakdown"] == [{"type": "szkło", "qty": 2}]
         assert d["tracking_number"] is None
         assert d["courier_draft_id"] is None
         assert d["shopify_order_number"] == "1002"
@@ -3474,6 +3813,45 @@ class TestCreateDraft:
         assert d["shipping_address"]["city"] == "Kraków"
         assert d["shipping_address"]["post_code"] == "30-001"
         assert d["shipping_address"]["flat_number"] == "m. 5"
+
+    def test_order_lines_carry_what_they_cost(self, store):
+        # Without a value per line there is nothing to weigh the parcels by,
+        # and a multi-parcel COD order falls back to an equal split.
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+
+        _create_draft_for_test(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["order_items"] == [
+            {
+                "name": "HUMIO - woda alkaliczna, 12 butelek w szkle",
+                "quantity": 2,
+                "line_total": "179.98",
+            }
+        ]
+
+    def test_line_discounts_come_off_the_stored_line_value(self, store):
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        order["line_items"][0]["total_discount"] = "9.98"
+
+        _create_draft_for_test(order, store, object())
+
+        assert store.list_drafts()[0]["order_items"][0]["line_total"] == "170.00"
+
+    def test_the_delivery_cost_is_stored_so_it_can_be_shared_between_parcels(self, store):
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+
+        _create_draft_for_test(order, store, object())
+
+        assert store.list_drafts()[0]["shipping_price"] == "20.00"
+
+    def test_a_discounted_delivery_stores_what_the_customer_actually_pays(self, store):
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        order["shipping_lines"][0]["discounted_price"] = "0.00"
+
+        _create_draft_for_test(order, store, object())
+
+        assert store.list_drafts()[0]["shipping_price"] == "0.00"
 
     def test_shopify_cod_uses_gateway_and_exact_outstanding_amount(self, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")
@@ -3497,7 +3875,9 @@ class TestCreateDraft:
             "gateway": "cash on delivery (cod)",
         }
         assert draft["cod_error"] is None
-        assert draft["status"] == "pending"
+        # The fixture is 2 zgrzewki of glass, so it plans two boxes, and a COD
+        # order that does not fit one parcel is reviewed before it is booked.
+        assert draft["status"] == "needs_review"
 
     def test_shopify_outstanding_change_updates_cod_and_preview_fingerprint(self, client, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")
@@ -4623,7 +5003,7 @@ class TestCreateDraftUnreadableProductName:
 
         draft = store.list_drafts()[0]
         assert draft["status"] == "pending"
-        assert draft["packages_breakdown"] == [{"type": "szkło-2pak", "qty": 1}]
+        assert draft["packages_breakdown"] == [{"type": "szkło", "qty": 2}]
 
 
 class TestCreateDraftKaucjaFilter:
@@ -4751,20 +5131,56 @@ class TestCalcPackages:
         assert count == 1
         assert bd == {"szkło": 1}
 
-    def test_szklo_2_zgrzewki_one_2pak(self):
+    def test_szklo_2_zgrzewki_two_single_boxes(self):
+        """Glass ships one zgrzewka per box, so two zgrzewki are two parcels.
+
+        The plan used to group them into one "szkło-2pak" row. Nothing
+        downstream expanded that row, so the courier received one label and a
+        9 kg declaration for two 9 kg boxes (order #1735).
+        """
         count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek w szkle", 2))
-        assert count == 1
-        assert bd == {"szkło-2pak": 1}
+        assert count == 2
+        assert bd == {"szkło": 2}
 
-    def test_szklo_3_zgrzewki_2pak_plus_1pak(self):
+    def test_szklo_3_zgrzewki_three_single_boxes(self):
         count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek w szkle", 3))
-        assert count == 2
-        assert bd == {"szkło-2pak": 1, "szkło": 1}
+        assert count == 3
+        assert bd == {"szkło": 3}
 
-    def test_szklo_4_zgrzewki_two_2pak(self):
+    def test_szklo_4_zgrzewki_four_single_boxes(self):
         count, bd = self._run(("HUMIO - woda alkaliczna, 12 butelek w szkle", 4))
-        assert count == 2
-        assert bd == {"szkło-2pak": 2}
+        assert count == 4
+        assert bd == {"szkło": 4}
+
+    def test_the_suspension_switch_actually_switches_back(self, monkeypatch):
+        """Suspended, not deleted — the owner may resume 2-pak glass packing.
+
+        Pinned because a switch nobody exercises is a switch that has quietly
+        stopped working by the time it is needed.
+        """
+        from zdrovena.shipping.domain import planning
+
+        monkeypatch.setattr(planning, "GLASS_2PAK_SUSPENDED", False)
+
+        plan = planning.calc_packages(
+            [{"name": "HUMIO - woda alkaliczna, 12 butelek w szkle", "quantity": 2}]
+        )
+        assert [(item.package_type, item.quantity) for item in plan.breakdown] == [
+            ("szkło-2pak", 1)
+        ]
+
+        # And a stored row goes back to meaning one box, so nothing expands it.
+        parcels = planning.physical_parcels(
+            {"packages_breakdown": [{"type": "szkło-2pak", "qty": 1}]}
+        )
+        assert [parcel.package_type for parcel in parcels] == ["szkło-2pak"]
+
+    def test_planner_never_produces_the_suspended_glass_2pak_type(self):
+        for qty in range(1, 13):
+            plan = calc_packages(
+                [{"name": "HUMIO - woda alkaliczna, 12 butelek w szkle", "quantity": qty}]
+            )
+            assert all(item.package_type == "szkło" for item in plan.breakdown)
 
     # ── Szkło pod nową nazwą (regresja #1710-#1712) ──────────────────────────
 
@@ -4778,8 +5194,8 @@ class TestCalcPackages:
         have packed glass bottles into plastic cartons.
         """
         count, bd = self._run((self._RENAMED_GLASS, 2))
-        assert count == 1
-        assert bd == {"szkło-2pak": 1}
+        assert count == 2
+        assert bd == {"szkło": 2}
 
     def test_renamed_glass_sku_single_unit_order_1712(self):
         count, bd = self._run((self._RENAMED_GLASS, 1))
@@ -4788,8 +5204,8 @@ class TestCalcPackages:
 
     def test_renamed_glass_sku_four_units_order_1711(self):
         count, bd = self._run((self._RENAMED_GLASS, 4))
-        assert count == 2
-        assert bd == {"szkło-2pak": 2}
+        assert count == 4
+        assert bd == {"szkło": 4}
 
     def test_title_only_line_is_planned_like_a_named_one(self):
         """Line items are read through one accessor, not two.
@@ -4802,7 +5218,7 @@ class TestCalcPackages:
         named = calc_packages([{"name": self._RENAMED_GLASS, "quantity": 2}])
 
         assert titled == named
-        assert [b.package_type for b in titled.breakdown] == ["szkło-2pak"]
+        assert [b.package_type for b in titled.breakdown] == ["szkło"]
 
     def test_renamed_glass_matches_the_old_name_exactly(self):
         """The rename must not change the plan for the same physical goods."""

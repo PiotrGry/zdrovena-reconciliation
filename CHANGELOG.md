@@ -3,6 +3,84 @@
 
 ## Unreleased
 
+### Added
+
+- **shipping**: Pobranie rozkłada się na paczki, więc zamówienie COD na więcej niż jedną
+  paczkę wreszcie da się nadać. Do tej pory portal je blokował — i miał rację: jedna paczka
+  to jedna przesyłka u kuriera, a pełny obiekt `cod` jechał na każdej z nich, więc bez
+  blokady kurier zainkasowałby całość tyle razy, ile było pudeł. Shopify #1731 stało przez
+  to niewysłane od 2026-08-28. Teraz koszt dostawy dzieli się równo między paczki, a reszta
+  proporcjonalnie do wartości towaru, który w danej paczce faktycznie leży. Arytmetyka w
+  całych groszach metodą największych reszt, więc części sumują się do `total_outstanding`
+  co do grosza z konstrukcji, a nie w przybliżeniu. Kaucja i rabaty jadą wewnątrz dzielonej
+  puli — dlatego pula towaru jest **rozdzielana** wagami, a nie sumowana z cen pozycji:
+  `kaucja` wypada z planu paczek przez `SKIP_RE`, a klient i tak ją płaci.
+
+  Podział nigdzie się nie zapisuje. Jest funkcją kwoty, kosztu dostawy, pozycji zamówienia
+  i planu paczek, więc przepakowanie draftu przelicza go samo i nie ma czego zestarzeć.
+  Jego wejścia zamrażają się razem z `cod` w chwili startu wysyłki — inaczej edycja
+  zamówienia w Shopify dałaby wznawianej paczce inną kwotę niż ta na etykiecie leżącej już
+  u kuriera.
+
+  Paczkomat zostaje zablokowany: tam każdą paczkę odbiera się osobno, więc podział
+  pozwoliłby klientowi zapłacić za jedno pudło i zostawić resztę.
+
+  Drafty sprzed tej zmiany nie mają cen pozycji i dostają podział równy — opisany w portalu
+  jako równy, a nie podany za podział wg wartości.
+
+- **shipping**: Draft czekający na przegląd mówi teraz, **dlaczego** czeka. Obok plakietki
+  „do sprawdzenia" pojawiają się chipy z powodami: „brak poprawnego telefonu", „pobranie na kilka
+  paczek", „nieczytelna nazwa produktu", „brak dopasowanej usługi Apaczki", „brak punktu odbioru",
+  „nieczytelna kwota pobrania". Do tej pory status mówił operatorowi, żeby na coś spojrzał, nie
+  mówiąc na co — powód trzeba było wydedukować z wiersza.
+
+  `review_reasons()` zwraca **wszystkie** powody, nie pierwszy: operator naprawia to, co lista
+  wymienia, a jeden powód naraz kazałby mu przechodzić pętlę raz na problem. `needs_review` jest
+  teraz z tej listy wyprowadzany (`bool(powody)`), więc flaga i jej wyjaśnienie nie mogą się
+  rozjechać.
+
+  Zapisywane jako kody, nie zdania — teksty siedzą w `lang.js`, więc przeredagowanie nie wymaga
+  przepisywania zapisanych draftów, a wersja angielska dostaje je za darmo. Nieznany kod renderuje
+  się jako on sam, żeby powód dodany po stronie serwera był widoczny, zanim ktoś zdąży go nazwać.
+  Drafty zapisane wcześniej nie mają tego pola i wyglądają jak dotąd.
+
+### Changed
+
+- **shipping**: Telefon odbiorcy przestał być edytowalny na wierszu przesyłki i przeniósł
+  się do Ustawień, gdzie trzeba podać numer zamówienia, żeby do niego dotrzeć. Prośba
+  operatora: numer, który przyszedł z zamówieniem, nie jest czymś, co zmienia się mimochodem.
+  Całkiem usunąć się go nie dało — od 2026-09-08 InPost odrzuca przesyłkę z niepoprawnym
+  numerem (#294), a edycja jest jedynym sposobem, żeby odblokować zamówienie, które
+  przyszło ze złym numerem ze Shopify. Zamiana przypadku na czynność świadomą.
+
+### Fixed
+
+- **shipping**: Dwie zgrzewki szkła to znowu dwie paczki, dwie etykiety i dwa numery śledzenia.
+  Planer zwijał je w jeden wpis `szkło-2pak`, który oznaczał *dwa* pudełka — ale nic go nie
+  rozwijało: `physical_parcels()` rozwija tylko `qty`, więc powstawała **jedna** przesyłka
+  u kuriera, z wymiarami i wagą **jednego** pudełka. Kurier dostawał 9 kg deklaracji na dwa
+  9-kilogramowe pudła i jedną etykietę na oba. Obietnica „sent as qty=2 in parcels list"
+  wisiała w komentarzu `PARCEL_SPECS` od czerwca i nigdy nie została napisana. 29 zamówień
+  poszło tak między czerwcem a wrześniem 2026; wychwycił to operator na #1735.
+
+  Typ jest **zawieszony, nie usunięty** — przełącznik `GLASS_2PAK_SUSPENDED`
+  (`shipping/domain/planning.py`, lustrzany w `parcelTypes.js`) wyłącza go w planerze,
+  w liście wyboru operatora i włącza rozwijanie zapisanych wierszy na dwie paczki `szkło`.
+  Dzięki temu dwa oczekujące drafty ze starym typem nadadzą się poprawnie bez ruszania danych.
+  Przy przełączniku jest lista kroków do przywrócenia; pierwszy z nich to zmierzyć realny
+  karton, bo `PARCEL_SPECS["szkło-2pak"]` trzyma dziś wymiary i wagę *jednego* pudełka — i to
+  była właśnie ta pułapka.
+
+  Skutek uboczny: zamówienie COD ze szkłem 2+ zgrzewki wpada teraz w `needs_review`, tak samo
+  jak od dawna wpada plastikowe — reguła `packages_count != 1` jest starsza niż podział COD.
+
+- **shipping**: Plan paczek jest zamrożony, gdy draft padł w połowie i ma już etykiety
+  u kuriera. Status `error` zostaje edytowalny (większość awarii zdarza się zanim cokolwiek
+  zostanie zabookowane, a przepakowanie to jedyna droga wyjścia), ale utworzone wcześniej
+  etykiety są wydrukowane i opłacone, a to plan je numeruje. Bez tego przepakowanie
+  przenumerowywało paczki jeszcze niezabookowane („1/2" już u kuriera, „2/3" dobookowane),
+  a zmiana typu zostawiała opłaconą etykietę na pudełku, którego w planie już nie ma.
+
 ## 2.11.0
 
 ### Changed
@@ -34,8 +112,6 @@
   pierwszy fetch w tej samej partii; React 19 to obnażył. Zapytanie zawężone do `.pill`,
   zgodnie z sąsiednią asercją trzy linijki niżej.
 
-
-### Fixed
 
 - **ci**: `terraform apply` na `main` prosił o zatwierdzenie planu, który nigdy nie powstał.
   Krok planu w jobie `apply` używał gołego potoku `terraform plan … | tee plan.txt`, więc

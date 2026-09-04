@@ -149,6 +149,41 @@ describe('ShippingView', () => {
         expect(screen.getByText('200.30 PLN')).toBeInTheDocument()
     })
 
+    it('shows what each parcel collects when a COD order needs several', async () => {
+        installShippingFetch({
+            drafts: [draft({
+                cod: { amount: '700.00', currency: 'PLN' },
+                cod_split: ['600.00', '100.00'],
+                cod_split_basis: 'value',
+                packages_count: 2,
+                packages_breakdown: [{ type: '3-pak', qty: 1 }, { type: 'pół-pak', qty: 1 }],
+            })],
+        })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+        await userEvent.click(screen.getByRole('button', { name: 'Rozwiń' }))
+
+        expect(screen.getByText('Pobranie per paczka')).toBeInTheDocument()
+        expect(screen.getByText('600.00 PLN')).toBeInTheDocument()
+        expect(screen.getByText('100.00 PLN')).toBeInTheDocument()
+    })
+
+    it('does not let the draft row rewrite the customer phone', async () => {
+        // The operator asked for this: the number that came with the order is
+        // not something to change in passing. It moved to Settings, where it
+        // takes an order number to reach.
+        installShippingFetch({ drafts: [draft()] })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+        await userEvent.click(screen.getByRole('button', { name: 'Rozwiń' }))
+
+        expect(screen.getByText('Telefon odbiorcy')).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Zapisz telefon' })).not.toBeInTheDocument()
+        expect(screen.queryByLabelText('Telefon odbiorcy')).not.toBeInTheDocument()
+    })
+
     it('shows material totals derived from physical package types', async () => {
         installShippingFetch({
             drafts: [draft({
@@ -260,6 +295,46 @@ describe('ShippingView', () => {
         await screen.findByText('Anna Nowak')
 
         expect(screen.getByRole('option', { name: 'do sprawdzenia' })).toBeInTheDocument()
+    })
+
+    it('says on the row why a draft waits for review', async () => {
+        installShippingFetch({
+            drafts: [draft({
+                status: 'needs_review',
+                review_reasons: ['missing_phone', 'cod_multi_parcel'],
+            })],
+        })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+
+        expect(screen.getByText('brak poprawnego telefonu')).toBeInTheDocument()
+        expect(screen.getByText('pobranie na kilka paczek')).toBeInTheDocument()
+    })
+
+    it('shows no reasons on a draft that is not held', async () => {
+        // A reason left next to "oczekujące" would read as a problem nobody
+        // has to solve. Stale reasons on a cleared draft must not surface.
+        installShippingFetch({
+            drafts: [draft({ status: 'pending', review_reasons: ['missing_phone'] })],
+        })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+
+        expect(screen.queryByText('brak poprawnego telefonu')).not.toBeInTheDocument()
+    })
+
+    it('renders a draft stored before review reasons existed', async () => {
+        // No review_reasons field at all: the row renders as it always did,
+        // status and nothing more.
+        installShippingFetch({ drafts: [draft({ status: 'needs_review' })] })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+
+        expect(document.querySelector('.pill.warn')).toBeInTheDocument()
+        expect(screen.queryByText('brak poprawnego telefonu')).not.toBeInTheDocument()
     })
 
     it('distinguishes pickup point delivery from a street address', async () => {

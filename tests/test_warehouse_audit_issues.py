@@ -148,11 +148,11 @@ class TestTheInspectorActuallyRunsIt:
 
         with (
             patch(
-                "zdrovena.month_closing.workflow.FakturowniaClient.from_keyring",
+                "zdrovena.month_closing.inspection.FakturowniaClient.from_keyring",
                 return_value=client,
             ),
             patch(
-                "zdrovena.month_closing.workflow.warehouse_issues",
+                "zdrovena.month_closing.inspection.warehouse_issues",
                 return_value=warehouse_return,
             ) as spy,
         ):
