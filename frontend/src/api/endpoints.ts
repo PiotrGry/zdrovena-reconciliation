@@ -129,10 +129,24 @@ export function damageAction({
 
 export type CloseWorkflowRun =
     paths['/api/close/workflow']['get']['responses'][200]['content']['application/json']
+export type CloseInspection =
+    paths['/api/close/inspection']['get']['responses'][200]['content']['application/json']
 export type CloseHistoryResponse =
     paths['/api/close/history']['get']['responses'][200]['content']['application/json']
 export type IntegrationsHealthResponse =
     paths['/api/integrations/health']['get']['responses'][200]['content']['application/json']
+
+export function getCloseInspection({
+    year,
+    month,
+    token,
+}: {
+    year: number
+    month: number
+    token: string
+}): Promise<CloseInspection> {
+    return request<CloseInspection>(`/api/close/inspection?year=${year}&month=${month}`, { token })
+}
 
 export function getCloseWorkflow({
     year,

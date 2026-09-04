@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from io import StringIO
 from typing import Annotated
 
@@ -11,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from zdrovena.api.auth import Principal, require_accountant_or_admin, require_viewer_or_above
 from zdrovena.api.models import (
     CloseEmailAttemptResolution,
+    CloseInspectionResponse,
     CloseRequest,
     CloseResponse,
     CloseStateResponse,
@@ -27,8 +29,9 @@ from zdrovena.month_closing.close_history import (
 )
 from zdrovena.month_closing.config import BASE_DIR, POLISH_MONTHS
 from zdrovena.month_closing.console import ConsoleReporter
+from zdrovena.month_closing.inspection import MonthCloseInspector
 from zdrovena.month_closing.orchestrator import MonthCloseOrchestrator
-from zdrovena.month_closing.run_store import RunBusyError, RunConflictError
+from zdrovena.month_closing.run_store import CloseRunStore, RunBusyError, RunConflictError
 from zdrovena.month_closing.state import PipelineState
 from zdrovena.month_closing.workflow import (
     EmailAttemptResolutionError,
@@ -153,6 +156,42 @@ def run_close(
         ),
     )
     return CloseResponse.from_close_report(report, log_lines=log_lines)
+
+
+@router.get(
+    "/inspection",
+    response_model=CloseInspectionResponse,
+    summary="How the period stands right now, without starting anything",
+)
+def get_close_inspection(
+    principal: Annotated[Principal, Depends(require_viewer_or_above)],
+    year: int = Query(..., ge=2020),
+    month: int = Query(..., ge=1, le=12),
+) -> CloseInspectionResponse:
+    """Answer "how do I stand?" as a question, not as a move.
+
+    Deliberately not routed through MonthCloseWorkflow. `get_or_create` would
+    create and save a run for a period nobody has started, and would mark a
+    long-abandoned step failed — both are writes, and this is a read. The run
+    is read with a plain `get()` that returns None when there is none, which is
+    exactly the case this endpoint exists for.
+
+    Recomputed on every call rather than replayed, hence `computed_at`: a stale
+    answer about what is still missing is worse than no answer at all.
+    """
+    inspected = MonthCloseInspector(year, month).inspect()
+    run = CloseRunStore().get(year, month)
+    return CloseInspectionResponse.model_validate(
+        {
+            "year": year,
+            "month": month,
+            "computed_at": datetime.now(timezone.utc).isoformat(),
+            "documents": inspected.get("documents", []),
+            "issues": inspected.get("issues", []),
+            "metrics": inspected.get("metrics", {}),
+            "run": run,
+        }
+    )
 
 
 @router.get(

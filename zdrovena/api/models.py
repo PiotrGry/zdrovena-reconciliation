@@ -177,6 +177,38 @@ class CloseWorkflowRunResponse(BaseModel):
     waivers: list[CloseWorkflowWaiver] = Field(default_factory=list)
 
 
+class CloseInspectionRunSummary(BaseModel):
+    """The close run as it stands, reported without being touched."""
+
+    model_config = ConfigDict(extra="allow")
+
+    run_id: str
+    status: str
+    active_action: str | None = None
+    updated_at: str
+    steps: dict[str, CloseWorkflowStep] = Field(default_factory=dict)
+    waivers: list[CloseWorkflowWaiver] = Field(default_factory=list)
+
+
+class CloseInspectionResponse(BaseModel):
+    """How a period stands right now.
+
+    Computed on every request rather than replayed from a stored run — hence
+    `computed_at`. `run` is null when nobody has started the close, which is
+    the case this endpoint exists for.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    year: int
+    month: int
+    computed_at: str
+    documents: list[CloseWorkflowDocument] = Field(default_factory=list)
+    issues: list[CloseWorkflowIssue] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    run: CloseInspectionRunSummary | None = None
+
+
 class InvoiceItem(BaseModel):
     id: int
     number: str
