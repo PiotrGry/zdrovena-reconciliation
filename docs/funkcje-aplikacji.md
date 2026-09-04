@@ -158,6 +158,36 @@ draft do przeglądu** — po tym, jak zmiana nazwy SKU szkła cicho zaklasyfikow
 Po wejściu w `executing` **plan paczek jest zamrożony** (`_BREAKDOWN_LOCKED_STATUSES`) — inaczej
 zapisany plan przestałby się zgadzać z etykietami już u kuriera.
 
+#### Dlaczego draft czeka na przegląd
+
+`needs_review` jest wyliczany przez `review_reasons()` (`shipping_draft_composition.py`), która
+zwraca **wszystkie** powody, nie pierwszy — operator naprawia to, co lista wymienia, a jeden powód
+naraz kazałby mu przechodzić pętlę raz na problem. Status to `bool(powody)`, więc flaga i jej
+wyjaśnienie nie mogą się rozjechać. Powody zapisują się na drafcie jako `review_reasons` i portal
+pokazuje je jako chipy obok plakietki statusu.
+
+| kod | kiedy |
+|---|---|
+| `unreadable_products` | `bottles_per_unit` nie odczytał liczby butelek → plan paczek jest zgadywany |
+| `missing_phone` | brak numeru, który InPost przyjmie (od 2026-09-08 odrzuca złe) |
+| `apaczka_service_unmatched` | Apaczka bez dopasowanej usługi |
+| `apaczka_pickup_point_missing` | usługa Apaczki wymaga punktu odbioru (`23`, `64`), a punktu nie ma |
+| `cod_error` | Shopify przysłał kwotę pobrania, której nie da się odczytać |
+| `cod_multi_parcel` | pobranie na więcej niż jedną paczkę |
+
+Kody, nie zdania: teksty siedzą w `frontend/src/lang.js` (`sh_review_*`), więc przeredagowanie
+nie wymaga przepisywania zapisanych draftów, a wersja angielska dostaje je za darmo. Nieznany kod
+renderuje się jako on sam — nowy powód jest widoczny, zanim ktokolwiek zdąży go nazwać.
+
+Dwie rzeczy, o których warto pamiętać. Po pierwsze, **powody liczą się raz, przy tworzeniu
+draftu**, i nie są przeliczane przy synchronizacji — `merge_synced_draft` celowo nie oznacza
+ponownie draftu, który operator już odklikał. Draft oznaczony przez regułę, która od tamtej pory
+zniknęła, zostaje oznaczony (przykład: #1556 z lipca 2026, którego wszystkie powody dziś już nie
+występują). Po drugie, `cod_multi_parcel` jest **starszy niż podział COD na paczki**: powstał, gdy
+pełna kwota jechała na każdej przesyłce i wielopaczkowe pobranie zostałoby zainkasowane raz na
+pudło. Był witryną dla twardej blokady w providerze; blokada została zawężona do paczkomatów
+(PR #384), flaga nie.
+
 Status `error` jest **celowo edytowalny**: większość awarii zdarza się zanim cokolwiek zostanie
 zabookowane (zły telefon, podział COD, którego paczkomat nie przyjmie), a przepakowanie planu to
 wtedy jedyna droga wyjścia dla operatora. Ale jeśli draft padł *w połowie* i ma już

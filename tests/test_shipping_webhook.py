@@ -3680,7 +3680,116 @@ class TestListApaczkaServices:
         assert {"service_id": "21", "label": "DPD Kurier"} in body["services"]
 
 
+class TestReviewReasons:
+    """Why a draft is held, recorded next to the fact that it is held.
+
+    The status alone told the operator to look at a draft without saying what
+    to look at — the reasons had to be guessed from the row. They are stored as
+    codes, not sentences: the wording lives in the frontend, so rephrasing it
+    never means rewriting stored drafts.
+    """
+
+    @staticmethod
+    def _reasons(**overrides):
+        from zdrovena.api.shipping_draft_composition import review_reasons
+
+        defaults = {
+            "unreadable": [],
+            "phone": "+48600100200",
+            "courier": "inpost",
+            "apaczka_service_id": None,
+            "pickup_point": None,
+            "cod": None,
+            "cod_error": None,
+            "packages_count": 1,
+        }
+        return review_reasons(**{**defaults, **overrides})
+
+    def test_a_clean_draft_has_no_reasons(self):
+        assert self._reasons() == []
+
+    def test_an_unreadable_product_name_is_a_reason(self):
+        assert self._reasons(unreadable=["Zestaw prezentowy HUMIO"]) == ["unreadable_products"]
+
+    def test_a_missing_phone_is_a_reason(self):
+        # normalize_pl_phone returns None for a number InPost will refuse.
+        assert self._reasons(phone=None) == ["missing_phone"]
+
+    def test_an_unmatched_apaczka_service_is_a_reason(self):
+        assert self._reasons(courier="apaczka", apaczka_service_id=None) == [
+            "apaczka_service_unmatched"
+        ]
+
+    def test_an_apaczka_service_needing_a_point_without_one_is_a_reason(self):
+        assert self._reasons(courier="apaczka", apaczka_service_id="23") == [
+            "apaczka_pickup_point_missing"
+        ]
+
+    def test_that_point_reason_clears_once_the_point_is_known(self):
+        assert (
+            self._reasons(courier="apaczka", apaczka_service_id="23", pickup_point={"id": "P123"})
+            == []
+        )
+
+    def test_an_unreadable_cod_amount_is_a_reason(self):
+        assert self._reasons(cod_error="total_outstanding is not a number") == ["cod_error"]
+
+    def test_cod_across_more_than_one_parcel_is_a_reason(self):
+        assert self._reasons(cod={"amount": "200.30", "currency": "PLN"}, packages_count=2) == [
+            "cod_multi_parcel"
+        ]
+
+    def test_cod_in_a_single_parcel_is_not(self):
+        assert self._reasons(cod={"amount": "200.30", "currency": "PLN"}) == []
+
+    def test_every_reason_is_reported_not_just_the_first(self):
+        # The operator fixes what the list says. Reporting one reason at a time
+        # would send them round the loop once per problem.
+        assert self._reasons(
+            unreadable=["Zestaw prezentowy HUMIO"],
+            phone=None,
+            courier="apaczka",
+            apaczka_service_id=None,
+            cod={"amount": "200.30", "currency": "PLN"},
+            packages_count=2,
+        ) == [
+            "unreadable_products",
+            "missing_phone",
+            "apaczka_service_unmatched",
+            "cod_multi_parcel",
+        ]
+
+
 class TestCreateDraft:
+    def test_review_reasons_are_stored_on_the_draft(self, store):
+        # The fixture is 2 zgrzewki of glass, which is two parcels, so adding
+        # COD to it holds the draft — and now says so.
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        order.update(
+            {
+                "payment_gateway_names": ["Cash on Delivery (COD)"],
+                "gateway": "Cash on Delivery (COD)",
+                "financial_status": "pending",
+                "total_outstanding": "200.30",
+                "currency": "PLN",
+            }
+        )
+
+        _create_draft_for_test(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["status"] == "needs_review"
+        assert draft["review_reasons"] == ["cod_multi_parcel"]
+
+    def test_a_clean_draft_stores_an_empty_reason_list(self, store):
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+
+        _create_draft_for_test(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["status"] == "pending"
+        assert draft["review_reasons"] == []
+
     def test_inpost_kurier_draft_stored_on_success(self, store, tmp_path):
 
         storage = object()

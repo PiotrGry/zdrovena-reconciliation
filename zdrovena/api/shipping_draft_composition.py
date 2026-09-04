@@ -152,6 +152,63 @@ _APACZKA_PICKUP_SERVICES = {
 _APACZKA_SERVICES_REQUIRING_PICKUP_POINT = frozenset(_APACZKA_PICKUP_SERVICES.values())
 _SHOPIFY_COD_GATEWAYS = frozenset({"cash on delivery (cod)"})
 
+# Why a draft is held for the operator. Codes, not sentences: the wording lives
+# in frontend/src/lang.js, so rephrasing it never means rewriting stored drafts,
+# and the English portal gets the same reasons for free.
+REVIEW_UNREADABLE_PRODUCTS = "unreadable_products"
+REVIEW_MISSING_PHONE = "missing_phone"
+REVIEW_APACZKA_SERVICE_UNMATCHED = "apaczka_service_unmatched"
+REVIEW_APACZKA_PICKUP_POINT_MISSING = "apaczka_pickup_point_missing"
+REVIEW_COD_ERROR = "cod_error"
+REVIEW_COD_MULTI_PARCEL = "cod_multi_parcel"
+
+
+def review_reasons(
+    *,
+    unreadable: list[str],
+    phone: str | None,
+    courier: str,
+    apaczka_service_id: str | None,
+    pickup_point: dict[str, Any] | None,
+    cod: dict[str, Any] | None,
+    cod_error: str | None,
+    packages_count: int,
+) -> list[str]:
+    """Return every reason this draft has to be held, in display order.
+
+    Every reason, not the first one: the operator fixes what the list names, so
+    reporting one at a time would send them round the loop once per problem.
+
+    Empty means the draft is executable. ``needs_review`` is derived from that,
+    which keeps the flag and its explanation from ever disagreeing — a status
+    saying "look at this" without saying at what is what the operator had
+    before.
+    """
+    reasons: list[str] = []
+    if unreadable:
+        # The parcel plan is a guess, and an executable guess is how #1710-#1712
+        # were packed as plastic.
+        reasons.append(REVIEW_UNREADABLE_PRODUCTS)
+    if phone is None:
+        # InPost refuses a shipment without a valid number from 2026-09-08.
+        reasons.append(REVIEW_MISSING_PHONE)
+    if courier == "apaczka":
+        if apaczka_service_id is None:
+            reasons.append(REVIEW_APACZKA_SERVICE_UNMATCHED)
+        elif apaczka_service_id in _APACZKA_SERVICES_REQUIRING_PICKUP_POINT and not (
+            pickup_point or {}
+        ).get("id"):
+            reasons.append(REVIEW_APACZKA_PICKUP_POINT_MISSING)
+    if cod_error is not None:
+        reasons.append(REVIEW_COD_ERROR)
+    elif cod is not None and packages_count != 1:
+        # Older than the per-parcel COD split: back then the full amount rode on
+        # every shipment, so a multi-parcel order would have been collected once
+        # per box. The split removed that danger, and the hard refusal this flag
+        # was the shop window for now covers lockers only.
+        reasons.append(REVIEW_COD_MULTI_PARCEL)
+    return reasons
+
 
 def _shopify_cod_details(
     order: dict[str, Any],
@@ -490,19 +547,17 @@ def build_draft_record(
 
     street, building_number = parse_pl_address(shipping_addr.get("address1", ""))
     phone = normalize_pl_phone(phone) if phone else phone
-    needs_review = (
-        bool(unreadable)
-        or phone is None
-        or (courier == "apaczka" and apaczka_service_id is None)
-        or cod_error is not None
-        or (cod is not None and packages_count != 1)
+    reasons = review_reasons(
+        unreadable=unreadable,
+        phone=phone,
+        courier=courier,
+        apaczka_service_id=apaczka_service_id,
+        pickup_point=pickup_point,
+        cod=cod,
+        cod_error=cod_error,
+        packages_count=packages_count,
     )
-    if (
-        courier == "apaczka"
-        and apaczka_service_id in _APACZKA_SERVICES_REQUIRING_PICKUP_POINT
-        and not (pickup_point or {}).get("id")
-    ):
-        needs_review = True
+    needs_review = bool(reasons)
 
     source_fulfillment = draft_application.source_fulfillment_status(order, source=source)
     now = datetime.now(timezone.utc).isoformat()
@@ -542,6 +597,7 @@ def build_draft_record(
         "packages_source": "planner",
         "packages_breakdown": packages_breakdown,
         "unreadable_products": unreadable,
+        "review_reasons": reasons,
         "total_qty": total_qty,
         "order_items": [
             {
