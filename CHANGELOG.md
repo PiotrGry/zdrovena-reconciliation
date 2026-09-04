@@ -3,6 +3,40 @@
 
 ## Unreleased
 
+### Added
+
+- **shipping**: Pobranie rozkłada się na paczki, więc zamówienie COD na więcej niż jedną
+  paczkę wreszcie da się nadać. Do tej pory portal je blokował — i miał rację: jedna paczka
+  to jedna przesyłka u kuriera, a pełny obiekt `cod` jechał na każdej z nich, więc bez
+  blokady kurier zainkasowałby całość tyle razy, ile było pudeł. Shopify #1731 stało przez
+  to niewysłane od 2026-08-28. Teraz koszt dostawy dzieli się równo między paczki, a reszta
+  proporcjonalnie do wartości towaru, który w danej paczce faktycznie leży. Arytmetyka w
+  całych groszach metodą największych reszt, więc części sumują się do `total_outstanding`
+  co do grosza z konstrukcji, a nie w przybliżeniu. Kaucja i rabaty jadą wewnątrz dzielonej
+  puli — dlatego pula towaru jest **rozdzielana** wagami, a nie sumowana z cen pozycji:
+  `kaucja` wypada z planu paczek przez `SKIP_RE`, a klient i tak ją płaci.
+
+  Podział nigdzie się nie zapisuje. Jest funkcją kwoty, kosztu dostawy, pozycji zamówienia
+  i planu paczek, więc przepakowanie draftu przelicza go samo i nie ma czego zestarzeć.
+  Jego wejścia zamrażają się razem z `cod` w chwili startu wysyłki — inaczej edycja
+  zamówienia w Shopify dałaby wznawianej paczce inną kwotę niż ta na etykiecie leżącej już
+  u kuriera.
+
+  Paczkomat zostaje zablokowany: tam każdą paczkę odbiera się osobno, więc podział
+  pozwoliłby klientowi zapłacić za jedno pudło i zostawić resztę.
+
+  Drafty sprzed tej zmiany nie mają cen pozycji i dostają podział równy — opisany w portalu
+  jako równy, a nie podany za podział wg wartości.
+
+### Changed
+
+- **shipping**: Telefon odbiorcy przestał być edytowalny na wierszu przesyłki i przeniósł
+  się do Ustawień, gdzie trzeba podać numer zamówienia, żeby do niego dotrzeć. Prośba
+  operatora: numer, który przyszedł z zamówieniem, nie jest czymś, co zmienia się mimochodem.
+  Całkiem usunąć się go nie dało — od 2026-09-08 InPost odrzuca przesyłkę z niepoprawnym
+  numerem (#294), a edycja jest jedynym sposobem, żeby odblokować zamówienie, które
+  przyszło ze złym numerem ze Shopify. Zamiana przypadku na czynność świadomą.
+
 ## 2.11.0
 
 ### Changed
@@ -34,8 +68,6 @@
   pierwszy fetch w tej samej partii; React 19 to obnażył. Zapytanie zawężone do `.pill`,
   zgodnie z sąsiednią asercją trzy linijki niżej.
 
-
-### Fixed
 
 - **ci**: `terraform apply` na `main` prosił o zatwierdzenie planu, który nigdy nie powstał.
   Krok planu w jobie `apply` używał gołego potoku `terraform plan … | tee plan.txt`, więc

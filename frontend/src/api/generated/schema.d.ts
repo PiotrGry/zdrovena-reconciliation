@@ -84,6 +84,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/close/inspection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How the period stands right now, without starting anything
+         * @description Answer "how do I stand?" as a question, not as a move.
+         *
+         *     Deliberately not routed through MonthCloseWorkflow. `get_or_create` would
+         *     create and save a run for a period nobody has started, and would mark a
+         *     long-abandoned step failed — both are writes, and this is a read. The run
+         *     is read with a plain `get()` that returns None when there is none, which is
+         *     exactly the case this endpoint exists for.
+         *
+         *     Recomputed on every call rather than replayed, hence `computed_at`: a stale
+         *     answer about what is still missing is worse than no answer at all.
+         */
+        get: operations["get_close_inspection_api_close_inspection_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/close/state": {
         parameters: {
             query?: never;
@@ -1028,6 +1057,55 @@ export interface components {
             /** Year */
             year: number;
         };
+        /**
+         * CloseInspectionResponse
+         * @description How a period stands right now.
+         *
+         *     Computed on every request rather than replayed from a stored run — hence
+         *     `computed_at`. `run` is null when nobody has started the close, which is
+         *     the case this endpoint exists for.
+         */
+        CloseInspectionResponse: {
+            /** Computed At */
+            computed_at: string;
+            /** Documents */
+            documents?: components["schemas"]["CloseWorkflowDocument"][];
+            /** Issues */
+            issues?: components["schemas"]["CloseWorkflowIssue"][];
+            /** Metrics */
+            metrics?: {
+                [key: string]: unknown;
+            };
+            /** Month */
+            month: number;
+            run?: components["schemas"]["CloseInspectionRunSummary"] | null;
+            /** Year */
+            year: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * CloseInspectionRunSummary
+         * @description The close run as it stands, reported without being touched.
+         */
+        CloseInspectionRunSummary: {
+            /** Active Action */
+            active_action?: string | null;
+            /** Run Id */
+            run_id: string;
+            /** Status */
+            status: string;
+            /** Steps */
+            steps?: {
+                [key: string]: components["schemas"]["CloseWorkflowStep"];
+            };
+            /** Updated At */
+            updated_at: string;
+            /** Waivers */
+            waivers?: components["schemas"]["CloseWorkflowWaiver"][];
+        } & {
+            [key: string]: unknown;
+        };
         /** CloseRequest */
         CloseRequest: {
             /**
@@ -1896,6 +1974,38 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_close_inspection_api_close_inspection_get: {
+        parameters: {
+            query: {
+                year: number;
+                month: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseInspectionResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

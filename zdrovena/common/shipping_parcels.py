@@ -52,6 +52,21 @@ PARCEL_SPECS: dict[str, dict] = {
     },
 }
 
+# How many six-bottle half-packs (zgrzewki) each box holds.
+#
+# Kept out of PARCEL_SPECS on purpose: that record is handed to the carriers
+# verbatim as the parcel's `dimensions`, so a capacity key would travel as a
+# bogus dimension. This is the capacity calc_packages fills, and the divisor the
+# COD value split divides by — see zdrovena/shipping/domain/cod.py.
+PARCEL_HALF_PACKS: dict[str, int] = {
+    "3-pak": 6,
+    "2-pak": 4,
+    "1-pak": 2,
+    "pół-pak": 1,
+    "szkło": 2,
+    "szkło-2pak": 4,
+}
+
 # Max package dimensions that fit in the "large" slot of each carrier's locker/automat.
 # Dimensions: height × width × depth (cm), max_weight_kg.
 # ✅ = verified against carrier/aggregator website; ❓ = unverified, use with caution.

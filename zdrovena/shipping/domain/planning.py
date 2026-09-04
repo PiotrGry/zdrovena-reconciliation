@@ -30,16 +30,25 @@ def product_name(item: dict[str, Any]) -> str:
     return str(item.get("name") or item.get("title") or "").strip()
 
 
+def half_packs_for_item(item: dict[str, Any]) -> int:
+    """Return how many six-bottle half-packs one order line occupies.
+
+    Shared with the COD value split, which needs the same answer this planner
+    used when it chose the boxes. Two copies of this arithmetic would let the
+    money disagree with the parcels it is meant to describe.
+    """
+    qty = item.get("quantity", 1)
+    bottle_count = bottles_per_unit(product_name(item))
+    return ceil(float(qty) * bottle_count / 6) if bottle_count else int(qty) * 2
+
+
 def calc_packages(product_items: list[dict[str, Any]]) -> PackagePlan:
     """Calculate an ordered parcel plan for filtered product line items."""
     plastic_half_packs = 0
     glass_half_packs = 0
     for item in product_items:
-        qty = item.get("quantity", 1)
-        name = product_name(item)
-        bottle_count = bottles_per_unit(name)
-        half_packs = ceil(float(qty) * bottle_count / 6) if bottle_count else int(qty) * 2
-        if is_glass(name):
+        half_packs = half_packs_for_item(item)
+        if is_glass(product_name(item)):
             glass_half_packs += half_packs
         else:
             plastic_half_packs += half_packs

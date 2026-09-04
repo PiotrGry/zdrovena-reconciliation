@@ -220,6 +220,14 @@ def merge_synced_draft(
         # record after shipment creation has started.
         merged["cod"] = existing.get("cod")
         merged["cod_error"] = existing.get("cod_error")
+        # What divides that amount between parcels freezes with it. A resume
+        # after a partial failure recomputes the split rather than reading a
+        # stored one, so moving its inputs would hand the remaining parcels a
+        # different share than the labels already at the carrier.
+        if "shipping_price" in existing:
+            merged["shipping_price"] = existing.get("shipping_price")
+        if "order_items" in existing:
+            merged["order_items"] = existing.get("order_items")
     if existing.get("tracking_number"):
         merged["tracking_number"] = existing["tracking_number"]
         merged["tracking_company"] = existing.get("tracking_company")

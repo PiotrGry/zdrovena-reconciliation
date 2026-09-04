@@ -276,6 +276,110 @@
         "title": "CloseEmailAttemptResolution",
         "type": "object"
       },
+      "CloseInspectionResponse": {
+        "additionalProperties": true,
+        "description": "How a period stands right now.\n\nComputed on every request rather than replayed from a stored run — hence\n`computed_at`. `run` is null when nobody has started the close, which is\nthe case this endpoint exists for.",
+        "properties": {
+          "computed_at": {
+            "title": "Computed At",
+            "type": "string"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/CloseWorkflowDocument"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/CloseWorkflowIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "metrics": {
+            "additionalProperties": true,
+            "title": "Metrics",
+            "type": "object"
+          },
+          "month": {
+            "title": "Month",
+            "type": "integer"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CloseInspectionRunSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "year": {
+            "title": "Year",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "year",
+          "month",
+          "computed_at"
+        ],
+        "title": "CloseInspectionResponse",
+        "type": "object"
+      },
+      "CloseInspectionRunSummary": {
+        "additionalProperties": true,
+        "description": "The close run as it stands, reported without being touched.",
+        "properties": {
+          "active_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Action"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CloseWorkflowStep"
+            },
+            "title": "Steps",
+            "type": "object"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "waivers": {
+            "items": {
+              "$ref": "#/components/schemas/CloseWorkflowWaiver"
+            },
+            "title": "Waivers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "updated_at"
+        ],
+        "title": "CloseInspectionRunSummary",
+        "type": "object"
+      },
       "CloseRequest": {
         "properties": {
           "dry_run": {
@@ -2808,6 +2912,66 @@
           }
         ],
         "summary": "Delete a history entry by timestamp",
+        "tags": [
+          "close"
+        ]
+      }
+    },
+    "/api/close/inspection": {
+      "get": {
+        "description": "Answer \"how do I stand?\" as a question, not as a move.\n\nDeliberately not routed through MonthCloseWorkflow. `get_or_create` would\ncreate and save a run for a period nobody has started, and would mark a\nlong-abandoned step failed — both are writes, and this is a read. The run\nis read with a plain `get()` that returns None when there is none, which is\nexactly the case this endpoint exists for.\n\nRecomputed on every call rather than replayed, hence `computed_at`: a stale\nanswer about what is still missing is worse than no answer at all.",
+        "operationId": "get_close_inspection_api_close_inspection_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "year",
+            "required": true,
+            "schema": {
+              "minimum": 2020,
+              "title": "Year",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "month",
+            "required": true,
+            "schema": {
+              "maximum": 12,
+              "minimum": 1,
+              "title": "Month",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloseInspectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "How the period stands right now, without starting anything",
         "tags": [
           "close"
         ]

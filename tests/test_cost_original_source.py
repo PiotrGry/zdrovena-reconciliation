@@ -121,9 +121,9 @@ class TestTheFixReachesTheCodeThatMatters:
     """A helper nobody calls fixes nothing."""
 
     def test_the_inspector_matches_the_accountant_despite_the_polish_l(self):
-        from zdrovena.month_closing import workflow
+        from zdrovena.month_closing import inspection
 
-        vendor = workflow._find_vendor(
+        vendor = inspection._find_vendor(
             {"buyer_name": "BIURO RACHUNKOWE MGR BOŻENA OGORZAŁEK", "buyer_tax_no": ""}
         )
 
