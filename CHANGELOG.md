@@ -46,6 +46,19 @@
 
 ### Changed
 
+- **shipping**: Zamówienie za pobraniem na więcej niż jedną paczkę nie czeka już na przegląd
+  operatora. Reguła powstała, gdy pełna kwota jechała na **każdej** przesyłce — zamówienie na
+  250 zł rozbite na dwa pudła kazałoby kurierowi zainkasować 250 zł dwa razy. Chroniła przed tym
+  twarda odmowa w providerze; flaga była tylko witryną, żeby operator zobaczył problem na liście,
+  zamiast odkrywać go przy nieudanej wysyłce.
+
+  Podział pobrania na paczki usunął zagrożenie u kuriera, a twardą odmowę zawężono do paczkomatów,
+  gdzie każdą paczkę odbiera się osobno. Tam nadal odmawiają dwie niezależne warstwy: zapis planu
+  (400) i provider przy wysyłce. Flaga nie chroniła więc już przed niczym, a kosztowała kliknięcie
+  na każdym pobraniu kurierskim — w tym, po ostatniej zmianie, na każdym zamówieniu ze szkłem od
+  dwóch zgrzewek. Sama kwota jest dalej sprawdzana: nieczytelne `total_outstanding` wstrzymuje
+  draft jak dotąd.
+
 - **shipping**: Telefon odbiorcy przestał być edytowalny na wierszu przesyłki i przeniósł
   się do Ustawień, gdzie trzeba podać numer zamówienia, żeby do niego dotrzeć. Prośba
   operatora: numer, który przyszedł z zamówieniem, nie jest czymś, co zmienia się mimochodem.

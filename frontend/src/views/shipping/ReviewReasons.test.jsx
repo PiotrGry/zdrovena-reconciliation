@@ -5,7 +5,7 @@ import { ReviewReasonChips, reviewReasonLabel } from './ReviewReasons'
 
 const T = {
     sh_review_missing_phone: 'brak poprawnego telefonu',
-    sh_review_cod_multi_parcel: 'pobranie na kilka paczek',
+    sh_review_cod_error: 'nieczytelna kwota pobrania',
 }
 
 describe('reviewReasonLabel', () => {
@@ -26,10 +26,10 @@ describe('reviewReasonLabel', () => {
 
 describe('ReviewReasonChips', () => {
     it('renders one chip per reason', () => {
-        render(<ReviewReasonChips reasons={['missing_phone', 'cod_multi_parcel']} T={T} />)
+        render(<ReviewReasonChips reasons={['missing_phone', 'cod_error']} T={T} />)
 
         expect(screen.getByText('brak poprawnego telefonu')).toBeInTheDocument()
-        expect(screen.getByText('pobranie na kilka paczek')).toBeInTheDocument()
+        expect(screen.getByText('nieczytelna kwota pobrania')).toBeInTheDocument()
     })
 
     it('renders nothing for a draft stored before the field existed', () => {

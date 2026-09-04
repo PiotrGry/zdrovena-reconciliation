@@ -301,7 +301,7 @@ describe('ShippingView', () => {
         installShippingFetch({
             drafts: [draft({
                 status: 'needs_review',
-                review_reasons: ['missing_phone', 'cod_multi_parcel'],
+                review_reasons: ['missing_phone', 'cod_error'],
             })],
         })
 
@@ -309,7 +309,7 @@ describe('ShippingView', () => {
         await screen.findByText('Anna Nowak')
 
         expect(screen.getByText('brak poprawnego telefonu')).toBeInTheDocument()
-        expect(screen.getByText('pobranie na kilka paczek')).toBeInTheDocument()
+        expect(screen.getByText('nieczytelna kwota pobrania')).toBeInTheDocument()
     })
 
     it('shows no reasons on a draft that is not held', async () => {

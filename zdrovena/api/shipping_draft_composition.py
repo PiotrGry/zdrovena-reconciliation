@@ -160,7 +160,6 @@ REVIEW_MISSING_PHONE = "missing_phone"
 REVIEW_APACZKA_SERVICE_UNMATCHED = "apaczka_service_unmatched"
 REVIEW_APACZKA_PICKUP_POINT_MISSING = "apaczka_pickup_point_missing"
 REVIEW_COD_ERROR = "cod_error"
-REVIEW_COD_MULTI_PARCEL = "cod_multi_parcel"
 
 
 def review_reasons(
@@ -170,9 +169,7 @@ def review_reasons(
     courier: str,
     apaczka_service_id: str | None,
     pickup_point: dict[str, Any] | None,
-    cod: dict[str, Any] | None,
     cod_error: str | None,
-    packages_count: int,
 ) -> list[str]:
     """Return every reason this draft has to be held, in display order.
 
@@ -200,13 +197,11 @@ def review_reasons(
         ).get("id"):
             reasons.append(REVIEW_APACZKA_PICKUP_POINT_MISSING)
     if cod_error is not None:
+        # Only the amount, not the parcel count. A COD order spanning boxes was
+        # held while the full amount rode on every shipment; the per-parcel
+        # split ended that, and the hard refusal the flag stood in for now
+        # covers lockers only, where two other layers refuse the plan anyway.
         reasons.append(REVIEW_COD_ERROR)
-    elif cod is not None and packages_count != 1:
-        # Older than the per-parcel COD split: back then the full amount rode on
-        # every shipment, so a multi-parcel order would have been collected once
-        # per box. The split removed that danger, and the hard refusal this flag
-        # was the shop window for now covers lockers only.
-        reasons.append(REVIEW_COD_MULTI_PARCEL)
     return reasons
 
 
@@ -553,9 +548,7 @@ def build_draft_record(
         courier=courier,
         apaczka_service_id=apaczka_service_id,
         pickup_point=pickup_point,
-        cod=cod,
         cod_error=cod_error,
-        packages_count=packages_count,
     )
     needs_review = bool(reasons)
 

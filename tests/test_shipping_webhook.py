@@ -3699,9 +3699,7 @@ class TestReviewReasons:
             "courier": "inpost",
             "apaczka_service_id": None,
             "pickup_point": None,
-            "cod": None,
             "cod_error": None,
-            "packages_count": 1,
         }
         return review_reasons(**{**defaults, **overrides})
 
@@ -3734,14 +3732,6 @@ class TestReviewReasons:
     def test_an_unreadable_cod_amount_is_a_reason(self):
         assert self._reasons(cod_error="total_outstanding is not a number") == ["cod_error"]
 
-    def test_cod_across_more_than_one_parcel_is_a_reason(self):
-        assert self._reasons(cod={"amount": "200.30", "currency": "PLN"}, packages_count=2) == [
-            "cod_multi_parcel"
-        ]
-
-    def test_cod_in_a_single_parcel_is_not(self):
-        assert self._reasons(cod={"amount": "200.30", "currency": "PLN"}) == []
-
     def test_every_reason_is_reported_not_just_the_first(self):
         # The operator fixes what the list says. Reporting one reason at a time
         # would send them round the loop once per problem.
@@ -3750,20 +3740,33 @@ class TestReviewReasons:
             phone=None,
             courier="apaczka",
             apaczka_service_id=None,
-            cod={"amount": "200.30", "currency": "PLN"},
-            packages_count=2,
+            cod_error="total_outstanding is not a number",
         ) == [
             "unreadable_products",
             "missing_phone",
             "apaczka_service_unmatched",
-            "cod_multi_parcel",
+            "cod_error",
         ]
 
 
 class TestCreateDraft:
     def test_review_reasons_are_stored_on_the_draft(self, store):
-        # The fixture is 2 zgrzewki of glass, which is two parcels, so adding
-        # COD to it holds the draft — and now says so.
+        # A phone InPost will refuse holds the draft, and the stored reason
+        # says which of the six it is.
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        order["shipping_address"]["phone"] = "123"
+        order["customer"] = {**(order.get("customer") or {}), "phone": "123"}
+        order["phone"] = "123"
+
+        _create_draft_for_test(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["status"] == "needs_review"
+        assert draft["review_reasons"] == ["missing_phone"]
+
+    def test_a_multi_parcel_cod_order_is_not_held(self, store):
+        # The fixture is 2 zgrzewki of glass, so two parcels. Adding COD to it
+        # used to hold the draft; the per-parcel split made that unnecessary.
         order = _load_fixture("shopify_order_inpost_kurier.json")
         order.update(
             {
@@ -3778,8 +3781,9 @@ class TestCreateDraft:
         _create_draft_for_test(order, store, object())
 
         draft = store.list_drafts()[0]
-        assert draft["status"] == "needs_review"
-        assert draft["review_reasons"] == ["cod_multi_parcel"]
+        assert draft["packages_count"] == 2
+        assert draft["status"] == "pending"
+        assert draft["review_reasons"] == []
 
     def test_a_clean_draft_stores_an_empty_reason_list(self, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")
@@ -3875,9 +3879,7 @@ class TestCreateDraft:
             "gateway": "cash on delivery (cod)",
         }
         assert draft["cod_error"] is None
-        # The fixture is 2 zgrzewki of glass, so it plans two boxes, and a COD
-        # order that does not fit one parcel is reviewed before it is booked.
-        assert draft["status"] == "needs_review"
+        assert draft["status"] == "pending"
 
     def test_shopify_outstanding_change_updates_cod_and_preview_fingerprint(self, client, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")
@@ -3919,7 +3921,7 @@ class TestCreateDraft:
         assert draft["cod"] is None
         assert draft["cod_error"] is None
 
-    def test_multi_parcel_cod_is_fail_closed_for_manual_review(self, store):
+    def test_multi_parcel_cod_ships_without_a_hold(self, store):
         order = {
             "id": "cod-multi",
             "order_number": 1707,
@@ -3948,7 +3950,11 @@ class TestCreateDraft:
         draft = store.list_drafts()[0]
         assert draft["packages_count"] == 2
         assert draft["cod"]["amount"] == "500.00"
-        assert draft["status"] == "needs_review"
+        # Held while the full amount rode on every shipment — two boxes meant
+        # collecting 500.00 twice. The per-parcel split ended that, so the
+        # order now goes the way every other order goes.
+        assert draft["status"] == "pending"
+        assert draft["review_reasons"] == []
 
     def test_cod_without_outstanding_amount_is_fail_closed(self, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")
