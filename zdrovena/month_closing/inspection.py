@@ -26,6 +26,7 @@ from zdrovena.month_closing.config import (
     FAKTUROWNIA_REPORTS,
     POLISH_MONTHS,
     VendorConfig,
+    match_vendor,
 )
 from zdrovena.month_closing.preflight import pko_matches_month
 from zdrovena.month_closing.warehouse_audit import warehouse_issues
@@ -80,17 +81,7 @@ def build_issue(
 
 
 def _find_vendor(inv: dict[str, Any]) -> VendorConfig | None:
-    buyer = (inv.get("buyer_name") or "").casefold()
-    buyer_nip = (inv.get("buyer_tax_no") or "").casefold()
-    return next(
-        (
-            vendor
-            for vendor in EXPECTED_VENDORS
-            if not vendor.skip
-            and (vendor.pattern.casefold() in buyer or vendor.pattern.casefold() in buyer_nip)
-        ),
-        None,
-    )
+    return match_vendor(inv.get("buyer_name") or "", inv.get("buyer_tax_no") or "")
 
 
 class MonthCloseInspector:
