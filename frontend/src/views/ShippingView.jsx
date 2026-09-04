@@ -263,21 +263,6 @@ export default function ShippingView() {
         }, 'Nie udało się zapisać usługi Apaczka')()
     }
 
-    function handleSavePhone(draft, phone) {
-        return withBusy(draft.id, async () => {
-            const token = await getToken()
-            const res = await fetch(`/api/shipping/drafts/${draft.id}`, {
-                method: 'PATCH',
-                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ receiver_phone: phone }),
-            })
-            if (!res.ok) {
-                const body = await res.json().catch(() => ({}))
-                throw new Error(apiErrorMessage(body, res))
-            }
-        }, 'Nie udało się zapisać telefonu')()
-    }
-
     function handleSavePackages(draft, rows) {
         return withBusy(draft.id, async () => {
             const token = await getToken()
@@ -707,7 +692,6 @@ export default function ShippingView() {
                             onSetApaczkaService={handleSetApaczkaService}
                             onReviewDraft={handleReviewDraft}
                             onSavePackages={handleSavePackages}
-                            onSavePhone={handleSavePhone}
                             apaczkaServices={apaczkaServices}
                             selected={selectedDraftIds.has(draft.id)}
                             onToggleSelect={handleToggleSelect}

@@ -535,6 +535,57 @@ class TestListDrafts:
         assert data["drafts"][0]["id"] == "abc-123"
         assert data["drafts"][0]["packages_count"] == 1
 
+    def _cod_draft(self, store, **overrides):
+        draft = {
+            "id": "cod-listing",
+            "status": "pending",
+            "courier": "inpost",
+            "service": "inpost_courier_standard",
+            "cod": {"amount": "700.00", "currency": "PLN"},
+            "shipping_price": "0.00",
+            "order_items": [{"name": "HUMIO 42 butelki", "quantity": 1, "line_total": "700.00"}],
+            "packages_breakdown": [
+                {"type": "3-pak", "qty": 1},
+                {"type": "pół-pak", "qty": 1},
+            ],
+        }
+        draft.update(overrides)
+        store.upsert_draft(draft)
+        return draft
+
+    def test_a_multi_parcel_cod_draft_shows_what_each_parcel_collects(self, client, store):
+        # The operator has to see the split before the labels exist, not only
+        # inside the execution preview.
+        self._cod_draft(store)
+
+        listed = client.get("/api/shipping/drafts").json()["drafts"][0]
+
+        assert listed["cod_split"] == ["600.00", "100.00"]
+        assert listed["cod_split_basis"] == "value"
+
+    def test_a_single_parcel_cod_draft_has_nothing_to_split(self, client, store):
+        self._cod_draft(store, packages_breakdown=[{"type": "3-pak", "qty": 1}])
+
+        listed = client.get("/api/shipping/drafts").json()["drafts"][0]
+
+        assert "cod_split" not in listed
+
+    def test_a_draft_whose_split_is_impossible_still_lists(self, client, store):
+        # Listing is a read. A draft that cannot ship must still be visible,
+        # with its reason, rather than taking the whole screen down.
+        self._cod_draft(
+            store,
+            order_items=[{"name": "HUMIO 12 butelek", "quantity": 1, "line_total": "700.00"}],
+            packages_breakdown=[{"type": "3-pak", "qty": 1}, {"type": "3-pak", "qty": 1}],
+        )
+
+        resp = client.get("/api/shipping/drafts")
+
+        assert resp.status_code == 200
+        listed = resp.json()["drafts"][0]
+        assert "cod_split" not in listed
+        assert "0.00" in listed["cod_split_error"]
+
 
 # ── Execute draft ─────────────────────────────────────────────────────────────
 
@@ -1946,12 +1997,59 @@ class TestUpdateDraftPackagesBreakdown:
         )
         assert resp.status_code == 409
 
-    def test_400_when_a_cod_draft_would_get_more_than_one_parcel(self, client, store):
-        # apaczka_call_specs refuses multi-parcel COD, because one full
-        # collection amount per parcel charges the customer several times.
-        # Saying so at save time beats failing at execute time.
+    def test_a_cod_draft_may_be_repacked_into_several_parcels(self, client, store):
+        # The collection amount is divided between the parcels, so more than
+        # one box no longer charges the customer several times.
         draft = self._seed_pending_draft(store)
-        store.update_draft(draft["id"], {"cod": {"amount": 20030, "currency": "PLN"}})
+        store.update_draft(
+            draft["id"],
+            {
+                "cod": {"amount": "200.30", "currency": "PLN"},
+                "order_items": [
+                    {"name": "HUMIO 24 butelki", "quantity": 1, "line_total": "200.30"}
+                ],
+            },
+        )
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "1-pak", "qty": 2}]},
+        )
+        assert resp.status_code == 200
+
+    def test_400_when_a_repack_would_leave_a_parcel_collecting_nothing(self, client, store):
+        # Three boxes but only enough goods for one: the empty ones would ask
+        # the courier to collect 0.00, which the carrier rejects. Saying so at
+        # save time beats failing at execute time.
+        draft = self._seed_pending_draft(store)
+        store.update_draft(
+            draft["id"],
+            {
+                "cod": {"amount": "200.30", "currency": "PLN"},
+                "order_items": [
+                    {"name": "HUMIO 12 butelek", "quantity": 1, "line_total": "200.30"}
+                ],
+            },
+        )
+        resp = client.patch(
+            f"/api/shipping/drafts/{draft['id']}",
+            json={"packages_breakdown": [{"type": "1-pak", "qty": 3}]},
+        )
+        assert resp.status_code == 400
+
+    def test_400_when_a_locker_cod_draft_would_get_more_than_one_parcel(self, client, store):
+        # A locker is collected parcel by parcel, so the split stays blocked there.
+        draft = self._seed_pending_draft(store)
+        store.update_draft(
+            draft["id"],
+            {
+                "courier": "inpost",
+                "service": "inpost_locker_standard",
+                "cod": {"amount": "200.30", "currency": "PLN"},
+                "order_items": [
+                    {"name": "HUMIO 24 butelki", "quantity": 1, "line_total": "200.30"}
+                ],
+            },
+        )
         resp = client.patch(
             f"/api/shipping/drafts/{draft['id']}",
             json={"packages_breakdown": [{"type": "1-pak", "qty": 2}]},
@@ -3474,6 +3572,45 @@ class TestCreateDraft:
         assert d["shipping_address"]["city"] == "Kraków"
         assert d["shipping_address"]["post_code"] == "30-001"
         assert d["shipping_address"]["flat_number"] == "m. 5"
+
+    def test_order_lines_carry_what_they_cost(self, store):
+        # Without a value per line there is nothing to weigh the parcels by,
+        # and a multi-parcel COD order falls back to an equal split.
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+
+        _create_draft_for_test(order, store, object())
+
+        draft = store.list_drafts()[0]
+        assert draft["order_items"] == [
+            {
+                "name": "HUMIO - woda alkaliczna, 12 butelek w szkle",
+                "quantity": 2,
+                "line_total": "179.98",
+            }
+        ]
+
+    def test_line_discounts_come_off_the_stored_line_value(self, store):
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        order["line_items"][0]["total_discount"] = "9.98"
+
+        _create_draft_for_test(order, store, object())
+
+        assert store.list_drafts()[0]["order_items"][0]["line_total"] == "170.00"
+
+    def test_the_delivery_cost_is_stored_so_it_can_be_shared_between_parcels(self, store):
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+
+        _create_draft_for_test(order, store, object())
+
+        assert store.list_drafts()[0]["shipping_price"] == "20.00"
+
+    def test_a_discounted_delivery_stores_what_the_customer_actually_pays(self, store):
+        order = _load_fixture("shopify_order_inpost_kurier.json")
+        order["shipping_lines"][0]["discounted_price"] = "0.00"
+
+        _create_draft_for_test(order, store, object())
+
+        assert store.list_drafts()[0]["shipping_price"] == "0.00"
 
     def test_shopify_cod_uses_gateway_and_exact_outstanding_amount(self, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")

@@ -6,6 +6,7 @@ import { Pill } from '../../components/Pill'
 import { Icon } from '../../components/Icon'
 import { TrackingList } from './TrackingList'
 import { PackagesEditor } from './PackagesEditor'
+import { CodSplit } from './CodSplit'
 import { RecipientPhone } from './RecipientPhone'
 import { ExecutePreview } from './ExecutePreview'
 import { InvoicePreviewPanel } from './InvoicePreviewPanel'
@@ -15,7 +16,7 @@ import { OrderNumberCell, SourceCell } from './cells'
 import { courierLabel, courierPillKind, fmtDate, matchStatusLabel, matchStatusPillKind, pickupOrderIds } from './formatting'
 import { defaultPickupSchedule, hasFixedApaczkaPickupWindows } from './pickupSchedule'
 
-export function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, onReviewDraft, onSavePackages, onSavePhone, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen, getToken, onDraftUpdate, columnGridTemplate, tableMinWidth }) {
+export function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfilled, onConfirmPending, onSetApaczkaService, onReviewDraft, onSavePackages, apaczkaServices, busy, canManage, selected, onToggleSelect, forceOpen, getToken, onDraftUpdate, columnGridTemplate, tableMinWidth }) {
     const { t, lang } = useT()
     const T = t[lang]
     const [open, setOpen] = useState(forceOpen ?? false)
@@ -197,6 +198,7 @@ export function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfi
                                         </div>
                                     </>
                                 )}
+                                <CodSplit draft={draft} />
                                 {draft.cod_error && (
                                     <div style={{ marginTop: 10, color: 'var(--error)', fontSize: '0.88em' }}>
                                         COD: {draft.cod_error}
@@ -204,12 +206,13 @@ export function DraftRow({ draft, onPrintLabel, onExecute, onPickup, onMarkFulfi
                                 )}
                             </div>
                             <div>
+                                {/* Read-only on purpose: changing a customer's
+                                    number is a deliberate act, done from
+                                    Settings with the order number in hand. */}
                                 <RecipientPhone
                                     phone={draft.receiver?.phone}
                                     courier={draft.courier}
-                                    canEdit={canManage && !PACKAGES_LOCKED_STATUSES.has(draft.status)}
-                                    saving={isBusy}
-                                    onSave={value => onSavePhone(draft, value)}
+                                    canEdit={false}
                                 />
                                 <div style={{ marginTop: 10 }}>
                                     <TrackingList draft={draft} />

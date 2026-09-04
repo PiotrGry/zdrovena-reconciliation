@@ -20,6 +20,8 @@ from zdrovena.api.models import (
     ShippingDraftsResponse,
 )
 from zdrovena.common.shipping_format import normalize_pl_phone
+from zdrovena.shipping.domain.cod import CodAllocationError, cod_allocation
+from zdrovena.shipping.domain.planning import physical_parcels
 
 logger = logging.getLogger("zdrovena.api.routers.shipping.drafts")
 
@@ -28,6 +30,27 @@ router = APIRouter(tags=["shipping"])
 
 
 _MATCH_MANUAL = "manual"
+
+
+def _with_cod_split(draft: dict[str, Any]) -> dict[str, Any]:
+    """Annotate a multi-parcel COD draft with what each parcel collects.
+
+    Computed on read rather than stored, for the same reason the providers
+    compute it: a stored copy would disagree with the plan the moment the
+    operator repacked. A draft whose split is impossible keeps its reason and
+    stays in the list — a listing that fails closed hides every other order too.
+    """
+    if not draft.get("cod") or len(physical_parcels(draft)) < 2:
+        return draft
+    try:
+        allocation = cod_allocation(draft)
+    except CodAllocationError as exc:
+        return {**draft, "cod_split_error": str(exc)}
+    return {
+        **draft,
+        "cod_split": [str(amount) for amount in allocation.amounts],
+        "cod_split_basis": allocation.basis,
+    }
 
 
 @router.get(
@@ -41,7 +64,7 @@ def list_drafts(
     shipping_store: ShippingStoreDep,
     principal: Annotated[Principal, Depends(require_viewer_or_above)],
 ) -> dict[str, Any]:
-    drafts = shipping_store.list_drafts()
+    drafts = [_with_cod_split(draft) for draft in shipping_store.list_drafts()]
     return {"drafts": drafts}
 
 
@@ -171,11 +194,24 @@ def update_draft(
             )
         cleaned = _validated_breakdown(packages_breakdown)
         total = sum(row["qty"] for row in cleaned)
-        if draft.get("cod") and total != 1:
-            raise HTTPException(
-                status_code=400,
-                detail="Przesyłka pobraniowa musi mieścić się w jednej paczce",
-            )
+        if draft.get("cod"):
+            if draft.get("service") == "inpost_locker_standard" and total != 1:
+                # A locker is collected parcel by parcel, so a split would let
+                # the customer pay for one box and abandon the rest.
+                raise HTTPException(
+                    status_code=400,
+                    detail="Pobranie do paczkomatu musi mieścić się w jednej paczce",
+                )
+            try:
+                # Checked against the plan being saved, not the stored one, so
+                # an impossible split is refused here rather than at execute
+                # time when the operator is waiting on labels.
+                cod_allocation({**draft, "packages_breakdown": cleaned})
+            except CodAllocationError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Nie można podzielić pobrania na te paczki: {exc}",
+                ) from exc
         logger.info(
             "Operator repacked draft %s: %s -> %s",
             draft_id,
