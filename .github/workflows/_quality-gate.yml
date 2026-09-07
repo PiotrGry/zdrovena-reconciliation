@@ -187,7 +187,7 @@ jobs:
       - name: Terraform validate
         run: terraform -chdir=infra/terraform validate
       - name: Checkov IaC security scan
-        uses: bridgecrewio/checkov-action@5659ddea96102e16d8f221b3d8402453c0b1c150 # v12
+        uses: bridgecrewio/checkov-action@f967808197a8d784d3e72919f38c3ff0cda7884e # v12
         with:
           directory: infra/terraform
           quiet: true
