@@ -5,6 +5,23 @@
 
 ### Added
 
+- **shipping**: Zdarzenia w logach niosą numery, po których operator faktycznie szuka.
+  Numer śledzenia nie trafiał do Log Analytics w ogóle: ShipX zwraca `tracking_number=null`
+  przy tworzeniu przesyłki i dopisuje go dopiero przy potwierdzeniu, a zdarzenie
+  `draft.tracking_assigned` mówiło wtedy tylko „draft X dostał numer" — bez numeru.
+  Wyszukanie po numerze z listu przewozowego zwracało zero wierszy, więc jedyną drogą do
+  draftu było przejście przez `correlation_id` z niestrukturalnej linii klienta InPost.
+
+  `draft.tracking_assigned` niesie teraz `tracking_number` i `courier_draft_id`,
+  `shipment.created` dodatkowo `tracking_numbers` (wszystkie paczki, nie tylko pierwsza),
+  `courier_draft_id` i `dispatch_order_id`, a zamówienie podjazdu emituje nowe
+  `pickup.ordered` (`draft_id`, `order_number`, `courier`, `pickup_id`, `shipment_ids`) —
+  ID zlecenia odbioru to jedyny numer, jaki operator ma w ręku, gdy kurier nie przyjechał.
+  Dzięki temu `Message has "<dowolny numer>"` na loggerze `zdrovena.events` trafia w draft.
+  Zdarzenie o podjeździe czyta ID, które już są w pamięci, a nie ze świeżego odczytu ze
+  storage: przesyłka jest u kuriera zanim ono poleci, więc awaria zapisu nie może zamienić
+  zamówionego odbioru w 500.
+
 - **shipping**: Pobranie rozkłada się na paczki, więc zamówienie COD na więcej niż jedną
   paczkę wreszcie da się nadać. Do tej pory portal je blokował — i miał rację: jedna paczka
   to jedna przesyłka u kuriera, a pełny obiekt `cod` jechał na każdej z nich, więc bez
