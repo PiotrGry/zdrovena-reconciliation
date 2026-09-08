@@ -173,7 +173,6 @@ pokazuje je jako chipy obok plakietki statusu.
 | `apaczka_service_unmatched` | Apaczka bez dopasowanej usługi |
 | `apaczka_pickup_point_missing` | usługa Apaczki wymaga punktu odbioru (`23`, `64`), a punktu nie ma |
 | `cod_error` | Shopify przysłał kwotę pobrania, której nie da się odczytać |
-| `cod_multi_parcel` | pobranie na więcej niż jedną paczkę |
 
 Kody, nie zdania: teksty siedzą w `frontend/src/lang.js` (`sh_review_*`), więc przeredagowanie
 nie wymaga przepisywania zapisanych draftów, a wersja angielska dostaje je za darmo. Nieznany kod
@@ -183,10 +182,16 @@ Dwie rzeczy, o których warto pamiętać. Po pierwsze, **powody liczą się raz,
 draftu**, i nie są przeliczane przy synchronizacji — `merge_synced_draft` celowo nie oznacza
 ponownie draftu, który operator już odklikał. Draft oznaczony przez regułę, która od tamtej pory
 zniknęła, zostaje oznaczony (przykład: #1556 z lipca 2026, którego wszystkie powody dziś już nie
-występują). Po drugie, `cod_multi_parcel` jest **starszy niż podział COD na paczki**: powstał, gdy
-pełna kwota jechała na każdej przesyłce i wielopaczkowe pobranie zostałoby zainkasowane raz na
-pudło. Był witryną dla twardej blokady w providerze; blokada została zawężona do paczkomatów
-(PR #384), flaga nie.
+występują).
+
+Po drugie, **liczba paczek nie wstrzymuje już zamówienia pobraniowego** (wrzesień 2026). Powód
+`cod_multi_parcel` istniał, gdy pełna kwota jechała na każdej przesyłce i wielopaczkowe pobranie
+zostałoby zainkasowane raz na pudło. Był witryną dla twardej blokady w providerze — a nie samą
+blokadą. Podział COD na paczki (PR #384) usunął zagrożenie u kuriera, a blokadę zawężono do
+paczkomatów, gdzie każdą paczkę odbiera się osobno. Tam nadal odmawiają dwie niezależne warstwy:
+zapis planu (400) i provider przy wysyłce. Flaga nie chroniła więc już przed niczym, a kosztowała
+operatora kliknięcie na każdym pobraniu kurierskim. Sama kwota jest dalej sprawdzana —
+`cod_error` zostaje.
 
 Status `error` jest **celowo edytowalny**: większość awarii zdarza się zanim cokolwiek zostanie
 zabookowane (zły telefon, podział COD, którego paczkomat nie przyjmie), a przepakowanie planu to
