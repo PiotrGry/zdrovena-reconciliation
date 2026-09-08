@@ -5,6 +5,24 @@
 
 ### Added
 
+- **zamknięcie miesiąca**: `invoice_pdf` odróżnia fakturę kosztową od poczty, która przychodzi
+  obok niej. Skrzynka dostawcy przeszukiwana po „inpost" albo po adresie zwraca w tych samych
+  wątkach protokoły szkody, odpowiedzi na reklamacje i raport marketingowy — a każdy PDF z
+  takiego wątku szedł do folderu kosztów i do księgowej.
+
+  Rozpoznanie nie może opierać się na słowie „faktura": InPost renderuje swoje faktury z
+  zepsutym kodowaniem tekstu (słowa tam po prostu nie ma), a Shopify fakturuje po angielsku.
+  Wspólne dla wszystkich są NIP i kwoty, więc to są sygnały — przy czym NIP musi mieć
+  dokładnie dziesięć cyfr z granicą, bo numer przesyłki ma ich 24, a telefon 11.
+
+  Klasyfikator jest celowo asymetryczny: odrzucenie prawdziwej faktury kosztuje brak dokumentu
+  w księgach, zachowanie obcego PDF-a kosztuje księgową jedno spojrzenie. Odrzucany jest więc
+  wyłącznie przypadek pewny — tekst, który udało się odczytać i który nie ma kształtu faktury.
+  Skan bez warstwy tekstowej i plik, który nie jest PDF-em, zostają zachowane z podaniem powodu.
+
+  Moduł nie jest jeszcze nigdzie podpięty — decyzja, czy filtrować pobieranie załączników
+  w `zoho_mail._save_pdf_attachments`, należy do właściciela.
+
 - **shipping**: Pobranie rozkłada się na paczki, więc zamówienie COD na więcej niż jedną
   paczkę wreszcie da się nadać. Do tej pory portal je blokował — i miał rację: jedna paczka
   to jedna przesyłka u kuriera, a pełny obiekt `cod` jechał na każdej z nich, więc bez
