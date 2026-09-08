@@ -24,6 +24,7 @@ from zdrovena.api.models import (
     ShipmentActionResponse,
 )
 from zdrovena.api.routers.shipping import deps
+from zdrovena.common.events import log_event
 from zdrovena.common.shipping_exceptions import (
     AllegroAuthError,
     AllegroBusinessError,
@@ -104,6 +105,7 @@ def order_pickup(
     if not shipping_store.try_claim_pickup(draft_id):
         raise HTTPException(status_code=409, detail="Pickup already ordered")
 
+    pickup_id: str | None = None
     if execution_composition.MOCK_COURIER:
         ref = draft.get("shopify_order_number", "mock")
         logger.info("MOCK_COURIER: skipping %s pickup for draft %s", courier, ref)
@@ -153,11 +155,12 @@ def order_pickup(
                         "allegro_command_id": pickup_result["command_id"],
                     },
                 )
+            pickup_id = pickup_result["pickup_id"]
             shipping_store.update_draft(
                 draft_id,
                 {
                     "pickup_ordered": True,
-                    "allegro_dispatch_id": pickup_result["pickup_id"],
+                    "allegro_dispatch_id": pickup_id,
                     "allegro_pickup_command_id": None,
                 },
             )
@@ -187,10 +190,22 @@ def order_pickup(
         # at this point, so a storage hiccup must not release the pickup claim
         # and invite a duplicate collection. Without the id there is nothing to
         # DELETE, so the pickup could never be cancelled.
-        shipping_store.update_draft(
-            draft_id, {"dispatch_order_id": str(dispatch.get("id") or "") or None}
-        )
+        pickup_id = str(dispatch.get("id") or "") or None
+        shipping_store.update_draft(draft_id, {"dispatch_order_id": pickup_id})
 
+    # The pickup id is what the operator quotes to the courier's support desk
+    # after a no-show, and until now it lived only in an unstructured client log
+    # line with nothing tying it back to a draft. Read from the ids already in
+    # hand, never from a fresh store lookup: the pickup exists at the carrier by
+    # now, so a storage hiccup must not turn a booked collection into a 500.
+    log_event(
+        "pickup.ordered",
+        draft_id=draft_id,
+        order_number=draft.get("shopify_order_number"),
+        courier=courier,
+        pickup_id=pickup_id,
+        shipment_ids=shipment_ids,
+    )
     return {"status": "pickup_ordered", "draft_id": draft_id}
 
 

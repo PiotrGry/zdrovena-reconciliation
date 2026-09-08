@@ -13,7 +13,7 @@ export const I18N = {
         nav_users: 'Zespół', nav_settings: 'Ustawienia', nav_shipping: 'Wysyłki', nav_dlq: 'Kolejka błędów', nav_damage: 'Uszkodzenia',
         shipping_title: 'Wysyłki', shipping_sub: 'Drafty przesyłek tworzone automatycznie przy złożeniu zamówienia Shopify.',
         shipping_drafts_count: 'draftów', shipping_errors: 'błędów',
-        sh_search: 'Szukaj po numerze lub kliencie…',
+        sh_search: 'Szukaj po dowolnym polu — numer, klient, adres, śledzenie…',
         sh_filter_all_status: 'Wszystkie statusy', sh_status_pending: 'oczekujące', sh_status_created: 'nadane', sh_status_needs_review: 'do sprawdzenia', sh_status_error: 'błąd', sh_status_pending_confirmation: 'oczekuje na potwierdzenie',
         sh_confirm_pending: 'Sprawdź status', sh_confirm_pending_busy: 'Sprawdzanie…',
         // Why a draft waits for review. Keys mirror the codes in
@@ -83,7 +83,7 @@ export const I18N = {
         nav_users: 'Team', nav_settings: 'Settings', nav_shipping: 'Shipping', nav_dlq: 'Error queue', nav_damage: 'Damages',
         shipping_title: 'Shipping', shipping_sub: 'Shipment drafts created automatically when a Shopify order is placed.',
         shipping_drafts_count: 'drafts', shipping_errors: 'errors',
-        sh_search: 'Search by order # or customer…',
+        sh_search: 'Search any field — order, customer, address, tracking…',
         sh_filter_all_status: 'All statuses', sh_status_pending: 'pending', sh_status_created: 'created', sh_status_needs_review: 'to review', sh_status_error: 'error', sh_status_pending_confirmation: 'awaiting confirmation',
         sh_review_unreadable_products: 'unreadable product name',
         sh_review_missing_phone: 'no valid phone',

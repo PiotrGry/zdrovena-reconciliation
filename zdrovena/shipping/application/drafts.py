@@ -20,9 +20,27 @@ class DraftRepository(Protocol):
 
 
 BuildDraftRecord = Callable[..., dict[str, Any]]
-EmitTrackingAssigned = Callable[[Any, Any, str], None]
 RecordEvent = Callable[..., None]
 SendNewOrderSms = Callable[[dict[str, Any]], None]
+
+
+class EmitTrackingAssigned(Protocol):
+    """Audit hook fired when a draft gains a tracking number.
+
+    The carrier ids are keyword-only: they are diagnostic payload for log
+    lookups, not part of the lifecycle contract, so a caller that has none
+    simply omits them.
+    """
+
+    def __call__(
+        self,
+        draft_id: Any,
+        order_number: Any,
+        origin: str,
+        *,
+        tracking_number: Any = None,
+        courier_draft_id: Any = None,
+    ) -> None: ...
 
 
 _SYNC_PRESERVED_FIELDS = {
@@ -152,6 +170,8 @@ def merge_synced_draft(
             merged.get("id"),
             merged.get("shopify_order_number"),
             merged["shipment_origin"],
+            tracking_number=merged.get("tracking_number"),
+            courier_draft_id=merged.get("courier_draft_id"),
         )
 
     existing_status = existing.get("status")

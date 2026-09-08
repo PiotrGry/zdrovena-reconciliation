@@ -29,6 +29,7 @@ import { PickupScheduleModal } from './shipping/PickupScheduleModal'
 import { defaultPickupSchedule, hasFixedApaczkaPickupWindows } from './shipping/pickupSchedule'
 import { apiErrorMessage, syncErrorCount, syncSummary } from './shipping/syncSummary'
 import { batchSheetTitle, labelSheetTitle, printPdf, sortValue } from './shipping/formatting'
+import { rankByQuery } from './shipping/fuzzySearch'
 
 // Re-exported because ShippingView.test.jsx and older callers import them from
 // this module. The implementations live in ./shipping.
@@ -447,18 +448,18 @@ export default function ShippingView() {
         }
     }
 
-    const filtered = drafts.filter(d => {
-        if (filterStatus !== 'all' && d.status !== filterStatus) return false
-        if (filterCourier !== 'all' && d.courier !== filterCourier) return false
-        if (filterSource !== 'all' && (d.source || 'shopify') !== filterSource) return false
-        if (filterDateFrom && (d.order_date || d.created_at)?.slice(0, 10) < filterDateFrom) return false
-        if (search) {
-            const q = search.toLowerCase()
-            if (!d.shopify_order_number?.toLowerCase().includes(q) &&
-                !d.customer_name?.toLowerCase().includes(q)) return false
-        }
-        return true
-    })
+    const filtered = useMemo(() => {
+        const narrowed = drafts.filter(d => {
+            if (filterStatus !== 'all' && d.status !== filterStatus) return false
+            if (filterCourier !== 'all' && d.courier !== filterCourier) return false
+            if (filterSource !== 'all' && (d.source || 'shopify') !== filterSource) return false
+            if (filterDateFrom && (d.order_date || d.created_at)?.slice(0, 10) < filterDateFrom) return false
+            return true
+        })
+        // Ranked best-match-first. A chosen column sort still wins below — the
+        // operator asked for that order explicitly, relevance did not.
+        return rankByQuery(narrowed, search)
+    }, [drafts, filterStatus, filterCourier, filterSource, filterDateFrom, search])
 
     const visibleDrafts = useMemo(() => {
         return sortDrafts(

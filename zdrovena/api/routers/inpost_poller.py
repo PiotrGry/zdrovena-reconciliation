@@ -123,6 +123,8 @@ def resolve_pending_inpost_once(
             draft_id,
             draft.get("shopify_order_number"),
             SHIPMENT_ORIGIN_SYSTEM,
+            tracking_number=patch.get("tracking_number"),
+            courier_draft_id=patch.get("courier_draft_id") or draft.get("courier_draft_id"),
         )
         stats["resolved"] += 1
 
