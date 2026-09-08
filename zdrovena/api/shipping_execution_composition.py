@@ -940,6 +940,8 @@ def _confirm_pending_inpost(
         draft_id,
         draft.get("shopify_order_number"),
         SHIPMENT_ORIGIN_SYSTEM,
+        tracking_number=patch.get("tracking_number"),
+        courier_draft_id=patch.get("courier_draft_id") or draft.get("courier_draft_id"),
     )
     return ConfirmationResult(repository.get_draft(draft_id) or patch)
 
@@ -1036,6 +1038,8 @@ def confirm_shipping_draft(
             draft_id,
             draft.get("shopify_order_number"),
             SHIPMENT_ORIGIN_SYSTEM,
+            tracking_number=patch.get("tracking_number"),
+            courier_draft_id=patch.get("courier_draft_id") or draft.get("courier_draft_id"),
         )
     updated = repository.get_draft(draft_id)
     if updated:

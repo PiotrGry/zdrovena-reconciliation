@@ -59,7 +59,7 @@ def _incoming_record(
 
 
 def _callbacks(calls: list[tuple[str, Any]]) -> dict[str, Any]:
-    def emit_tracking(draft_id: Any, order_number: Any, origin: str) -> None:
+    def emit_tracking(draft_id: Any, order_number: Any, origin: str, **_carrier_ids: Any) -> None:
         calls.append(("tracking", (draft_id, order_number, origin)))
 
     def record_event(name: str, **fields: Any) -> None:
@@ -532,3 +532,38 @@ class TestInPostPhoneReFlagsOnSync:
         merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
 
         assert merged["status"] == "pending"
+
+
+def test_sync_tracking_event_carries_the_ids_printed_on_the_label() -> None:
+    """An operator searches Log Analytics with what the UI shows him.
+
+    Without the tracking number and the courier draft id in the event, no query
+    starting from a label can ever reach the draft that produced it.
+    """
+    emitted: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    existing = {
+        "id": "draft-label-search",
+        "shopify_order_number": "1744",
+        "status": "created",
+    }
+    incoming = {
+        **existing,
+        "tracking_number": "523000015146050147436114",
+        "courier_draft_id": "2941156722",
+    }
+
+    merge_synced_draft(
+        existing,
+        incoming,
+        emit_tracking_assigned=lambda *args, **kwargs: emitted.append((args, kwargs)),
+    )
+
+    assert emitted == [
+        (
+            ("draft-label-search", "1744", "system"),
+            {
+                "tracking_number": "523000015146050147436114",
+                "courier_draft_id": "2941156722",
+            },
+        )
+    ]

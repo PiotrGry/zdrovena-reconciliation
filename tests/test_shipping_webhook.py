@@ -1234,6 +1234,45 @@ class TestOrderPickup:
             "maxTime": "13:00",
         }
 
+    def test_allegro_pickup_event_names_the_allegro_pickup_id(self, store, caplog):
+        """Ship-with-Allegro books its own pickup id — the same search has to
+        reach the draft from it, not only from an InPost dispatch order."""
+        draft = self._seed_created_kurier(store)
+        store.update_draft(
+            draft["id"], {"courier": "allegro_delivery", "service": "allegro_delivery"}
+        )
+        allegro = MagicMock()
+        allegro.get_ship_with_allegro_pickup_proposals.return_value = [
+            {"date": "2026-08-07", "minTime": "09:00", "maxTime": "13:00"}
+        ]
+        allegro.get_ship_with_allegro_pickup_command_status.return_value = {
+            "id": "pickup-command",
+            "status": "SUCCESS",
+            "pickupId": "allegro-pickup-9",
+            "errors": [],
+        }
+        with (
+            patch(
+                "zdrovena.api.shipping_execution_composition.get_allegro_client",
+                return_value=allegro,
+            ),
+            patch(
+                "zdrovena.api.shipping_execution_composition.get_allegro_pickup_address",
+                return_value=_ALLEGRO_PICKUP_ADDRESS,
+            ),
+            caplog.at_level(logging.INFO, logger="zdrovena.events"),
+        ):
+            fulfillment_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)
+
+        events = [
+            json.loads(record.getMessage())
+            for record in caplog.records
+            if record.name == "zdrovena.events"
+        ]
+        pickup = next(event for event in events if event["event"] == "pickup.ordered")
+        assert pickup["courier"] == "allegro_delivery"
+        assert pickup["pickup_id"] == "allegro-pickup-9"
+
     def test_allegro_pickup_resumes_command_persists_pickup_id_and_can_cancel(self, store):
         draft = self._seed_created_kurier(store)
         store.update_draft(
@@ -1503,6 +1542,34 @@ class TestOrderPickup:
             for call in update_draft.call_args_list
             if call.args == (draft["id"], {"pickup_ordered": False})
         ] == []
+
+    def test_pickup_emits_an_event_naming_the_pickup_id_and_the_draft(self, store, caplog):
+        """The pickup order id is the only number the operator has after a
+        courier no-show; it has to resolve to a draft in Log Analytics."""
+        draft = self._seed_created_kurier(store)
+        with (
+            patch(
+                "zdrovena.common.inpost.InPostClient.create_dispatch_order",
+                return_value={"id": "16229861"},
+            ),
+            patch(
+                "zdrovena.api.shipping_execution_composition.get_secret", return_value="test-value"
+            ),
+            caplog.at_level(logging.INFO, logger="zdrovena.events"),
+        ):
+            fulfillment_router.order_pickup(draft["id"], store, MagicMock(), None, None, None)
+
+        events = [
+            json.loads(record.getMessage())
+            for record in caplog.records
+            if record.name == "zdrovena.events"
+        ]
+        pickup = next(event for event in events if event["event"] == "pickup.ordered")
+        assert pickup["draft_id"] == draft["id"]
+        assert pickup["order_number"] == "1100"
+        assert pickup["courier"] == "inpost"
+        assert pickup["pickup_id"] == "16229861"
+        assert pickup["shipment_ids"] == ["ship-id-1"]
 
     def test_manual_pickup_collects_every_parcel_in_one_dispatch(self, client, store):
         """Same defect as the execute path: the standalone "Zamów podjazd"
