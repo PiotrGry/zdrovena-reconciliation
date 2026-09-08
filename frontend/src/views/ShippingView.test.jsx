@@ -367,6 +367,33 @@ describe('ShippingView', () => {
         expect(screen.queryByText('Skrytka 9 WAW123A')).not.toBeInTheDocument()
     })
 
+    it('finds a draft by a tracking number the table never shows in a column', async () => {
+        installShippingFetch({
+            drafts: [
+                draft({ id: 'other', shopify_order_number: '1001', customer_name: 'Jan Kowalski' }),
+                draft({
+                    id: 'wanted',
+                    shopify_order_number: '1744',
+                    customer_name: 'Anna Nowak',
+                    courier_shipments: [
+                        { id: '2941156722', tracking_number: '523000015146050147436114' },
+                    ],
+                }),
+            ],
+        })
+
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Jan Kowalski')
+
+        await userEvent.type(
+            screen.getByPlaceholderText(/Szukaj po dowolnym polu/),
+            '523000015146050147436114'
+        )
+
+        expect(screen.getByText('Anna Nowak')).toBeInTheDocument()
+        expect(screen.queryByText('Jan Kowalski')).not.toBeInTheDocument()
+    })
+
     it('sorts visible drafts by package count', async () => {
         installShippingFetch({
             drafts: [

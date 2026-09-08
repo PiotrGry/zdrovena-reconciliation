@@ -5,6 +5,22 @@
 
 ### Added
 
+- **shipping**: Szukajka w portalu przeszukuje cały draft, nie dwa pola. Do tej pory filtr
+  patrzył wyłącznie na numer zamówienia i nazwę klienta, więc paczki nie dało się znaleźć po
+  numerze śledzenia z listu przewozowego, po ID przesyłki u kuriera ani po ID zlecenia
+  odbioru — a to są numery, które operator ma pod ręką, kiedy dzwoni klient albo nie
+  przyjechał kurier. Teraz przeszukiwany jest każdy atrybut rekordu, także zagnieżdżony
+  (`courier_shipments[]`, adres, odbiorca, pozycje zamówienia).
+
+  Dopasowanie jest stopniowane, nie „fuzzy na wszystkim": pełne pole > początek pola >
+  fragment > cyfry > literówka. Numer wpisany bez separatorów trafia w zapisany ze
+  spacjami (`600111222` znajduje `+48 600 111 222`), polskie znaki i wielkość liter nie mają
+  znaczenia (`lodz` znajduje `Łódź`), a literówka jest tolerowana tylko wtedy, gdy trafienie
+  jest zwarte — dzięki temu `nowak` nie wciąga „Natalia Ossowska Walkiewicz". Spacja
+  w zapytaniu to `AND`: `anna warszawa` zwraca drafty spełniające oba warunki. Wyniki są
+  sortowane trafnością, chyba że operator sam kliknął sortowanie kolumny — wtedy jego
+  wybór wygrywa.
+
 - **shipping**: Pobranie rozkłada się na paczki, więc zamówienie COD na więcej niż jedną
   paczkę wreszcie da się nadać. Do tej pory portal je blokował — i miał rację: jedna paczka
   to jedna przesyłka u kuriera, a pełny obiekt `cod` jechał na każdej z nich, więc bez
