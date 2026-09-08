@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from zdrovena.common.shipping_exceptions import ZdrovenaShippingError
 from zdrovena.common.shipping_state import EXECUTING
+from zdrovena.shipping.application.drafts import EmitTrackingAssigned
 from zdrovena.shipping.application.execution.fingerprint import fingerprints_match
 
 
@@ -37,7 +38,6 @@ PreviewBuilder = Callable[[dict[str, Any]], dict[str, Any]]
 SenderResolver = Callable[[], dict[str, str]]
 ProviderRunner = Callable[..., dict[str, Any]]
 RecordEvent = Callable[..., None]
-EmitTrackingAssigned = Callable[[Any, Any, str], None]
 PushTracking = Callable[[dict[str, Any]], None]
 LogException = Callable[..., None]
 
@@ -268,6 +268,17 @@ def execute_draft(
             order_number=draft.get("shopify_order_number"),
             courier=draft.get("courier"),
             tracking_number=patch.get("tracking_number"),
+            # Every id the shipping UI shows the operator, so a log lookup can
+            # start from a label, a courier draft or a pickup order and still
+            # land on this draft. The first tracking number alone leaves the
+            # parcels 2..N of a multi-box order unsearchable.
+            tracking_numbers=[
+                str(shipment.get("tracking_number") or "")
+                for shipment in patch.get("courier_shipments") or []
+                if str(shipment.get("tracking_number") or "").strip()
+            ],
+            courier_draft_id=patch.get("courier_draft_id"),
+            dispatch_order_id=patch.get("dispatch_order_id"),
             status=patch.get("status"),
         )
         if patch.get("tracking_number"):
@@ -275,6 +286,8 @@ def execute_draft(
                 draft_id,
                 draft.get("shopify_order_number"),
                 patch.get("shipment_origin") or system_shipment_origin,
+                tracking_number=patch.get("tracking_number"),
+                courier_draft_id=patch.get("courier_draft_id"),
             )
         if updated:
             effects.push_tracking(updated)

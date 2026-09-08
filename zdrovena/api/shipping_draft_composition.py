@@ -38,13 +38,28 @@ from zdrovena.shipping.domain.planning import (
 logger = logging.getLogger("zdrovena.api.shipping_draft_composition")
 
 
-def emit_tracking_assigned(draft_id: Any, order_number: Any, origin: str) -> None:
-    """Emit the shared audit event whenever a draft gains tracking."""
+def emit_tracking_assigned(
+    draft_id: Any,
+    order_number: Any,
+    origin: str,
+    *,
+    tracking_number: Any = None,
+    courier_draft_id: Any = None,
+) -> None:
+    """Emit the shared audit event whenever a draft gains tracking.
+
+    The tracking number and the courier draft id are what the operator reads
+    off the label and off the shipping UI. They are carried here so a Log
+    Analytics lookup can start from either of them and end at the draft; an
+    event that names only ``draft_id`` is unreachable from the parcel.
+    """
     log_event(
         "draft.tracking_assigned",
         draft_id=draft_id,
         order_number=order_number,
         shipment_origin=origin,
+        tracking_number=tracking_number,
+        courier_draft_id=courier_draft_id,
     )
 
 
