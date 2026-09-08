@@ -21,10 +21,16 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import re
 from dataclasses import dataclass
 
 logger = logging.getLogger("zdrovena.month_closing.invoice_pdf")
+
+# The filter decides what reaches the accountant, so it has an off switch that
+# does not need a deploy: a month that must be closed cannot wait on a fix here.
+FILTER_ENV = "INVOICE_PDF_FILTER"
+_FILTER_OFF = {"false", "0", "no", "off"}
 
 # Amounts, comma-decimal (Polish) and dot-decimal (Shopify). The lookarounds
 # keep "31.07.2026" out: a date must never read as two amounts.
@@ -99,3 +105,17 @@ def classify_invoice_pdf(content: bytes) -> InvoiceVerdict:
         return InvoiceVerdict(True, "PDF bez warstwy tekstowej (skan?) — zachowany")
 
     return classify_invoice_text(text)
+
+
+def invoice_filter_enabled() -> bool:
+    """Whether classification may reject anything at all."""
+
+    return os.environ.get(FILTER_ENV, "true").strip().lower() not in _FILTER_OFF
+
+
+def should_keep_attachment(content: bytes) -> InvoiceVerdict:
+    """Verdict for a downloaded mail attachment, honouring the off switch."""
+
+    if not invoice_filter_enabled():
+        return InvoiceVerdict(True, f"filtr faktur wyłączony ({FILTER_ENV})")
+    return classify_invoice_pdf(content)

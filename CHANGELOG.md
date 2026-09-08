@@ -53,8 +53,12 @@
   wyłącznie przypadek pewny — tekst, który udało się odczytać i który nie ma kształtu faktury.
   Skan bez warstwy tekstowej i plik, który nie jest PDF-em, zostają zachowane z podaniem powodu.
 
-  Moduł nie jest jeszcze nigdzie podpięty — decyzja, czy filtrować pobieranie załączników
-  w `zoho_mail._save_pdf_attachments`, należy do właściciela.
+  Filtr jest podpięty do pobierania załączników (`zoho_mail._save_pdf_attachments`): odrzucony
+  plik nie trafia do folderu kosztów, a każde odrzucenie zapisuje zdarzenie
+  `mail.attachment_rejected` z nazwą pliku, dostawcą i powodem — więc da się je zaudytować.
+  Gdy dostawca nie przyśle nic poza pocztą towarzyszącą, `found` zostaje `False`, czyli
+  operator dostaje ostrzeżenie „Brak faktur kosztowych" zamiast ciszy. Wyłącznik bez deployu:
+  `INVOICE_PDF_FILTER=off`.
 
 - **shipping**: Pobranie rozkłada się na paczki, więc zamówienie COD na więcej niż jedną
   paczkę wreszcie da się nadać. Do tej pory portal je blokował — i miał rację: jedna paczka
