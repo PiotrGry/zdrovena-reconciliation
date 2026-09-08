@@ -19,7 +19,9 @@ from typing import Any
 
 import requests
 
+from zdrovena.common.events import log_event
 from zdrovena.month_closing.config import ZOHO_ACCOUNTS_URL, ZOHO_MAIL_API_URL
+from zdrovena.month_closing.invoice_pdf import should_keep_attachment
 
 logger = logging.getLogger("zdrovena.month_closing.zoho_mail")
 
@@ -445,6 +447,21 @@ class ZohoMailClient:
                 continue
             content = self._api_get_binary(f"{base_url}/attachments/{att_id}")
             if not content:
+                continue
+            # A vendor search matches damage protocols, claim replies and
+            # marketing reports in the same threads as the invoice, and every
+            # PDF in the folder goes to the accountant. Only a confident
+            # rejection drops a file; anything unreadable is filed as before.
+            verdict = should_keep_attachment(content)
+            if not verdict.is_invoice:
+                log_event(
+                    "mail.attachment_rejected",
+                    vendor=vendor_prefix,
+                    filename=filename,
+                    reason=verdict.reason,
+                    size_bytes=len(content),
+                )
+                logger.info("Skipped non-invoice attachment %s (%s)", filename, verdict.reason)
                 continue
             file_hash = _sha256(content)
             if file_hash in hashes:
