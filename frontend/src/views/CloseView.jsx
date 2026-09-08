@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
     addCloseWaiver,
     getCloseHistory,
+    getCloseInspection,
     getCloseWorkflow,
     removeCloseWaiver,
     resetCloseWorkflow,
@@ -12,6 +13,7 @@ import { Icon } from '../components/Icon'
 import { useToast } from '../components/Toast'
 import { MONTHS_PL } from '../data'
 import { CloseHero } from './close/CloseHero'
+import { PeriodStatus } from './close/PeriodStatus'
 import { CloseHistoryTable } from './close/CloseHistoryTable'
 import { WorkflowBoard } from './close/WorkflowBoard'
 import { WorkflowDocuments } from './close/WorkflowDocuments'
@@ -25,6 +27,7 @@ export default function CloseView() {
     const [year, setYear] = useState(defaultYear)
     const [month, setMonth] = useState(defaultMonth)
     const [run, setRun] = useState(null)
+    const [inspection, setInspection] = useState(null)
     const [loading, setLoading] = useState(true)
     const [historyKey, setHistoryKey] = useState(0)
     const [lastClose, setLastClose] = useState(null)
@@ -46,6 +49,23 @@ export default function CloseView() {
             setLoading(false)
         }
     }, [getToken, month, pushToast, year])
+
+    // Separate from loadRun on purpose: the inspection is a plain read that
+    // creates nothing, so it must not ride along with the polling that keeps
+    // an active run fresh.
+    const loadInspection = useCallback(async () => {
+        try {
+            const token = await getToken({ interactive: false })
+            setInspection(await getCloseInspection({ year, month, token }))
+        } catch {
+            setInspection(null)
+        }
+    }, [getToken, month, year])
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => { void loadInspection() }, 0)
+        return () => window.clearTimeout(timer)
+    }, [loadInspection])
 
     useEffect(() => {
         const timer = window.setTimeout(() => { void loadRun() }, 0)
@@ -257,6 +277,7 @@ export default function CloseView() {
 
             {run && (
                 <>
+                    <PeriodStatus inspection={inspection} />
                     <WorkflowBoard
                         run={run}
                         onAction={execute}

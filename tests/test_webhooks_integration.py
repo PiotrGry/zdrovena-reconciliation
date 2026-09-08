@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import io
 import itertools
 import json
 import os
@@ -21,6 +22,7 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from pypdf import PdfReader, PdfWriter
 
 os.environ.setdefault("AZURE_AUTH_DISABLED", "true")
 
@@ -32,6 +34,16 @@ from zdrovena.common.storage import LocalStorageService
 _FIXTURES = Path(__file__).parent / "fixtures"
 _SECRET = "integration-webhook-secret"
 _webhook_id_counter = itertools.count(1)
+
+
+def _one_page_pdf() -> bytes:
+    """A parsable one-page PDF. `b"%PDF-1.4 fake"` is not one, and merging two
+    labels into one document goes through pypdf, which raises on it."""
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=300)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
 
 
 def _load_fixture(name: str) -> dict:
@@ -135,11 +147,15 @@ class TestInPostKurierFullFlow:
         )
         draft_id = store.list_drafts()[0]["id"]
 
-        # Execute with the courier client stubbed at session level
+        # Execute with the courier client stubbed at session level. The fixture
+        # is 2 zgrzewki of glass — one box each, so two shipments are booked.
         with patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"):
             with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as mock_ship:
                 with patch("zdrovena.common.inpost.InPostClient.create_dispatch_order"):
-                    mock_ship.return_value = {"id": "ship-99", "tracking_number": "TRK99"}
+                    mock_ship.side_effect = [
+                        {"id": "ship-99", "tracking_number": "TRK99"},
+                        {"id": "ship-100", "tracking_number": "TRK100"},
+                    ]
                     resp = client.post(f"/api/shipping/drafts/{draft_id}/execute")
         assert resp.status_code == 200
 
@@ -148,16 +164,19 @@ class TestInPostKurierFullFlow:
         assert loaded["status"] == "created"
         assert loaded["courier_draft_id"] == "ship-99"
         assert loaded["tracking_number"] == "TRK99"
+        assert [s["id"] for s in loaded["courier_shipments"]] == ["ship-99", "ship-100"]
 
-        # Now fetch the label — InPostClient.get_label returns bytes
-        fake_pdf = b"%PDF-1.4 inpost-label"
+        # Now fetch the label — one page per box, merged into one document.
         with patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"):
-            with patch("zdrovena.common.inpost.InPostClient.get_label", return_value=fake_pdf):
+            with patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                return_value=_one_page_pdf(),
+            ):
                 resp = client.get(f"/api/shipping/drafts/{draft_id}/label")
 
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/pdf"
-        assert resp.content == fake_pdf
+        assert len(PdfReader(io.BytesIO(resp.content)).pages) == 2
 
     def test_execute_then_409_on_second_execute(self, client, store):
         order = _load_fixture("shopify_order_inpost_kurier.json")

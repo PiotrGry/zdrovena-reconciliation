@@ -643,7 +643,7 @@ class TestExecutionFinalizationCharacterization:
             patch.object(
                 execution,
                 "emit_tracking_assigned",
-                side_effect=lambda *_args: events.append("tracking"),
+                side_effect=lambda *_args, **_fields: events.append("tracking"),
             ),
             patch.object(
                 execution,
@@ -654,6 +654,52 @@ class TestExecutionFinalizationCharacterization:
             _execute_application(draft["id"], repository, object())
 
         assert events == expected
+
+    def test_shipment_created_carries_every_id_the_operator_can_see(self) -> None:
+        """Every identifier the shipping UI prints must be greppable in the logs.
+
+        The courier draft id, the pickup order id and the per-package tracking
+        numbers are what an operator has in hand; a search that starts from one
+        of them has to land on the draft that produced it.
+        """
+        draft = _draft("searchable-ids")
+        final_patch = {
+            "courier_draft_id": "2941156722",
+            "courier_shipments": [
+                {"id": "2941156722", "tracking_number": "523000015146050147436114"},
+                {"id": "2941156723", "tracking_number": "523000015146050147436115"},
+            ],
+            "dispatch_order_id": "16229861",
+            "tracking_number": "523000015146050147436114",
+            "status": "created",
+            "error": None,
+        }
+        repository = MagicMock()
+        repository.get_draft.return_value = draft
+        repository.try_claim_execution.return_value = True
+        repository.update_draft.return_value = True
+        recorded: list[tuple[str, dict[str, Any]]] = []
+
+        with (
+            patch.object(execution, "get_sender", return_value=_SENDER),
+            patch.object(execution, "_run_inpost", return_value=final_patch),
+            patch.object(
+                execution,
+                "log_event",
+                side_effect=lambda name, **fields: recorded.append((name, fields)),
+            ),
+            patch.object(execution, "emit_tracking_assigned"),
+            patch.object(execution, "push_tracking_to_allegro"),
+        ):
+            _execute_application(draft["id"], repository, object())
+
+        fields = next(fields for name, fields in recorded if name == "shipment.created")
+        assert fields["courier_draft_id"] == "2941156722"
+        assert fields["dispatch_order_id"] == "16229861"
+        assert fields["tracking_numbers"] == [
+            "523000015146050147436114",
+            "523000015146050147436115",
+        ]
 
     def test_allegro_tracking_sync_failure_remains_best_effort(self, store) -> None:
         draft = _draft(

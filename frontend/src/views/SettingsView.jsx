@@ -6,6 +6,7 @@ import { PageHead } from '../components/PageHead'
 import { Icon } from '../components/Icon'
 import { Pill } from '../components/Pill'
 import { boolLabel, formatCheckedAt, statusKind, statusLabel } from './settingsHealth'
+import { RecipientPhoneForm } from './settings/RecipientPhoneForm'
 
 const ROLE_LABELS = {
     'zdrovena-admin': 'Admin',
@@ -234,6 +235,21 @@ export default function SettingsView() {
                     ))}
                 </div>
             )}
+
+            {/* Recipient phone — moved off the draft row so a customer's
+                number cannot be rewritten by a stray click, while InPost's
+                2026-09-08 phone rule still has a way to be satisfied. */}
+            <div className="card">
+                <div className="card-head">
+                    <span className="card-title">
+                        <Icon name="truck" size={14} /> Telefon odbiorcy w zamówieniu
+                    </span>
+                    <span className="card-sub">zmiana numeru dla pojedynczej przesyłki</span>
+                </div>
+                <div style={{ padding: '16px 20px' }}>
+                    <RecipientPhoneForm />
+                </div>
+            </div>
 
             {/* Secrets */}
             <div className="card">

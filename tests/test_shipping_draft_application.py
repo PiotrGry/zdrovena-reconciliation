@@ -59,7 +59,7 @@ def _incoming_record(
 
 
 def _callbacks(calls: list[tuple[str, Any]]) -> dict[str, Any]:
-    def emit_tracking(draft_id: Any, order_number: Any, origin: str) -> None:
+    def emit_tracking(draft_id: Any, order_number: Any, origin: str, **_carrier_ids: Any) -> None:
         calls.append(("tracking", (draft_id, order_number, origin)))
 
     def record_event(name: str, **fields: Any) -> None:
@@ -244,6 +244,58 @@ def test_cod_updates_from_shopify_until_execution_has_started() -> None:
     merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
 
     assert merged["cod"] == {"amount": "180.00", "currency": "PLN"}
+
+
+def test_the_inputs_of_the_cod_split_freeze_with_the_amount() -> None:
+    # The amount is frozen once execution starts because it is part of the
+    # reviewed provider contract. What divides it between parcels has to freeze
+    # with it: otherwise an order edited in Shopify would hand a resumed parcel
+    # a different share than the label already at the carrier.
+    existing = {
+        "id": "draft-cod-executing",
+        "status": "executing",
+        "courier": "apaczka",
+        "service": "apaczka",
+        "cod": {"amount": "700.00", "currency": "PLN"},
+        "cod_error": None,
+        "shipping_price": "20.00",
+        "order_items": [{"name": "HUMIO 42 butelki", "quantity": 1, "line_total": "680.00"}],
+    }
+    incoming = {
+        **existing,
+        "cod": {"amount": "500.00", "currency": "PLN"},
+        "shipping_price": "0.00",
+        "order_items": [{"name": "HUMIO 12 butelek", "quantity": 1, "line_total": "500.00"}],
+    }
+
+    merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
+
+    assert merged["cod"] == {"amount": "700.00", "currency": "PLN"}
+    assert merged["shipping_price"] == "20.00"
+    assert merged["order_items"] == existing["order_items"]
+
+
+def test_the_split_inputs_still_follow_shopify_before_execution_starts() -> None:
+    existing = {
+        "id": "draft-cod-pending",
+        "status": "pending",
+        "courier": "apaczka",
+        "service": "apaczka",
+        "cod": {"amount": "700.00", "currency": "PLN"},
+        "cod_error": None,
+        "shipping_price": "20.00",
+        "order_items": [{"name": "HUMIO 42 butelki", "quantity": 1, "line_total": "680.00"}],
+    }
+    incoming = {
+        **existing,
+        "shipping_price": "0.00",
+        "order_items": [{"name": "HUMIO 12 butelek", "quantity": 1, "line_total": "500.00"}],
+    }
+
+    merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
+
+    assert merged["shipping_price"] == "0.00"
+    assert merged["order_items"] == incoming["order_items"]
 
 
 def test_cod_remains_immutable_after_a_failed_execution_attempt() -> None:
@@ -480,3 +532,38 @@ class TestInPostPhoneReFlagsOnSync:
         merged = merge_synced_draft(existing, incoming, emit_tracking_assigned=lambda *_: None)
 
         assert merged["status"] == "pending"
+
+
+def test_sync_tracking_event_carries_the_ids_printed_on_the_label() -> None:
+    """An operator searches Log Analytics with what the UI shows him.
+
+    Without the tracking number and the courier draft id in the event, no query
+    starting from a label can ever reach the draft that produced it.
+    """
+    emitted: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    existing = {
+        "id": "draft-label-search",
+        "shopify_order_number": "1744",
+        "status": "created",
+    }
+    incoming = {
+        **existing,
+        "tracking_number": "523000015146050147436114",
+        "courier_draft_id": "2941156722",
+    }
+
+    merge_synced_draft(
+        existing,
+        incoming,
+        emit_tracking_assigned=lambda *args, **kwargs: emitted.append((args, kwargs)),
+    )
+
+    assert emitted == [
+        (
+            ("draft-label-search", "1744", "system"),
+            {
+                "tracking_number": "523000015146050147436114",
+                "courier_draft_id": "2941156722",
+            },
+        )
+    ]

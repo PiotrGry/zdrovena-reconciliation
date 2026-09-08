@@ -20,9 +20,27 @@ class DraftRepository(Protocol):
 
 
 BuildDraftRecord = Callable[..., dict[str, Any]]
-EmitTrackingAssigned = Callable[[Any, Any, str], None]
 RecordEvent = Callable[..., None]
 SendNewOrderSms = Callable[[dict[str, Any]], None]
+
+
+class EmitTrackingAssigned(Protocol):
+    """Audit hook fired when a draft gains a tracking number.
+
+    The carrier ids are keyword-only: they are diagnostic payload for log
+    lookups, not part of the lifecycle contract, so a caller that has none
+    simply omits them.
+    """
+
+    def __call__(
+        self,
+        draft_id: Any,
+        order_number: Any,
+        origin: str,
+        *,
+        tracking_number: Any = None,
+        courier_draft_id: Any = None,
+    ) -> None: ...
 
 
 _SYNC_PRESERVED_FIELDS = {
@@ -152,6 +170,8 @@ def merge_synced_draft(
             merged.get("id"),
             merged.get("shopify_order_number"),
             merged["shipment_origin"],
+            tracking_number=merged.get("tracking_number"),
+            courier_draft_id=merged.get("courier_draft_id"),
         )
 
     existing_status = existing.get("status")
@@ -220,6 +240,14 @@ def merge_synced_draft(
         # record after shipment creation has started.
         merged["cod"] = existing.get("cod")
         merged["cod_error"] = existing.get("cod_error")
+        # What divides that amount between parcels freezes with it. A resume
+        # after a partial failure recomputes the split rather than reading a
+        # stored one, so moving its inputs would hand the remaining parcels a
+        # different share than the labels already at the carrier.
+        if "shipping_price" in existing:
+            merged["shipping_price"] = existing.get("shipping_price")
+        if "order_items" in existing:
+            merged["order_items"] = existing.get("order_items")
     if existing.get("tracking_number"):
         merged["tracking_number"] = existing["tracking_number"]
         merged["tracking_company"] = existing.get("tracking_company")

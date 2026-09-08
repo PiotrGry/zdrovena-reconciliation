@@ -190,6 +190,50 @@ def test_call_specs_forward_cod_and_bank_account() -> None:
     assert specs[0]["kwargs"]["cod_bank_account"] == "12345678901234567890123456"
 
 
+def test_multi_parcel_cod_is_split_across_the_shipments() -> None:
+    # Each Apaczka order is one parcel, so the full amount on every one of them
+    # would collect the order total once per box.
+    draft = _draft(
+        cod={"amount": "700.00", "currency": "PLN"},
+        packages_breakdown=[{"type": "3-pak", "qty": 1}, {"type": "pół-pak", "qty": 1}],
+        order_items=[{"name": "HUMIO 42 butelki", "quantity": 1, "line_total": "700.00"}],
+    )
+
+    specs = apaczka_call_specs(
+        draft, _PICKUP_ADDRESS, cod_bank_account="12345678901234567890123456"
+    )
+
+    assert [spec["kwargs"]["cod_amount"] for spec in specs] == ["600.00", "100.00"]
+
+
+def test_a_resumed_parcel_keeps_its_own_share() -> None:
+    # apaczka_call_specs skips checkpointed parcels inside the loop, so the
+    # split has to stay aligned to the full parcel list, not to what is left.
+    draft = _draft(
+        cod={"amount": "700.00", "currency": "PLN"},
+        packages_breakdown=[{"type": "3-pak", "qty": 1}, {"type": "pół-pak", "qty": 1}],
+        order_items=[{"name": "HUMIO 42 butelki", "quantity": 1, "line_total": "700.00"}],
+        courier_shipments=[{"id": "ship-1", "package_type": "3-pak", "package_number": 1}],
+    )
+
+    specs = apaczka_call_specs(
+        draft, _PICKUP_ADDRESS, cod_bank_account="12345678901234567890123456"
+    )
+
+    assert [spec["kwargs"]["cod_amount"] for spec in specs] == ["100.00"]
+
+
+def test_a_parcel_that_would_collect_nothing_is_rejected() -> None:
+    draft = _draft(
+        cod={"amount": "300.00", "currency": "PLN"},
+        packages_breakdown=[{"type": "3-pak", "qty": 2}],
+        order_items=[{"name": "HUMIO 36 butelek", "quantity": 1, "line_total": "300.00"}],
+    )
+
+    with pytest.raises(ApaczkaBusinessError, match=r"0\.00"):
+        apaczka_call_specs(draft, _PICKUP_ADDRESS)
+
+
 def test_cod_pickup_point_must_explicitly_advertise_cod() -> None:
     lookup = _PointLookup({"foreign_address_id": "PL55338", "option_cod": False})
     draft = _draft(
@@ -253,18 +297,21 @@ def test_non_cod_pickup_point_does_not_require_capability_lookup() -> None:
     assert lookup.calls == []
 
 
-def test_multi_parcel_cod_is_rejected_before_payload_build() -> None:
+def test_multi_parcel_cod_reaches_the_payload_build_with_a_split_amount() -> None:
+    # The default draft carries one unpriced line, so the fallback divides the
+    # amount equally rather than refusing to ship.
     draft = _draft(
         cod={"amount": "500.00", "currency": "PLN"},
         packages_breakdown=[{"type": "1-pak", "qty": 2}],
     )
 
-    with pytest.raises(ApaczkaBusinessError, match="exactly one"):
-        apaczka_call_specs(
-            draft,
-            _PICKUP_ADDRESS,
-            cod_bank_account="12345678901234567890123456",
-        )
+    specs = apaczka_call_specs(
+        draft,
+        _PICKUP_ADDRESS,
+        cod_bank_account="12345678901234567890123456",
+    )
+
+    assert [spec["kwargs"]["cod_amount"] for spec in specs] == ["250.00", "250.00"]
 
 
 def test_invalid_shopify_cod_data_is_rejected_even_after_manual_review() -> None:

@@ -240,7 +240,7 @@ Shopify `line_item.quantity` = liczba zgrzewek.
 | 1-pak | 1 | plastik, pełny karton |
 | pół-pak | 0.5 | plastik, niepełna zgrzewka |
 | szkło | 1 | szkło, 1 pudełko/zgrzewkę |
-| szkło-2pak | 2 | szkło, karton na 2 zgrzewki |
+| ~~szkło-2pak~~ | 2 | **wycofany 2026-09** — patrz nota niżej |
 
 ### Packing algorithm
 
@@ -253,11 +253,18 @@ elif remaining == 1: use 1-pak
 elif remaining > 0: use pół-pak
 ```
 
-**Szkło** — greedy 2-pak first, then single:
+**Szkło** — jedna zgrzewka = jedno pudełko (bez konsolidacji):
 ```
-while glass >= 2: use szkło-2pak, glass -= 2
-if glass == 1: use szkło
+glass_boxes = total_glass_zgrzewki
 ```
+
+> **Nota 2026-09 — `szkło-2pak` wycofany.** Wersja z czerwca 2026 pakowała szkło zachłannie
+> (`while glass >= 2: use szkło-2pak`). Typ oznaczał dwa pudełka, ale żaden konsument planu go nie
+> rozwijał: `physical_parcels()` liczy jedno pudełko na sztukę, więc zamówienie ze szkłem szło do
+> kuriera jako **jedna** przesyłka z wagą jednego pudełka (9 kg zamiast 18) i jedną etykietą na dwa
+> pudła. Wykryte na zamówieniu #1735; 29 wysłanych zamówień poszło tak od czerwca do września 2026.
+> Typ zostaje w `PARCEL_SPECS` wyłącznie dla starych draftów, które `physical_parcels()` rozwija
+> teraz na dwie paczki `szkło`.
 
 **Łącznie:**
 ```

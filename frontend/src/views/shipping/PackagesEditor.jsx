@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-import { BOX_STYLE, GLASS_TYPES, PACKAGE_TYPES } from './parcelTypes'
+import { BOX_STYLE, GLASS_TYPES, packageTypeOptions, parcelCount, SUSPENDED_PACKAGE_TYPES } from './parcelTypes'
 
 const HEAD_CELL = {
     textAlign: 'left',
@@ -46,7 +46,9 @@ export function PackagesEditor({ breakdown, canEdit, onSave, saving = false }) {
         setRows(JSON.parse(serverPlan))
     }
 
-    const total = rows.reduce((sum, row) => sum + (Number(row.qty) || 0), 0)
+    // Counted as parcels, not as rows: the sentence below promises one label
+    // and one tracking number each, and a suspended "szkło-2pak" row is two.
+    const total = parcelCount(rows)
     const dirty = JSON.stringify(rows) !== serverPlan
     const valid = rows.length > 0 && rows.every(row => Number(row.qty) >= 1 && Number(row.qty) <= 99)
 
@@ -83,8 +85,10 @@ export function PackagesEditor({ breakdown, canEdit, onSave, saving = false }) {
                                     value={row.type}
                                     onChange={e => updateRow(index, { type: e.target.value })}
                                     style={{ width: '100%' }}>
-                                    {PACKAGE_TYPES.map(type => (
-                                        <option key={type} value={type}>{type}</option>
+                                    {packageTypeOptions(row.type).map(type => (
+                                        <option key={type} value={type}>
+                                            {SUSPENDED_PACKAGE_TYPES.has(type) ? `${type} (wycofany)` : type}
+                                        </option>
                                     ))}
                                 </select>
                             </td>

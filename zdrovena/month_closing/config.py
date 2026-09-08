@@ -9,6 +9,7 @@ and keychain service names used during the monthly accounting close.
 from __future__ import annotations
 
 import os
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -176,6 +177,35 @@ EXPECTED_VENDORS: list[VendorConfig] = [
     ),
     VendorConfig(name="Accounting/Bożena", pattern="ogorzalek", email="ogorzalek"),
 ]
+
+
+def _fold(value: str) -> str:
+    """Casefold and strip diacritics for vendor matching.
+
+    Fakturownia spells the buyer exactly as the vendor registered it, so
+    "OGORZAŁEK" never matched the pattern "ogorzalek" and the accountant's own
+    invoice was treated as an unknown vendor for months. Comparing without
+    diacritics costs nothing and removes a whole class of that mistake — every
+    Polish vendor name is a candidate for it.
+    """
+    decomposed = unicodedata.normalize("NFKD", value.casefold())
+    stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return stripped.replace("ł", "l").replace("Ł", "l")
+
+
+def match_vendor(buyer_name: str, buyer_tax_no: str) -> VendorConfig | None:
+    """Return the configured vendor for an invoice, or None when unknown."""
+    buyer = _fold(buyer_name or "")
+    tax_no = _fold(buyer_tax_no or "")
+    return next(
+        (
+            cfg
+            for cfg in EXPECTED_VENDORS
+            if not cfg.skip and (_fold(cfg.pattern) in buyer or _fold(cfg.pattern) in tax_no)
+        ),
+        None,
+    )
+
 
 # ─── Google Ads ───────────────────────────────────────────────────────────────
 

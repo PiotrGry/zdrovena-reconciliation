@@ -8,7 +8,7 @@
     "test:verbose": "tsx runner.ts --verbose"
   },
   "dependencies": {
-    "tsx": "^4.23.12",
+    "tsx": "^4.23.13",
     "typescript": "^7.0.2"
   }
 }

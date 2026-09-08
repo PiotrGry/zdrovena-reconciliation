@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from zdrovena.common.shipping_exceptions import ApaczkaBusinessError
 from zdrovena.common.shipping_parcels import PARCEL_SPECS
+from zdrovena.shipping.domain.cod import CodAllocationError, cod_allocation
 from zdrovena.shipping.domain.planning import (
     parcel_content,
     physical_parcels,
@@ -171,15 +172,19 @@ def apaczka_call_specs(
 
     parcels = physical_parcels(draft)
     cod = draft.get("cod")
-    if cod and len(parcels) != 1:
-        raise ApaczkaBusinessError(
-            "COD requires exactly one physical Apaczka shipment; multi-parcel COD is blocked",
-            courier="apaczka",
-            action="create_shipment",
-        )
+    cod_amounts: list[str] = []
+    if cod:
+        # Every Apaczka order carries a single parcel, so each one collects only
+        # what its own contents are worth plus its share of the delivery cost.
+        try:
+            cod_amounts = [str(amount) for amount in cod_allocation(draft).amounts]
+        except CodAllocationError as exc:
+            raise ApaczkaBusinessError(
+                str(exc), courier="apaczka", action="create_shipment"
+            ) from exc
 
     specs: list[ApaczkaCallSpec] = []
-    for parcel in parcels:
+    for position, parcel in enumerate(parcels):
         package_type = parcel.package_type
         package_number = parcel.position
         package_count = parcel.count_for_type
@@ -223,9 +228,12 @@ def apaczka_call_specs(
             "pickup_to": pickup_to,
         }
         if cod:
+            # Indexed by position in the full parcel list, not by how many specs
+            # survived the checkpoint filter above: a resumed parcel has to ask
+            # for its own share, not for the first one's.
             kwargs.update(
                 {
-                    "cod_amount": str(cod.get("amount") or ""),
+                    "cod_amount": cod_amounts[position],
                     "cod_currency": str(cod.get("currency") or ""),
                     "cod_bank_account": cod_bank_account,
                 }

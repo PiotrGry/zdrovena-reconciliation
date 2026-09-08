@@ -27,11 +27,28 @@ describe('PackagesEditor', () => {
         const { onSave } = setup()
 
         await user.click(screen.getByRole('button', { name: 'Dodaj typ paczki' }))
-        await user.selectOptions(screen.getByLabelText('Typ paczki 2'), 'szkło-2pak')
+        await user.selectOptions(screen.getByLabelText('Typ paczki 2'), 'szkło')
         await user.click(screen.getByRole('button', { name: 'Usuń typ paczki 1' }))
         await user.click(screen.getByRole('button', { name: 'Zapisz paczki' }))
 
-        await waitFor(() => expect(onSave).toHaveBeenCalledWith([{ type: 'szkło-2pak', qty: 1 }]))
+        await waitFor(() => expect(onSave).toHaveBeenCalledWith([{ type: 'szkło', qty: 1 }]))
+    })
+
+    it('does not offer the suspended glass 2-pak', () => {
+        setup()
+
+        const options = [...screen.getByLabelText('Typ paczki 1').options].map(o => o.value)
+        expect(options).toEqual(['3-pak', '2-pak', '1-pak', 'pół-pak', 'szkło'])
+    })
+
+    it('keeps a stored suspended type selectable and counts it as two parcels', () => {
+        // Drafts created before szkło-2pak was suspended still carry it. Hiding
+        // the type would blank the row; counting it as one parcel would promise
+        // one label where the backend books two.
+        setup({ breakdown: [{ type: 'szkło-2pak', qty: 1 }] })
+
+        expect(screen.getByLabelText('Typ paczki 1')).toHaveValue('szkło-2pak')
+        expect(screen.getByText(/Razem 2 paczki/)).toBeInTheDocument()
     })
 
     it('will not let the operator save an empty plan', async () => {
