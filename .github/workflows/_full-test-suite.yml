@@ -422,6 +422,9 @@ jobs:
 
       - name: Upload smoke report
         if: always()
+        # Diagnostics only: a flaky artifact service must not fail a green run.
+        # Test outcome is gated by the "Run smoke test suite" step itself.
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: smoke-report
@@ -495,18 +498,22 @@ jobs:
           RUN_FAKE_PROVIDER_E2E: "0"
         run: |
           cd e2e
-          npx playwright test --reporter=json,list 2>&1 | tee e2e-results.txt
+          npx playwright test 2>&1 | tee e2e-results.txt
           EXIT_CODE=${PIPESTATUS[0]}
           echo "result=$([ $EXIT_CODE -eq 0 ] && echo PASS || echo FAIL)" >> $GITHUB_OUTPUT
           exit $EXIT_CODE
 
       - name: Upload E2E results
         if: always()
+        # Diagnostics only: a flaky artifact service must not fail a green run.
+        # Test outcome is gated by the "Run E2E tests" step itself.
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-results
           path: |
             e2e/e2e-results.txt
+            e2e/e2e-results.json
             e2e/playwright-report/
 
   # ── 6. AI verdict ─────────────────────────────────────────────────────────
