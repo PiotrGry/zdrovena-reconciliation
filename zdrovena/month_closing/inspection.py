@@ -28,7 +28,7 @@ from zdrovena.month_closing.config import (
     VendorConfig,
     match_vendor,
 )
-from zdrovena.month_closing.preflight import pko_matches_month
+from zdrovena.month_closing.preflight import pko_matches_month, report_extension_mismatch
 from zdrovena.month_closing.warehouse_audit import warehouse_issues
 
 
@@ -247,6 +247,7 @@ class MonthCloseInspector:
                 None,
             )
             status = "present" if found_name else "missing"
+            expected = Path(report["dest_name"]).suffix
             documents.append(
                 build_document(
                     f"report-{report['name'].casefold().replace(' ', '-')}",
@@ -255,7 +256,8 @@ class MonthCloseInspector:
                     status,
                     source="Wgrany plik" if found_name else "Fakturownia UI",
                     file_key=all_names[found_name].key if found_name else None,
-                    message=found_name or "Pobierz raport i wgraj dla wybranego okresu.",
+                    message=found_name
+                    or f"Pobierz raport ({expected}) i wgraj dla wybranego okresu.",
                 )
             )
             if not found_name:
@@ -263,7 +265,16 @@ class MonthCloseInspector:
                     build_issue(
                         f"report-missing-{report['name']}",
                         "blocker",
-                        f"Brakuje raportu {report['name']}.",
+                        f"Brakuje raportu {report['name']} ({expected}).",
+                    )
+                )
+            elif report_extension_mismatch(report, found_name):
+                issues.append(
+                    build_issue(
+                        f"report-extension-{report['name']}",
+                        "warning",
+                        f"{report['name']}: plik {found_name} nie jest w formacie {expected}, "
+                        "którego oczekuje księgowa.",
                     )
                 )
 

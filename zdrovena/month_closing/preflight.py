@@ -488,6 +488,7 @@ class PreflightChecker:
                         ({"name": rpt["name"], "dest_name": rpt["dest_name"]}, newest)
                     )
                     self._out(f"  │  ✅ {rpt['name']}: found {newest.name}")
+                    self._warn_on_report_extension(rpt, newest.name)
                     continue
             elif blob_files:
                 blob_matches = sorted(
@@ -505,16 +506,36 @@ class PreflightChecker:
                         self._out(
                             f"  │  ✅ {rpt['name']}: found {Path(newest_blob.key).name} (from blob)"
                         )
+                        self._warn_on_report_extension(rpt, Path(newest_blob.key).name)
                         continue
             missing.append(rpt)
 
         # Remaining missing reports are warnings only — auto-download happens in orchestrator step 3
         for rpt in missing:
             self.result.missing_reports.append(rpt)
-            self._out(f"  │  ⚠️  {rpt['name']}: not found in inbox/")
+            expected = Path(rpt["dest_name"]).suffix
+            self._out(f"  │  ⚠️  {rpt['name']}: not found in inbox/ (expected {expected})")
             if rpt.get("url"):
                 self._out(f"  │     🔗 {rpt['url']}")
         self._out("  └─")
+
+    def _warn_on_report_extension(self, rpt: dict, filename: str) -> None:
+        expected = report_extension_mismatch(rpt, filename)
+        if expected:
+            msg = f"{rpt['name']}: {filename} is not {expected}, the format the accountant expects"
+            self.result.warnings.append(msg)
+            self._out(f"  │  ⚠️  {msg}")
+
+
+def report_extension_mismatch(rpt: dict, filename: str) -> str | None:
+    """Return the expected extension when ``filename`` does not have it, else ``None``.
+
+    The expected extension is the one in ``dest_name`` — the file the accountant
+    receives. A mismatch is a warning, not a blocker (owner's decision): the
+    typical case is a browser-printed PDF of the JPK preview instead of the XML.
+    """
+    expected = Path(rpt["dest_name"]).suffix
+    return None if Path(filename).suffix.casefold() == expected.casefold() else expected
 
 
 def pko_matches_month(filename: str, year: int, month: int) -> bool:

@@ -547,6 +547,40 @@ def test_inspector_accepts_a_complete_sales_collection(tmp_path):
     assert not any(i["id"] == "sales-pdfs-incomplete" for i in inspected["issues"])
 
 
+def _inspect_with_inbox_file(tmp_path, name: str) -> dict:
+    storage = LocalStorageService(root=tmp_path / "files")
+    src = tmp_path / name
+    src.write_bytes(b"x")
+    storage.upload(src, f"faktury/inbox/2026-06/{name}")
+    client = MagicMock()
+    client.fetch_sales_invoices.return_value = []
+    client.fetch_cost_invoices.return_value = []
+    with patch(
+        "zdrovena.month_closing.inspection.FakturowniaClient.from_keyring",
+        return_value=client,
+    ):
+        return MonthCloseInspector(2026, 6, storage=storage).inspect()
+
+
+def test_inspector_warns_when_a_report_has_the_wrong_extension(tmp_path):
+    """Present, but the accountant expects JPK_FA as XML — warn, don't block."""
+    inspected = _inspect_with_inbox_file(tmp_path, "zdrovena-2026-06-jpk_fa.pdf")
+
+    doc = next(d for d in inspected["documents"] if d["id"] == "report-jpk_fa")
+    assert doc["status"] == "present"
+    issue = next(i for i in inspected["issues"] if i["id"] == "report-extension-JPK_FA")
+    assert issue["severity"] == "warning"
+    assert ".xml" in issue["message"]
+
+
+def test_inspector_names_the_expected_extension_of_a_missing_report(tmp_path):
+    inspected = _inspect_with_inbox_file(tmp_path, "zdrovena-2026-06-jpk_fa.xml")
+
+    assert not any(i["id"].startswith("report-extension-") for i in inspected["issues"])
+    vat = next(d for d in inspected["documents"] if d["id"] == "report-vat-sales-register")
+    assert ".pdf" in vat["message"]
+
+
 def test_inspector_is_not_fooled_by_a_stray_pdf(tmp_path):
     """Counting files would pass here — a leftover PDF padding the total.
 

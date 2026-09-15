@@ -62,6 +62,30 @@ class TestPreflightReportBoundary:
         missing_names = [r["name"] for r in checker.result.missing_reports]
         assert "JPK_FA" not in missing_names
 
+    def test_a_report_with_the_wrong_extension_still_counts_but_warns(self, tmp_path, capsys):
+        """A browser-printed PDF of the JPK preview is not the XML the accountant needs.
+
+        Warning only, by owner's decision: the file still counts as present.
+        """
+        checker, inbox = _make_checker(tmp_path)
+        (inbox / "zdrovena-2026-03-jpk_fa.pdf").write_text("x" * 120)
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
+            checker._check_reports()
+
+        assert "JPK_FA" in [
+            cfg["name"] for cfg, _path in checker.result.matches if isinstance(cfg, dict)
+        ]
+        assert any(".xml" in w and "JPK_FA" in w for w in checker.result.warnings)
+        assert ".xml" in capsys.readouterr().out
+
+    def test_a_report_with_the_expected_extension_does_not_warn(self, tmp_path):
+        checker, inbox = _make_checker(tmp_path)
+        (inbox / "zdrovena-2026-03-jpk_fa.XML").write_text("x" * 120)
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
+            checker._check_reports()
+
+        assert not checker.result.warnings
+
     def test_missing_reports_print_their_manual_download_urls(self, tmp_path, capsys):
         """Missing reports show manual download URLs in the preflight output."""
         checker, inbox = _make_checker(tmp_path)
