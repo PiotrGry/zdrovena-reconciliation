@@ -99,6 +99,22 @@
   się jako on sam, żeby powód dodany po stronie serwera był widoczny, zanim ktoś zdąży go nazwać.
   Drafty zapisane wcześniej nie mają tego pola i wyglądają jak dotąd.
 
+- **month-closing**: Raporty z Fakturowni mówią, w jakim formacie mają trafić do księgowej.
+  JPK_FA i JPK_V7M to XML, wykaz sprzedaży VAT to PDF — historycznie (kwiecień–lipiec 2026)
+  każdy miesiąc tak wyglądał. Globy w `FAKTUROWNIA_REPORTS` nie sprawdzały rozszerzenia, więc
+  wydruk podglądu JPK z przeglądarki (PDF) liczyłby się jako raport; taki wydruk leżał w inboksie
+  za lipiec. Brakujący raport podaje teraz oczekiwany format („Pobierz raport (.xml)…"), a plik
+  z innym rozszerzeniem daje ostrzeżenie `report-extension-<raport>` w kontroli okresu i w
+  preflight. Świadomie ostrzeżenie, nie bloker: plik nadal liczy się jako obecny, a wysyłka z
+  ostrzeżeniem wymaga podania powodu, jak przy każdym innym ostrzeżeniu.
+
+  Plik w złym formacie **nie jest przemianowywany** na docelową nazwę: etap raportów zapisuje go
+  jako `JPK_FA.pdf`, nie `JPK_FA.xml`. Przemianowanie ukryłoby problem przed każdą kolejną
+  kontrolą — pakowanie i wysyłka widziałyby już poprawną nazwę — i księgowa dostałaby PDF
+  podpisany jako XML, bez pytania o powód. Z tego samego powodu kopia w złym formacie nie
+  nadpisuje już dobrego `JPK_FA.xml`. Gdy obok siebie leżą XML i PDF podglądu, wybierany jest
+  plik we właściwym formacie, a nie nowszy. Oczekiwane rozszerzenie pochodzi z `dest_name`.
+
 ### Changed
 
 - **shipping**: Zamówienie za pobraniem na więcej niż jedną paczkę nie czeka już na przegląd
