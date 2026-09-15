@@ -94,6 +94,85 @@ class TestZohoVendorDownload:
         assert len(saved) == 1
         assert "tmp" not in saved[0].name.lower()
 
+    def _mock_polka_note(self, body: bytes) -> None:
+        _setup_auth()
+        rsps.add(
+            rsps.GET,
+            f"{API_BASE}/accounts/{ACCOUNT_ID}/messages/search",
+            json={
+                "data": [
+                    {
+                        "messageId": "NOTE1",
+                        "folderId": "FOLDER1",
+                        "fromAddress": "faktury@polskakaucja.pl",
+                        "hasAttachment": "1",
+                        "receivedTime": _april_2026_ts(15),
+                    }
+                ]
+            },
+        )
+        rsps.add(
+            rsps.GET,
+            f"{API_BASE}/accounts/{ACCOUNT_ID}/folders/FOLDER1/messages/NOTE1",
+            json={
+                "data": {
+                    "attachments": [
+                        {"attachmentName": "FV_NO_2026_04_77 Zdrovena.pdf", "attachmentId": "A1"}
+                    ]
+                }
+            },
+        )
+        rsps.add(
+            rsps.GET,
+            f"{API_BASE}/accounts/{ACCOUNT_ID}/folders/FOLDER1/messages/NOTE1/attachments/A1",
+            body=body,
+        )
+
+    def _download_polka(self, tmp_path: Path) -> dict:
+        client = self._client()
+        client.authenticate()
+        return client.search_and_download_vendor(
+            vendor_name="POLKA noty",
+            search_term="faktury@polskakaucja.pl",
+            date_from="2026/04/01",
+            date_to="2026/04/30",
+            save_dir=tmp_path,
+        )
+
+    @rsps.activate
+    def test_a_mailed_copy_of_a_fakturownia_original_is_not_saved_twice(self, tmp_path: Path):
+        """The note entered in Fakturownia is downloaded first; the mailed copy is the same file.
+
+        It must not land in the cost folder a second time, yet the vendor counts as found,
+        otherwise "Brak faktur kosztowych" would block a month that has its document.
+        """
+        body = b"%PDF-1.0 POLKA debit note"
+        original = tmp_path / "POLKA_NO_2026_04_77__original__FV_NO_2026_04_77_Zdrovena.pdf"
+        original.write_bytes(body)
+        self._mock_polka_note(body)
+
+        result = self._download_polka(tmp_path)
+
+        assert result["found"] is True
+        assert result["downloaded"] == 0
+        assert [p.name for p in tmp_path.glob("*.pdf")] == [original.name]
+
+    @rsps.activate
+    def test_a_hash_left_by_a_deleted_file_does_not_hide_the_document(self, tmp_path: Path):
+        import hashlib
+        import json
+
+        body = b"%PDF-1.0 POLKA debit note"
+        (tmp_path / ".file_hashes.json").write_text(
+            json.dumps({hashlib.sha256(body).hexdigest(): "deleted-earlier.pdf"})
+        )
+        self._mock_polka_note(body)
+
+        result = self._download_polka(tmp_path)
+
+        assert result["found"] is True
+        assert result["downloaded"] == 1
+
     @rsps.activate
     def test_no_messages_returns_not_found(self, tmp_path: Path) -> None:
         """Empty search result → found=False, no files on disk."""

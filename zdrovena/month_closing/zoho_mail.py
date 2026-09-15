@@ -47,6 +47,25 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _known_hashes(directory: Path) -> dict[str, str]:
+    """Content already in the folder, keyed by SHA-256.
+
+    Starts from the saved hash file but drops entries whose file is gone: a hash of a
+    deleted file would count a document as present when it is not. Then adds every PDF
+    already there, such as the original Fakturownia attachment downloaded earlier in the
+    same run, which is byte-identical to the copy the vendor mailed.
+    """
+    hashes = {
+        digest: name
+        for digest, name in _load_hashes(directory).items()
+        if (directory / name).exists()
+    }
+    for path in directory.iterdir():
+        if path.is_file() and path.suffix.lower() == ".pdf":
+            hashes.setdefault(_sha256(path.read_bytes()), path.name)
+    return hashes
+
+
 def _safe_filename(name: str) -> str:
     name = re.sub(r'[<>:"/\\|?*]', "_", name)
     name = name.strip(". ")
@@ -239,15 +258,16 @@ class ZohoMailClient:
             return {"found": True, "downloaded": len(messages), "manual_note": None}
 
         save_dir.mkdir(parents=True, exist_ok=True)
-        hashes = _load_hashes(save_dir)
+        hashes = _known_hashes(save_dir)
         all_saved_paths: list[Path] = []
+        already_present = 0
         seen_urls: set[str] = set()
         seen_invoice_ids: set[str] = set()
 
         for msg in messages:
             try:
                 if is_link_vendor:
-                    saved, _dups = self._download_from_link(
+                    saved, dups = self._download_from_link(
                         msg,
                         save_dir,
                         hashes,
@@ -257,20 +277,23 @@ class ZohoMailClient:
                         seen_invoice_ids=seen_invoice_ids,
                     )
                 else:
-                    saved, _dups = self._download_attachments(
+                    saved, dups = self._download_attachments(
                         msg, save_dir, hashes, vendor_prefix=vendor_name
                     )
                 all_saved_paths.extend(saved)
+                already_present += dups
             except Exception as exc:
                 logger.error("Failed to process email from %s: %s", vendor_name, exc)
 
         _save_hashes(save_dir, hashes)
-        # found=True only when at least one PDF was actually saved.
-        # Messages found but zero PDFs downloaded (e.g. non-PDF attachment, download
-        # error) must NOT mark the vendor as found — that silently suppresses the
-        # "Brak faktur kosztowych" warning and lets email go out without the invoice.
+        # found=True only when a PDF was saved or is already in the folder. Messages
+        # found but zero PDFs downloaded (e.g. non-PDF attachment, download error) must
+        # NOT mark the vendor as found — that silently suppresses the "Brak faktur
+        # kosztowych" warning and lets email go out without the invoice. A duplicate is
+        # different: `hashes` only holds content of files that exist, so the document is
+        # there (typically the same file downloaded from Fakturownia first).
         return {
-            "found": len(all_saved_paths) > 0,
+            "found": bool(all_saved_paths) or already_present > 0,
             "downloaded": len(all_saved_paths),
             "manual_note": None,
             "saved_paths": all_saved_paths,
