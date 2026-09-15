@@ -5,7 +5,7 @@ import { I18N } from './lang'
 describe('shipping status translations', () => {
     it('describes pending confirmation independently from courier pickup', () => {
         expect(I18N.pl.sh_status_pending_confirmation).toBe('oczekuje na potwierdzenie')
-        expect(I18N.en.sh_status_pending_confirmation).toBe('awaiting confirmation')
+        expect(I18N.en.sh_status_pending_confirmation).toBe('controlled failure fixture')
     })
 
     it('leaves the created shipment labels unchanged', () => {
