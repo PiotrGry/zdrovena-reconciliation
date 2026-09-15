@@ -387,24 +387,26 @@ def extract_invoice_number(pdf_path: Path, text: str | None = None) -> str | Non
     return None
 
 
+# POLKA (deposit-return system operator) bills the packaging deposit as a debit note,
+# which never says "faktura". Only POLKA's notes count as a cost document; a debit note
+# from anyone else is still rejected (owner's decision, 2026-09-15).
+_POLKA_NIP = "5252990128"
+_DEBIT_NOTE_WORDS = ("nota obciążeniowa", "nota obciazeniowa")
+
+
+def _is_polka_debit_note(text: str, text_lower: str) -> bool:
+    return _POLKA_NIP in text and any(word in text_lower for word in _DEBIT_NOTE_WORDS)
+
+
 def is_likely_invoice(pdf_path: Path, text: str | None = None) -> bool:
     if text is None:
         text = extract_text(pdf_path)
     if not text.strip():
         return True
     text_lower = text.lower()
-    # A debit note is a cost document that never says "faktura": POLKA bills the
-    # packaging deposit this way, and every such note used to be deleted here.
-    strong_invoice_keywords = [
-        "faktura",
-        "invoice",
-        "rachunek",
-        "bill #",
-        "nota obciążeniowa",
-        "nota obciazeniowa",
-    ]
+    strong_invoice_keywords = ["faktura", "invoice", "rachunek", "bill #"]
     has_strong_invoice_keyword = any(kw in text_lower for kw in strong_invoice_keywords)
-    if not has_strong_invoice_keyword:
+    if not has_strong_invoice_keyword and not _is_polka_debit_note(text, text_lower):
         return False
     non_invoice_negators = [
         "proforma",

@@ -76,10 +76,22 @@ class TestPolkaDebitNotesReachTheCostFolder:
 
         text = (
             "NOTA OBCIĄŻENIOWA NR: NO/2026/09/77\nData wystawienia: 2026.09.15\n"
+            "POLKA Operator Systemu Kaucyjnego NIP: 5252990128\n"
             "Kaucja - tworzywo sztuczne szt 474 0,50 237,00\nDo zapłaty: 237,00 PLN"
         )
 
         assert is_likely_invoice(Path("FV_NO_2026_09_77 Zdrovena.pdf"), text=text)
+
+    def test_a_debit_note_from_anyone_else_is_still_dropped(self):
+        # Owner's decision: a debit note is a cost only when POLKA issues it.
+        from zdrovena.month_closing.invoice_date_check import is_likely_invoice
+
+        text = (
+            "NOTA OBCIĄŻENIOWA NR: 12/2026\nData wystawienia: 2026.09.15\n"
+            "Inna Firma sp. z o.o. NIP: 1234567890\nDo zapłaty: 150,00 PLN"
+        )
+
+        assert not is_likely_invoice(Path("nota.pdf"), text=text)
 
     def test_the_date_gate_still_drops_a_document_that_is_no_cost(self):
         from zdrovena.month_closing.invoice_date_check import is_likely_invoice
