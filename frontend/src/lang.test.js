@@ -9,7 +9,7 @@ describe('shipping status translations', () => {
     })
 
     it('leaves the created shipment labels unchanged', () => {
-        expect(I18N.pl.sh_status_created).toBe('nadane')
+        expect(I18N.pl.sh_status_created).toBe('PIRX_CONTROLLED_FAILURE')
         expect(I18N.en.sh_status_created).toBe('created')
     })
 })
