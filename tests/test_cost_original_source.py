@@ -48,6 +48,47 @@ class TestVendorMatchingSurvivesPolishLetters:
         assert match_vendor("Nieznana nazwa", vendor.pattern) is not None
 
 
+class TestPolkaDebitNotesReachTheCostFolder:
+    """POLKA's kaucja debit notes exist only as email attachments.
+
+    Two things kept every one of them out of the cost folder: no vendor told the
+    Zoho phase to look at faktury@polskakaucja.pl, and the date gate deleted a
+    "NOTA OBCIĄŻENIOWA" as "not an invoice" because it never says "faktura".
+    """
+
+    def test_the_notes_have_a_vendor_that_searches_the_mailbox(self):
+        vendor = next(v for v in EXPECTED_VENDORS if v.name == "POLKA noty")
+
+        assert vendor.email == "faktury@polskakaucja.pl"
+        assert not (vendor.manual or vendor.skip or vendor.browser_download)
+
+    def test_polkas_ksef_invoices_do_not_mark_the_notes_as_found(self):
+        # Fakturownia lists the FSP invoices under this buyer. Matching them to the
+        # notes vendor would skip the mailbox search in the Zoho phase.
+        vendor = match_vendor(
+            "POLKA Operator Systemu Kaucyjnego NOT FOR PROFIT Spolka Akcyjna ", "5252990128"
+        )
+
+        assert vendor is None or vendor.name != "POLKA noty"
+
+    def test_the_date_gate_keeps_a_debit_note(self):
+        from zdrovena.month_closing.invoice_date_check import is_likely_invoice
+
+        text = (
+            "NOTA OBCIĄŻENIOWA NR: NO/2026/09/77\nData wystawienia: 2026.09.15\n"
+            "Kaucja - tworzywo sztuczne szt 474 0,50 237,00\nDo zapłaty: 237,00 PLN"
+        )
+
+        assert is_likely_invoice(Path("FV_NO_2026_09_77 Zdrovena.pdf"), text=text)
+
+    def test_the_date_gate_still_drops_a_document_that_is_no_cost(self):
+        from zdrovena.month_closing.invoice_date_check import is_likely_invoice
+
+        text = "Protokół szkody przesyłki 123456789012345678901234, wartość 150,00"
+
+        assert not is_likely_invoice(Path("protokol.pdf"), text=text)
+
+
 class TestAKsefXmlOriginalIsNotSilentlyIgnored:
     def _client(self, archive_bytes: bytes) -> FakturowniaClient:
         client = FakturowniaClient.__new__(FakturowniaClient)

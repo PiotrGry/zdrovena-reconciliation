@@ -209,6 +209,13 @@ EXPECTED_VENDORS: list[VendorConfig] = [
         source_policy="original_required",
     ),
     VendorConfig(name="Accounting/Bożena", pattern="ogorzalek", email="ogorzalek"),
+    # POLKA (deposit-return system operator) sends two kinds of cost document. Its VAT
+    # invoices (FSP/...) go through KSeF and arrive via Fakturownia as an unknown vendor.
+    # The kaucja debit notes (NOTA OBCIĄŻENIOWA, NO/...) stay outside KSeF and exist only
+    # as email attachments. The pattern deliberately matches neither the FSP buyer name
+    # nor its NIP: if it did, finding those invoices would mark this vendor as found and
+    # the mailbox holding the notes would never be searched.
+    VendorConfig(name="POLKA noty", pattern="polskakaucja.pl", email="faktury@polskakaucja.pl"),
 ]
 
 

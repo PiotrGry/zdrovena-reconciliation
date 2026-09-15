@@ -393,7 +393,16 @@ def is_likely_invoice(pdf_path: Path, text: str | None = None) -> bool:
     if not text.strip():
         return True
     text_lower = text.lower()
-    strong_invoice_keywords = ["faktura", "invoice", "rachunek", "bill #"]
+    # A debit note is a cost document that never says "faktura": POLKA bills the
+    # packaging deposit this way, and every such note used to be deleted here.
+    strong_invoice_keywords = [
+        "faktura",
+        "invoice",
+        "rachunek",
+        "bill #",
+        "nota obciążeniowa",
+        "nota obciazeniowa",
+    ]
     has_strong_invoice_keyword = any(kw in text_lower for kw in strong_invoice_keywords)
     if not has_strong_invoice_keyword:
         return False
