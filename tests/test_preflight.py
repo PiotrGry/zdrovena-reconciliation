@@ -167,6 +167,24 @@ class TestCopyToFolders:
         # Dest should not be overwritten
         assert dest.read_bytes() == b"%PDF existing"
 
+    def test_a_report_keeps_its_own_extension_when_it_is_not_the_expected_one(self, tmp_path):
+        """Renaming a PDF to JPK_FA.xml would hide the mismatch from every later check."""
+        checker = _make_checker(tmp_path)
+        checker.dry_run = False
+        month_dir = tmp_path / "month"
+        costs_dir = tmp_path / "costs"
+        month_dir.mkdir()
+        costs_dir.mkdir()
+        report = {"name": "JPK_FA", "dest_name": "JPK_FA.xml"}
+        for source in ("zdrovena-2025-06-jpk_fa.XML", "zdrovena-2025-06-jpk_fa_podglad.pdf"):
+            src = tmp_path / source
+            src.write_bytes(b"x")
+            checker.result.matches.append((report, src))
+
+        checker.copy_to_folders(month_dir, costs_dir)
+
+        assert sorted(f.name for f in month_dir.iterdir()) == ["JPK_FA.pdf", "JPK_FA.xml"]
+
 
 # ── _check_bank_statement ─────────────────────────────────────────────────────
 

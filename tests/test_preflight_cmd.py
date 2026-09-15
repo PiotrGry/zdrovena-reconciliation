@@ -99,6 +99,24 @@ class TestPreflightCheckerContract:
 
     @patch("zdrovena.month_closing.commands.preflight_cmd._get_secret", return_value=None)
     @patch("zdrovena.month_closing.preflight.PreflightChecker")
+    def test_warnings_are_printed_even_when_all_files_are_ready(
+        self, mock_checker_cls, mock_secret, capsys
+    ):
+        """A wrong-format report is not missing, so it must not hide behind "All files ready"."""
+        result = _mock_result()
+        result.warnings = ["JPK_FA: JPK_FA.pdf is not .xml, the format the accountant expects"]
+        mock_checker_cls.return_value.run.return_value = result
+
+        from zdrovena.month_closing.commands.preflight_cmd import _run
+
+        _run(_make_args(period="2025-03"))
+
+        out = capsys.readouterr().out
+        assert "JPK_FA.pdf is not .xml" in out
+        assert "All files ready" in out
+
+    @patch("zdrovena.month_closing.commands.preflight_cmd._get_secret", return_value=None)
+    @patch("zdrovena.month_closing.preflight.PreflightChecker")
     def test_no_browser_flag_is_accepted_but_inert(self, mock_checker_cls, mock_secret):
         mock_checker_cls.return_value.run.return_value = _mock_result()
 

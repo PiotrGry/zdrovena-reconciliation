@@ -161,6 +161,8 @@ def _run(args: argparse.Namespace) -> None:
         print(f"   Then run: zdrovena close {year}-{month:02d}")
         sys.exit(1)
     else:
+        for warning in result.warnings:
+            print(f"⚠️  {warning}")
         print(f"✅ All files ready for {year}-{month:02d}")
         print(f"   Run: zdrovena close {year}-{month:02d}")
 

@@ -62,6 +62,154 @@ class TestPreflightReportBoundary:
         missing_names = [r["name"] for r in checker.result.missing_reports]
         assert "JPK_FA" not in missing_names
 
+    def test_a_report_with_the_wrong_extension_still_counts_but_warns(self, tmp_path, capsys):
+        """A browser-printed PDF of the JPK preview is not the XML the accountant needs.
+
+        Warning only, by owner's decision: the file still counts as present.
+        """
+        checker, inbox = _make_checker(tmp_path)
+        (inbox / "zdrovena-2026-03-jpk_fa.pdf").write_text("x" * 120)
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
+            checker._check_reports()
+
+        assert "JPK_FA" in [
+            cfg["name"] for cfg, _path in checker.result.matches if isinstance(cfg, dict)
+        ]
+        assert any(".xml" in w and "JPK_FA" in w for w in checker.result.warnings)
+        assert ".xml" in capsys.readouterr().out
+
+    def test_a_report_with_the_expected_extension_does_not_warn(self, tmp_path):
+        checker, inbox = _make_checker(tmp_path)
+        (inbox / "zdrovena-2026-03-jpk_fa.XML").write_text("x" * 120)
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
+            checker._check_reports()
+
+        assert "JPK_FA" in [
+            cfg["name"] for cfg, _path in checker.result.matches if isinstance(cfg, dict)
+        ]
+        assert not checker.result.warnings
+
+    def test_the_expected_extension_wins_over_a_newer_preview(self, tmp_path):
+        """A PDF preview saved after the real XML must not be the file that gets stored."""
+        import os
+
+        checker, inbox = _make_checker(tmp_path)
+        xml = inbox / "zdrovena-2026-03-jpk_fa.xml"
+        xml.write_text("x" * 120)
+        preview = inbox / "zdrovena-2026-03-jpk_fa_podglad.pdf"
+        preview.write_text("x" * 120)
+        later = xml.stat().st_mtime + 60
+        os.utime(preview, (later, later))
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
+            checker._check_reports()
+
+        chosen = [
+            path
+            for cfg, path in checker.result.matches
+            if isinstance(cfg, dict) and cfg["name"] == "JPK_FA"
+        ]
+        assert chosen == [xml]
+        assert not checker.result.warnings
+
+    def test_a_wrong_format_copy_in_the_month_folder_still_warns(self, tmp_path):
+        """On a rerun the report sits in the month folder under its own extension."""
+        checker, inbox = _make_checker(tmp_path)
+        (tmp_path / "month" / "JPK_FA.pdf").write_bytes(b"%PDF")
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
+            checker._check_reports()
+
+        assert "JPK_FA" not in [r["name"] for r in checker.result.missing_reports]
+        assert checker.result.warnings == [
+            "JPK_FA: JPK_FA.pdf is not .xml, the format the accountant expects"
+        ]
+
+    def test_a_corrected_upload_replaces_a_stored_wrong_format_copy(self, tmp_path):
+        """After the warning the operator uploads the real XML; it must get staged."""
+        checker, inbox = _make_checker(tmp_path)
+        (tmp_path / "month" / "JPK_FA.pdf").write_bytes(b"%PDF")
+        xml = inbox / "zdrovena-2026-03-jpk_fa.xml"
+        xml.write_text("x" * 120)
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
+            checker._check_reports()
+
+        chosen = [
+            path
+            for cfg, path in checker.result.matches
+            if isinstance(cfg, dict) and cfg["name"] == "JPK_FA"
+        ]
+        assert chosen == [xml]
+        assert not checker.result.warnings
+
+    def test_another_wrong_format_upload_does_not_replace_the_stored_copy(self, tmp_path):
+        checker, inbox = _make_checker(tmp_path)
+        (tmp_path / "month" / "JPK_FA.pdf").write_bytes(b"%PDF")
+        (inbox / "zdrovena-2026-03-jpk_fa.html").write_text("x" * 120)
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
+            checker._check_reports()
+
+        assert not [cfg for cfg, _path in checker.result.matches if isinstance(cfg, dict)]
+        assert checker.result.warnings == [
+            "JPK_FA: JPK_FA.pdf is not .xml, the format the accountant expects"
+        ]
+
+    def test_a_report_from_blob_with_the_wrong_extension_still_counts_but_warns(self, tmp_path):
+        """The blob branch (API/cloud path) warns the same way as the watch dir."""
+        storage = MagicMock()
+        blob = SimpleNamespace(
+            key="faktury/inbox/zdrovena-2026-03-jpk_fa.pdf", size=120, last_modified=0
+        )
+        storage.list_files.return_value = [blob]
+        storage.download.side_effect = lambda _key, path: path.write_bytes(b"%PDF")
+        checker = PreflightChecker(
+            year=2026,
+            month=3,
+            month_dir=tmp_path,
+            date_from="2026-03-01",
+            date_to="2026-04-01",
+            cost_date_to="2026-04-01",
+            dry_run=True,
+            get_secret=lambda _service, required=True: None,
+            storage=storage,
+        )
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", tmp_path / "absent"):
+            checker._check_reports()
+        for _key, tmp in checker._blob_downloads:
+            tmp.unlink(missing_ok=True)
+
+        assert "JPK_FA" in [
+            cfg["name"] for cfg, _path in checker.result.matches if isinstance(cfg, dict)
+        ]
+        assert checker.result.warnings == [
+            "JPK_FA: zdrovena-2026-03-jpk_fa.pdf is not .xml, the format the accountant expects"
+        ]
+
+    def test_missing_reports_name_the_expected_extension(self, tmp_path, capsys):
+        checker, inbox = _make_checker(tmp_path)
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
+            checker._check_reports()
+
+        out = capsys.readouterr().out
+        assert "JPK_FA: not found in inbox/ (expected .xml)" in out
+        assert "VAT Sales Register: not found in inbox/ (expected .pdf)" in out
+        assert not checker.result.warnings
+
+    @pytest.mark.parametrize(
+        ("filename", "expected"),
+        [
+            ("zdrovena-2026-03-jpk_fa.xml", None),
+            ("zdrovena-2026-03-jpk_fa.Xml", None),
+            ("zdrovena-2026-03-jpk_fa.pdf", ".xml"),
+            # The JPK_FA glob has a trailing `*`, so an extension-less download matches it.
+            ("zdrovena-2026-03-jpk_fa", ".xml"),
+            ("zdrovena-2026-03-jpk_fa.xml.zip", ".xml"),
+        ],
+    )
+    def test_report_extension_mismatch_compares_only_the_final_suffix(self, filename, expected):
+        from zdrovena.month_closing.config import report_extension_mismatch
+
+        rpt = {"name": "JPK_FA", "dest_name": "JPK_FA.xml"}
+        assert report_extension_mismatch(rpt, filename) == expected
+
     def test_missing_reports_print_their_manual_download_urls(self, tmp_path, capsys):
         """Missing reports show manual download URLs in the preflight output."""
         checker, inbox = _make_checker(tmp_path)
