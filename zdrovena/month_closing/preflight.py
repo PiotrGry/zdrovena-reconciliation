@@ -477,10 +477,11 @@ class PreflightChecker:
         missing: list[dict] = []
         for rpt in FAKTUROWNIA_REPORTS:
             stored = self._stored_report(rpt)
-            if stored:
+            if stored and report_extension_mismatch(rpt, stored) is None:
                 self._out(f"  │  ✅ {rpt['name']}: {stored} (in month folder)")
-                self._warn_on_report_extension(rpt, stored)
                 continue
+            # A wrong-format copy already stored must not hide a corrected upload: only an
+            # inbox file in the expected format replaces it, another wrong one does not.
             if watch_dir.exists() and not prefer_scoped_blob:
                 # A PDF preview uploaded next to the real XML must not win on recency.
                 matches = sorted(
@@ -491,7 +492,7 @@ class PreflightChecker:
                     ),
                     reverse=True,
                 )
-                if matches:
+                if matches and not (stored and report_extension_mismatch(rpt, matches[0].name)):
                     newest = matches[0]
                     self.result.matches.append(
                         ({"name": rpt["name"], "dest_name": rpt["dest_name"]}, newest)
@@ -508,7 +509,9 @@ class PreflightChecker:
                     ),
                     reverse=True,
                 )
-                if blob_matches:
+                if blob_matches and not (
+                    stored and report_extension_mismatch(rpt, Path(blob_matches[0].key).name)
+                ):
                     newest_blob = blob_matches[0]
                     tmp = self._download_blob_to_tmp(newest_blob.key)
                     if tmp:
@@ -520,6 +523,10 @@ class PreflightChecker:
                         )
                         self._warn_on_report_extension(rpt, Path(newest_blob.key).name)
                         continue
+            if stored:
+                self._out(f"  │  ✅ {rpt['name']}: {stored} (in month folder)")
+                self._warn_on_report_extension(rpt, stored)
+                continue
             missing.append(rpt)
 
         # Remaining missing reports are warnings only — auto-download happens in orchestrator step 3

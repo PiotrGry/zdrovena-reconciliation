@@ -123,6 +123,35 @@ class TestPreflightReportBoundary:
             "JPK_FA: JPK_FA.pdf is not .xml, the format the accountant expects"
         ]
 
+    def test_a_corrected_upload_replaces_a_stored_wrong_format_copy(self, tmp_path):
+        """After the warning the operator uploads the real XML; it must get staged."""
+        checker, inbox = _make_checker(tmp_path)
+        (tmp_path / "month" / "JPK_FA.pdf").write_bytes(b"%PDF")
+        xml = inbox / "zdrovena-2026-03-jpk_fa.xml"
+        xml.write_text("x" * 120)
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
+            checker._check_reports()
+
+        chosen = [
+            path
+            for cfg, path in checker.result.matches
+            if isinstance(cfg, dict) and cfg["name"] == "JPK_FA"
+        ]
+        assert chosen == [xml]
+        assert not checker.result.warnings
+
+    def test_another_wrong_format_upload_does_not_replace_the_stored_copy(self, tmp_path):
+        checker, inbox = _make_checker(tmp_path)
+        (tmp_path / "month" / "JPK_FA.pdf").write_bytes(b"%PDF")
+        (inbox / "zdrovena-2026-03-jpk_fa.html").write_text("x" * 120)
+        with patch("zdrovena.month_closing.preflight.DOWNLOAD_WATCH_DIR", inbox):
+            checker._check_reports()
+
+        assert not [cfg for cfg, _path in checker.result.matches if isinstance(cfg, dict)]
+        assert checker.result.warnings == [
+            "JPK_FA: JPK_FA.pdf is not .xml, the format the accountant expects"
+        ]
+
     def test_a_report_from_blob_with_the_wrong_extension_still_counts_but_warns(self, tmp_path):
         """The blob branch (API/cloud path) warns the same way as the watch dir."""
         storage = MagicMock()
