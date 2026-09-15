@@ -49,6 +49,7 @@ from zdrovena.month_closing.config import (
     KSEF_ENABLED,
     POLISH_MONTHS,
     VendorConfig,
+    is_stored_report,
     match_vendor,
 )
 from zdrovena.month_closing.console import ConsoleReporter
@@ -445,17 +446,29 @@ class MonthCloseOrchestrator:
             self._upload_to_blob(pdf_path, blob_sales)
         self._mark_step_done("Sales invoices")
 
+    def _report_present(self, rpt: dict) -> bool:
+        """``dest_name`` or a wrong-format copy kept under its own extension (``JPK_FA.pdf``).
+
+        The copy counts as present: preflight and inspection raise the extension warning,
+        and treating it as missing here would turn that warning into a
+        "reports incomplete" blocker.
+        """
+        for local_dir in (self.decl_dir, self.month_dir):
+            if local_dir.exists() and any(
+                f.is_file() and is_stored_report(rpt, f.name) for f in local_dir.iterdir()
+            ):
+                return True
+        try:
+            # list_files is recursive, so the month prefix also covers deklaracje/.
+            blobs = self.storage.list_files(self._blob_prefix + "/")
+        except Exception:
+            return False
+        return any(is_stored_report(rpt, Path(b.key).name) for b in blobs)
+
     def _step_3_jpk_reports(self) -> None:
         self.out.step(3, "Verifying JPK and VAT reports")
 
-        missing = [
-            rpt
-            for rpt in FAKTUROWNIA_REPORTS
-            if not (self.decl_dir / rpt["dest_name"]).exists()
-            and not (self.month_dir / rpt["dest_name"]).exists()
-            and not self._blob_file_exists(f"{self._blob_prefix}/deklaracje", rpt["dest_name"])
-            and not self._blob_file_exists(self._blob_prefix, rpt["dest_name"])
-        ]
+        missing = [rpt for rpt in FAKTUROWNIA_REPORTS if not self._report_present(rpt)]
         for rpt in FAKTUROWNIA_REPORTS:
             if rpt not in missing:
                 self.out.ok(f"{rpt['name']}: {rpt['dest_name']}")

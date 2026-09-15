@@ -109,6 +109,39 @@ FAKTUROWNIA_REPORT_RUNTIME = "playwright"
 FAKTUROWNIA_REPORT_TIMEOUT_MS = 120_000
 FAKTUROWNIA_REPORT_DOWNLOAD_SELECTOR = "#job_download_link a[href*='/jobs/']"
 
+
+def expected_report_extension(rpt: dict) -> str:
+    """Format the accountant receives a report in: the extension of its ``dest_name``."""
+    return Path(rpt["dest_name"]).suffix
+
+
+def report_extension_mismatch(rpt: dict, filename: str) -> str | None:
+    """Return the expected extension when ``filename`` does not have it, else ``None``.
+
+    A mismatch is a warning, not a blocker (owner's decision): the typical case is a
+    browser-printed PDF of the JPK preview instead of the XML.
+    """
+    expected = expected_report_extension(rpt)
+    return None if Path(filename).suffix.casefold() == expected.casefold() else expected
+
+
+def report_stored_name(rpt: dict, source_name: str) -> str:
+    """Name a matched report is stored under in the month folder.
+
+    ``dest_name`` when the source has the expected extension. Otherwise the stem keeps the
+    source's own extension (``JPK_FA.pdf``): renaming a PDF to ``JPK_FA.xml`` would hide the
+    mismatch from every later check and ship PDF bytes to the accountant as XML.
+    """
+    if report_extension_mismatch(rpt, source_name) is None:
+        return rpt["dest_name"]
+    return Path(rpt["dest_name"]).stem + Path(source_name).suffix
+
+
+def is_stored_report(rpt: dict, filename: str) -> bool:
+    """True for ``dest_name`` and for the same stem kept under another extension."""
+    return Path(filename).stem == Path(rpt["dest_name"]).stem
+
+
 # ─── Zoho Mail ────────────────────────────────────────────────────────────────
 
 ZOHO_EMAIL = "piotr@wodahumio.pl"

@@ -548,10 +548,15 @@ def test_inspector_accepts_a_complete_sales_collection(tmp_path):
 
 
 def _inspect_with_inbox_file(tmp_path, name: str) -> dict:
+    return _inspect_with_files(tmp_path, f"faktury/inbox/2026-06/{name}")
+
+
+def _inspect_with_files(tmp_path, *keys: str) -> dict:
     storage = LocalStorageService(root=tmp_path / "files")
-    src = tmp_path / name
-    src.write_bytes(b"x")
-    storage.upload(src, f"faktury/inbox/2026-06/{name}")
+    for key in keys:
+        src = tmp_path / Path(key).name
+        src.write_bytes(b"x")
+        storage.upload(src, key)
     client = MagicMock()
     client.fetch_sales_invoices.return_value = []
     client.fetch_cost_invoices.return_value = []
@@ -577,8 +582,48 @@ def test_inspector_names_the_expected_extension_of_a_missing_report(tmp_path):
     inspected = _inspect_with_inbox_file(tmp_path, "zdrovena-2026-06-jpk_fa.xml")
 
     assert not any(i["id"].startswith("report-extension-") for i in inspected["issues"])
+    jpk = next(d for d in inspected["documents"] if d["id"] == "report-jpk_fa")
+    assert jpk["status"] == "present"
     vat = next(d for d in inspected["documents"] if d["id"] == "report-vat-sales-register")
     assert ".pdf" in vat["message"]
+
+
+def test_inspector_still_warns_after_the_reports_stage_stored_the_copy(tmp_path):
+    """Preflight stores a wrong-format report as JPK_FA.pdf, not JPK_FA.xml.
+
+    Package and send re-inspect from scratch, so the warning has to come back from the
+    stored name. Renaming it to JPK_FA.xml used to make it vanish before send.
+    """
+    inspected = _inspect_with_files(tmp_path, "faktury/2026/czerwiec/deklaracje/JPK_FA.pdf")
+
+    doc = next(d for d in inspected["documents"] if d["id"] == "report-jpk_fa")
+    assert doc["status"] == "present"
+    issue = next(i for i in inspected["issues"] if i["id"] == "report-extension-JPK_FA")
+    assert issue["severity"] == "warning"
+
+
+def test_inspector_prefers_the_expected_extension_when_both_are_present(tmp_path):
+    """A PDF preview next to the real XML must not raise a false warning."""
+    inspected = _inspect_with_files(
+        tmp_path,
+        "faktury/inbox/2026-06/zdrovena-2026-06-jpk_fa_podglad.pdf",
+        "faktury/2026/czerwiec/JPK_FA.xml",
+    )
+
+    doc = next(d for d in inspected["documents"] if d["id"] == "report-jpk_fa")
+    assert doc["message"] == "JPK_FA.xml"
+    assert not any(i["id"] == "report-extension-JPK_FA" for i in inspected["issues"])
+
+
+def test_inspector_blocker_for_a_missing_report_names_the_expected_extension(tmp_path):
+    """The blocker is what the operator reads first — it must say which format to fetch."""
+    inspected = _inspect_with_inbox_file(tmp_path, "zdrovena-2026-06-jpk_fa.xml")
+
+    issues = {i["id"]: i for i in inspected["issues"]}
+    assert "report-missing-JPK_FA" not in issues
+    assert issues["report-missing-VAT Sales Register"]["severity"] == "blocker"
+    assert "(.pdf)" in issues["report-missing-VAT Sales Register"]["message"]
+    assert "(.xml)" in issues["report-missing-JPK_V7M"]["message"]
 
 
 def test_inspector_is_not_fooled_by_a_stray_pdf(tmp_path):

@@ -26,6 +26,10 @@ from zdrovena.month_closing.config import (
     EXPECTED_VENDORS,
     FAKTUROWNIA_REPORTS,
     VendorConfig,
+    expected_report_extension,
+    is_stored_report,
+    report_extension_mismatch,
+    report_stored_name,
 )
 from zdrovena.month_closing.zoho_mail import ZohoMailClient
 
@@ -126,7 +130,7 @@ class PreflightChecker:
                 safe_name = blob_filename
             elif dest_name:
                 dest_dir = month_dir
-                safe_name = dest_name
+                safe_name = report_stored_name({"dest_name": dest_name}, blob_filename)
             else:
                 dest_dir = costs_dir
                 safe_name = f"{name.replace(' ', '_')}_{blob_filename}"
@@ -472,14 +476,19 @@ class PreflightChecker:
 
         missing: list[dict] = []
         for rpt in FAKTUROWNIA_REPORTS:
-            dest = self.month_dir / rpt["dest_name"]
-            if dest.exists():
-                self._out(f"  │  ✅ {rpt['name']}: {dest.name} (in month folder)")
+            stored = self._stored_report(rpt)
+            if stored:
+                self._out(f"  │  ✅ {rpt['name']}: {stored} (in month folder)")
+                self._warn_on_report_extension(rpt, stored)
                 continue
             if watch_dir.exists() and not prefer_scoped_blob:
+                # A PDF preview uploaded next to the real XML must not win on recency.
                 matches = sorted(
                     watch_dir.glob(rpt["glob"]),
-                    key=lambda f: f.stat().st_mtime,
+                    key=lambda f: (
+                        report_extension_mismatch(rpt, f.name) is None,
+                        f.stat().st_mtime,
+                    ),
                     reverse=True,
                 )
                 if matches:
@@ -493,7 +502,10 @@ class PreflightChecker:
             elif blob_files:
                 blob_matches = sorted(
                     [b for b in blob_files if fnmatch.fnmatch(Path(b.key).name, rpt["glob"])],
-                    key=lambda b: b.last_modified,
+                    key=lambda b: (
+                        report_extension_mismatch(rpt, Path(b.key).name) is None,
+                        b.last_modified,
+                    ),
                     reverse=True,
                 )
                 if blob_matches:
@@ -513,29 +525,32 @@ class PreflightChecker:
         # Remaining missing reports are warnings only — auto-download happens in orchestrator step 3
         for rpt in missing:
             self.result.missing_reports.append(rpt)
-            expected = Path(rpt["dest_name"]).suffix
+            expected = expected_report_extension(rpt)
             self._out(f"  │  ⚠️  {rpt['name']}: not found in inbox/ (expected {expected})")
             if rpt.get("url"):
                 self._out(f"  │     🔗 {rpt['url']}")
         self._out("  └─")
 
+    def _stored_report(self, rpt: dict) -> str | None:
+        """Report already copied into the month folder, ``dest_name`` preferred over a wrong-format copy."""
+        if not self.month_dir.exists():
+            return None
+        names = sorted(
+            (
+                f.name
+                for f in self.month_dir.iterdir()
+                if f.is_file() and is_stored_report(rpt, f.name)
+            ),
+            key=lambda name: report_extension_mismatch(rpt, name) is not None,
+        )
+        return names[0] if names else None
+
     def _warn_on_report_extension(self, rpt: dict, filename: str) -> None:
         expected = report_extension_mismatch(rpt, filename)
-        if expected:
+        if expected is not None:
             msg = f"{rpt['name']}: {filename} is not {expected}, the format the accountant expects"
             self.result.warnings.append(msg)
             self._out(f"  │  ⚠️  {msg}")
-
-
-def report_extension_mismatch(rpt: dict, filename: str) -> str | None:
-    """Return the expected extension when ``filename`` does not have it, else ``None``.
-
-    The expected extension is the one in ``dest_name`` — the file the accountant
-    receives. A mismatch is a warning, not a blocker (owner's decision): the
-    typical case is a browser-printed PDF of the JPK preview instead of the XML.
-    """
-    expected = Path(rpt["dest_name"]).suffix
-    return None if Path(filename).suffix.casefold() == expected.casefold() else expected
 
 
 def pko_matches_month(filename: str, year: int, month: int) -> bool:
