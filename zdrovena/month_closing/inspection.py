@@ -26,7 +26,10 @@ from zdrovena.month_closing.config import (
     FAKTUROWNIA_REPORTS,
     POLISH_MONTHS,
     VendorConfig,
+    expected_report_extension,
+    is_stored_report,
     match_vendor,
+    report_extension_mismatch,
 )
 from zdrovena.month_closing.preflight import pko_matches_month
 from zdrovena.month_closing.warehouse_audit import warehouse_issues
@@ -238,15 +241,18 @@ class MonthCloseInspector:
         all_names = {**inbox_by_name, **month_by_name}
 
         for report in FAKTUROWNIA_REPORTS:
-            found_name = next(
+            candidates = sorted(
                 (
                     name
                     for name in all_names
-                    if name == report["dest_name"] or fnmatch.fnmatch(name, report["glob"])
+                    if is_stored_report(report, name) or fnmatch.fnmatch(name, report["glob"])
                 ),
-                None,
+                # A PDF preview uploaded next to the real XML must not raise a false warning.
+                key=lambda name: report_extension_mismatch(report, name) is not None,
             )
+            found_name = candidates[0] if candidates else None
             status = "present" if found_name else "missing"
+            expected = expected_report_extension(report)
             documents.append(
                 build_document(
                     f"report-{report['name'].casefold().replace(' ', '-')}",
@@ -255,7 +261,8 @@ class MonthCloseInspector:
                     status,
                     source="Wgrany plik" if found_name else "Fakturownia UI",
                     file_key=all_names[found_name].key if found_name else None,
-                    message=found_name or "Pobierz raport i wgraj dla wybranego okresu.",
+                    message=found_name
+                    or f"Pobierz raport ({expected}) i wgraj dla wybranego okresu.",
                 )
             )
             if not found_name:
@@ -263,7 +270,16 @@ class MonthCloseInspector:
                     build_issue(
                         f"report-missing-{report['name']}",
                         "blocker",
-                        f"Brakuje raportu {report['name']}.",
+                        f"Brakuje raportu {report['name']} ({expected}).",
+                    )
+                )
+            elif report_extension_mismatch(report, found_name):
+                issues.append(
+                    build_issue(
+                        f"report-extension-{report['name']}",
+                        "warning",
+                        f"{report['name']}: plik {found_name} nie jest w formacie {expected}, "
+                        "którego oczekuje księgowa.",
                     )
                 )
 

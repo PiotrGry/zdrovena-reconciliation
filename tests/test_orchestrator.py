@@ -588,6 +588,59 @@ class TestStep3JpkReports:
             assert any("JPK" in s for s in orch.report.steps_completed)
 
 
+class TestStep3WrongFormatReports:
+    """A wrong-format copy (JPK_FA.pdf) is warned about elsewhere and must count as present here.
+
+    Treating it as missing would append "reports incomplete", which the web workflow
+    turns into a blocker — the opposite of the owner's warn-only decision.
+    """
+
+    def _live_orchestrator(self, tmp_path):
+        orch = _make_orchestrator(non_interactive=True)
+        orch.dry_run = False
+        orch.manage_state = False
+        orch.month_dir = tmp_path
+        orch.decl_dir = tmp_path / "deklaracje"
+        orch.storage = MagicMock()
+        orch.storage.list_files.return_value = []
+        return orch
+
+    def test_local_copy_counts_as_present(self, tmp_path):
+        orch = self._live_orchestrator(tmp_path)
+        (tmp_path / "JPK_FA.pdf").write_bytes(b"%PDF")
+        with patch(
+            "zdrovena.month_closing.orchestrator.FAKTUROWNIA_REPORTS",
+            [{"name": "JPK_FA", "dest_name": "JPK_FA.xml"}],
+        ):
+            orch._step_3_jpk_reports()
+
+        assert not orch.report.warnings
+        assert any("JPK" in s for s in orch.report.steps_completed)
+
+    def test_blob_copy_counts_as_present(self, tmp_path):
+        orch = self._live_orchestrator(tmp_path)
+        orch.storage.list_files.return_value = [
+            MagicMock(key=f"{orch._blob_prefix}/deklaracje/JPK_FA.pdf")
+        ]
+        with patch(
+            "zdrovena.month_closing.orchestrator.FAKTUROWNIA_REPORTS",
+            [{"name": "JPK_FA", "dest_name": "JPK_FA.xml"}],
+        ):
+            orch._step_3_jpk_reports()
+
+        assert not orch.report.warnings
+
+    def test_a_missing_report_is_still_incomplete(self, tmp_path):
+        orch = self._live_orchestrator(tmp_path)
+        with patch(
+            "zdrovena.month_closing.orchestrator.FAKTUROWNIA_REPORTS",
+            [{"name": "JPK_FA", "dest_name": "JPK_FA.xml"}],
+        ):
+            orch._step_3_jpk_reports()
+
+        assert any("reports incomplete" in w for w in orch.report.warnings)
+
+
 # ── execute modes ─────────────────────────────────────────────────────────────
 
 
