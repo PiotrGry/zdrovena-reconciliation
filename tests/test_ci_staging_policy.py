@@ -110,11 +110,39 @@ def test_staging_shutdown_uses_valid_bounded_teardown() -> None:
 
 
 def test_continuous_delivery_revalidates_exact_shas_at_each_mutation() -> None:
-    assert "VALIDATED_SHA" in CONTINUOUS_DELIVERY
+    assert "expected_sha" in CONTINUOUS_DELIVERY
     assert "--match-head-commit" in CONTINUOUS_DELIVERY
     assert "mergeStateStatus" in CONTINUOUS_DELIVERY
-    assert "expected_sha" in CONTINUOUS_DELIVERY
     assert "back_sync_ready" in CONTINUOUS_DELIVERY
+
+
+def test_continuous_delivery_polls_children_instead_of_chaining_their_workflow_runs() -> None:
+    assert CONTINUOUS_DELIVERY.count("await_dispatched_run()") == 2
+    assert "No $workflow run appeared for exact SHA $expected_sha" in CONTINUOUS_DELIVERY
+    assert '[[ "$conclusion" == "success" ]]' in CONTINUOUS_DELIVERY
+    assert "github.event.workflow_run.name == 'PR Validate" not in CONTINUOUS_DELIVERY
+    assert "github.event.workflow_run.name == 'Production Deploy" not in CONTINUOUS_DELIVERY
+
+
+def test_actions_token_merge_starts_release_only_after_exact_pr_is_merged() -> None:
+    assert "workflows: [Develop — Fast Gate]" in CONTINUOUS_DELIVERY
+    assert "github.event.workflow_run.event == 'pull_request'" in CONTINUOUS_DELIVERY
+    assert '[[ "$SOURCE_STATE" == "MERGED"' in CONTINUOUS_DELIVERY
+    assert '[[ "$(jq -r .headRefOid' in CONTINUOUS_DELIVERY
+    assert "PUSH_SHA=$(jq -r '.mergeCommit.oid'" in CONTINUOUS_DELIVERY
+
+
+def test_bot_created_prs_receive_status_only_after_exact_validation() -> None:
+    release_status = "-f context='CI Gate'"
+    back_sync_status = "-f context='Fast gate / Quality Gate'"
+    assert release_status in CONTINUOUS_DELIVERY
+    assert back_sync_status in CONTINUOUS_DELIVERY
+    assert CONTINUOUS_DELIVERY.index(
+        "await_dispatched_run pr-validate.yml"
+    ) < CONTINUOUS_DELIVERY.index(release_status)
+    assert CONTINUOUS_DELIVERY.index(
+        "await_dispatched_run develop-gate.yml"
+    ) < CONTINUOUS_DELIVERY.index(back_sync_status)
 
 
 def test_develop_auto_merge_never_executes_pull_request_code() -> None:
