@@ -112,7 +112,12 @@ def test_staging_shutdown_uses_valid_bounded_teardown() -> None:
 def test_continuous_delivery_revalidates_exact_shas_at_each_mutation() -> None:
     assert "expected_sha" in CONTINUOUS_DELIVERY
     assert "--match-head-commit" in CONTINUOUS_DELIVERY
-    assert "mergeStateStatus" in CONTINUOUS_DELIVERY
+    assert "--auto --merge" in CONTINUOUS_DELIVERY
+    assert "headRefOid,baseRefOid" in CONTINUOUS_DELIVERY
+    assert "mergeable" in CONTINUOUS_DELIVERY
+    # Back-sync still waits for GitHub's clean state because its coordinator
+    # runs on main, not on the PR head. The release path must not self-block.
+    assert CONTINUOUS_DELIVERY.count("mergeStateStatus") == 2
     assert "back_sync_ready" in CONTINUOUS_DELIVERY
 
 
@@ -132,17 +137,52 @@ def test_actions_token_merge_starts_release_only_after_exact_pr_is_merged() -> N
     assert "PUSH_SHA=$(jq -r '.mergeCommit.oid'" in CONTINUOUS_DELIVERY
 
 
+def test_ignored_workflow_run_cannot_cancel_an_active_release() -> None:
+    assert (
+        "cancel-in-progress: ${{ github.event_name == 'push' || "
+        "github.event_name == 'workflow_dispatch' }}"
+    ) in CONTINUOUS_DELIVERY
+    assert "github.event_name != 'repository_dispatch'" not in CONTINUOUS_DELIVERY
+
+
+def test_workflow_run_uses_durable_pr_number_before_commit_lookup() -> None:
+    assert (
+        "PR_GATE_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}"
+        in CONTINUOUS_DELIVERY
+    )
+    assert 'SOURCE_PR="$PR_GATE_NUMBER"' in CONTINUOUS_DELIVERY
+    assert CONTINUOUS_DELIVERY.index('SOURCE_PR="$PR_GATE_NUMBER"') < (
+        CONTINUOUS_DELIVERY.index("repos/${{ github.repository }}/commits/$PR_GATE_SHA/pulls")
+    )
+    assert "--json state,baseRefName,headRefOid,mergeCommit" in CONTINUOUS_DELIVERY
+    assert "$(jq -r .baseRefName" in CONTINUOUS_DELIVERY
+
+
 def test_bot_created_prs_receive_status_only_after_exact_validation() -> None:
-    release_status = "-f context='CI Gate'"
+    release_status = "-f context='Release Gate'"
     back_sync_status = "-f context='Fast gate / Quality Gate'"
     assert release_status in CONTINUOUS_DELIVERY
     assert back_sync_status in CONTINUOUS_DELIVERY
     assert CONTINUOUS_DELIVERY.index(
-        "await_dispatched_run pr-validate.yml"
+        "await_dispatched_run release-validation.yml"
     ) < CONTINUOUS_DELIVERY.index(release_status)
     assert CONTINUOUS_DELIVERY.index(
         "await_dispatched_run develop-gate.yml"
     ) < CONTINUOUS_DELIVERY.index(back_sync_status)
+
+
+def test_release_gate_combines_quality_and_full_acceptance() -> None:
+    assert "uses: ./.github/workflows/_quality-gate.yml" in RELEASE_VALIDATION
+    assert "uses: ./.github/workflows/_full-test-suite.yml" in RELEASE_VALIDATION
+    assert "needs: [quality-gate, acceptance]" in RELEASE_VALIDATION
+    assert '[[ "$QUALITY" == "success" ]]' in RELEASE_VALIDATION
+    assert '[[ "$ACCEPTANCE" == "success" ]]' in RELEASE_VALIDATION
+
+
+def test_release_validation_does_not_compete_with_pr_validation() -> None:
+    assert "--workflow release-validation.yml" in CONTINUOUS_DELIVERY
+    assert "gh workflow run release-validation.yml" in CONTINUOUS_DELIVERY
+    assert "gh workflow run pr-validate.yml" not in CONTINUOUS_DELIVERY
 
 
 def test_develop_auto_merge_never_executes_pull_request_code() -> None:

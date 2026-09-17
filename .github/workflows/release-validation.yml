@@ -1,8 +1,9 @@
 name: Release validation (on demand)
 
-# A full isolated staging run for an explicitly selected ref. There is no
-# schedule: release PRs invoke the same reusable suite automatically, while an
-# operator can run this workflow when an additional validation is useful.
+# The authoritative release validation for one exact ref. It combines the
+# deterministic quality gate with an isolated staging smoke/E2E run. The CD
+# coordinator publishes `Release Gate` only after this complete workflow has
+# succeeded for the expected SHA.
 
 on:
   workflow_dispatch:
@@ -11,17 +12,47 @@ permissions:
   contents: read
   pull-requests: write
   id-token: write
+  security-events: write
 
 concurrency:
   group: release-validation-on-demand
   cancel-in-progress: false
 
 jobs:
+  quality-gate:
+    name: Release quality gate
+    uses: ./.github/workflows/_quality-gate.yml
+    secrets: inherit
+
   acceptance:
     name: Full on-demand staging validation
+    needs: quality-gate
     uses: ./.github/workflows/_full-test-suite.yml
     with:
       backend_changed: "true"
       frontend_changed: "true"
       preview_environment: on-demand-${{ github.run_id }}
     secrets: inherit
+
+  release-gate:
+    name: Release Gate
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: [quality-gate, acceptance]
+    steps:
+      - name: Require quality, smoke and E2E success
+        env:
+          QUALITY: ${{ needs.quality-gate.result }}
+          ACCEPTANCE: ${{ needs.acceptance.result }}
+        run: |
+          set -euo pipefail
+          [[ "$QUALITY" == "success" ]] || {
+            echo "::error::Release quality gate finished as $QUALITY."
+            exit 1
+          }
+          [[ "$ACCEPTANCE" == "success" ]] || {
+            echo "::error::Release acceptance suite finished as $ACCEPTANCE."
+            exit 1
+          }
+          echo "Exact-SHA release validation passed."
