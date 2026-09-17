@@ -116,11 +116,20 @@ def test_continuous_delivery_revalidates_exact_shas_at_each_mutation() -> None:
     assert "back_sync_ready" in CONTINUOUS_DELIVERY
 
 
-def test_continuous_delivery_waits_for_child_runs_without_workflow_run_chaining() -> None:
-    assert "workflow_run:" not in CONTINUOUS_DELIVERY
+def test_continuous_delivery_polls_children_instead_of_chaining_their_workflow_runs() -> None:
     assert CONTINUOUS_DELIVERY.count("await_dispatched_run()") == 2
     assert "No $workflow run appeared for exact SHA $expected_sha" in CONTINUOUS_DELIVERY
     assert '[[ "$conclusion" == "success" ]]' in CONTINUOUS_DELIVERY
+    assert "github.event.workflow_run.name == 'PR Validate" not in CONTINUOUS_DELIVERY
+    assert "github.event.workflow_run.name == 'Production Deploy" not in CONTINUOUS_DELIVERY
+
+
+def test_actions_token_merge_starts_release_only_after_exact_pr_is_merged() -> None:
+    assert "workflows: [Develop — Fast Gate]" in CONTINUOUS_DELIVERY
+    assert "github.event.workflow_run.event == 'pull_request'" in CONTINUOUS_DELIVERY
+    assert '[[ "$SOURCE_STATE" == "MERGED"' in CONTINUOUS_DELIVERY
+    assert '[[ "$(jq -r .headRefOid' in CONTINUOUS_DELIVERY
+    assert "PUSH_SHA=$(jq -r '.mergeCommit.oid'" in CONTINUOUS_DELIVERY
 
 
 def test_bot_created_prs_receive_status_only_after_exact_validation() -> None:
