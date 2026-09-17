@@ -1,12 +1,9 @@
-name: Staging keep-alive schedule
+name: Staging on-demand control
 
-# Scale staging to 0 replicas at 22:00 UTC (midnight CEST) Mon–Fri.
-# Staging is warmed back up by the warm-staging job in _full-test-suite.yml
-# at the start of every CI pipeline run.
+# Staging is normally provisioned and torn down by _full-test-suite.yml.
+# This workflow exists only for explicit operator recovery or diagnostics.
 
 on:
-  schedule:
-    - cron: "0 22 * * 1-5"
   workflow_dispatch:
     inputs:
       action:
@@ -38,7 +35,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Shut down staging (scale to 0)
-        if: github.event_name == 'schedule' || github.event.inputs.action == 'shutdown'
+        if: github.event.inputs.action == 'shutdown'
         run: |
           bash scripts/ci/teardown-staging.sh zdrovena-api-staging zdrovena-rg
           bash scripts/ci/teardown-staging.sh zdrovena-fake-providers-staging zdrovena-rg

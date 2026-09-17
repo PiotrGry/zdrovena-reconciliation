@@ -23,6 +23,10 @@ on:
         description: "True if frontend code changed (from quality-gate detect-changes)"
         type: string
         default: ""
+      preview_environment:
+        description: "Isolated SWA preview environment name"
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -205,8 +209,7 @@ jobs:
     needs: [detect-changes]
     if: needs.detect-changes.outputs.frontend == 'true'
     outputs:
-      # SWA action creates env named after PR number (e.g. 47 → icy-water-0e2b04d03-47.westeurope.7.azurestaticapps.net)
-      swa-url: "https://icy-water-0e2b04d03-${{ github.event.pull_request.number }}.westeurope.7.azurestaticapps.net"
+      swa-url: ${{ steps.swa-deploy.outputs.static_web_app_url }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -244,6 +247,7 @@ jobs:
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
       - name: Deploy to SWA staging
+        id: swa-deploy
         uses: Azure/static-web-apps-deploy@1a947af9992250f3bc2e68ad0754c0b0c11566c9 # v1
         with:
           azure_static_web_apps_api_token: ${{ steps.swa-token.outputs.token }}
@@ -252,11 +256,16 @@ jobs:
           app_location: frontend/dist
           output_location: ""
           skip_app_build: true
+          deployment_environment: ${{ inputs.preview_environment }}
 
       - name: Wait for SWA staging readiness
         env:
-          SWA_URL: https://icy-water-0e2b04d03-${{ github.event.pull_request.number }}.westeurope.7.azurestaticapps.net
+          SWA_URL: ${{ steps.swa-deploy.outputs.static_web_app_url }}
         run: |
+          if [[ -z "$SWA_URL" ]]; then
+            echo "::error::SWA deployment did not return a preview URL."
+            exit 1
+          fi
           for attempt in $(seq 1 30); do
             HTTP_STATUS=$(curl -sS \
               --connect-timeout 5 \
@@ -524,7 +533,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [smoke, e2e]
-    if: always()
+    if: always() && github.event_name == 'pull_request'
     steps:
       - name: Post result comment
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -566,11 +575,9 @@ jobs:
     name: Teardown staging
     runs-on: ubuntu-latest
     # Teardown is cost control, not correctness: it scales staging to zero and
-    # deletes the SWA environment. If it fails, staging stays warm and the
-    # nightly `Staging keep-alive schedule` cron (22:00 Mon-Fri) cleans it up.
-    # Blocking a production release on that would mean a slow Azure login can
-    # hold back a fix the operator is waiting for — which is exactly what
-    # happened on PR #337, where azure/login alone took 4m49s of a 5m budget.
+    # deletes the isolated SWA environment. If it fails, the run remains green
+    # because teardown is cost control, while the failure is still visible in
+    # this job for an operator to retry from the on-demand staging controls.
     continue-on-error: true
     # Sized for a slow OIDC login, not for the ~20s of actual `az` work.
     timeout-minutes: 12
@@ -600,10 +607,10 @@ jobs:
         env:
           SWA_NAME: ${{ secrets.AZURE_SWA_NAME }}
           SWA_RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
-          PR_NUM: ${{ github.event.pull_request.number }}
+          PREVIEW_ENV: ${{ inputs.preview_environment }}
         run: |
           az staticwebapp environment delete \
             --name "$SWA_NAME" \
             --resource-group "$SWA_RG" \
-            --environment-name "$PR_NUM" \
-            --yes 2>/dev/null || echo "SWA env $PR_NUM already gone or not found — OK"
+            --environment-name "$PREVIEW_ENV" \
+            --yes 2>/dev/null || echo "SWA env $PREVIEW_ENV already gone or not found — OK"
