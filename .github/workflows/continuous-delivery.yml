@@ -30,7 +30,11 @@ permissions:
 
 concurrency:
   group: cd-${{ github.event_name == 'repository_dispatch' && 'back-sync' || 'release' }}
-  cancel-in-progress: ${{ github.event_name != 'repository_dispatch' }}
+  # A newer develop push or an explicit operator retry supersedes an older
+  # release. workflow_run is also used as a recovery signal, but many completed
+  # Fast Gates are intentionally ignored by the release job; those no-op runs
+  # must never cancel a real delivery already in progress.
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
   release:

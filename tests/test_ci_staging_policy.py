@@ -137,6 +137,14 @@ def test_actions_token_merge_starts_release_only_after_exact_pr_is_merged() -> N
     assert "PUSH_SHA=$(jq -r '.mergeCommit.oid'" in CONTINUOUS_DELIVERY
 
 
+def test_ignored_workflow_run_cannot_cancel_an_active_release() -> None:
+    assert (
+        "cancel-in-progress: ${{ github.event_name == 'push' || "
+        "github.event_name == 'workflow_dispatch' }}"
+    ) in CONTINUOUS_DELIVERY
+    assert "github.event_name != 'repository_dispatch'" not in CONTINUOUS_DELIVERY
+
+
 def test_bot_created_prs_receive_status_only_after_exact_validation() -> None:
     release_status = "-f context='Release Gate'"
     back_sync_status = "-f context='Fast gate / Quality Gate'"
