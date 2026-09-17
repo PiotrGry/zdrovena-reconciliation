@@ -152,12 +152,10 @@ def test_workflow_run_uses_durable_pr_number_before_commit_lookup() -> None:
     )
     assert 'SOURCE_PR="$PR_GATE_NUMBER"' in CONTINUOUS_DELIVERY
     assert CONTINUOUS_DELIVERY.index('SOURCE_PR="$PR_GATE_NUMBER"') < (
-        CONTINUOUS_DELIVERY.index(
-            'repos/${{ github.repository }}/commits/$PR_GATE_SHA/pulls'
-        )
+        CONTINUOUS_DELIVERY.index("repos/${{ github.repository }}/commits/$PR_GATE_SHA/pulls")
     )
     assert "--json state,baseRefName,headRefOid,mergeCommit" in CONTINUOUS_DELIVERY
-    assert '$(jq -r .baseRefName' in CONTINUOUS_DELIVERY
+    assert "$(jq -r .baseRefName" in CONTINUOUS_DELIVERY
 
 
 def test_bot_created_prs_receive_status_only_after_exact_validation() -> None:
