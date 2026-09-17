@@ -12,6 +12,19 @@ on:
       - "Dockerfile"
       - "frontend/**"
   workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "Exact current main SHA approved by the release coordinator"
+        required: true
+        type: string
+      backend_changed:
+        description: "Deploy backend runtime"
+        required: true
+        type: boolean
+      frontend_changed:
+        description: "Deploy frontend runtime"
+        required: true
+        type: boolean
 
 permissions:
   contents: write  # release job pushes version bump + creates GitHub Release
@@ -22,15 +35,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  authorize:
+    name: Authorize exact main release
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - name: Require an exact current main SHA
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_REF" != "refs/heads/main" ]]; then
+            echo "::error::Production may only be deployed from refs/heads/main; got $RELEASE_REF."
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ -z "$EXPECTED_SHA" || "$EXPECTED_SHA" != "$RELEASE_SHA" ]]; then
+              echo "::error::Dispatched release SHA does not match the exact current main SHA."
+              exit 1
+            fi
+          fi
+          echo "Authorized production release $RELEASE_SHA from main."
+
   detect-changes:
     name: Detect deployable areas
+    needs: authorize
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
       contents: read
     outputs:
-      backend: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.backend_runtime }}
-      frontend: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.frontend }}
+      backend: ${{ github.event_name == 'workflow_dispatch' && inputs.backend_changed || steps.filter.outputs.backend_runtime }}
+      frontend: ${{ github.event_name == 'workflow_dispatch' && inputs.frontend_changed || steps.filter.outputs.frontend }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: filter
@@ -41,7 +82,8 @@ jobs:
 
   deploy:
     name: Deploy
-    needs: detect-changes
+    needs: [authorize, detect-changes]
+    if: needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.frontend == 'true'
     uses: ./.github/workflows/_deploy.yml
     with:
       backend_changed: ${{ needs.detect-changes.outputs.backend == 'true' }}

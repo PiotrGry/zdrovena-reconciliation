@@ -63,6 +63,7 @@ jobs:
     with:
       backend_changed: ${{ needs.quality-gate.outputs.backend_runtime }}
       frontend_changed: ${{ needs.quality-gate.outputs.frontend }}
+      preview_environment: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('on-demand-{0}', github.run_id) }}
     secrets: inherit
 
   ci-gate:

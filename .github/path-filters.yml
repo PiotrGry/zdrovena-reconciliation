@@ -15,8 +15,7 @@ frontend:
 infra:
   - 'infra/terraform/**'
 staging:
-  - '.github/workflows/_full-test-suite.yml'
-  - '.github/workflows/pr-validate.yml'
+  - '.github/workflows/**'
   - 'scripts/ci/**'
   - 'scripts/smoke/**'
   - 'scripts/validate-staging-ci.sh'

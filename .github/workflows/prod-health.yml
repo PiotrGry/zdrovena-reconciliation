@@ -21,22 +21,56 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Check /health
+      - name: Verify production health and immutable revisions
         env:
           NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+          PROD_APP: zdrovena-api-prod
+          PROD_RG: zdrovena-rg
+          SWA_NAME: ${{ secrets.AZURE_SWA_NAME }}
+          SWA_RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
         run: |
-          FQDN=$(az containerapp show \
-            --name zdrovena-api-prod \
-            --resource-group zdrovena-rg \
-            --query properties.configuration.ingress.fqdn -o tsv)
-          HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://$FQDN/health")
-          if [[ "$HTTP" != "200" && "$HTTP" != "401" ]]; then
-            echo "FAIL: /health returned $HTTP"
-            if [ -n "$NOTIFY_WEBHOOK_URL" ]; then
-              curl -sf -X POST "$NOTIFY_WEBHOOK_URL" \
-                -H "Content-Type: application/json" \
-                -d "{\"text\":\"🚨 Production /health returned $HTTP\"}"
+          set -euo pipefail
+
+          fail() {
+            local message="$1"
+            echo "::error::$message"
+            if [[ -n "$NOTIFY_WEBHOOK_URL" ]]; then
+              jq -n --arg text "🚨 $message" '{text: $text}' \
+                | curl -fsS -X POST "$NOTIFY_WEBHOOK_URL" \
+                    -H "Content-Type: application/json" --data-binary @- || true
             fi
             exit 1
-          fi
-          echo "PASS: /health → $HTTP"
+          }
+
+          FQDN=$(az containerapp show \
+            --name "$PROD_APP" \
+            --resource-group "$PROD_RG" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          [[ -n "$FQDN" ]] || fail "Production API hostname is missing."
+
+          HTTP=$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 10 \
+            "https://$FQDN/health" || true)
+          [[ "$HTTP" == "200" ]] || fail "Production /health returned HTTP ${HTTP:-000}; expected 200."
+          jq -e '.status == "ok" and (.version | type == "string" and length > 0)' \
+            /tmp/health.json >/dev/null \
+            || fail "Production /health returned an invalid status/version payload."
+
+          BACKEND_IMAGE=$(az containerapp show \
+            --name "$PROD_APP" --resource-group "$PROD_RG" \
+            --query 'properties.template.containers[0].image' -o tsv)
+          [[ "$BACKEND_IMAGE" =~ :[0-9a-f]{40}$ ]] \
+            || fail "Production backend is not pinned to an immutable 40-character Git SHA image."
+
+          SWA_HOST=$(az staticwebapp show \
+            --name "$SWA_NAME" --resource-group "$SWA_RG" \
+            --query defaultHostname -o tsv)
+          [[ -n "$SWA_HOST" ]] || fail "Production frontend hostname is missing."
+          FRONTEND_SHA=$(curl -fsS --max-time 10 "https://$SWA_HOST/version.json" \
+            | jq -r '.git_sha // empty') \
+            || fail "Production frontend version.json is unavailable or invalid."
+          [[ "$FRONTEND_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || fail "Production frontend does not expose an immutable 40-character Git SHA."
+
+          echo "PASS: /health → 200, API version $(jq -r .version /tmp/health.json)"
+          echo "PASS: backend image → ${BACKEND_IMAGE##*:}"
+          echo "PASS: frontend version → $FRONTEND_SHA"

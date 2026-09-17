@@ -216,16 +216,28 @@ jobs:
       - name: Smoke public SWA route with propagation retry
         env:
           CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
+          EXPECTED_SHA: ${{ github.sha }}
           SWA_NAME: ${{ secrets.AZURE_SWA_NAME }}
           SWA_RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
         run: |
+          set -euo pipefail
           SWA_URL=$(az staticwebapp show \
             --name "$SWA_NAME" --resource-group "$SWA_RG" \
             --query defaultHostname -o tsv)
           for attempt in 1 2 3 4 5 6; do
             echo "SWA smoke attempt $attempt/6"
             if bash scripts/ci/smoke-test.sh "https://$SWA_URL" "$CLIENT_ID"; then
-              exit 0
+              if [[ "${{ inputs.frontend_changed }}" == "true" ]]; then
+                VERSION_SHA=$(curl -fsS --max-time 10 "https://$SWA_URL/version.json" | jq -r '.git_sha // empty')
+                if [[ "$VERSION_SHA" != "$EXPECTED_SHA" ]]; then
+                  echo "::error::Frontend version mismatch: expected $EXPECTED_SHA, got ${VERSION_SHA:-missing}."
+                else
+                  echo "Verified frontend SHA $VERSION_SHA."
+                  exit 0
+                fi
+              else
+                exit 0
+              fi
             fi
             if [[ "$attempt" -lt 6 ]]; then
               echo "SWA/backend link may still be propagating; retrying in 10s."
@@ -262,7 +274,25 @@ jobs:
         continue-on-error: true
         env:
           CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
+          EXPECTED_IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:${{ github.sha }}
         run: |
+          set -euo pipefail
+          DEPLOYED_IMAGE=$(az containerapp show \
+            --name "$PROD_APP" --resource-group "$RG" \
+            --query properties.template.containers[0].image -o tsv)
+          POLLER_IMAGE=$(az containerapp job show \
+            --name zdrovena-allegro-poller --resource-group "$RG" \
+            --query properties.template.containers[0].image -o tsv)
+          if [[ "$DEPLOYED_IMAGE" != "$EXPECTED_IMAGE" ]]; then
+            echo "::error::Backend image mismatch: expected $EXPECTED_IMAGE, got ${DEPLOYED_IMAGE:-missing}."
+            exit 1
+          fi
+          if [[ "$POLLER_IMAGE" != "$EXPECTED_IMAGE" ]]; then
+            echo "::error::Poller image mismatch: expected $EXPECTED_IMAGE, got ${POLLER_IMAGE:-missing}."
+            exit 1
+          fi
+          echo "Verified backend and poller image $EXPECTED_IMAGE."
+
           FQDN=$(az containerapp show \
             --name "$PROD_APP" --resource-group "$RG" \
             --query properties.configuration.ingress.fqdn -o tsv)
