@@ -100,24 +100,6 @@ jobs:
             return 1
           }
 
-          wait_until_clean() {
-            local pr_number="$1" state
-            for _ in $(seq 1 18); do
-              state=$(gh pr view "$pr_number" --repo "${{ github.repository }}" \
-                --json mergeStateStatus --jq .mergeStateStatus)
-              if [[ "$state" == "CLEAN" ]]; then
-                return 0
-              fi
-              if [[ "$state" == "DIRTY" ]]; then
-                echo "::error::PR #$pr_number has merge conflicts."
-                return 1
-              fi
-              sleep 5
-            done
-            echo "::error::PR #$pr_number did not become mergeable (last state=$state)."
-            return 1
-          }
-
           if [[ "$EVENT_NAME" == "workflow_run" ]]; then
             case "$PR_GATE_BRANCH" in
               feat/*|feature/*|fix/*|bugfix/*|hotfix/*|pirx/*|codex/*|claude/*) ;;
@@ -198,25 +180,62 @@ jobs:
             esac
           done < <(gh pr diff "$PR_NUMBER" --repo "${{ github.repository }}" --name-only)
 
-          BASELINE=$(gh run list --repo "${{ github.repository }}" --workflow pr-validate.yml \
+          BASELINE=$(gh run list --repo "${{ github.repository }}" --workflow release-validation.yml \
             --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // 0')
-          gh workflow run pr-validate.yml --repo "${{ github.repository }}" --ref develop
-          await_dispatched_run pr-validate.yml develop "$CURRENT_DEVELOP" "$BASELINE"
+          gh workflow run release-validation.yml --repo "${{ github.repository }}" --ref develop
+          await_dispatched_run release-validation.yml develop "$CURRENT_DEVELOP" "$BASELINE"
 
           [[ "$(gh api repos/${{ github.repository }}/git/ref/heads/develop --jq .object.sha)" == "$CURRENT_DEVELOP" ]] || {
             echo "A newer develop SHA exists after validation; refusing a stale merge."
             exit 0
           }
           gh api --method POST "repos/${{ github.repository }}/statuses/$CURRENT_DEVELOP" \
-            -f state=success -f context='CI Gate' \
+            -f state=success -f context='Release Gate' \
             -f description='Exact-SHA release validation passed' \
             -f target_url="$VALIDATION_URL" >/dev/null
-          wait_until_clean "$PR_NUMBER"
-          gh pr merge "$PR_NUMBER" --repo "${{ github.repository }}" \
-            --merge --match-head-commit "$CURRENT_DEVELOP"
 
-          MERGED_SHA=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
-            --json mergeCommit --jq '.mergeCommit.oid')
+          PR_JSON=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
+            --json state,mergeable,headRefOid,baseRefOid)
+          [[ "$(jq -r .state <<<"$PR_JSON")" == "OPEN" ]] || {
+            echo "::error::Release PR #$PR_NUMBER is no longer open."
+            exit 1
+          }
+          [[ "$(jq -r .mergeable <<<"$PR_JSON")" == "MERGEABLE" ]] || {
+            echo "::error::Release PR #$PR_NUMBER is conflicting or has unknown mergeability."
+            exit 1
+          }
+          [[ "$(jq -r .headRefOid <<<"$PR_JSON")" == "$CURRENT_DEVELOP" ]] || {
+            echo "::error::Release PR head changed after exact-SHA validation."
+            exit 1
+          }
+          [[ "$(jq -r .baseRefOid <<<"$PR_JSON")" == "$(gh api repos/${{ github.repository }}/git/ref/heads/main --jq .object.sha)" ]] || {
+            echo "::error::Main changed after exact-SHA validation; refusing a stale merge."
+            exit 1
+          }
+          gh pr merge "$PR_NUMBER" --repo "${{ github.repository }}" \
+            --auto --merge --match-head-commit "$CURRENT_DEVELOP"
+
+          for _ in $(seq 1 120); do
+            PR_JSON=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
+              --json state,headRefOid,mergeCommit)
+            [[ "$(jq -r .headRefOid <<<"$PR_JSON")" == "$CURRENT_DEVELOP" ]] || {
+              echo "::error::Release PR changed while waiting for protected auto-merge."
+              exit 1
+            }
+            PR_STATE=$(jq -r .state <<<"$PR_JSON")
+            [[ "$PR_STATE" == "MERGED" ]] && break
+            [[ "$PR_STATE" == "CLOSED" ]] && {
+              echo "::error::Release PR closed without merge."
+              exit 1
+            }
+            sleep 5
+          done
+          [[ "$PR_STATE" == "MERGED" ]] || {
+            echo "::error::Release PR was not merged within the bounded wait."
+            exit 1
+          }
+
+          MERGED_SHA=$(jq -r '.mergeCommit.oid' <<<"$PR_JSON")
           [[ -n "$MERGED_SHA" && "$MERGED_SHA" == "$(gh api repos/${{ github.repository }}/git/ref/heads/main --jq .object.sha)" ]] || {
             echo "::error::Merged release SHA is not the exact current main SHA."
             exit 1
