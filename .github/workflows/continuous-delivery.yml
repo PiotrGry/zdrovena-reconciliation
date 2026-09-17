@@ -12,6 +12,12 @@ name: Continuous Delivery Coordinator
 on:
   push:
     branches: [develop]
+  # A merge performed by GITHUB_TOKEN does not emit a new push workflow. The
+  # completed PR Fast Gate is therefore also an entry signal. The release job
+  # waits until that exact PR is actually merged before doing any work.
+  workflow_run:
+    workflows: [Develop — Fast Gate]
+    types: [completed]
   repository_dispatch:
     types: [back_sync_ready]
   workflow_dispatch:
@@ -29,7 +35,12 @@ concurrency:
 jobs:
   release:
     name: Validate, merge and deploy the release candidate
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -38,6 +49,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           PUSH_SHA: ${{ github.sha }}
+          PR_GATE_SHA: ${{ github.event.workflow_run.head_sha }}
+          PR_GATE_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           set -euo pipefail
 
@@ -105,8 +118,48 @@ jobs:
             return 1
           }
 
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            case "$PR_GATE_BRANCH" in
+              feat/*|feature/*|fix/*|bugfix/*|hotfix/*|pirx/*|codex/*|claude/*) ;;
+              *)
+                echo "Fast Gate branch $PR_GATE_BRANCH is not managed by trusted auto-merge."
+                exit 0
+                ;;
+            esac
+
+            SOURCE_PR=$(gh api "repos/${{ github.repository }}/commits/$PR_GATE_SHA/pulls" \
+              --jq '[.[] | select(.base.ref == "develop" and .head.sha == "'"$PR_GATE_SHA"'")] | .[0].number // empty')
+            [[ -n "$SOURCE_PR" ]] || {
+              echo "No develop PR is associated with green SHA $PR_GATE_SHA."
+              exit 0
+            }
+
+            for _ in $(seq 1 120); do
+              SOURCE_JSON=$(gh pr view "$SOURCE_PR" --repo "${{ github.repository }}" \
+                --json state,headRefOid,mergeCommit)
+              [[ "$(jq -r .headRefOid <<<"$SOURCE_JSON")" == "$PR_GATE_SHA" ]] || {
+                echo "PR #$SOURCE_PR changed after its green Fast Gate; waiting for the newer run."
+                exit 0
+              }
+              SOURCE_STATE=$(jq -r .state <<<"$SOURCE_JSON")
+              if [[ "$SOURCE_STATE" == "MERGED" ]]; then
+                PUSH_SHA=$(jq -r '.mergeCommit.oid' <<<"$SOURCE_JSON")
+                break
+              fi
+              if [[ "$SOURCE_STATE" == "CLOSED" ]]; then
+                echo "PR #$SOURCE_PR was closed without merge."
+                exit 0
+              fi
+              sleep 5
+            done
+            [[ "$SOURCE_STATE" == "MERGED" && -n "${PUSH_SHA:-}" ]] || {
+              echo "PR #$SOURCE_PR was not auto-merged within the bounded wait."
+              exit 0
+            }
+          fi
+
           CURRENT_DEVELOP=$(gh api repos/${{ github.repository }}/git/ref/heads/develop --jq .object.sha)
-          if [[ "$EVENT_NAME" == "push" && "$PUSH_SHA" != "$CURRENT_DEVELOP" ]]; then
+          if [[ "$EVENT_NAME" != "workflow_dispatch" && "$PUSH_SHA" != "$CURRENT_DEVELOP" ]]; then
             echo "A newer develop SHA exists; this run is stale."
             exit 0
           fi
