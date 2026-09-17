@@ -1,0 +1,44 @@
+name: Auto-merge trusted PRs to develop
+
+# This workflow never checks out or executes pull-request code. It only enables
+# native auto-merge for trusted, same-repository worker branches. The protected
+# develop ruleset remains the authority: Fast Gate must pass on the exact head
+# SHA and the branch must be current before GitHub can merge it.
+
+on:
+  pull_request_target:
+    branches: [develop]
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable-auto-merge:
+    name: Enable auto-merge after Fast Gate
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require a bounded worker branch and enable squash merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          case "$HEAD_BRANCH" in
+            feat/*|feature/*|fix/*|bugfix/*|hotfix/*|pirx/*|codex/*|claude/*)
+              ;;
+            *)
+              echo "Branch $HEAD_BRANCH is not an approved worker branch; leaving merge manual."
+              exit 0
+              ;;
+          esac
+          gh pr merge "$PR_URL" --auto --squash --match-head-commit "$HEAD_SHA"
+          echo "Auto-merge enabled for exact head $HEAD_SHA; Fast Gate remains mandatory."

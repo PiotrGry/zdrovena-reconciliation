@@ -1,0 +1,244 @@
+name: Continuous Delivery Coordinator
+
+# Deterministic release state machine:
+#   develop push -> release PR -> exact CI Gate -> merge main
+#   -> exact production deploy -> audited back-sync to develop.
+# Every transition revalidates branch and SHA state before it mutates GitHub.
+
+on:
+  push:
+    branches: [develop]
+  workflow_run:
+    workflows:
+      - PR Validate — develop → main
+      - Production Deploy
+      - Develop — Fast Gate
+    types: [completed]
+  repository_dispatch:
+    types: [back_sync_ready]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: cd-${{ github.event_name == 'push' && 'develop' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  prepare-release:
+    name: Prepare develop release candidate
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Create or reuse the release PR and start exact validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          CURRENT_DEVELOP=$(gh api repos/${{ github.repository }}/git/ref/heads/develop --jq .object.sha)
+          CURRENT_MAIN=$(gh api repos/${{ github.repository }}/git/ref/heads/main --jq .object.sha)
+          if [[ "$EVENT_NAME" == "push" && "$PUSH_SHA" != "$CURRENT_DEVELOP" ]]; then
+            echo "A newer develop SHA exists; this run is stale and will not create a candidate."
+            exit 0
+          fi
+
+          AHEAD=$(gh api repos/${{ github.repository }}/compare/main...develop --jq .ahead_by)
+          if [[ "$AHEAD" == "0" ]]; then
+            echo "develop has no commits to release."
+            exit 0
+          fi
+
+          PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" \
+            --base main --head develop --state open --json number --jq '.[0].number // empty')
+          if [[ -z "$PR_NUMBER" ]]; then
+            PR_URL=$(gh pr create --repo "${{ github.repository }}" \
+              --base main --head develop \
+              --title "release: develop → main" \
+              --body "Automated release candidate for exact develop SHA \`$CURRENT_DEVELOP\`. Validation and merge are controlled by the Continuous Delivery Coordinator (#432).")
+            PR_NUMBER=${PR_URL##*/}
+          fi
+
+          PR_HEAD=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)
+          if [[ "$PR_HEAD" != "$CURRENT_DEVELOP" ]]; then
+            echo "::error::Release PR head $PR_HEAD does not match current develop $CURRENT_DEVELOP."
+            exit 1
+          fi
+
+          gh workflow run pr-validate.yml --repo "${{ github.repository }}" --ref develop
+          echo "Release PR #$PR_NUMBER is awaiting CI Gate for $CURRENT_DEVELOP (main=$CURRENT_MAIN)."
+
+  merge-release:
+    name: Merge the exact green release and dispatch deployment
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.name == 'PR Validate — develop → main' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Reconcile the green SHA, merge once, and continue shipment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          CURRENT_DEVELOP=$(gh api repos/${{ github.repository }}/git/ref/heads/develop --jq .object.sha)
+          if [[ "$VALIDATED_SHA" != "$CURRENT_DEVELOP" ]]; then
+            echo "A newer develop SHA exists; validated $VALIDATED_SHA is stale."
+            exit 0
+          fi
+
+          PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" \
+            --base main --head develop --state open --json number --jq '.[0].number // empty')
+          [[ -n "$PR_NUMBER" ]] || { echo "::error::No open develop → main release PR."; exit 1; }
+
+          PR_JSON=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
+            --json baseRefName,headRefName,headRefOid,mergeStateStatus,state)
+          PR_HEAD=$(jq -r .headRefOid <<<"$PR_JSON")
+          MERGE_STATE=$(jq -r .mergeStateStatus <<<"$PR_JSON")
+          if [[ "$PR_HEAD" != "$VALIDATED_SHA" ]]; then
+            echo "::error::Release PR head $PR_HEAD differs from validated SHA $VALIDATED_SHA."
+            exit 1
+          fi
+          if [[ "$MERGE_STATE" != "CLEAN" ]]; then
+            echo "::error::Release PR is not current and clean (mergeStateStatus=$MERGE_STATE)."
+            exit 1
+          fi
+
+          BACKEND_CHANGED=false
+          FRONTEND_CHANGED=false
+          while IFS= read -r path; do
+            case "$path" in
+              zdrovena/*|pyproject.toml|Dockerfile) BACKEND_CHANGED=true ;;
+            esac
+            case "$path" in
+              frontend/*) FRONTEND_CHANGED=true ;;
+            esac
+          done < <(gh pr diff "$PR_NUMBER" --repo "${{ github.repository }}" --name-only)
+
+          gh pr merge "$PR_NUMBER" --repo "${{ github.repository }}" \
+            --merge --match-head-commit "$VALIDATED_SHA"
+          MERGED_SHA=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
+            --json mergeCommit --jq '.mergeCommit.oid')
+          CURRENT_MAIN=$(gh api repos/${{ github.repository }}/git/ref/heads/main --jq .object.sha)
+          if [[ -z "$MERGED_SHA" || "$MERGED_SHA" != "$CURRENT_MAIN" ]]; then
+            echo "::error::Merged release SHA is not the exact current main SHA."
+            exit 1
+          fi
+
+          if [[ "$BACKEND_CHANGED" == "true" || "$FRONTEND_CHANGED" == "true" ]]; then
+            gh workflow run prod-deploy.yml --repo "${{ github.repository }}" --ref main \
+              -f expected_sha="$MERGED_SHA" \
+              -f backend_changed="$BACKEND_CHANGED" \
+              -f frontend_changed="$FRONTEND_CHANGED"
+            echo "Dispatched production deploy for main $MERGED_SHA (backend=$BACKEND_CHANGED, frontend=$FRONTEND_CHANGED)."
+          else
+            gh api --method POST repos/${{ github.repository }}/dispatches \
+              -f event_type=back_sync_ready \
+              -f "client_payload[main_sha]=$MERGED_SHA"
+            echo "No runtime area changed; moving main $MERGED_SHA directly to back-sync."
+          fi
+
+  prepare-back-sync:
+    name: Prepare audited main to develop synchronization
+    if: >-
+      (github.event_name == 'repository_dispatch' && github.event.action == 'back_sync_ready') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.name == 'Production Deploy' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Create or reuse a conflict-visible back-sync PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH_SHA: ${{ github.event.client_payload.main_sha }}
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          EXPECTED_MAIN="${DISPATCH_SHA:-$DEPLOY_SHA}"
+          CURRENT_MAIN=$(gh api repos/${{ github.repository }}/git/ref/heads/main --jq .object.sha)
+          if [[ -z "$EXPECTED_MAIN" || "$EXPECTED_MAIN" != "$CURRENT_MAIN" ]]; then
+            echo "::error::Back-sync request is stale: expected $EXPECTED_MAIN, current main is $CURRENT_MAIN."
+            exit 1
+          fi
+
+          git fetch origin main develop
+          if git merge-base --is-ancestor origin/main origin/develop; then
+            echo "develop already contains main $CURRENT_MAIN."
+            exit 0
+          fi
+
+          BRANCH="automation/back-sync-${CURRENT_MAIN:0:12}"
+          REMOTE_SHA=$(git ls-remote --heads origin "$BRANCH" | awk '{print $1}')
+          if [[ -z "$REMOTE_SHA" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git switch --create "$BRANCH" origin/develop
+            git merge --no-ff origin/main -m "chore: sync main into develop (#432)"
+            git push origin "$BRANCH"
+            REMOTE_SHA=$(git rev-parse HEAD)
+          fi
+
+          PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" \
+            --base develop --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [[ -z "$PR_NUMBER" ]]; then
+            PR_URL=$(gh pr create --repo "${{ github.repository }}" \
+              --base develop --head "$BRANCH" \
+              --title "chore: sync released main back to develop" \
+              --body "Automated, conflict-visible synchronization after successful delivery of main \`$CURRENT_MAIN\` (#432).")
+            PR_NUMBER=${PR_URL##*/}
+          fi
+
+          gh workflow run develop-gate.yml --repo "${{ github.repository }}" --ref "$BRANCH"
+          echo "Back-sync PR #$PR_NUMBER is awaiting Fast Gate for $REMOTE_SHA."
+
+  merge-back-sync:
+    name: Merge exact green back-sync
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.name == 'Develop — Fast Gate' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'automation/back-sync-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Revalidate and merge the synchronization PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" \
+            --base develop --head "$HEAD_BRANCH" --state open --json number --jq '.[0].number // empty')
+          [[ -n "$PR_NUMBER" ]] || { echo "Back-sync PR is already closed; reconciliation complete."; exit 0; }
+
+          PR_JSON=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
+            --json headRefOid,mergeStateStatus)
+          PR_HEAD=$(jq -r .headRefOid <<<"$PR_JSON")
+          MERGE_STATE=$(jq -r .mergeStateStatus <<<"$PR_JSON")
+          if [[ "$PR_HEAD" != "$VALIDATED_SHA" || "$MERGE_STATE" != "CLEAN" ]]; then
+            echo "::error::Back-sync is stale or conflicting (head=$PR_HEAD, validated=$VALIDATED_SHA, state=$MERGE_STATE)."
+            exit 1
+          fi
+
+          gh pr merge "$PR_NUMBER" --repo "${{ github.repository }}" \
+            --merge --match-head-commit "$VALIDATED_SHA"
+          gh api --method DELETE "repos/${{ github.repository }}/git/refs/heads/$HEAD_BRANCH" || true
+          echo "Released main is synchronized back to develop."
