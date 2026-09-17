@@ -145,6 +145,21 @@ def test_ignored_workflow_run_cannot_cancel_an_active_release() -> None:
     assert "github.event_name != 'repository_dispatch'" not in CONTINUOUS_DELIVERY
 
 
+def test_workflow_run_uses_durable_pr_number_before_commit_lookup() -> None:
+    assert (
+        "PR_GATE_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}"
+        in CONTINUOUS_DELIVERY
+    )
+    assert 'SOURCE_PR="$PR_GATE_NUMBER"' in CONTINUOUS_DELIVERY
+    assert CONTINUOUS_DELIVERY.index('SOURCE_PR="$PR_GATE_NUMBER"') < (
+        CONTINUOUS_DELIVERY.index(
+            'repos/${{ github.repository }}/commits/$PR_GATE_SHA/pulls'
+        )
+    )
+    assert "--json state,baseRefName,headRefOid,mergeCommit" in CONTINUOUS_DELIVERY
+    assert '$(jq -r .baseRefName' in CONTINUOUS_DELIVERY
+
+
 def test_bot_created_prs_receive_status_only_after_exact_validation() -> None:
     release_status = "-f context='Release Gate'"
     back_sync_status = "-f context='Fast gate / Quality Gate'"

@@ -55,6 +55,7 @@ jobs:
           PUSH_SHA: ${{ github.sha }}
           PR_GATE_SHA: ${{ github.event.workflow_run.head_sha }}
           PR_GATE_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          PR_GATE_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
         run: |
           set -euo pipefail
 
@@ -113,8 +114,13 @@ jobs:
                 ;;
             esac
 
-            SOURCE_PR=$(gh api "repos/${{ github.repository }}/commits/$PR_GATE_SHA/pulls" \
-              --jq '[.[] | select(.base.ref == "develop" and .head.sha == "'"$PR_GATE_SHA"'")] | .[0].number // empty')
+            # workflow_run carries the originating PR even after GitHub deletes
+            # its source branch. Commit-to-PR lookup is only a recovery fallback.
+            SOURCE_PR="$PR_GATE_NUMBER"
+            if [[ -z "$SOURCE_PR" || "$SOURCE_PR" == "null" ]]; then
+              SOURCE_PR=$(gh api "repos/${{ github.repository }}/commits/$PR_GATE_SHA/pulls" \
+                --jq '[.[] | select(.base.ref == "develop" and .head.sha == "'"$PR_GATE_SHA"'")] | .[0].number // empty')
+            fi
             [[ -n "$SOURCE_PR" ]] || {
               echo "No develop PR is associated with green SHA $PR_GATE_SHA."
               exit 0
@@ -122,7 +128,11 @@ jobs:
 
             for _ in $(seq 1 120); do
               SOURCE_JSON=$(gh pr view "$SOURCE_PR" --repo "${{ github.repository }}" \
-                --json state,headRefOid,mergeCommit)
+                --json state,baseRefName,headRefOid,mergeCommit)
+              [[ "$(jq -r .baseRefName <<<"$SOURCE_JSON")" == "develop" ]] || {
+                echo "PR #$SOURCE_PR does not target develop; refusing release correlation."
+                exit 0
+              }
               [[ "$(jq -r .headRefOid <<<"$SOURCE_JSON")" == "$PR_GATE_SHA" ]] || {
                 echo "PR #$SOURCE_PR changed after its green Fast Gate; waiting for the newer run."
                 exit 0
