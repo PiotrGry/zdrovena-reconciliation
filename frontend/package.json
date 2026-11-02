@@ -14,7 +14,7 @@
         "check:api-types": "tsc -p tsconfig.api-contracts.json"
     },
     "dependencies": {
-        "@azure/msal-browser": "^5.26.0",
+        "@azure/msal-browser": "^5.27.0",
         "react": "^19.3.1",
         "react-dom": "^19.3.1"
     },
