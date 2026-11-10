@@ -199,6 +199,15 @@ def parcel_content(package_type: str) -> str:
     return f"Woda butelkowana, {material} {size}"
 
 
+def parcel_material_and_size(package_type: str) -> tuple[str, str]:
+    """Split a package type into the material and pack size shown to couriers.
+
+    Public for carrier boundaries such as Allegro, which must place the same
+    packing facts in a differently constrained field (``textOnLabel``).
+    """
+    return _parcel_material_and_size(package_type)
+
+
 def _parcel_material_and_size(package_type: str) -> tuple[str, str]:
     """Split a package type into the material and pack size shown to couriers."""
     material = "szkło" if package_type in GLASS_PACKAGE_SIZES else "plastik"

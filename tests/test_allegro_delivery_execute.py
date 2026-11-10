@@ -159,9 +159,14 @@ class TestRunAllegroDelivery:
         create_calls = client.create_ship_with_allegro_shipment.call_args_list
         assert [len(call.kwargs["packages"]) for call in create_calls] == [1, 1, 1]
         assert [call.kwargs["reference_number"] for call in create_calls] == [
-            "ALG-1 | plastik | 2-pak",
-            "ALG-1 | plastik | 2-pak",
-            "ALG-1 | plastik | pół-pak",
+            "ALG-1",
+            "ALG-1",
+            "ALG-1",
+        ]
+        assert [call.kwargs["packages"][0]["textOnLabel"] for call in create_calls] == [
+            "plastik 2-pak 1/2",
+            "plastik 2-pak 2/2",
+            "plastik pol-pak",
         ]
         assert [shipment["id"] for shipment in result["courier_shipments"]] == [
             "ship-1",
@@ -231,7 +236,8 @@ class TestRunAllegroDelivery:
         call = client.create_ship_with_allegro_shipment.call_args
         assert call.kwargs["delivery_method_id"] == "svc-dpd"
         assert call.kwargs["credentials_id"] == "own-agreement-42"
-        assert call.kwargs["reference_number"] == "ALG-1 | plastik | 1-pak"
+        assert call.kwargs["reference_number"] == "ALG-1"
+        assert call.kwargs["packages"][0]["textOnLabel"] == "plastik 1-pak"
         # sender/receiver blocks come from the delivery proposal.
         assert call.kwargs["sender"] == _PROPOSAL["suggestedInput"]["sender"]
         assert call.kwargs["receiver"]["name"] == _PROPOSAL["suggestedInput"]["receiver"]["name"]

@@ -24,6 +24,10 @@ from typing import Any, Protocol
 import requests
 from requests.auth import HTTPBasicAuth
 
+from zdrovena.common.allegro_reference import (
+    validate_allegro_reference_number,
+    validate_allegro_text_on_label,
+)
 from zdrovena.common.shipping_exceptions import (
     AllegroAuthError,
     AllegroBusinessError,
@@ -636,6 +640,12 @@ class AllegroClient:
                     detail=f"Allegro create-command requires input.packages[{index}].type",
                     action="create_ship_with_allegro_shipment",
                 )
+            if "textOnLabel" in package:
+                validate_allegro_text_on_label(str(package["textOnLabel"] or ""))
+        # Fail closed before the POST: Allegro answers VALIDATION_ERROR for
+        # spaces, "|" or diacritics here (#462), and a rejected command
+        # leaves nothing to resume from.
+        validate_allegro_reference_number(str(reference_number or ""))
 
         return self._post(
             "/shipment-management/shipments/create-commands",
