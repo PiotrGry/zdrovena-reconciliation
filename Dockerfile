@@ -1,5 +1,5 @@
 # ── Builder: resolve from uv.lock, not from a fresh pip resolution ───────────
-FROM python:3.12-slim AS builder
+FROM python:3.15-slim AS builder
 
 # uv reads uv.lock; pip does not. Before this, every image build resolved
 # dependencies afresh and the lockfile was never even copied into the build
@@ -24,7 +24,7 @@ RUN uv sync --locked --no-editable --no-dev \
         --extra api --extra cloud --extra ksef
 
 # ── Final: the environment only, no uv, no build tooling ─────────────────────
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 # The user is created BEFORE anything is copied, so ownership is set by COPY
 # --chown as each layer is written. A trailing `chown -R app:app /app` instead
