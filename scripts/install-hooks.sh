@@ -3,8 +3,8 @@
 # Uruchom raz po sklonowaniu repo: bash scripts/install-hooks.sh
 set -euo pipefail
 
-HOOKS_DIR="$(git rev-parse --git-dir)/hooks"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# --git-path: the shared hooks dir, also when run from a linked worktree.
+HOOKS_DIR="$(git rev-parse --git-path hooks)"
 
 cat > "$HOOKS_DIR/pre-push" << EOF
 #!/usr/bin/env bash
@@ -15,7 +15,9 @@ cat > "$HOOKS_DIR/pre-push" << EOF
 # Run \`bash scripts/check.sh\` for the full suite locally.
 set -uo pipefail
 
-SCRIPT_DIR="$SCRIPT_DIR"
+# Resolved at push time: a linked worktree (e.g. a Pirx task) checks its own
+# scripts and .venv, not the checkout that installed the hook.
+SCRIPT_DIR="\$(git rev-parse --show-toplevel)/scripts"
 ZERO='0000000000000000000000000000000000000000'
 RANGE=""
 BLOCKED=""
