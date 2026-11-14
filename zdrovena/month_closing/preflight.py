@@ -31,6 +31,7 @@ from zdrovena.month_closing.config import (
     report_extension_mismatch,
     report_stored_name,
 )
+from zdrovena.month_closing.invoice_date_check import extract_text
 from zdrovena.month_closing.zoho_mail import ZohoMailClient
 
 logger = logging.getLogger("zdrovena.month_closing.preflight")
@@ -382,9 +383,7 @@ class PreflightChecker:
             pko_files = [
                 f
                 for f in self.month_dir.rglob("*")
-                if f.is_file()
-                and ("wyciag" in f.name.lower() or "pko" in f.name.lower())
-                and f.suffix.lower() == ".pdf"
+                if f.is_file() and f.suffix.lower() == ".pdf" and is_bank_statement_pdf(f)
             ]
             if pko_files:
                 self.result.bank_statement_found = True
@@ -397,18 +396,19 @@ class PreflightChecker:
         )
         if watch_dir.exists() and not prefer_scoped_blob:
             pko_downloads = sorted(
-                (f for f in watch_dir.glob("Wyciag_na_zadanie_*.pdf") if f.is_file()),
+                (
+                    f
+                    for f in watch_dir.glob("*.pdf")
+                    if f.is_file()
+                    and is_bank_statement_pdf(f)
+                    and pko_matches_month(f.name, self.year, self.month)
+                ),
                 key=lambda f: f.stat().st_mtime,
                 reverse=True,
             )
-            matching = [
-                f for f in pko_downloads if pko_matches_month(f.name, self.year, self.month)
-            ]
-            if matching:
-                best = matching[0]
-                self.result.matches.append(
-                    ({"name": "PKO BP", "download_glob": "Wyciag_na_zadanie_*.pdf"}, best)
-                )
+            if pko_downloads:
+                best = pko_downloads[0]
+                self.result.matches.append(({"name": "PKO BP", "download_glob": "*.pdf"}, best))
                 self.result.bank_statement_found = True
                 self._out(f"  └─ ✅ Bank statement: {best.name} (in inbox/)")
                 return
@@ -420,33 +420,32 @@ class PreflightChecker:
         elif self._storage:
             blob_files = self._list_blob_inbox()
             pko_blobs = sorted(
-                [
-                    b
-                    for b in blob_files
-                    if fnmatch.fnmatch(Path(b.key).name, "Wyciag_na_zadanie_*.pdf")
-                ],
+                [b for b in blob_files if Path(b.key).suffix.casefold() == ".pdf"],
                 key=lambda b: b.last_modified,
                 reverse=True,
             )
-            matching_blobs = [
-                b for b in pko_blobs if pko_matches_month(Path(b.key).name, self.year, self.month)
-            ]
-            if matching_blobs:
-                best = matching_blobs[0]
+            for best in pko_blobs:
                 tmp = self._download_blob_to_tmp(best.key)
-                if tmp:
-                    self.result.matches.append(
-                        ({"name": "PKO BP", "download_glob": "Wyciag_na_zadanie_*.pdf"}, tmp)
-                    )
+                source_name = Path(best.key).name
+                legacy_period_matches = not source_name.casefold().startswith(
+                    "wyciag_na_zadanie_"
+                ) or pko_matches_month(source_name, self.year, self.month)
+                if (
+                    tmp
+                    and legacy_period_matches
+                    and is_bank_statement_pdf(tmp, source_name=source_name)
+                ):
+                    self.result.matches.append(({"name": "PKO BP", "download_glob": "*.pdf"}, tmp))
                     self.result.bank_statement_found = True
                     self._out(f"  └─ ✅ Bank statement: {Path(best.key).name} (from blob)")
                     return
-            if pko_blobs:
-                wrong = pko_blobs[0]
-                self._out(
-                    f"  └─ ⚠️  Found {Path(wrong.key).name} but it's not for "
-                    f"{self.year}-{self.month:02d}"
-                )
+                if tmp:
+                    self._blob_downloads = [
+                        (key, downloaded)
+                        for key, downloaded in self._blob_downloads
+                        if downloaded != tmp
+                    ]
+                    tmp.unlink(missing_ok=True)
 
         self.result.bank_statement_found = False
         self.result.warnings.append(
@@ -561,6 +560,17 @@ class PreflightChecker:
 
 
 def pko_matches_month(filename: str, year: int, month: int) -> bool:
+    current = re.search(r"^Wyciag_(\d{1,2})_.*_(\d{4})(\d{2})(\d{2})\d+\.pdf$", filename, re.I)
+    if current:
+        try:
+            statement_month, statement_year, date_month = (
+                int(current.group(1)),
+                int(current.group(2)),
+                int(current.group(3)),
+            )
+            return statement_year == year and statement_month == month and date_month == month
+        except ValueError:
+            return False
     m = re.search(r"_(202\d)(\d{2})(\d{2})\d+\.pdf$", filename, re.IGNORECASE)
     if not m:
         return False
@@ -576,3 +586,33 @@ def pko_matches_month(filename: str, year: int, month: int) -> bool:
         return file_year == expected_year and file_month == expected_month
     except (ValueError, IndexError):
         return False
+
+
+def is_bank_statement_pdf(path: Path, *, source_name: str | None = None) -> bool:
+    """Identify PKO statements from content; the period-scoped path supplies date."""
+    filename = (source_name or path.name).casefold()
+    text = extract_text(path).casefold()
+    normalized = (
+        text.replace("ą", "a")
+        .replace("ć", "c")
+        .replace("ę", "e")
+        .replace("ł", "l")
+        .replace("ń", "n")
+        .replace("ó", "o")
+        .replace("ś", "s")
+        .replace("ź", "z")
+        .replace("ż", "z")
+    )
+    has_bank = any(term in normalized for term in ("pko bp", "pko bank polski", "powszechna kasa"))
+    has_statement = any(
+        term in normalized
+        for term in (
+            "wyciag",
+            "historia rachunku",
+            "zestawienie operacji",
+            "zestawienie transakcji",
+        )
+    )
+    if has_bank and has_statement:
+        return True
+    return "wyciag" in filename or "pko" in filename
