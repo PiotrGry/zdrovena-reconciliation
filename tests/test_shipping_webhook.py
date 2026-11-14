@@ -6739,9 +6739,17 @@ class TestAllegroPayloadPlan:
             ("2-pak", 2),
             ("pół-pak", 1),
         ]
-        assert [entry["reference"] for entry in plan] == [
-            "1053 | plastik | 2-pak",
-            "1053 | plastik | 2-pak",
+        # #462: Allegro gets an Allegro-safe referenceNumber; packing facts
+        # move to textOnLabel and the full annotation stays in the preview.
+        assert [entry["reference"] for entry in plan] == ["1053", "1053", "1053"]
+        assert [entry["payload"]["packages"][0]["textOnLabel"] for entry in plan] == [
+            "plastik 2-pak 1/2",
+            "plastik 2-pak 2/2",
+            "plastik pol-pak",
+        ]
+        assert [entry["annotation"] for entry in plan] == [
+            "1053 | plastik | 2-pak 1/2",
+            "1053 | plastik | 2-pak 2/2",
             "1053 | plastik | pół-pak",
         ]
         assert [entry["payload"]["packages"][0]["weight"]["value"] for entry in plan] == [

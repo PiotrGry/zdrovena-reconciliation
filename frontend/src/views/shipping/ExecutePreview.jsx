@@ -61,7 +61,9 @@ export function AllegroPreviewParcel({ entry }) {
     return (
         <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
             {previewLine('Usługa', entry.service)}
-            {previewLine('Zamówienie Allegro', payload.order_id || entry.reference)}
+            {previewLine('Referencja Allegro', payload.reference_number || entry.reference)}
+            {previewLine('Opis na etykiecie', box.textOnLabel || entry.text_on_label)}
+            {previewLine('Opakowanie', entry.annotation)}
             {previewLine('Odbiorca', receiver.name)}
             {previewLine('Adres', [receiver.street, [receiver.postCode, receiver.city].filter(Boolean).join(' ')].filter(Boolean).join(', '))}
             {previewLine('Punkt odbioru', receiver.point)}

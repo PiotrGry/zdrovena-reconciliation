@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from zdrovena.common.allegro_reference import (
+    allegro_reference_number,
+    allegro_text_on_label,
+)
 from zdrovena.common.shipping_exceptions import AllegroBusinessError
 from zdrovena.common.shipping_parcels import PARCEL_SPECS
 from zdrovena.shipping.domain.planning import (
+    parcel_material_and_size,
     physical_parcels,
     shipment_reference,
 )
@@ -21,8 +26,21 @@ class AllegroDeliveryProposalClient(Protocol):
 
 
 def allegro_call_specs(draft: dict[str, Any], proposal: dict[str, Any]) -> list[AllegroCallSpec]:
-    """Build one independent create-command for each physical parcel."""
+    """Build one independent create-command for each physical parcel.
+
+    The Allegro boundary does not send the portal annotation
+    (``shipment_reference``) as ``referenceNumber``: Allegro rejects its spaces,
+    ``|`` and diacritics (#462). ``referenceNumber`` is a deterministic,
+    Allegro-safe order identifier, and the packing facts go to
+    ``packages[].textOnLabel``. See :mod:`zdrovena.common.allegro_reference`
+    for the length/character policy. The full annotation stays available
+    under ``annotation`` for the portal preview.
+    """
     parcels = physical_parcels(draft)
+    order_number = str(draft.get("shopify_order_number", ""))
+    # One identifier per order: every parcel of the order carries it, so it is
+    # computed (and validated, failing closed) once, before any parcel.
+    reference_number = allegro_reference_number(order_number)
 
     # Allegro pre-fills both required address blocks under suggestedInput.
     suggested_input = proposal.get("suggestedInput")
@@ -53,11 +71,15 @@ def allegro_call_specs(draft: dict[str, Any], proposal: dict[str, Any]) -> list[
 
     call_specs: list[AllegroCallSpec] = []
     for parcel in parcels:
-        reference_number = shipment_reference(
-            str(draft.get("shopify_order_number", "")),
+        material, size = parcel_material_and_size(parcel.package_type)
+        text_on_label = allegro_text_on_label(
+            material, size, parcel.position, parcel.count_for_type
+        )
+        annotation = shipment_reference(
+            order_number,
             parcel.package_type,
-            1,
-            1,
+            parcel.position,
+            parcel.count_for_type,
         )
         parcel_spec = PARCEL_SPECS.get(parcel.package_type) or PARCEL_SPECS["1-pak"]
         package = {
@@ -69,11 +91,13 @@ def allegro_call_specs(draft: dict[str, Any], proposal: dict[str, Any]) -> list[
                 "value": round(float(parcel_spec["weight_kg"]), 2),
                 "unit": "KILOGRAMS",
             },
+            "textOnLabel": text_on_label,
         }
         call_specs.append(
             {
                 "package_type": parcel.package_type,
                 "package_number": parcel.position,
+                "annotation": annotation,
                 "kwargs": {
                     "reference_number": reference_number,
                     # Optional since 2026-07-01 — Allegro derives it from the order.
@@ -111,6 +135,8 @@ def allegro_payload_plan(
             "package_type": call_spec["package_type"],
             "package_number": call_spec["package_number"],
             "reference": call_spec["kwargs"]["reference_number"],
+            "text_on_label": call_spec["kwargs"]["packages"][0]["textOnLabel"],
+            "annotation": call_spec["annotation"],
             "payload": call_spec["kwargs"],
         }
         for call_spec in call_specs
