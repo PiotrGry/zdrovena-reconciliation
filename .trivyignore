@@ -1,0 +1,7 @@
+# Accepted findings. Each entry: why it does not reach production, and an expiry.
+# Trivy fails again on the expiry date, so the exception is reviewed rather than forgotten.
+
+# python-ecdsa Minerva timing side-channel (also PYSEC-2026-1325 in scripts/check.sh).
+# Only via checkov (iac extra): a dev-time IaC scanner, not installed in the production
+# image (Dockerfile syncs api/cloud/ksef only). Upstream has no fix and treats side-channels as out of scope.
+CVE-2024-23342 exp:2027-02-15

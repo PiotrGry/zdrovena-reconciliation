@@ -51,6 +51,12 @@ iac = ["checkov>=3.0.0", "soupsieve>=4.0.0"]
 [project.scripts]
 zdrovena = "zdrovena.cli:main"
 
+[tool.uv]
+# checkov 3.4.x pins asteval==1.0.6 (PYSEC-2026-3807, GHSA-9w56-46f6-3qhx; fixed in 1.0.9).
+# asteval is a patch-level bump and checkov's own scan step passes with it.
+# Remove when checkov stops pinning asteval below 1.0.9.
+override-dependencies = ["asteval>=1.0.9"]
+
 [tool.setuptools.packages.find]
 include = ["zdrovena*"]
 
