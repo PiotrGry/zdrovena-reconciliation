@@ -216,6 +216,7 @@ class MonthCloseOrchestrator:
         """Copy period-scoped manual inputs without enforcing the legacy gate."""
         checker = self._make_preflight_checker()
         checker.run()
+        self.report.bank_statement_found = checker.result.bank_statement_found
         self._preflight_checker = checker
         self._step_1_create_folders()
 
@@ -926,6 +927,7 @@ class MonthCloseOrchestrator:
             self.out.info(f"[DRY-RUN] Would create: {zip_name}")
             self._mark_step_done("ZIP archive (dry-run)")
             return
+        self._include_scoped_inbox_in_month()
         try:
             blob_zip_key, count, included_files = create_month_archive_from_blob(
                 self.storage, self._blob_prefix, self.month_pl, self.year
@@ -947,6 +949,30 @@ class MonthCloseOrchestrator:
                 logger.warning("Could not upload ZIP to blob: %s", upload_exc)
                 self.report.warnings.append(f"ZIP blob upload failed: {upload_exc}")
         self._mark_step_done("ZIP archive")
+
+    def _include_scoped_inbox_in_month(self) -> None:
+        """Copy every file from the period inbox into the monthly archive tree."""
+        scoped_prefix = self.inbox_prefix.rstrip("/")
+        if scoped_prefix == "faktury/inbox":
+            scoped_prefix = f"{scoped_prefix}/{self.year:04d}-{self.month:02d}"
+        prefix = scoped_prefix + "/"
+        inbox_files = self.storage.list_files(prefix)
+        if not inbox_files:
+            return
+        with tempfile.TemporaryDirectory(prefix="zdrovena-inbox-") as temp_dir:
+            for item in inbox_files:
+                relative = item.key[len(prefix) :]
+                if not relative or relative.startswith("/") or ".." in Path(relative).parts:
+                    logger.warning("Skipping unsafe inbox key: %s", item.key)
+                    continue
+                source = Path(temp_dir) / relative
+                source.parent.mkdir(parents=True, exist_ok=True)
+                self.storage.download(item.key, source)
+                target_key = f"{self._blob_prefix}/inbox/{relative}"
+                self.storage.upload(source, target_key)
+                local_target = self.month_dir / "inbox" / relative
+                local_target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, local_target)
 
     def _step_7_email(self) -> None:
         self.out.step(7, "Sending email to accountant")

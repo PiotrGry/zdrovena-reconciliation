@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import calendar
 import fnmatch
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,7 @@ from zdrovena.month_closing.config import (
     match_vendor,
     report_extension_mismatch,
 )
-from zdrovena.month_closing.preflight import pko_matches_month
+from zdrovena.month_closing.preflight import is_bank_statement_pdf, pko_matches_month
 from zdrovena.month_closing.warehouse_audit import warehouse_issues
 
 
@@ -283,28 +284,20 @@ class MonthCloseInspector:
                     )
                 )
 
-        bank_candidates = [
+        bank_candidates = self._find_bank_statements(all_names)
+        legacy_period_mismatches = [
             name
             for name in all_names
-            if name.casefold().endswith(".pdf")
-            and ("wyciag" in name.casefold() or "pko" in name.casefold())
+            if name.casefold().startswith("wyciag_na_zadanie_")
+            and not pko_matches_month(name, self.year, self.month)
         ]
-        period_tokens = {
-            f"{self.year:04d}-{self.month:02d}",
-            f"{self.year:04d}_{self.month:02d}",
-            f"{self.year:04d}{self.month:02d}",
-        }
-        bank_name = next(
-            (
-                name
-                for name in bank_candidates
-                if pko_matches_month(name, self.year, self.month)
-                or any(token in name for token in period_tokens)
-            ),
-            None,
+        bank_name = bank_candidates[0] if len(bank_candidates) == 1 else None
+        ambiguous = len(bank_candidates) > 1
+        invalid_bank = not bank_name and bool(legacy_period_mismatches)
+        invalid_bank_name = legacy_period_mismatches[0] if legacy_period_mismatches else None
+        bank_status = (
+            "invalid" if ambiguous or invalid_bank else "present" if bank_name else "missing"
         )
-        invalid_bank_name = next((name for name in bank_candidates if name != bank_name), None)
-        bank_status = "present" if bank_name else "invalid" if invalid_bank_name else "missing"
         documents.append(
             build_document(
                 "bank-pko",
@@ -313,14 +306,16 @@ class MonthCloseInspector:
                 bank_status,
                 source="Wgrany plik",
                 file_key=(
-                    all_names[bank_name].key
-                    if bank_name
+                    all_names[bank_candidates[0]].key
+                    if bank_candidates
                     else all_names[invalid_bank_name].key
                     if invalid_bank_name
                     else None
                 ),
                 message=(
-                    bank_name
+                    bank_name or ", ".join(bank_candidates)
+                    if ambiguous
+                    else bank_name
                     or (
                         f"{invalid_bank_name} nie pasuje do wybranego okresu."
                         if invalid_bank_name
@@ -332,14 +327,17 @@ class MonthCloseInspector:
         if not bank_name:
             issues.append(
                 build_issue(
-                    "bank-missing",
+                    "bank-ambiguous"
+                    if ambiguous
+                    else "bank-invalid"
+                    if invalid_bank
+                    else "bank-missing",
                     "blocker",
-                    (
-                        f"Wyciąg {invalid_bank_name} nie pasuje do okresu "
-                        f"{self.year}-{self.month:02d}."
-                        if invalid_bank_name
-                        else f"Brakuje wyciągu PKO BP za {self.year}-{self.month:02d}."
-                    ),
+                    f"W inboxie jest kilka możliwych wyciągów: {', '.join(bank_candidates)}."
+                    if ambiguous
+                    else f"Wyciąg {invalid_bank_name} nie pasuje do okresu {self.year}-{self.month:02d}."
+                    if invalid_bank
+                    else f"Brakuje wyciągu PKO BP za {self.year}-{self.month:02d}.",
                 )
             )
 
@@ -378,6 +376,29 @@ class MonthCloseInspector:
                     )
                 )
         return documents
+
+    def _find_bank_statements(self, files: dict[str, Any]) -> list[str]:
+        """Find statements by content; the selected period folder supplies date."""
+        matches: list[str] = []
+        for name, item in files.items():
+            if not name.casefold().endswith(".pdf"):
+                continue
+            if name.casefold().startswith("wyciag_na_zadanie_") and not pko_matches_month(
+                name, self.year, self.month
+            ):
+                continue
+            if "wyciag" in name.casefold() or "pko" in name.casefold():
+                matches.append(name)
+                continue
+            with tempfile.TemporaryDirectory(prefix="zdrovena-bank-check-") as temp_dir:
+                local_path = Path(temp_dir) / "candidate.pdf"
+                try:
+                    self.storage.download(item.key, local_path)
+                except Exception:
+                    continue
+                if is_bank_statement_pdf(local_path, source_name=name):
+                    matches.append(name)
+        return matches
 
     def _cost_documents(
         self,

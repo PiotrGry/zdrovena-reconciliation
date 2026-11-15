@@ -63,10 +63,10 @@ def create_month_archive_from_blob(
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for blob in sorted(blobs, key=lambda b: b.key):
             filename = blob.key[len(blob_prefix) :].lstrip("/")
-            # Skip excluded files and nested .zip files
+            # Skip package artifacts; preserve inbox uploads, including archives.
             if Path(filename).name in excluded_names:
                 continue
-            if filename.endswith(".zip"):
+            if filename.endswith(".zip") and not filename.startswith("inbox/"):
                 continue
             content = b"".join(storage.stream(blob.key))
             zf.writestr(filename, content)
