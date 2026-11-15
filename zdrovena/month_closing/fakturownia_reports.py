@@ -336,12 +336,13 @@ def _download_one_report(
     if non_wizard_captured:
         output_path.write_bytes(non_wizard_captured[-1])
         logger.info("%s: saved via route intercept (%d bytes)", name, len(non_wizard_captured[-1]))
-    elif not output_path.exists() or output_path.stat().st_size < 100:
-        # Last resort: authenticated HTTP fetch
-        if not _download_via_job_url(page, selector, output_path, timeout_ms=30_000):
-            logger.warning("%s: all download strategies failed", name)
-            page.unroute(_s3_pattern, _intercept_xml_nw)
-            return None
+    # Last resort when nothing usable was saved: authenticated HTTP fetch.
+    elif (
+        not output_path.exists() or output_path.stat().st_size < 100
+    ) and not _download_via_job_url(page, selector, output_path, timeout_ms=30_000):
+        logger.warning("%s: all download strategies failed", name)
+        page.unroute(_s3_pattern, _intercept_xml_nw)
+        return None
 
     page.unroute(_s3_pattern, _intercept_xml_nw)
     size = output_path.stat().st_size
