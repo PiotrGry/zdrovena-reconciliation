@@ -1044,7 +1044,6 @@ Pokrycie mierzalnego kodu biznesowego: ≥80% (twardo enforce’owane w `_qualit
 | `cloud` | azure-storage-blob, azure-identity, azure-keyvault-secrets, azure-data-tables, azure-monitor-opentelemetry | produkcja Azure |
 | `all` | `[ksef,pdf,report]` — **bez `api`/`cloud`** | zbiorczy alias dla lokalnego pipeline zamknięcia |
 | `dev` | pytest, pytest-cov, responses, httpx, pip-audit, bandit, hypothesis, ruff | testy + quality gate |
-| `iac` | checkov | lokalny skan Terraform; oddzielony od `dev` ze względu na zależności przechodnie |
 
 ❌ **Uwaga:** `pip install -e '.[all]'` **nie** zainstaluje REST API ani zależności Azure. Do uruchomienia API użyj `.[api,cloud,all,dev]`.
 
