@@ -32,6 +32,8 @@ jobs:
     environment: production  # wymagane zatwierdzenie jeśli skonfigurowano
 
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Log rollback intent
         run: |
           echo "======================================"
@@ -65,25 +67,7 @@ jobs:
       # ── Rollback do poprzedniej rewizji (bez podanego SHA) ────────────────
       - name: Rollback to previous revision
         if: inputs.image_sha == ''
-        run: |
-          set -euo pipefail
-          # Single-revision mode: list with --all (otherwise only the active
-          # revision is returned) and redeploy the previous revision's image.
-          PREV_IMAGE=$(az containerapp revision list --all \
-            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --query "sort_by(@, &properties.createdTime) | [-2].properties.template.containers[0].image" \
-            --output tsv)
-
-          if [[ -z "$PREV_IMAGE" ]]; then
-            echo "Brak poprzedniej rewizji — manual intervention required."
-            exit 1
-          fi
-
-          echo "Deploying previous image: $PREV_IMAGE"
-          az containerapp update \
-            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --image "$PREV_IMAGE" --output none
-
-          echo "Rollback complete. Container App now running: $PREV_IMAGE"
+        env:
+          APP: ${{ secrets.AZURE_CONTAINER_APP_NAME }}
+          RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        run: bash scripts/ci/rollback-revision.sh "$APP" "$RG"
