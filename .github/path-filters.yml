@@ -4,7 +4,11 @@ backend:
   - 'scripts/**'
   - 'contracts/**'
   - 'pyproject.toml'
+  - 'uv.lock'
   - 'Dockerfile'
+  # tests/test_ci_*.py check the workflows themselves.
+  - '.github/workflows/**'
+  - '.github/path-filters.yml'
 backend_runtime:
   - 'zdrovena/**'
   - 'pyproject.toml'

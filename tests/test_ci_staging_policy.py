@@ -241,4 +241,11 @@ def test_staging_and_release_validation_are_on_demand_only() -> None:
 def test_full_suite_uses_and_deletes_the_same_isolated_preview() -> None:
     assert "preview_environment:" in FULL_SUITE
     assert "steps.swa-deploy.outputs.static_web_app_url" in FULL_SUITE
-    assert '--environment-name "$PREVIEW_ENV"' in FULL_SUITE
+    # SWA renames the preview (alphanumerics only, 16 characters; PR number for
+    # pull_request events), so cleanup deletes the names SWA actually creates.
+    assert (
+        "NORMALIZED=$(printf '%s' \"$PREVIEW_ENV\" | tr -cd '[:alnum:]' "
+        "| tr '[:upper:]' '[:lower:]' | cut -c1-16)" in FULL_SUITE
+    )
+    assert "for env in $NORMALIZED $PR_NUMBER; do" in FULL_SUITE
+    assert '--environment-name "$env" --yes' in FULL_SUITE
