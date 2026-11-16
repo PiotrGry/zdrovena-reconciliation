@@ -275,6 +275,8 @@ jobs:
         env:
           CLIENT_ID: ${{ secrets.AZURE_API_CLIENT_ID }}
           EXPECTED_IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:${{ github.sha }}
+          SWA_NAME: ${{ secrets.AZURE_SWA_NAME }}
+          SWA_RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
         run: |
           set -euo pipefail
           DEPLOYED_IMAGE=$(az containerapp show \
@@ -293,12 +295,14 @@ jobs:
           fi
           echo "Verified backend and poller image $EXPECTED_IMAGE."
 
-          FQDN=$(az containerapp show \
-            --name "$PROD_APP" --resource-group "$RG" \
-            --query properties.configuration.ingress.fqdn -o tsv)
+          # Through the SWA linked backend, not the Container App FQDN: the app's
+          # built-in auth admits only SWA, so every direct request gets 401.
+          SWA_HOST=$(az staticwebapp show \
+            --name "$SWA_NAME" --resource-group "$SWA_RG" \
+            --query defaultHostname -o tsv)
           for i in 1 2 3; do
             echo "=== Smoke attempt $i/3 ==="
-            if bash scripts/ci/smoke-test.sh "https://$FQDN" "$CLIENT_ID"; then
+            if bash scripts/ci/smoke-test.sh "https://$SWA_HOST" "$CLIENT_ID"; then
               exit 0
             fi
             [ $i -lt 3 ] && echo "Retrying in 5s..." && sleep 5

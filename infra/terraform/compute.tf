@@ -183,6 +183,11 @@ resource "azurerm_container_app_job" "allegro_poller" {
 # ── EasyAuth: Shopify webhook excluded paths ───────────────────────────────────
 # azurerm does not expose globalValidation.excludedPaths and azapi requires
 # EasyAuth to be initialised before it can PATCH authConfigs/current.
+# Linking the SWA backend (scripts/ci/link-swa-backend.sh) makes azureStaticWebApps
+# the only identity provider, so the Container App FQDN rejects every request
+# that does not come through SWA, Entra bearer tokens included. Health and smoke
+# checks therefore go through the SWA hostname. Do not add check endpoints to
+# excludedPaths: that would open them to anyone who finds the FQDN.
 # Applied once via CLI (out-of-band) and persisted by Azure:
 #
 #   az containerapp auth update \

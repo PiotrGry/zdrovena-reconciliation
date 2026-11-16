@@ -9,6 +9,7 @@ set -euo pipefail
 
 BASE="${1:?Podaj base URL (np. https://staging.example.com)}"
 CLIENT_ID="${2:?Podaj Azure API client ID}"
+CLIENT_ID="${CLIENT_ID//[[:space:]]/}"  # a stray newline in the secret gives AADSTS500011
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
@@ -38,8 +39,10 @@ HTTP_ANON=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$BASE/api/file
     || fail "/files bez tokenu zwróciło $HTTP_ANON (oczekiwano 401/403)"
 pass "/files (anon) → $HTTP_ANON"
 
-# 4. /files z tokenem CI → 200. Brak tokenu jest błędem konfiguracji, nie SKIP-em.
-echo "--- /files (z tokenem CI)"
+# 4. /api/ci/smoke z tokenem CI → 200. Rola zdrovena-ci-smoke (tylko service
+#    principal GitHub Actions) nie daje dostępu do danych. Brak tokenu jest błędem
+#    konfiguracji, nie SKIP-em.
+echo "--- /api/ci/smoke (z tokenem CI)"
 # stderr goes to a file, not /dev/null: az's AADSTS message is the only clue
 # why CI cannot get a token. It never contains the token itself.
 TOKEN_ERR=$(mktemp)
@@ -48,9 +51,9 @@ if TOKEN=$(az account get-access-token \
         --resource "api://$CLIENT_ID" \
         --query accessToken -o tsv 2>"$TOKEN_ERR") && [[ -n "$TOKEN" ]]; then
     HTTP_AUTH=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-        -H "Authorization: Bearer $TOKEN" "$BASE/api/files")
-    [[ "$HTTP_AUTH" == "200" ]] || fail "/files z tokenem zwróciło $HTTP_AUTH (oczekiwano 200)"
-    pass "/files (auth) → 200"
+        -H "Authorization: Bearer $TOKEN" "$BASE/api/ci/smoke")
+    [[ "$HTTP_AUTH" == "200" ]] || fail "/api/ci/smoke z tokenem zwróciło $HTTP_AUTH (oczekiwano 200)"
+    pass "/api/ci/smoke (auth) → 200"
 else
     fail "nie udało się pobrać tokenu dla api://$CLIENT_ID: $(tr '\n' ' ' < "$TOKEN_ERR")"
 fi

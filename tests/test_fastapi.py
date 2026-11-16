@@ -84,6 +84,50 @@ class TestHealth:
         assert "version" in c.get("/health").json()
 
 
+class TestCiSmoke:
+    @pytest.mark.parametrize("roles", [[], ["zdrovena-admin"], ["zdrovena-viewer"]])
+    def test_other_roles_are_forbidden(self, api, roles):
+        c, _ = api
+        app.dependency_overrides[get_current_principal] = lambda: Principal(
+            sub="u", email="", roles=roles
+        )
+        try:
+            assert c.get("/api/ci/smoke").status_code == 403
+        finally:
+            app.dependency_overrides.pop(get_current_principal, None)
+
+    def test_ci_role_gets_status_and_version_only(self, api):
+        c, _ = api
+        app.dependency_overrides[get_current_principal] = lambda: Principal(
+            sub="ci", email="", roles=["zdrovena-ci-smoke"]
+        )
+        try:
+            resp = c.get("/api/ci/smoke")
+        finally:
+            app.dependency_overrides.pop(get_current_principal, None)
+        assert resp.status_code == 200
+        assert set(resp.json()) == {"status", "version"}
+
+    def test_ci_role_cannot_read_files(self, api):
+        c, _ = api
+        app.dependency_overrides[get_current_principal] = lambda: Principal(
+            sub="ci", email="", roles=["zdrovena-ci-smoke"]
+        )
+        try:
+            assert c.get("/api/files").status_code == 403
+        finally:
+            app.dependency_overrides.pop(get_current_principal, None)
+
+    def test_not_in_openapi_schema(self, api):
+        c, _ = api
+        assert "/api/ci/smoke" not in c.get("/openapi.json").json()["paths"]
+
+    def test_missing_token_is_401(self, api, monkeypatch):
+        c, _ = api
+        monkeypatch.setenv("AZURE_AUTH_DISABLED", "false")
+        assert c.get("/api/ci/smoke").status_code == 401
+
+
 # ── /files — download ─────────────────────────────────────────────────────────
 
 
