@@ -776,9 +776,11 @@ describe('execute preview', () => {
                     service: 'allegro_delivery',
                     package_type: 'allegro',
                     package_number: 1,
-                    reference: 'allegro-order-9',
+                    reference: '9f2a6c1e3b7d4e8ab5c40d1e2f3a4b5c',
+                    text_on_label: 'szklo 1-pak 1/2',
+                    annotation: '9f2a6c1e-3b7d-4e8a-b5c4-0d1e2f3a4b5c | szkło | 1-pak 1/2',
                     payload: {
-                        order_id: 'allegro-order-9',
+                        reference_number: '9f2a6c1e3b7d4e8ab5c40d1e2f3a4b5c',
                         receiver: { name: 'Ola Wisniewska', street: 'Lipowa 3', city: 'Lodz' },
                         packages: [{
                             type: 'PACKAGE',
@@ -786,6 +788,7 @@ describe('execute preview', () => {
                             width: { value: 20, unit: 'CENTIMETER' },
                             height: { value: 20, unit: 'CENTIMETER' },
                             weight: { value: 6, unit: 'KILOGRAMS' },
+                            textOnLabel: 'szklo 1-pak 1/2',
                         }],
                     },
                 }],
@@ -798,6 +801,10 @@ describe('execute preview', () => {
         const panel = await screen.findByTestId('execute-preview')
         expect(panel.textContent).toContain('Ola Wisniewska')
         expect(panel.textContent).toContain('6 kg')
+        // #462: what Allegro receives, plus the full portal annotation.
+        expect(panel.textContent).toContain('9f2a6c1e3b7d4e8ab5c40d1e2f3a4b5c')
+        expect(panel.textContent).toContain('szklo 1-pak 1/2')
+        expect(panel.textContent).toContain('szkło | 1-pak 1/2')
         expect(screen.getByTestId('execute-preview-confirm').disabled).toBe(false)
     })
 

@@ -26,6 +26,7 @@ from zdrovena.common.shipping_exceptions import (
 from zdrovena.fake_providers.app import app
 from zdrovena.fake_providers.common import PDF_BYTES
 from zdrovena.shipping.domain.planning import parcel_content
+from zdrovena.shipping.providers.allegro_delivery import allegro_payload_plan
 
 
 class _MemoryStorage:
@@ -207,6 +208,64 @@ def test_allegro_client_uses_fake_provider_over_http(
     state = requests.get(f"{fake_provider_url}/__fake__/state", timeout=2).json()
     assert state["allegro"]["orders"]["fake-order-1"]["fulfillment"]["status"] == "PROCESSING"
     assert state["allegro"]["invoices"][invoice["id"]]["fileUploaded"] is True
+
+
+def test_fake_allegro_rejects_annotation_reference_and_accepts_planned_payload(
+    fake_provider_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#462: the emulator mirrors the production referenceNumber validation, and
+    the planner's real HTTP body (reference + textOnLabel) passes it."""
+    monkeypatch.setenv("ALLEGRO_BASE_URL", f"{fake_provider_url}/allegro")
+    monkeypatch.setenv("ALLEGRO_AUTH_URL", f"{fake_provider_url}/allegro/auth/oauth/token")
+    monkeypatch.setenv("PROVIDER_MODE", "fake")
+    checkout_id = "9f2a6c1e-3b7d-4e8a-b5c4-0d1e2f3a4b5c"
+    client = AllegroClient(
+        client_id="client-id",
+        client_secret="client-secret",
+        refresh_token="refresh-token",
+        timeout=2,
+        token_store=_ExplodingAllegroTokenStore(),
+    )
+    draft = {
+        "shopify_order_number": checkout_id,
+        "external_order_id": checkout_id,
+        "service": "allegro_delivery",
+        "receiver": {},
+        "packages_breakdown": [{"type": "szkło", "qty": 2}],
+    }
+    plan = allegro_payload_plan(draft, client)
+
+    rejected = requests.post(
+        f"{fake_provider_url}/allegro/shipment-management/shipments/create-commands",
+        json={
+            "commandId": "cmd-old",
+            "input": {
+                **{k: plan[0]["payload"][k] for k in ("sender", "receiver", "packages")},
+                "referenceNumber": f"{checkout_id} | szkło | 1-pak",
+            },
+        },
+        headers={
+            "Authorization": "Bearer fake",
+            "Accept": "application/vnd.allegro.public.v1+json",
+            "Content-Type": "application/vnd.allegro.public.v1+json",
+        },
+        timeout=2,
+    )
+    assert rejected.status_code == 422
+    assert "VALIDATION_ERROR" in rejected.text
+
+    for index, entry in enumerate(plan):
+        command_id = f"cmd-462-{index}"
+        command = client.create_ship_with_allegro_shipment(
+            command_id=command_id, **entry["payload"]
+        )
+        assert command["input"]["referenceNumber"] == entry["reference"]
+        assert command["input"]["packages"][0]["textOnLabel"] == entry["text_on_label"]
+        client.get_ship_with_allegro_command_status(command_id)
+        status = client.get_ship_with_allegro_command_status(command_id)
+        shipment = client.get_ship_with_allegro_shipment(status["shipmentId"])
+        assert shipment["referenceNumber"] == checkout_id.replace("-", "")
+        assert shipment["packages"][0]["textOnLabel"] == f"szklo 1-pak {index + 1}/2"
 
 
 def test_emulator_labels_are_parsable_pdfs() -> None:

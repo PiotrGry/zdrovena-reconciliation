@@ -98,7 +98,7 @@ def test_call_spec_matches_exact_payload_builder_shape() -> None:
     result = allegro_call_spec(_draft(), proposal)
 
     assert result == {
-        "reference_number": "1053 | plastik | 2-pak",
+        "reference_number": "1053",
         "delivery_method_id": "method-inpost-locker",
         "credentials_id": None,
         "packages": [
@@ -108,6 +108,7 @@ def test_call_spec_matches_exact_payload_builder_shape() -> None:
                 "width": {"value": 30, "unit": "CENTIMETER"},
                 "height": {"value": 20, "unit": "CENTIMETER"},
                 "weight": {"value": 12.0, "unit": "KILOGRAMS"},
+                "textOnLabel": "plastik 2-pak 1/2",
             },
         ],
         "sender": {
@@ -131,11 +132,9 @@ def test_call_spec_matches_exact_payload_builder_shape() -> None:
     assert result["sender"] is proposal["suggestedInput"]["sender"]
     assert "point" not in proposal["suggestedInput"]["receiver"]
     assert len(result["packages"]) == 1
-    assert "1/2" not in result["reference_number"]
-    assert "2/2" not in result["reference_number"]
 
 
-def test_reference_number_uses_canonical_business_reference_not_checkout_id() -> None:
+def test_reference_number_uses_business_order_number_not_checkout_id() -> None:
     draft = _draft(
         id="local-draft-uuid",
         external_order_id="allegro-checkout-uuid",
@@ -145,12 +144,13 @@ def test_reference_number_uses_canonical_business_reference_not_checkout_id() ->
 
     result = allegro_call_spec(draft, _PROPOSAL)
 
-    assert result["reference_number"] == "1700 | plastik | 1-pak"
+    assert result["reference_number"] == "1700"
+    assert result["packages"][0]["textOnLabel"] == "plastik 1-pak"
     assert result["reference_number"] != draft["external_order_id"]
     assert result["reference_number"] != draft["id"]
 
 
-def test_equivalent_inpost_and_allegro_drafts_use_same_canonical_reference() -> None:
+def test_inpost_keeps_annotation_while_allegro_preview_carries_the_same_annotation() -> None:
     draft = _draft(
         external_order_id="1c5e0b30-94db-11f1-82ad-f5cfa7ea889b",
         shopify_order_number="1700",
@@ -158,10 +158,14 @@ def test_equivalent_inpost_and_allegro_drafts_use_same_canonical_reference() -> 
     )
 
     inpost_reference = inpost_call_specs(draft, sender={})[0][3]
-    allegro_reference = allegro_call_spec(draft, _PROPOSAL)["reference_number"]
+    plan = allegro_payload_plan(draft, _ReadOnlyProposalClient(_PROPOSAL))
 
+    # InPost behaviour is unchanged (#462 adapts only the Allegro boundary).
     assert inpost_reference == "1700 | plastik | 1-pak"
-    assert allegro_reference == inpost_reference
+    # The portal still sees the same business annotation for the Allegro parcel.
+    assert plan[0]["annotation"] == inpost_reference
+    assert plan[0]["reference"] == "1700"
+    assert plan[0]["text_on_label"] == "plastik 1-pak"
 
 
 def test_call_spec_omits_point_and_ignores_unknown_sending_method() -> None:
@@ -215,7 +219,9 @@ def test_payload_plan_reads_proposal_once_and_performs_no_writes_or_uuid_generat
         "service": "allegro_delivery",
         "package_type": "2-pak",
         "package_number": 1,
-        "reference": "1053 | plastik | 2-pak",
+        "reference": "1053",
+        "text_on_label": "plastik 2-pak 1/2",
+        "annotation": "1053 | plastik | 2-pak 1/2",
         "payload": allegro_call_spec(_draft(), _PROPOSAL),
     }
 
@@ -231,23 +237,22 @@ def test_payload_plan_creates_one_independent_shipment_per_physical_box() -> Non
         ("pół-pak", 1),
     ]
     assert [len(entry["payload"]["packages"]) for entry in plan] == [1, 1, 1]
-    assert [entry["reference"] for entry in plan] == [
-        "1053 | plastik | 2-pak",
-        "1053 | plastik | 2-pak",
-        "1053 | plastik | pół-pak",
+    assert [entry["reference"] for entry in plan] == ["1053", "1053", "1053"]
+    assert [entry["payload"]["packages"][0]["textOnLabel"] for entry in plan] == [
+        "plastik 2-pak 1/2",
+        "plastik 2-pak 2/2",
+        "plastik pol-pak",
     ]
-    assert all("1/2" not in entry["reference"] for entry in plan)
-    assert all("2/2" not in entry["reference"] for entry in plan)
 
 
-def test_mixed_physical_parcels_use_their_own_canonical_reference() -> None:
+def test_mixed_physical_parcels_keep_their_own_portal_annotation() -> None:
     client = _ReadOnlyProposalClient(_PROPOSAL)
 
     plan = allegro_payload_plan(_draft(), client)
 
-    assert [entry["reference"] for entry in plan] == [
-        "1053 | plastik | 2-pak",
-        "1053 | plastik | 2-pak",
+    assert [entry["annotation"] for entry in plan] == [
+        "1053 | plastik | 2-pak 1/2",
+        "1053 | plastik | 2-pak 2/2",
         "1053 | plastik | pół-pak",
     ]
 
@@ -280,7 +285,7 @@ def test_payload_plan_preserves_external_order_id_for_proposal_correlation() -> 
 
     assert client.proposal_order_ids == ["allegro-checkout-uuid"]
     assert draft["external_order_id"] == "allegro-checkout-uuid"
-    assert plan[0]["payload"]["reference_number"] == "1053 | plastik | 2-pak"
+    assert plan[0]["payload"]["reference_number"] == "1053"
 
 
 def test_payload_plan_validates_external_order_id_before_provider_lookup() -> None:

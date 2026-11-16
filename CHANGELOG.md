@@ -139,6 +139,17 @@
 
 ### Fixed
 
+- **shipping**: „Wysyłam z Allegro” nie odrzuca już przesyłki z `VALIDATION_ERROR` na
+  numerze referencyjnym (#462). Do `referenceNumber` trafiał opis pakowania
+  `"<UUID zamówienia> | plastik | 3-pak"`, a Allegro przyjmuje tam tylko litery bez
+  polskich znaków, cyfry i `_/-`. Teraz `referenceNumber` to sam numer zamówienia: UUID
+  bez myślników (32 znaki, bezstratnie), tylko `[A-Za-z0-9_-]`, maks. 32 znaki. Gdy coś
+  się nie mieści, wysyłka zatrzymuje się przed wysłaniem żądania i nic nie jest obcinane.
+  Materiał, rozmiar i numer paczki (`n/z`) trafiają do `packages[].textOnLabel`
+  (`"szklo 1-pak 2/3"`, ASCII, maks. 30 znaków), a pełny opis z polskimi znakami nadal
+  widać w portalu jako `annotation`. Te limity to nasza ostrożna polityka, nie limit
+  Allegro, bo Allegro nie publikuje limitów przewoźników. InPost i Apaczka wysyłają opis
+  bez zmian.
 - **shipping**: Dwie zgrzewki szkła to znowu dwie paczki, dwie etykiety i dwa numery śledzenia.
   Planer zwijał je w jeden wpis `szkło-2pak`, który oznaczał *dwa* pudełka — ale nic go nie
   rozwijało: `physical_parcels()` rozwija tylko `qty`, więc powstawała **jedna** przesyłka
