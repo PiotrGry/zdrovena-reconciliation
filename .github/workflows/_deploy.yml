@@ -63,6 +63,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    outputs:
+      rollback_revision: ${{ steps.before.outputs.revision }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -72,6 +74,22 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # The rollback target is the revision that served traffic before this
+      # deploy, recorded once. A re-run of the failed verify job reuses this
+      # job's output, so retries never pick a different (possibly bad) revision.
+      - name: Record the revision running before this deploy
+        id: before
+        env:
+          PROD_APP: zdrovena-api-prod
+          RG: zdrovena-rg
+        run: |
+          set -euo pipefail
+          REV=$(az containerapp revision list \
+            --name "$PROD_APP" --resource-group "$RG" \
+            --query "[?properties.active] | [0].name" -o tsv)
+          echo "Active before deploy: ${REV:-none}"
+          echo "revision=$REV" >> "$GITHUB_OUTPUT"
 
       - name: Update Container App image
         env:
@@ -311,7 +329,10 @@ jobs:
 
       - name: Auto-rollback on smoke failure
         if: steps.smoke.outcome == 'failure'
-        run: bash scripts/ci/rollback-revision.sh "$PROD_APP" "$RG"
+        env:
+          TARGET: ${{ needs.deploy-prod.outputs.rollback_revision }}
+          BAD_IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/zdrovena-api:${{ github.sha }}
+        run: bash scripts/ci/rollback-revision.sh "$PROD_APP" "$RG" "$TARGET" "$BAD_IMAGE"
 
       - name: Notify on rollback
         if: steps.smoke.outcome == 'failure'
