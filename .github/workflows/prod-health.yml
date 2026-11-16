@@ -42,14 +42,15 @@ jobs:
             exit 1
           }
 
-          FQDN=$(az containerapp show \
-            --name "$PROD_APP" \
-            --resource-group "$PROD_RG" \
-            --query properties.configuration.ingress.fqdn -o tsv)
-          [[ -n "$FQDN" ]] || fail "Production API hostname is missing."
+          SWA_HOST=$(az staticwebapp show \
+            --name "$SWA_NAME" --resource-group "$SWA_RG" \
+            --query defaultHostname -o tsv)
+          [[ -n "$SWA_HOST" ]] || fail "Production frontend hostname is missing."
 
+          # Through the SWA linked backend: the Container App's built-in auth
+          # admits only SWA, so its own FQDN answers 401 to everyone.
           HTTP=$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 10 \
-            "https://$FQDN/health" || true)
+            "https://$SWA_HOST/health" || true)
           [[ "$HTTP" == "200" ]] || fail "Production /health returned HTTP ${HTTP:-000}; expected 200."
           jq -e '.status == "ok" and (.version | type == "string" and length > 0)' \
             /tmp/health.json >/dev/null \
@@ -61,10 +62,6 @@ jobs:
           [[ "$BACKEND_IMAGE" =~ :[0-9a-f]{40}$ ]] \
             || fail "Production backend is not pinned to an immutable 40-character Git SHA image."
 
-          SWA_HOST=$(az staticwebapp show \
-            --name "$SWA_NAME" --resource-group "$SWA_RG" \
-            --query defaultHostname -o tsv)
-          [[ -n "$SWA_HOST" ]] || fail "Production frontend hostname is missing."
           FRONTEND_SHA=$(curl -fsS --max-time 10 "https://$SWA_HOST/version.json" \
             | jq -r '.git_sha // empty') \
             || fail "Production frontend version.json is unavailable or invalid."

@@ -26,6 +26,7 @@ App roles:
   zdrovena-viewer       — read-only (list, download)
   zdrovena-accountant   — close + download
   zdrovena-shipment-mgr — execute shipping actions (create drafts, order pickup)
+  zdrovena-ci-smoke     — application-only, CI smoke test; may call /api/ci/smoke only
 """
 
 from __future__ import annotations
@@ -206,6 +207,15 @@ def require_viewer_or_above(
     principal: Annotated[Principal, Depends(get_current_principal)],
 ) -> Principal:
     principal.require_role("zdrovena-admin", "zdrovena-accountant", "zdrovena-viewer")
+    return principal
+
+
+def require_ci_smoke(
+    principal: Annotated[Principal, Depends(get_current_principal)],
+) -> Principal:
+    # Only the GitHub Actions service principal holds this application role.
+    # It proves the deployed API accepts CI's token, and grants no data access.
+    principal.require_role("zdrovena-ci-smoke")
     return principal
 
 
