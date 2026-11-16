@@ -40,15 +40,19 @@ pass "/files (anon) → $HTTP_ANON"
 
 # 4. /files z tokenem CI → 200. Brak tokenu jest błędem konfiguracji, nie SKIP-em.
 echo "--- /files (z tokenem CI)"
+# stderr goes to a file, not /dev/null: az's AADSTS message is the only clue
+# why CI cannot get a token. It never contains the token itself.
+TOKEN_ERR=$(mktemp)
+trap 'rm -f "$TOKEN_ERR"' EXIT
 if TOKEN=$(az account get-access-token \
         --resource "api://$CLIENT_ID" \
-        --query accessToken -o tsv 2>/dev/null) && [[ -n "$TOKEN" ]]; then
+        --query accessToken -o tsv 2>"$TOKEN_ERR") && [[ -n "$TOKEN" ]]; then
     HTTP_AUTH=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
         -H "Authorization: Bearer $TOKEN" "$BASE/api/files")
     [[ "$HTTP_AUTH" == "200" ]] || fail "/files z tokenem zwróciło $HTTP_AUTH (oczekiwano 200)"
     pass "/files (auth) → 200"
 else
-    fail "nie udało się pobrać tokenu dla api://$CLIENT_ID"
+    fail "nie udało się pobrać tokenu dla api://$CLIENT_ID: $(tr '\n' ' ' < "$TOKEN_ERR")"
 fi
 
 echo ""
