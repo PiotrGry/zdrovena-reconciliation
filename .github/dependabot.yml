@@ -44,6 +44,13 @@ updates:
     commit-message:
       prefix: "chore(deps-fe)"
       include: "scope"
+    ignore:
+      # eslint-plugin-react 7.37.5 accepts eslint up to ^9.7, so eslint 10
+      # breaks `npm ci`. Remove once eslint-plugin-react supports eslint 10.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/js"
+        update-types: ["version-update:semver-major"]
     groups:
       frontend-minor-and-patch:
         update-types: ["minor", "patch"]
