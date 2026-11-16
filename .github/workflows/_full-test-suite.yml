@@ -608,9 +608,22 @@ jobs:
           SWA_NAME: ${{ secrets.AZURE_SWA_NAME }}
           SWA_RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
           PREVIEW_ENV: ${{ inputs.preview_environment }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          az staticwebapp environment delete \
-            --name "$SWA_NAME" \
-            --resource-group "$SWA_RG" \
-            --environment-name "$PREVIEW_ENV" \
-            --yes 2>/dev/null || echo "SWA env $PREVIEW_ENV already gone or not found — OK"
+          set -euo pipefail
+          # SWA does not keep the requested name: it drops non-alphanumerics and
+          # keeps 16 characters (on-demand-43919939631 -> ondemand43919939), and
+          # for pull_request events it names the preview after the PR number.
+          # Deleting the raw name never matched, so previews piled up until the
+          # app hit its staging-environment limit.
+          NORMALIZED=$(printf '%s' "$PREVIEW_ENV" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]' | cut -c1-16)
+          for env in $NORMALIZED $PR_NUMBER; do
+            if az staticwebapp environment show --name "$SWA_NAME" --resource-group "$SWA_RG" \
+                --environment-name "$env" --output none 2>/dev/null; then
+              az staticwebapp environment delete --name "$SWA_NAME" --resource-group "$SWA_RG" \
+                --environment-name "$env" --yes
+              echo "Deleted SWA preview environment $env."
+            else
+              echo "SWA preview environment $env not found."
+            fi
+          done
