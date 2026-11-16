@@ -8,11 +8,13 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from typing import Annotated
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from zdrovena import __version__
+from zdrovena.api.auth import Principal, require_ci_smoke
 from zdrovena.api.errors import install_exception_handlers
 from zdrovena.api.models import HealthResponse
 from zdrovena.api.observability import CorrelationIdFilter, correlation_id_middleware
@@ -188,4 +190,11 @@ if _azure_telemetry_enabled:
 
 @app.get("/health", tags=["health"], response_model=HealthResponse)
 def health() -> dict:
+    return {"status": "ok", "version": app.version}
+
+
+@app.get("/api/ci/smoke", include_in_schema=False, response_model=HealthResponse)
+def ci_smoke(principal: Annotated[Principal, Depends(require_ci_smoke)]) -> dict:
+    """Authenticated deploy check for CI: token, audience and role all work."""
+    del principal
     return {"status": "ok", "version": app.version}
