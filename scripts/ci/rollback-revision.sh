@@ -1,28 +1,38 @@
 #!/usr/bin/env bash
-# Roll a single-revision Container App back to the previous deployed revision.
+# Roll a single-revision Container App back to a known revision.
 #
-# Usage: rollback-revision.sh <container-app> <resource-group>
+# Usage: rollback-revision.sh <container-app> <resource-group> <target-revision> [bad-image]
 #
-# - Copies the whole template of the target revision (image, env, resources),
-#   so a configuration-only change is rolled back too, not just the image.
-# - Rollback copies get the suffix "rb-<epoch>" and are never picked as a
-#   target. The target is the second-newest revision that is not a rollback
-#   copy: after A (good) -> B (bad) -> rb (copy of A), it is still A. A retry or
-#   a second manual run therefore copies A again instead of restoring B.
+# Revision history alone cannot tell which revision was healthy: after
+# A (good) -> B (bad) -> rollback copy of A -> C (bad), "the previous revision"
+# is B. So the caller names the target: the deploy records the revision that
+# was active before it changed anything, and a manual rollback names one.
+#
+# The whole template of the target (image, env, resources) is copied into a new
+# revision, so a configuration-only regression is rolled back too. If
+# [bad-image] is given, a target that runs that image is refused.
 set -euo pipefail
 
 APP="${1:?container app name}"
 RG="${2:?resource group}"
+TARGET="${3:-}"
+BAD_IMAGE="${4:-}"
 
-TARGET=$(az containerapp revision list --all --name "$APP" --resource-group "$RG" -o json \
-  | jq -r 'map(select(.name | test("--rb-") | not))
-           | sort_by(.properties.createdTime) | .[-2].name // empty')
 if [[ -z "$TARGET" ]]; then
-  echo "::error::No previous deployed revision to roll back to; manual intervention required."
+  echo "::error::No rollback target revision given; manual intervention required."
   exit 1
 fi
 
-echo "Rolling back: copying revision $TARGET"
+TARGET_IMAGE=$(az containerapp revision show \
+  --name "$APP" --resource-group "$RG" --revision "$TARGET" \
+  --query "properties.template.containers[0].image" -o tsv) \
+  || { echo "::error::Revision $TARGET not found."; exit 1; }
+if [[ -n "$BAD_IMAGE" && "$TARGET_IMAGE" == "$BAD_IMAGE" ]]; then
+  echo "::error::Revision $TARGET runs the image being rolled back ($BAD_IMAGE); manual intervention required."
+  exit 1
+fi
+
+echo "Rolling back: copying revision $TARGET ($TARGET_IMAGE)"
 az containerapp revision copy \
   --name "$APP" --resource-group "$RG" \
   --from-revision "$TARGET" \
