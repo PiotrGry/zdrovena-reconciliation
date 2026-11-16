@@ -308,21 +308,22 @@ jobs:
       - name: Auto-rollback on smoke failure
         if: steps.smoke.outcome == 'failure'
         run: |
-          NEW_REV=$(az containerapp revision list \
+          set -euo pipefail
+          # The app runs in single-revision mode: `revision list` without --all
+          # returns only the one active revision, and activate/deactivate cannot
+          # switch between revisions. Redeploy the previous revision's image.
+          PREV_IMAGE=$(az containerapp revision list --all \
             --name "$PROD_APP" --resource-group "$RG" \
-            --query "sort_by(@, &properties.createdTime) | [-1].name" \
+            --query "sort_by(@, &properties.createdTime) | [-2].properties.template.containers[0].image" \
             -o tsv)
-          PREV_REV=$(az containerapp revision list \
+          if [[ -z "$PREV_IMAGE" ]]; then
+            echo "::error::No previous revision to roll back to; manual intervention required."
+            exit 1
+          fi
+          echo "Rolling back to $PREV_IMAGE"
+          az containerapp update \
             --name "$PROD_APP" --resource-group "$RG" \
-            --query "sort_by(@, &properties.createdTime) | [-2].name" \
-            -o tsv)
-          echo "Rolling back: $NEW_REV → $PREV_REV"
-          az containerapp revision activate \
-            --name "$PROD_APP" --resource-group "$RG" \
-            --revision "$PREV_REV"
-          az containerapp revision deactivate \
-            --name "$PROD_APP" --resource-group "$RG" \
-            --revision "$NEW_REV"
+            --image "$PREV_IMAGE" --output none
 
       - name: Notify on rollback
         if: steps.smoke.outcome == 'failure'

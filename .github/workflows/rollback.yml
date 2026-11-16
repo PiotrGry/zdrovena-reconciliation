@@ -66,27 +66,24 @@ jobs:
       - name: Rollback to previous revision
         if: inputs.image_sha == ''
         run: |
-          PREV=$(az containerapp revision list \
+          set -euo pipefail
+          # Single-revision mode: list with --all (otherwise only the active
+          # revision is returned) and redeploy the previous revision's image.
+          PREV_IMAGE=$(az containerapp revision list --all \
             --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --query "[?properties.active==\`false\`] | sort_by(@, &properties.createdTime) | [-1].name" \
+            --query "sort_by(@, &properties.createdTime) | [-2].properties.template.containers[0].image" \
             --output tsv)
 
-          if [[ -z "$PREV" ]]; then
+          if [[ -z "$PREV_IMAGE" ]]; then
             echo "Brak poprzedniej rewizji — manual intervention required."
             exit 1
           fi
 
-          echo "Activating previous revision: $PREV"
-          az containerapp revision activate \
+          echo "Deploying previous image: $PREV_IMAGE"
+          az containerapp update \
             --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --revision "$PREV"
+            --image "$PREV_IMAGE" --output none
 
-          echo "Switching 100% traffic to: $PREV"
-          az containerapp ingress traffic set \
-            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --revision-weight "$PREV=100"
-
-          echo "Rollback complete. Active revision: $PREV"
+          echo "Rollback complete. Container App now running: $PREV_IMAGE"
