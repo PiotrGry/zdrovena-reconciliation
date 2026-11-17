@@ -4,7 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       image_sha:
-        description: "Git SHA obrazu do którego wracamy (np. abc1234). Zostaw puste = poprzednia rewizja."
+        description: "Git SHA obrazu do którego wracamy (np. abc1234). Wracamy tylko do obrazu, konfiguracja zostaje."
+        required: false
+        type: string
+      revision:
+        description: "Albo nazwa rewizji do skopiowania w całości (obraz + env + zasoby). Puste oba pola = lista rewizji, bez zmian."
         required: false
         type: string
       reason:
@@ -32,13 +36,16 @@ jobs:
     environment: production  # wymagane zatwierdzenie jeśli skonfigurowano
 
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Log rollback intent
         run: |
           echo "======================================"
           echo "ROLLBACK INITIATED"
           echo "Triggered by: ${{ github.actor }}"
           echo "Reason: ${{ inputs.reason }}"
-          echo "Target SHA: ${{ inputs.image_sha || '(poprzednia rewizja)' }}"
+          echo "Target SHA: ${{ inputs.image_sha || '-' }}"
+          echo "Target revision: ${{ inputs.revision || '-' }}"
           echo "======================================"
 
       - name: Azure login (OIDC)
@@ -62,31 +69,25 @@ jobs:
             --image          "$TARGET_IMAGE"
           echo "Done. Container App now running: $TARGET_IMAGE"
 
-      # ── Rollback do poprzedniej rewizji (bez podanego SHA) ────────────────
-      - name: Rollback to previous revision
-        if: inputs.image_sha == ''
+      # ── Rollback do wskazanej rewizji (cały szablon) ──────────────────────
+      - name: Rollback to named revision
+        if: inputs.image_sha == '' && inputs.revision != ''
+        env:
+          APP: ${{ secrets.AZURE_CONTAINER_APP_NAME }}
+          RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          TARGET: ${{ inputs.revision }}
+        run: bash scripts/ci/rollback-revision.sh "$APP" "$RG" "$TARGET"
+
+      # ── Bez celu: historia rewizji nie mówi, która była zdrowa ───────────
+      # (A dobra → B zła → kopia A → C zła: "poprzednia" to B). Operator wybiera.
+      - name: List revisions and stop
+        if: inputs.image_sha == '' && inputs.revision == ''
+        env:
+          APP: ${{ secrets.AZURE_CONTAINER_APP_NAME }}
+          RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
         run: |
-          PREV=$(az containerapp revision list \
-            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --query "[?properties.active==\`false\`] | sort_by(@, &properties.createdTime) | [-1].name" \
-            --output tsv)
-
-          if [[ -z "$PREV" ]]; then
-            echo "Brak poprzedniej rewizji — manual intervention required."
-            exit 1
-          fi
-
-          echo "Activating previous revision: $PREV"
-          az containerapp revision activate \
-            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --revision "$PREV"
-
-          echo "Switching 100% traffic to: $PREV"
-          az containerapp ingress traffic set \
-            --name "${{ secrets.AZURE_CONTAINER_APP_NAME }}" \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --revision-weight "$PREV=100"
-
-          echo "Rollback complete. Active revision: $PREV"
+          az containerapp revision list --all --name "$APP" --resource-group "$RG" \
+            --query "sort_by(@, &properties.createdTime)[].{name:name, created:properties.createdTime, active:properties.active, image:properties.template.containers[0].image}" \
+            -o table
+          echo "::error::Podaj image_sha albo revision (nazwa z listy powyżej). Nic nie zmieniono."
+          exit 1

@@ -8,6 +8,7 @@ the shipment resource. The emulator is intentionally independent from
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -31,6 +32,7 @@ MEDIA_TYPE = "application/vnd.allegro.public.v1+json"
 PACKAGE_TYPES = frozenset({"PACKAGE", "DOX", "PALLET"})
 DIMENSION_UNITS = frozenset({"MILLIMETER", "CENTIMETER", "METER"})
 WEIGHT_UNITS = frozenset({"KILOGRAMS"})
+REFERENCE_NUMBER_PATTERN = re.compile(r"[A-Za-z0-9_/-]+")
 
 
 def _require_headers(
@@ -93,6 +95,22 @@ def _validate_create_input(value: Any) -> dict[str, Any]:
                 _positive_measure(package[name], f"{path}.{name}", DIMENSION_UNITS)
         if "weight" in package:
             _positive_measure(package["weight"], f"{path}.weight", WEIGHT_UNITS)
+        if "textOnLabel" in package and not isinstance(package["textOnLabel"], str):
+            raise HTTPException(status_code=422, detail=f"{path}.textOnLabel must be a string")
+    reference = value.get("referenceNumber")
+    if reference is not None and (
+        not isinstance(reference, str) or not REFERENCE_NUMBER_PATTERN.fullmatch(reference)
+    ):
+        # Production VALIDATION_ERROR (2026-09-15, 2026-10-26, #462): only
+        # letters without diacritics, digits and "_/-" are accepted. Carrier
+        # length limits vary and are not emulated here.
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "VALIDATION_ERROR: input.referenceNumber may contain only letters "
+                "without diacritics, digits and _/-"
+            ),
+        )
     properties = value.get("additionalProperties")
     if properties is not None:
         if not isinstance(properties, dict):

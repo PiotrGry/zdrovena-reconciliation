@@ -151,6 +151,7 @@ step "pip-audit — zależności Python"
 #   CVE-2026-41182  — langsmith 0.7.22 (via langchain-core)
 #   CVE-2026-45134  — langsmith 0.7.22, same root cause
 #   GHSA-f4xh-w4cj-qxq8 — langsmith 0.7.22, same root cause
+#                     Review by 2027-02-15 or when ecdsa ships a fix.
 _AUDIT_IGNORE="--ignore-vuln PYSEC-2026-89 --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2026-196 --ignore-vuln PYSEC-2026-237 --ignore-vuln CVE-2026-34993 --ignore-vuln CVE-2026-47265 --ignore-vuln CVE-2026-54273 --ignore-vuln CVE-2026-54279 --ignore-vuln CVE-2026-54277 --ignore-vuln CVE-2026-50269 --ignore-vuln CVE-2026-54276 --ignore-vuln CVE-2026-54278 --ignore-vuln CVE-2026-54280 --ignore-vuln CVE-2026-54274 --ignore-vuln PYSEC-2022-260 --ignore-vuln CVE-2026-40087 --ignore-vuln CVE-2026-44843 --ignore-vuln CVE-2026-48775 --ignore-vuln CVE-2026-48776 --ignore-vuln CVE-2026-41182 --ignore-vuln CVE-2026-45134 --ignore-vuln GHSA-f4xh-w4cj-qxq8"
 # Użyj uv run żeby skanować tylko pakiety projektu (nie globalny Python)
 if command -v uv >/dev/null 2>&1 && [ -d "$REPO_ROOT/.venv" ]; then
@@ -197,7 +198,7 @@ if command -v checkov >/dev/null 2>&1 || docker image inspect ghcr.io/bridgecrew
   fi
   $CHECKOV_CMD -d infra/terraform --quiet 2>&1 | grep -E "Passed|Failed|Error" | tail -3 && ok "checkov" || fail "checkov: problemy z IaC"
 else
-  missing_tool "checkov" CHECK_CHECKOV "zainstaluj: uv sync --extra iac"
+  missing_tool "checkov" CHECK_CHECKOV "zainstaluj: uv tool install checkov"
 fi
 
 step "Frontend lint (ESLint)"

@@ -19,7 +19,7 @@ updates:
           - "*"
 
   # Python dependencies
-  - package-ecosystem: "pip"
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
@@ -44,6 +44,13 @@ updates:
     commit-message:
       prefix: "chore(deps-fe)"
       include: "scope"
+    ignore:
+      # eslint-plugin-react 7.37.5 accepts eslint up to ^9.7, so eslint 10
+      # breaks `npm ci`. Remove once eslint-plugin-react supports eslint 10.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/js"
+        update-types: ["version-update:semver-major"]
     groups:
       frontend-minor-and-patch:
         update-types: ["minor", "patch"]
@@ -86,6 +93,11 @@ updates:
     target-branch: "develop"
     commit-message:
       prefix: "chore(docker)"
+    # A new Python minor is a new interpreter: wheels for it lag (python 3.15 broke the
+    # release image in #470). Move Python minors deliberately; take patches automatically.
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   # Terraform providers
   - package-ecosystem: "terraform"
