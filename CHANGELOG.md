@@ -1200,8 +1200,8 @@ For integration tests between services: staging-smoke job deploys all svc contai
 
 * ci(staging): teardown staging after smoke tests (scale to zero)
 
-Staging jest efemeryczny — po testach skaluje sie do 0 replik = brak kosztow idle miedzy runami PR.
-  Krok if: always() wiec dziala nawet gdy testy sie wysypia. Deploy step z --min-replicas 1
+Staging jest efemeryczny — po testach skaluje się do 0 replik = brak kosztów idle między runami PR.
+  Krok if: always() więc działa nawet gdy testy się wysypią. Deploy step z --min-replicas 1
   automatycznie budzi staging przy kolejnym PR.
 
 * feat(api+frontend): invoices/products endpoints + live views (#8)
@@ -1406,8 +1406,8 @@ For integration tests between services: staging-smoke job deploys all svc contai
 
 * ci(staging): teardown staging after smoke tests (scale to zero)
 
-Staging jest efemeryczny — po testach skaluje sie do 0 replik = brak kosztow idle miedzy runami PR.
-  Krok if: always() wiec dziala nawet gdy testy sie wysypia. Deploy step z --min-replicas 1
+Staging jest efemeryczny — po testach skaluje się do 0 replik = brak kosztów idle między runami PR.
+  Krok if: always() więc działa nawet gdy testy się wysypią. Deploy step z --min-replicas 1
   automatycznie budzi staging przy kolejnym PR.
 
 * feat(api+frontend): invoices/products endpoints + live views (#8)
