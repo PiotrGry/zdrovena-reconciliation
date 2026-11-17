@@ -157,10 +157,10 @@ _AUDIT_IGNORE="--ignore-vuln PYSEC-2026-89 --ignore-vuln PYSEC-2025-183 --ignore
 if command -v uv >/dev/null 2>&1 && [ -d "$REPO_ROOT/.venv" ]; then
   PIPAPI_PYTHON_LOCATION="$REPO_ROOT/.venv/bin/python3" uv run pip-audit --local $_AUDIT_IGNORE 2>&1 \
     && ok "pip-audit" || fail "pip-audit: znaleziono podatności — uruchom: uv lock --upgrade-package <pkg>"
-elif command -v pip-audit >/dev/null 2>&1; then
-  pip-audit --local $_AUDIT_IGNORE 2>&1 && ok "pip-audit" || fail "pip-audit: znaleziono podatności"
 else
-  missing_tool "pip-audit" CHECK_PIPAUDIT "zainstaluj: uv sync --extra dev"
+  # Without the project .venv a global pip-audit would audit whatever Python
+  # happens to be installed, not this project's dependencies.
+  missing_tool "pip-audit" CHECK_PIPAUDIT "brak .venv projektu — uruchom: uv sync --extra dev"
 fi
 
 step "gitleaks — skanowanie sekretów"
