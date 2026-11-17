@@ -27,12 +27,16 @@ HAS_CODE=""
 while read -r _local_ref local_sha remote_ref remote_sha; do
   [[ "\$local_sha" == "\$ZERO" ]] && continue   # branch deletion — nothing to check
 
-  if [[ "\$remote_sha" == "\$ZERO" ]]; then
-    # New remote branch: diff against develop rather than the whole history.
-    base=\$(git merge-base origin/develop "\$local_sha" 2>/dev/null || true)
-    RANGE=\$([[ -n "\$base" ]] && echo "\$base..\$local_sha" || echo "")
-  else
+  # A branch is gated for what its PR adds to develop. remote..local would also
+  # hold every develop commit a "merge develop in" brought along: code develop's
+  # own gate already passed, re-checked here against this machine's environment.
+  base=\$(git merge-base origin/develop "\$local_sha" 2>/dev/null || true)
+  if [[ "\$remote_ref" != "refs/heads/develop" && -n "\$base" ]]; then
+    RANGE="\$base..\$local_sha"
+  elif [[ "\$remote_sha" != "\$ZERO" ]]; then
     RANGE="\$remote_sha..\$local_sha"
+  else
+    RANGE=""
   fi
 
   if ! "\$SCRIPT_DIR/docs-only.sh" \${RANGE:+"\$RANGE"} >/dev/null 2>&1; then
