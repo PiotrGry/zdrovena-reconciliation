@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 from zdrovena.month_closing.preflight import (
     PreflightChecker,
     PreflightResult,
+    is_bank_statement_pdf,
     pko_matches_month,
 )
 
@@ -32,6 +33,57 @@ class TestPkoMatchesMonth:
 
     def test_invalid_numbers(self):
         assert pko_matches_month("Wyciag_na_zadanie_202X0701.pdf", 2025, 6) is False
+
+
+class TestPkoMatchesMonthCurrentFormat:
+    """``Wyciag_<month>_…_<yyyymmdd><n>.pdf`` — the name PKO uses now (hotfix #480).
+
+    Unlike the on-demand format, the date here is inside the statement month,
+    so all three of statement month, year and date month must agree.
+    """
+
+    def test_matching_month_year_and_date(self):
+        assert pko_matches_month("Wyciag_8_12345678_202608311.pdf", 2026, 8) is True
+
+    def test_zero_padded_statement_month(self):
+        assert pko_matches_month("Wyciag_08_12345678_202608311.pdf", 2026, 8) is True
+
+    def test_case_insensitive_name(self):
+        assert pko_matches_month("WYCIAG_8_12345678_202608311.PDF", 2026, 8) is True
+
+    def test_statement_month_differs(self):
+        assert pko_matches_month("Wyciag_7_12345678_202608311.pdf", 2026, 8) is False
+
+    def test_year_differs(self):
+        assert pko_matches_month("Wyciag_8_12345678_202508311.pdf", 2026, 8) is False
+
+    def test_date_month_differs(self):
+        # The on-demand rule would accept a next-month date; this format must not.
+        assert pko_matches_month("Wyciag_8_12345678_202609011.pdf", 2026, 8) is False
+
+    def test_other_period_requested(self):
+        assert pko_matches_month("Wyciag_8_12345678_202608311.pdf", 2026, 9) is False
+
+
+# ── is_bank_statement_pdf ─────────────────────────────────────────────────────
+
+
+class TestIsBankStatementPdf:
+    """Content decides; the period-scoped inbox supplies the date (hotfix #480)."""
+
+    def _check(self, tmp_path: Path, text: str, name: str) -> bool:
+        pdf = tmp_path / "candidate.pdf"
+        pdf.write_bytes(b"%PDF-1.4 stub")
+        with patch("zdrovena.month_closing.preflight.extract_text", return_value=text):
+            return is_bank_statement_pdf(pdf, source_name=name)
+
+    def test_pko_statement_text_is_recognised_under_any_name(self, tmp_path):
+        text = "PKO Bank Polski SA\nWyciąg z rachunku nr 8/2026\nSaldo końcowe 1 234,56 PLN"
+        assert self._check(tmp_path, text, "historia_sierpien.pdf") is True
+
+    def test_invoice_text_is_not_a_statement(self, tmp_path):
+        text = "Faktura VAT nr FV/12/08/2026\nSprzedawca: Dostawca Sp. z o.o.\nDo zapłaty: 123,00"
+        assert self._check(tmp_path, text, "faktura_08.pdf") is False
 
 
 # ── PreflightResult defaults ──────────────────────────────────────────────────

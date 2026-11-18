@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import zipfile
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from zdrovena.month_closing.zip_service import create_month_archive
 
@@ -157,3 +158,84 @@ class TestCreateMonthArchiveFromBlob:
             storage, "faktury/2026/kwiecien", "kwiecien", 2026
         )
         assert count == 0
+
+
+# ── Month-scoped inbox in the monthly archive (pins hotfix #480) ──────────────
+
+_SCOPED_INBOX = "faktury/inbox/2026-08"
+_SCOPED_INBOX_FILES = {
+    "Wyciag_8_12345678_202608311.pdf": b"%PDF statement",
+    "historia_sierpien.pdf": b"%PDF unnamed statement",
+    "raporty/rejestr_sprzedazy.xml": b"<xml/>",
+    "raporty/2026/notatka.txt": b"note",
+    "paczka_od_dostawcy.zip": b"PK uploaded archive",
+}
+
+
+class TestScopedInboxInMonthlyArchive:
+    """Every file the operator uploaded for the period reaches the accountant.
+
+    Driven through the real ZIP step over local storage, so the copy of the
+    month-scoped inbox into the month tree and the archive build run together.
+    """
+
+    INBOX = _SCOPED_INBOX
+    INBOX_FILES = _SCOPED_INBOX_FILES
+
+    def _run_zip_step(self, tmp_path: Path) -> zipfile.ZipFile:
+        from zdrovena.common.storage import LocalStorageService
+        from zdrovena.month_closing.orchestrator import MonthCloseOrchestrator
+
+        storage = LocalStorageService(root=tmp_path / "storage")
+        for relative, content in self.INBOX_FILES.items():
+            target = storage.root / self.INBOX / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        collected = storage.root / "faktury/2026/sierpien/koszty/FV001.pdf"
+        collected.parent.mkdir(parents=True, exist_ok=True)
+        collected.write_bytes(b"%PDF cost invoice")
+
+        with patch("zdrovena.month_closing.orchestrator.get_storage_service", return_value=storage):
+            orch = MonthCloseOrchestrator(
+                year=2026, month=8, dry_run=False, inbox_prefix=self.INBOX
+            )
+        orch.out = MagicMock()
+        orch.month_dir = tmp_path / "local" / "2026" / "sierpien"
+        orch.month_dir.mkdir(parents=True)
+
+        orch._step_6_zip_archive()
+
+        assert str(orch.report.zip_path) == "faktury/2026/sierpien/sierpien_2026_HUMIO.zip"
+        return zipfile.ZipFile(storage.root / orch.report.zip_path)
+
+    def test_every_inbox_file_is_archived_with_its_inbox_path(self, tmp_path):
+        with self._run_zip_step(tmp_path) as zf:
+            names = set(zf.namelist())
+            for relative, content in self.INBOX_FILES.items():
+                assert f"inbox/{relative}" in names
+                assert zf.read(f"inbox/{relative}") == content
+
+    def test_collected_documents_stay_next_to_the_inbox(self, tmp_path):
+        with self._run_zip_step(tmp_path) as zf:
+            assert "koszty/FV001.pdf" in zf.namelist()
+
+    def test_nested_zip_outside_the_inbox_is_still_skipped(self):
+        from zdrovena.month_closing.zip_service import create_month_archive_from_blob
+
+        storage = MagicMock()
+        blobs = []
+        for key in (
+            "faktury/2026/sierpien/old_package.zip",
+            "faktury/2026/sierpien/inbox/paczka.zip",
+        ):
+            blob = MagicMock()
+            blob.key = key
+            blobs.append(blob)
+        storage.list_files.return_value = blobs
+        storage.stream.side_effect = lambda key: iter([b"zip"])
+
+        _, _, files = create_month_archive_from_blob(
+            storage, "faktury/2026/sierpien", "sierpien", 2026
+        )
+
+        assert files == ["inbox/paczka.zip"]
