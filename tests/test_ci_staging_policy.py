@@ -192,6 +192,13 @@ def test_develop_auto_merge_never_executes_pull_request_code() -> None:
     assert "--match-head-commit" in AUTO_MERGE_DEVELOP
 
 
+def test_develop_auto_merge_keeps_the_worker_history() -> None:
+    # A squash erases the branch commits from develop: the branch can no longer be
+    # proven merged before deletion, and a follow-up fix cannot reuse it.
+    assert "--auto --merge --match-head-commit" in AUTO_MERGE_DEVELOP
+    assert "--squash" not in AUTO_MERGE_DEVELOP
+
+
 def _teardown_block() -> str:
     """The `teardown:` job definition, up to the next top-level job key."""
     start = FULL_SUITE.index("\n  teardown:")
