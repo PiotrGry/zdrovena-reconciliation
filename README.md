@@ -919,6 +919,7 @@ issue → branch z develop → PR do develop → PR develop do main → produkcj
 
 **Zabezpieczenia bramki:**
 - PR do `develop` musi przejść lint, typy, testy z pokryciem ≥80% oraz skany bezpieczeństwa odpowiednie dla zmienionych obszarów
+- PR-y z gałęzi workerów (`feat/`, `fix/`, `pirx/`, `codex/`, `claude/` itp.) z tego samego repozytorium do `develop` merge'ują się automatycznie po zielonym Fast Gate na dokładnym head SHA (`auto-merge-develop.yml`); używają merge commita (`--merge`), nie squasha, więc historia gałęzi zostaje na `develop`
 - PR `develop → main` zawsze uruchamia quality gate. Pełny staging smoke/E2E uruchamia się tylko dla zmian backendu/frontendu albo samego mechanizmu staging/smoke/E2E; PR-y wyłącznie dokumentacyjne nie logują się do Azure i nie zmieniają stagingu
 - Po merge do `main` produkcyjny workflow uruchamia się tylko dla plików runtime i wdraża osobno backend lub frontend. Zmiana README, testów lub skryptów CI nie powoduje produkcyjnego deploymentu
 - Force-push i usuwanie `develop`/`main` blokują aktywne rulesety; wymagane statusy nie mają bypass actorów. Statusy muszą być zielone, ale `strict_required_status_checks_policy=false`, więc GitHub nie blokuje merge wyłącznie z powodu nowszego commita w bazie
