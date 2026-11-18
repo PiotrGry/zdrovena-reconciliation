@@ -276,3 +276,215 @@ class TestBankStatementDetection:
         assert bank["file_key"] is None
         assert [issue["id"] for issue in issues] == ["bank-missing"]
         assert issues[0]["message"] == "Brakuje wyciągu PKO BP za 2026-08."
+
+
+# ─── Cost documents ──────────────────────────────────────────────────────────
+#
+# For every cost invoice the package holds the original PDF, a Fakturownia
+# render, or nothing. A lost KSeF original once went unnoticed here (#387), so
+# each branch of the decision is pinned on its own.
+
+
+def _vendor(*, original_required: bool):
+    from zdrovena.month_closing.config import EXPECTED_VENDORS
+
+    return next(
+        vendor
+        for vendor in EXPECTED_VENDORS
+        if not vendor.skip
+        and not vendor.download_glob
+        and (vendor.source_policy == "original_required") == original_required
+    )
+
+
+def _vendor_named(name: str):
+    from zdrovena.month_closing.config import EXPECTED_VENDORS
+
+    return next(vendor for vendor in EXPECTED_VENDORS if vendor.name == name)
+
+
+_STRICT = _vendor(original_required=True)
+_LENIENT = _vendor(original_required=False)
+_COSTS_DIR = "faktury/2026/sierpien/koszty"
+
+
+class _StoredFile:
+    def __init__(self, key: str) -> None:
+        self.key = key
+
+
+def _cost(vendor, *, invoice_id: int = 501, has_attachments: bool = False) -> dict:
+    # Fakturownia keeps the vendor of a cost invoice in the buyer fields.
+    return {
+        "id": invoice_id,
+        "number": f"FV/{invoice_id}/08/2026",
+        "buyer_name": f"{vendor.pattern.upper()} Sp. z o.o.",
+        "buyer_tax_no": "",
+        "has_attachments": has_attachments,
+    }
+
+
+def _stem(inv: dict) -> str:
+    from zdrovena.common import FakturowniaClient
+
+    return FakturowniaClient.cost_document_stem(inv)
+
+
+def _cost_documents(costs: list[dict], names: list[str]) -> tuple[list[dict], list[dict]]:
+    from zdrovena.month_closing.inspection import MonthCloseInspector
+
+    # The method only reads ``.key`` of the listed files; storage is never touched.
+    inspector = MonthCloseInspector(*_PERIOD, storage=object())
+    month_files = [_StoredFile(f"{_COSTS_DIR}/{name}") for name in names]
+    issues: list[dict] = []
+    documents = inspector._cost_documents(costs, month_files, issues)
+    return documents, issues
+
+
+def _cost_document(inv: dict, names: list[str]) -> tuple[dict, list[dict]]:
+    documents, issues = _cost_documents([inv], names)
+    return next(doc for doc in documents if doc["id"] == f"cost-{inv['id']}"), issues
+
+
+def _vendor_document_id(vendor) -> str:
+    return f"vendor-{vendor.name.casefold().replace(' ', '-')}"
+
+
+class TestCostDocuments:
+    def test_the_vendors_under_test_have_the_intended_policies(self):
+        assert _STRICT.source_policy == "original_required"
+        assert _LENIENT.source_policy != "original_required"
+
+    @pytest.mark.parametrize("vendor", [_STRICT, _LENIENT], ids=["required", "preferred"])
+    @pytest.mark.parametrize("with_render", [False, True], ids=["alone", "with-render"])
+    def test_a_stored_original_is_present_without_an_issue(self, vendor, with_render):
+        inv = _cost(vendor)
+        original = f"{_stem(inv)}__original__ksef.pdf"
+        names = [f"{_stem(inv)}.pdf", original] if with_render else [original]
+
+        doc, issues = _cost_document(inv, names)
+
+        assert doc["status"] == "present"
+        assert doc["source"] == "Oryginalny załącznik Fakturowni"
+        assert doc["file_key"] == f"{_COSTS_DIR}/{original}"
+        assert issues == []
+
+    def test_a_render_where_the_original_is_required_is_a_blocker(self):
+        # Even with an attachment in Fakturownia: the stored render must go.
+        inv = _cost(_STRICT, has_attachments=True)
+        render = f"{_stem(inv)}.pdf"
+
+        doc, issues = _cost_document(inv, [render])
+
+        assert doc["status"] == "missing"
+        assert doc["source"] == "Wygenerowany PDF — do zastąpienia"
+        assert doc["file_key"] == f"{_COSTS_DIR}/{render}"
+        assert [(i["id"], i["severity"]) for i in issues] == [
+            (f"generated-forbidden-{inv['id']}", "blocker")
+        ]
+
+    def test_a_render_where_the_original_is_optional_is_a_warning(self):
+        inv = _cost(_LENIENT)
+        render = f"{_stem(inv)}.pdf"
+
+        doc, issues = _cost_document(inv, [render])
+
+        assert doc["status"] == "present"
+        assert doc["source"] == "Wygenerowany PDF Fakturowni"
+        assert doc["file_key"] == f"{_COSTS_DIR}/{render}"
+        assert [(i["id"], i["severity"]) for i in issues] == [
+            (f"generated-stored-{inv['id']}", "warning")
+        ]
+
+    @pytest.mark.parametrize("vendor", [_STRICT, _LENIENT], ids=["required", "preferred"])
+    def test_nothing_stored_but_an_attachment_is_fetched_automatically(self, vendor):
+        inv = _cost(vendor, has_attachments=True)
+
+        doc, issues = _cost_document(inv, [])
+
+        assert doc["status"] == "available_automatically"
+        assert doc["source"] == "Oryginalny załącznik Fakturowni"
+        assert doc["file_key"] is None
+        assert issues == []
+
+    def test_nothing_at_all_where_the_original_is_required_is_a_blocker(self):
+        inv = _cost(_STRICT)
+
+        doc, issues = _cost_document(inv, [])
+
+        assert doc["status"] == "missing"
+        assert doc["source"] == "Zoho / wgranie ręczne"
+        assert doc["file_key"] is None
+        assert [(i["id"], i["severity"]) for i in issues] == [
+            (f"original-required-{inv['id']}", "blocker")
+        ]
+
+    def test_nothing_at_all_where_the_original_is_optional_falls_back_to_a_render(self):
+        inv = _cost(_LENIENT)
+
+        doc, issues = _cost_document(inv, [])
+
+        assert doc["status"] == "available_automatically"
+        assert doc["source"] == "Wygenerowany PDF Fakturowni"
+        assert doc["file_key"] is None
+        assert [(i["id"], i["severity"]) for i in issues] == [
+            (f"generated-fallback-{inv['id']}", "warning")
+        ]
+
+    def test_an_original_is_recognised_whatever_the_letter_case(self):
+        inv = _cost(_STRICT)
+        original = f"{_stem(inv).upper()}__ORIGINAL__X.PDF"
+
+        doc, issues = _cost_document(inv, [original])
+
+        assert doc["status"] == "present"
+        assert doc["source"] == "Oryginalny załącznik Fakturowni"
+        assert doc["file_key"] == f"{_COSTS_DIR}/{original}"
+        assert issues == []
+
+    def test_a_render_is_recognised_whatever_the_letter_case(self):
+        inv = _cost(_STRICT)
+        render = f"{_stem(inv).upper()}.PDF"
+
+        doc, issues = _cost_document(inv, [render])
+
+        assert doc["status"] == "missing"
+        assert doc["source"] == "Wygenerowany PDF — do zastąpienia"
+        assert doc["file_key"] == f"{_COSTS_DIR}/{render}"
+        assert [(i["id"], i["severity"]) for i in issues] == [
+            (f"generated-forbidden-{inv['id']}", "blocker")
+        ]
+
+    def test_a_vendor_with_an_invoice_gets_no_separate_vendor_document(self):
+        inv = _cost(_LENIENT, has_attachments=True)
+
+        documents, _ = _cost_documents([inv], [])
+
+        assert _vendor_document_id(_LENIENT) not in [doc["id"] for doc in documents]
+
+    def test_an_expected_vendor_without_an_invoice_is_left_to_the_collector(self):
+        vendor = _vendor_named("Apaczka")
+
+        documents, issues = _cost_documents([], [])
+
+        doc = next(doc for doc in documents if doc["id"] == _vendor_document_id(vendor))
+        assert doc["status"] == "available_automatically"
+        assert doc["source"] == "Zoho Mail"
+        assert doc["file_key"] is None
+        assert issues == []
+
+    @pytest.mark.parametrize("by", ["pattern", "name"])
+    def test_an_expected_vendor_without_an_invoice_is_present_when_stored(self, by):
+        # Apaczka invoices come from Alsendo: the name and the pattern differ,
+        # and either one in a stored file name is enough.
+        vendor = _vendor_named("Apaczka")
+        assert vendor.pattern.casefold() not in vendor.name.casefold()
+        needle = vendor.pattern if by == "pattern" else vendor.name
+
+        documents, issues = _cost_documents([], [f"Faktura_{needle.upper()}_08.pdf"])
+
+        doc = next(doc for doc in documents if doc["id"] == _vendor_document_id(vendor))
+        assert doc["status"] == "present"
+        assert doc["source"] == "Pobrany dokument"
+        assert doc["file_key"] is None
+        assert issues == []
