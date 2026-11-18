@@ -484,3 +484,239 @@ class TestCopyToFoldersBlobMoveSemantics:
 
         storage.delete.assert_not_called()
         assert local_file.exists()
+
+
+# ── _find_vendor_in_blob — Zoho invoice IDs, glob fallback, misses ───────────
+
+_ZOHO_VENDOR_KW = dict(
+    name="ZohoVendor",
+    pattern="zohovendor",
+    email="billing@zohovendor.example",
+    invoice_id_re=r"INV-\d+",
+    invoice_file_tpl="zv_{id}.pdf",
+    download_glob="zv_*.pdf",
+)
+
+
+def _zoho_vendor(**overrides):
+    from zdrovena.month_closing.config import VendorConfig
+
+    return VendorConfig(**{**_ZOHO_VENDOR_KW, **overrides})
+
+
+def _blob_at(key: str, day: int):
+    bf = _make_blob_file(key)
+    bf.last_modified = datetime(2025, 6, day, tzinfo=timezone.utc)
+    return bf
+
+
+def _blob_checker(tmp_path: Path, failing_keys: frozenset[str] = frozenset()):
+    """Checker over a fake storage; ``download`` raises for ``failing_keys``."""
+    storage = MagicMock()
+    downloaded: list[str] = []
+
+    def _download(key, path):
+        if key in failing_keys:
+            raise OSError(f"download of {key} failed")
+        downloaded.append(key)
+        path.write_bytes(key.encode())
+
+    storage.download.side_effect = _download
+    checker = _make_checker_with_storage(tmp_path, storage)
+    out: list[str] = []
+    checker._out = out.append
+    return checker, out, downloaded
+
+
+def _matched_keys(checker: PreflightChecker) -> list[str]:
+    return [path.read_bytes().decode() for _, path in checker.result.matches]
+
+
+class TestFindVendorInBlob:
+    def test_zoho_id_with_exact_file_in_inbox_is_matched(self, tmp_path):
+        checker, out, downloaded = _blob_checker(tmp_path)
+        zoho = MagicMock()
+        zoho.extract_invoice_ids.return_value = [
+            {"id": "INV-1", "url": "https://mail.example/1"},
+        ]
+        blobs = [
+            _blob_at("faktury/inbox/zv_other.pdf", 20),
+            _blob_at("faktury/inbox/zv_INV-1.pdf", 1),
+        ]
+
+        found = checker._find_vendor_in_blob(
+            _zoho_vendor(), blobs, zoho, "2025/06/01", "2025/07/15"
+        )
+
+        assert found is True
+        assert _matched_keys(checker) == ["faktury/inbox/zv_INV-1.pdf"]
+        assert checker.result.matches[0][0].name == "ZohoVendor"
+        assert downloaded == ["faktury/inbox/zv_INV-1.pdf"]
+        assert any("found zv_INV-1.pdf (from blob)" in line for line in out)
+        zoho.extract_invoice_ids.assert_called_once_with(
+            search_term="billing@zohovendor.example",
+            date_from="2025/06/01",
+            date_to="2025/07/15",
+            invoice_id_re=r"INV-\d+",
+        )
+
+    def test_exact_file_missing_falls_back_to_newest_glob_match(self, tmp_path):
+        checker, out, downloaded = _blob_checker(tmp_path)
+        zoho = MagicMock()
+        zoho.extract_invoice_ids.return_value = [{"id": "INV-9", "url": None}]
+        blobs = [
+            _blob_at("faktury/inbox/zv_old.pdf", 2),
+            _blob_at("faktury/inbox/zv_newest.pdf", 28),
+            _blob_at("faktury/inbox/zv_middle.pdf", 14),
+            _blob_at("faktury/inbox/unrelated.pdf", 30),
+        ]
+
+        found = checker._find_vendor_in_blob(
+            _zoho_vendor(), blobs, zoho, "2025/06/01", "2025/07/15"
+        )
+
+        assert found is True
+        assert _matched_keys(checker) == ["faktury/inbox/zv_newest.pdf"]
+        assert downloaded == ["faktury/inbox/zv_newest.pdf"]
+        assert any("found zv_newest.pdf (glob fallback)" in line for line in out)
+
+    def test_exact_file_missing_and_no_glob_match_lists_email_urls(self, tmp_path):
+        checker, out, downloaded = _blob_checker(tmp_path)
+        zoho = MagicMock()
+        zoho.extract_invoice_ids.return_value = [
+            {"id": "INV-1", "url": "https://mail.example/1"},
+            {"id": "INV-2", "url": "https://mail.example/2"},
+        ]
+        blobs = [_blob_at("faktury/inbox/unrelated.pdf", 10)]
+        vendor = _zoho_vendor(fallback_url="https://vendor.example/billing")
+
+        found = checker._find_vendor_in_blob(vendor, blobs, zoho, "2025/06/01", "2025/07/15")
+
+        assert found is False
+        assert checker.result.matches == []
+        assert downloaded == []
+        joined = "\n".join(out)
+        assert "ZohoVendor: expected zv_INV-1.pdf, zv_INV-2.pdf — not in blob inbox/" in joined
+        assert "🔗 https://mail.example/1" in joined
+        assert "🔗 https://mail.example/2" in joined
+        # E-mail URLs take precedence over the vendor's fallback URL.
+        assert "https://vendor.example/billing" not in joined
+
+    def test_exact_file_missing_no_urls_shows_fallback_url(self, tmp_path):
+        checker, out, downloaded = _blob_checker(tmp_path)
+        zoho = MagicMock()
+        zoho.extract_invoice_ids.return_value = [{"id": "INV-3"}]
+        vendor = _zoho_vendor(fallback_url="https://vendor.example/billing")
+
+        found = checker._find_vendor_in_blob(vendor, [], zoho, "2025/06/01", "2025/07/15")
+
+        assert found is False
+        assert checker.result.matches == []
+        assert downloaded == []
+        joined = "\n".join(out)
+        assert "ZohoVendor: expected zv_INV-3.pdf — not in blob inbox/" in joined
+        assert "🔗 Download from: https://vendor.example/billing" in joined
+        assert "https://mail.example" not in joined
+
+    def test_zoho_failure_falls_through_to_glob_only_path(self, tmp_path, caplog):
+        checker, out, _ = _blob_checker(tmp_path)
+        zoho = MagicMock()
+        zoho.extract_invoice_ids.side_effect = RuntimeError("zoho exploded")
+        blobs = [
+            _blob_at("faktury/inbox/zv_a.pdf", 3),
+            _blob_at("faktury/inbox/zv_b.pdf", 25),
+        ]
+
+        with caplog.at_level("WARNING", logger="zdrovena.month_closing.preflight"):
+            found = checker._find_vendor_in_blob(
+                _zoho_vendor(), blobs, zoho, "2025/06/01", "2025/07/15"
+            )
+
+        assert found is True
+        assert _matched_keys(checker) == ["faktury/inbox/zv_b.pdf"]
+        # Glob-only path reports "(from blob)", not the post-Zoho "(glob fallback)".
+        assert any("found zv_b.pdf (from blob)" in line for line in out)
+        assert not any("expected" in line for line in out)
+        assert any(
+            r.levelname == "WARNING"
+            and "Zoho invoice ID extraction for ZohoVendor failed" in r.getMessage()
+            and "zoho exploded" in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_zoho_failure_with_no_glob_match_reports_missing(self, tmp_path, caplog):
+        checker, out, _ = _blob_checker(tmp_path)
+        zoho = MagicMock()
+        zoho.extract_invoice_ids.side_effect = RuntimeError("zoho exploded")
+        vendor = _zoho_vendor(fallback_url="https://vendor.example/billing")
+
+        with caplog.at_level("WARNING", logger="zdrovena.month_closing.preflight"):
+            found = checker._find_vendor_in_blob(vendor, [], zoho, "2025/06/01", "2025/07/15")
+
+        assert found is False
+        assert checker.result.matches == []
+        joined = "\n".join(out)
+        assert "ZohoVendor: no matching PDF in blob inbox/" in joined
+        assert "🔗 Download from: https://vendor.example/billing" in joined
+        assert any(
+            r.levelname == "WARNING" and "zoho exploded" in r.getMessage() for r in caplog.records
+        )
+
+    def test_failed_download_of_exact_file_is_not_counted_as_found(self, tmp_path):
+        exact = "faktury/inbox/zv_INV-1.pdf"
+        checker, out, downloaded = _blob_checker(tmp_path, failing_keys=frozenset({exact}))
+        zoho = MagicMock()
+        zoho.extract_invoice_ids.return_value = [{"id": "INV-1", "url": "https://mail.example/1"}]
+        blobs = [_blob_at(exact, 10)]
+
+        found = checker._find_vendor_in_blob(
+            _zoho_vendor(), blobs, zoho, "2025/06/01", "2025/07/15"
+        )
+
+        assert found is False
+        assert checker.result.matches == []
+        assert downloaded == []
+        joined = "\n".join(out)
+        assert "✅" not in joined
+        assert "ZohoVendor: expected zv_INV-1.pdf — not in blob inbox/" in joined
+        assert "🔗 https://mail.example/1" in joined
+
+    def test_failed_download_of_exact_file_retried_by_glob_still_not_found(self, tmp_path):
+        exact = "faktury/inbox/zv_INV-1.pdf"
+        checker, out, downloaded = _blob_checker(tmp_path, failing_keys=frozenset({exact}))
+        zoho = MagicMock()
+        zoho.extract_invoice_ids.return_value = [{"id": "INV-1"}]
+        # The exact file is also the newest glob match, so the fallback retries
+        # it and fails again — the older readable blob is not consulted.
+        blobs = [_blob_at(exact, 20), _blob_at("faktury/inbox/zv_older.pdf", 5)]
+
+        found = checker._find_vendor_in_blob(
+            _zoho_vendor(), blobs, zoho, "2025/06/01", "2025/07/15"
+        )
+
+        assert found is False
+        assert checker.result.matches == []
+        assert downloaded == []
+        assert checker._storage.download.call_count == 2
+        assert "✅" not in "\n".join(out)
+
+    def test_failed_download_of_newest_glob_match_is_not_counted(self, tmp_path):
+        newest = "faktury/inbox/zv_new.pdf"
+        checker, out, downloaded = _blob_checker(tmp_path, failing_keys=frozenset({newest}))
+        blobs = [_blob_at("faktury/inbox/zv_old.pdf", 1), _blob_at(newest, 29)]
+
+        found = checker._find_vendor_in_blob(
+            _zoho_vendor(fallback_url="https://vendor.example/billing"),
+            blobs,
+            None,
+            "2025/06/01",
+            "2025/07/15",
+        )
+
+        assert found is False
+        assert checker.result.matches == []
+        assert downloaded == []
+        joined = "\n".join(out)
+        assert "✅" not in joined
+        assert "ZohoVendor: no matching PDF in blob inbox/" in joined
+        assert "🔗 Download from: https://vendor.example/billing" in joined
