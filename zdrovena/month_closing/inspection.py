@@ -20,6 +20,7 @@ from typing import Any
 
 from zdrovena.audit.sections import check_numbering
 from zdrovena.common import FakturowniaClient
+from zdrovena.common.exceptions import storage_unavailable
 from zdrovena.common.storage import StorageService, get_storage_service
 from zdrovena.month_closing.config import (
     BASE_DIR,
@@ -378,7 +379,20 @@ class MonthCloseInspector:
         return documents
 
     def _find_bank_statements(self, files: dict[str, Any]) -> list[str]:
-        """Find statements by content; the selected period folder supplies date."""
+        """Find statements by content; the selected period folder supplies date.
+
+        Only a file that vanished between listing and download is skipped. Any
+        other download failure raises: an outage is not evidence that the file
+        is not a statement, and answering it with "missing" would hide it (#310).
+        """
+        vanished: tuple[type[BaseException], ...] = (FileNotFoundError,)
+        try:
+            from azure.core.exceptions import ResourceNotFoundError
+        except ImportError:  # pragma: no cover — azure is an optional dependency
+            pass
+        else:
+            vanished = (*vanished, ResourceNotFoundError)
+
         matches: list[str] = []
         for name, item in files.items():
             if not name.casefold().endswith(".pdf"):
@@ -394,8 +408,12 @@ class MonthCloseInspector:
                 local_path = Path(temp_dir) / "candidate.pdf"
                 try:
                     self.storage.download(item.key, local_path)
-                except Exception:
+                except vanished:
                     continue
+                except Exception as exc:
+                    raise storage_unavailable(
+                        "month-close inbox", "bank statement content check", exc
+                    ) from exc
                 if is_bank_statement_pdf(local_path, source_name=name):
                     matches.append(name)
         return matches
