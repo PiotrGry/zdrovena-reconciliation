@@ -176,3 +176,103 @@ def test_the_endpoint_is_open_to_the_viewer_role():
     marker = source.index('"/inspection"')
     signature = source[marker : marker + 700]
     assert "require_viewer_or_above" in signature
+
+
+# ── Bank statement detection (pins hotfix #480, a584cec) ──────────────────────
+#
+# The statement used to be recognised by file name alone, so a PKO export saved
+# under any other name left the period "missing" a statement it already had.
+# These tests drive the real inspector over a real month-scoped inbox; only the
+# PDF text extraction is stubbed, so the content check itself still runs.
+
+_PERIOD = (2026, 8)
+_INBOX = "faktury/inbox/2026-08"
+_PKO_TEXT = "PKO Bank Polski SA\nWyciąg z rachunku nr 8/2026\nSaldo początkowe"
+_INVOICE_TEXT = "Faktura VAT nr FV/12/08/2026\nSprzedawca: Dostawca Sp. z o.o."
+
+
+def _fake_extract_text(path: Path) -> str:
+    # The "PDFs" in these tests are plain text standing in for the extracted text.
+    return path.read_text(encoding="utf-8")
+
+
+def _inspect_bank(tmp_path: Path, files: dict[str, str]) -> tuple[dict, list[dict]]:
+    """Inspect a period whose inbox holds ``files``; return the bank document and issues."""
+    from zdrovena.month_closing.inspection import MonthCloseInspector
+
+    storage = LocalStorageService(root=tmp_path / "storage")
+    for name, text in files.items():
+        target = storage.root / _INBOX / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+
+    with (
+        patch(
+            "zdrovena.month_closing.preflight.extract_text",
+            side_effect=_fake_extract_text,
+            create=True,
+        ),
+        patch(
+            "zdrovena.month_closing.inspection.FakturowniaClient.from_keyring",
+            side_effect=RuntimeError("offline in tests"),
+        ),
+    ):
+        result = MonthCloseInspector(*_PERIOD, storage=storage).inspect()
+
+    bank = next(doc for doc in result["documents"] if doc["id"] == "bank-pko")
+    bank_issues = [issue for issue in result["issues"] if issue["id"].startswith("bank-")]
+    return bank, bank_issues
+
+
+class TestBankStatementDetection:
+    def test_a_statement_is_found_by_its_content_not_its_name(self, tmp_path):
+        # Neither "wyciag" nor "pko" in the name: only the content says what it is.
+        bank, issues = _inspect_bank(tmp_path, {"historia_sierpien.pdf": _PKO_TEXT})
+
+        assert bank["status"] == "present"
+        assert bank["message"] == "historia_sierpien.pdf"
+        assert bank["file_key"] == f"{_INBOX}/historia_sierpien.pdf"
+        assert issues == []
+
+    def test_an_invoice_in_the_inbox_is_not_taken_for_a_statement(self, tmp_path):
+        bank, issues = _inspect_bank(tmp_path, {"faktura_08.pdf": _INVOICE_TEXT})
+
+        assert bank["status"] == "missing"
+        assert [issue["id"] for issue in issues] == ["bank-missing"]
+
+    def test_two_candidate_statements_are_ambiguous_and_both_are_named(self, tmp_path):
+        bank, issues = _inspect_bank(
+            tmp_path,
+            {
+                "Wyciag_8_12345678_202608311.pdf": _PKO_TEXT,
+                "historia_sierpien.pdf": _PKO_TEXT,
+            },
+        )
+
+        assert bank["status"] == "invalid"
+        assert len(issues) == 1
+        issue = issues[0]
+        assert issue["id"] == "bank-ambiguous"
+        assert issue["severity"] == "blocker"
+        assert "Wyciag_8_12345678_202608311.pdf" in issue["message"]
+        assert "historia_sierpien.pdf" in issue["message"]
+
+    def test_an_on_demand_statement_for_another_month_is_invalid(self, tmp_path):
+        # Legacy on-demand names carry the generation date, which for August is
+        # in September; a June date belongs to May, not to the selected period.
+        name = "Wyciag_na_zadanie_12345678_20260601123.pdf"
+        bank, issues = _inspect_bank(tmp_path, {name: _PKO_TEXT})
+
+        assert bank["status"] == "invalid"
+        assert bank["message"] == f"{name} nie pasuje do wybranego okresu."
+        assert [issue["id"] for issue in issues] == ["bank-invalid"]
+        assert issues[0]["severity"] == "blocker"
+        assert issues[0]["message"] == f"Wyciąg {name} nie pasuje do okresu 2026-08."
+
+    def test_no_candidate_at_all_is_missing(self, tmp_path):
+        bank, issues = _inspect_bank(tmp_path, {})
+
+        assert bank["status"] == "missing"
+        assert bank["file_key"] is None
+        assert [issue["id"] for issue in issues] == ["bank-missing"]
+        assert issues[0]["message"] == "Brakuje wyciągu PKO BP za 2026-08."
