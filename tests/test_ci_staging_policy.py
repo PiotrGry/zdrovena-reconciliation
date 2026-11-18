@@ -256,3 +256,15 @@ def test_full_suite_uses_and_deletes_the_same_isolated_preview() -> None:
     )
     assert "for env in $NORMALIZED $PR_NUMBER; do" in FULL_SUITE
     assert '--environment-name "$env" --yes' in FULL_SUITE
+
+
+def test_release_retries_the_pr_lookup_and_never_skips_silently() -> None:
+    """#523: a lookup right after an auto-merge came back empty and the run exited 0.
+
+    The release was skipped while the run looked green. The lookup must be retried,
+    and a green worker-branch Fast Gate with no develop PR must fail the run.
+    """
+    assert "lookup $attempt/12" in CONTINUOUS_DELIVERY
+    assert "No develop PR is associated with green SHA $PR_GATE_SHA." not in CONTINUOUS_DELIVERY
+    lookup = CONTINUOUS_DELIVERY.index("after 12 lookups")
+    assert "exit 1" in CONTINUOUS_DELIVERY[lookup : lookup + 200]

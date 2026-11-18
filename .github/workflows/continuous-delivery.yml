@@ -117,13 +117,23 @@ jobs:
             # workflow_run carries the originating PR even after GitHub deletes
             # its source branch. Commit-to-PR lookup is only a recovery fallback.
             SOURCE_PR="$PR_GATE_NUMBER"
-            if [[ -z "$SOURCE_PR" || "$SOURCE_PR" == "null" ]]; then
+            # GitHub links a commit to its PR asynchronously: right after an
+            # auto-merge the lookup can come back empty for a few seconds
+            # (#523: merged 18:39:26Z, looked up 18:39:28Z, nothing found).
+            for attempt in $(seq 1 12); do
+              [[ -n "$SOURCE_PR" && "$SOURCE_PR" != "null" ]] && break
               SOURCE_PR=$(gh api "repos/${{ github.repository }}/commits/$PR_GATE_SHA/pulls" \
                 --jq '[.[] | select(.base.ref == "develop" and .head.sha == "'"$PR_GATE_SHA"'")] | .[0].number // empty')
-            fi
-            [[ -n "$SOURCE_PR" ]] || {
-              echo "No develop PR is associated with green SHA $PR_GATE_SHA."
-              exit 0
+              [[ -n "$SOURCE_PR" ]] && break
+              echo "No develop PR linked to $PR_GATE_SHA yet (lookup $attempt/12); retrying in 10 s."
+              sleep 10
+            done
+            # A green Fast Gate on a trusted worker branch always belongs to a
+            # develop PR. Not finding it is a failure to look into, never a
+            # silent "nothing to release".
+            [[ -n "$SOURCE_PR" && "$SOURCE_PR" != "null" ]] || {
+              echo "::error::No develop PR is associated with green SHA $PR_GATE_SHA after 12 lookups; re-run this workflow."
+              exit 1
             }
 
             for _ in $(seq 1 120); do
