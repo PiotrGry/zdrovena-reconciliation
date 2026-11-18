@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Require a bounded worker branch and enable squash merge
+      - name: Require a bounded worker branch and enable a history-preserving merge
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
@@ -40,5 +40,8 @@ jobs:
               exit 0
               ;;
           esac
-          gh pr merge "$PR_URL" --auto --squash --match-head-commit "$HEAD_SHA"
+          # A merge commit, not a squash: develop keeps the worker's commits, so a
+          # follow-up fix can continue on the same branch and Pirx can prove the
+          # branch head is on develop before it deletes the branch.
+          gh pr merge "$PR_URL" --auto --merge --match-head-commit "$HEAD_SHA"
           echo "Auto-merge enabled for exact head $HEAD_SHA; Fast Gate remains mandatory."
