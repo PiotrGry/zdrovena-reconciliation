@@ -278,6 +278,57 @@ class TestBankStatementDetection:
         assert issues[0]["message"] == "Brakuje wyciągu PKO BP za 2026-08."
 
 
+# ── Storage failures during the content check (#520, CONTRIBUTING § #310) ─────
+#
+# A download that fails is not evidence that the file is not a statement. Only a
+# file that vanished may be skipped; anything else has to surface as a storage
+# error rather than as "Brakuje wyciągu PKO BP".
+
+
+def _inspect_with_failing_download(
+    tmp_path: Path, files: dict[str, str], failures: dict[str, BaseException]
+) -> tuple[dict, list[dict], list[str]]:
+    """Like ``_inspect_bank`` but downloads of names in ``failures`` raise."""
+    attempted: list[str] = []
+    real_download = LocalStorageService.download
+
+    def download(self, key: str, local_path: Path) -> None:
+        name = key.rsplit("/", 1)[-1]
+        attempted.append(name)
+        if name in failures:
+            raise failures[name]
+        real_download(self, key, local_path)
+
+    with patch.object(LocalStorageService, "download", download):
+        bank, issues = _inspect_bank(tmp_path, files)
+    return bank, issues, attempted
+
+
+class TestBankStatementStorageFailures:
+    def test_a_failed_download_is_a_storage_error_not_a_missing_statement(self, tmp_path):
+        from zdrovena.common.exceptions import StorageUnavailableError
+
+        with pytest.raises(StorageUnavailableError) as raised:
+            _inspect_with_failing_download(
+                tmp_path,
+                {"historia_sierpien.pdf": _PKO_TEXT},
+                {"historia_sierpien.pdf": OSError("connection reset")},
+            )
+
+        assert isinstance(raised.value.__cause__, OSError)
+
+    def test_a_vanished_file_is_skipped_and_the_rest_are_still_checked(self, tmp_path):
+        bank, issues, attempted = _inspect_with_failing_download(
+            tmp_path,
+            {"historia_sierpien.pdf": _PKO_TEXT, "faktura_08.pdf": _INVOICE_TEXT},
+            {"historia_sierpien.pdf": FileNotFoundError("gone")},
+        )
+
+        assert sorted(attempted) == ["faktura_08.pdf", "historia_sierpien.pdf"]
+        assert bank["status"] == "missing"
+        assert [issue["id"] for issue in issues] == ["bank-missing"]
+
+
 # ─── Cost documents ──────────────────────────────────────────────────────────
 #
 # For every cost invoice the package holds the original PDF, a Fakturownia
