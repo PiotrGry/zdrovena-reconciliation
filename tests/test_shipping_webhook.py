@@ -6024,9 +6024,9 @@ class TestBatchLabels:
             resp = client.post("/api/shipping/labels/batch", json={"draft_ids": ["b-1"]})
 
         assert resp.status_code == 200
-        assert _pdf_title(resp.content) == "Etykiety portal 26.08"
+        assert _pdf_title(resp.content) == "zdrovena_portal_260826"
         assert resp.headers["content-disposition"] == (
-            'inline; filename="Etykiety portal 26.08.pdf"'
+            'inline; filename="zdrovena_portal_260826.pdf"'
         )
 
 

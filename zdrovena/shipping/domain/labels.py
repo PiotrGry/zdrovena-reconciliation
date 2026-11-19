@@ -19,9 +19,20 @@ def _day_stamp(now: datetime | None) -> str:
     return moment.astimezone(WARSAW).strftime("%d.%m")
 
 
+def _compact_day_stamp(now: datetime | None) -> str:
+    """Return the Polish calendar day as DDMMYY (same Warsaw conversion)."""
+    moment = now or datetime.now(WARSAW)
+    return moment.astimezone(WARSAW).strftime("%d%m%y")
+
+
 def batch_label_title(now: datetime | None = None) -> str:
-    """Title for the merged sheet printed for a whole batch of drafts."""
-    return f"Etykiety portal {_day_stamp(now)}"
+    """Title for the merged sheet printed for a whole batch of drafts.
+
+    Must match ``batchSheetTitle()`` in
+    ``frontend/src/views/shipping/formatting.js`` — that one becomes the
+    saved PDF's filename, this one the PDF /Title and download filename.
+    """
+    return f"zdrovena_portal_{_compact_day_stamp(now)}"
 
 
 def single_label_title(order_number: str, now: datetime | None = None) -> str:

@@ -15,14 +15,19 @@ from zdrovena.shipping.domain.labels import batch_label_title, single_label_titl
 
 class TestBatchLabelTitle:
     def test_uses_the_operator_requested_wording_and_day(self):
-        moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
-        assert batch_label_title(moment) == "Etykiety portal 26.08"
+        moment = datetime(2026, 11, 19, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
+        assert batch_label_title(moment) == "zdrovena_portal_191126"
 
     def test_reads_the_warsaw_day_not_the_utc_one(self):
         # 23:30 UTC on the 25th is 01:30 on the 26th in Warsaw. The container
         # runs on UTC, so without the conversion a late batch is misdated.
         moment = datetime(2026, 8, 25, 23, 30, tzinfo=timezone.utc)
-        assert batch_label_title(moment) == "Etykiety portal 26.08"
+        assert batch_label_title(moment) == "zdrovena_portal_260826"
+
+    def test_just_after_midnight_in_winter_is_already_the_next_day(self):
+        # 23:30 UTC on 18 Nov is 00:30 on 19 Nov in Warsaw (CET, UTC+1).
+        moment = datetime(2026, 11, 18, 23, 30, tzinfo=timezone.utc)
+        assert batch_label_title(moment) == "zdrovena_portal_191126"
 
 
 class TestSingleLabelTitle:
