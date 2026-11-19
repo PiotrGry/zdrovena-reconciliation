@@ -27,6 +27,7 @@ from zdrovena.api.shipping_execution_composition import (
     SHIPMENT_ORIGIN_SYSTEM,
     shipment_patch,
 )
+from zdrovena.api.shopify_fulfillment_composition import maybe_auto_fulfill
 from zdrovena.common.secrets import get_secret
 from zdrovena.shipping.providers.inpost import (
     is_resumable_inpost_draft,
@@ -126,6 +127,10 @@ def resolve_pending_inpost_once(
             tracking_number=patch.get("tracking_number"),
             courier_draft_id=patch.get("courier_draft_id") or draft.get("courier_draft_id"),
         )
+        # The waybill is the tracking number Shopify has been waiting for
+        # (#541, behind SHOPIFY_AUTO_FULFILL). Never raises; a failure is stored
+        # on the draft and retried next cycle.
+        maybe_auto_fulfill(draft_id, shipping_store)
         stats["resolved"] += 1
 
     return stats
