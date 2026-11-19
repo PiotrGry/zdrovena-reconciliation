@@ -61,6 +61,12 @@ _SYNC_PRESERVED_FIELDS = {
     "fakturownia_invoice_attempts",
     "fakturownia_invoice_attempted_at",
     "allegro_fulfillment_status",
+    # Shopify fulfillment bookkeeping (#541): the ids are what keeps a refresh
+    # from leading to a second fulfillment.
+    "shopify_fulfillment_ids",
+    "shopify_fulfillment_error",
+    "shopify_fulfillment_attempted_at",
+    "shopify_fulfillment_synced_at",
 }
 
 _SYNC_TERMINAL_STATUSES = {"created", "cancelled"}

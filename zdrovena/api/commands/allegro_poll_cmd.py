@@ -245,6 +245,18 @@ def _run_cycle(args: argparse.Namespace) -> None:
     except Exception:
         logger.exception("InPost pending resolution failed")
 
+    # A Shopify fulfillment that failed when the tracking number arrived is
+    # stored on the draft; this is its retry (#541, behind SHOPIFY_AUTO_FULFILL).
+    try:
+        from zdrovena.api.shopify_fulfillment_composition import (
+            retry_shopify_auto_fulfillments_once,
+        )
+
+        shopify_stats = retry_shopify_auto_fulfillments_once(shipping_store=shipping_store)
+        logger.info("Shopify auto-fulfill retry complete: %s", shopify_stats)
+    except Exception:
+        logger.exception("Shopify auto-fulfill retry failed")
+
     # A pickup booked in the InPost app or InPost Manager never passes through
     # the portal, so without this the draft keeps offering "Zamów podjazd" and
     # invites a duplicate. Runs after the resolver so drafts it just promoted to

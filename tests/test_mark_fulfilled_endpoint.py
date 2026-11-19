@@ -261,7 +261,25 @@ class TestMarkFulfilledShopify:
         responses_lib.add(
             responses_lib.GET,
             "https://myshop.myshopify.com/admin/api/2024-01/orders/4567890123/fulfillment_orders.json",
-            json={"fulfillment_orders": [{"id": 99, "status": "open"}]},
+            json={
+                "fulfillment_orders": [
+                    {
+                        "id": 99,
+                        "status": "open",
+                        "line_items": [
+                            {"id": 1, "line_item_id": 11, "fulfillable_quantity": 2},
+                        ],
+                    }
+                ]
+            },
+            status=200,
+        )
+        responses_lib.add(
+            responses_lib.GET,
+            "https://myshop.myshopify.com/admin/api/2024-01/orders/4567890123.json",
+            json={
+                "order": {"line_items": [{"id": 11, "title": "Woda", "requires_shipping": True}]}
+            },
             status=200,
         )
         responses_lib.add(
@@ -289,7 +307,7 @@ class TestMarkFulfilledShopify:
         assert se["tracking_number"] == "123456789"
 
         # Verify fulfillment POST included tracking info + correct fulfillment_order_id
-        posted = responses_lib.calls[1].request
+        posted = responses_lib.calls[2].request
         import json
 
         payload = json.loads(posted.body)
@@ -297,6 +315,12 @@ class TestMarkFulfilledShopify:
             payload["fulfillment"]["line_items_by_fulfillment_order"][0]["fulfillment_order_id"]
             == 99
         )
+        assert payload["fulfillment"]["line_items_by_fulfillment_order"][0][
+            "fulfillment_order_line_items"
+        ] == [{"id": 1, "quantity": 2}]
+        assert payload["fulfillment"]["notify_customer"] is True
+        # The fulfillment id is stored, so a later run reuses it.
+        assert store.get_draft(draft_id)["shopify_fulfillment_ids"] == ["777"]
         assert payload["fulfillment"]["tracking_info"]["number"] == "123456789"
         assert payload["fulfillment"]["tracking_info"]["company"] == "InPost"
         assert "sledzenie" in payload["fulfillment"]["tracking_info"]["url"]
@@ -362,3 +386,5 @@ class TestMarkFulfilledShopify:
         assert "error" in se
         # Draft IS fulfilled locally even though Shopify call failed
         assert store.get_draft(draft_id)["fulfillment_status"] == "fulfilled"
+        # ...and the failure is visible on it.
+        assert "404" in store.get_draft(draft_id)["shopify_fulfillment_error"]
