@@ -21,8 +21,31 @@ export function dayStamp() {
     return `${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}`
 }
 
-export function batchSheetTitle() {
-    return `Etykiety portal ${dayStamp()}`
+/**
+ * The Polish calendar day as DDMMYY. Read in Europe/Warsaw explicitly so a
+ * sheet printed just after midnight (or from a browser on another timezone)
+ * still carries the operator's date. Matches _compact_day_stamp in
+ * zdrovena/shipping/domain/labels.py.
+ */
+export function compactDayStamp(now = new Date()) {
+    const parts = Object.fromEntries(
+        new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Europe/Warsaw',
+            day: '2-digit',
+            month: '2-digit',
+            year: '2-digit',
+        })
+            .formatToParts(now)
+            .map(part => [part.type, part.value]),
+    )
+    return `${parts.day}${parts.month}${parts.year}`
+}
+
+// Chrome's "Save as PDF" names the file after the top-level page title, which
+// printPdf swaps to this value, so this is the saved filename. Must match
+// batch_label_title in zdrovena/shipping/domain/labels.py.
+export function batchSheetTitle(now = new Date()) {
+    return `zdrovena_portal_${compactDayStamp(now)}`
 }
 
 export function labelSheetTitle(orderNumber) {
@@ -30,6 +53,17 @@ export function labelSheetTitle(orderNumber) {
 }
 
 export function printPdf(blob, title) {
+    // Chrome takes the "Save as PDF" filename from the top-level page title;
+    // the iframe title and the PDF's own /Title are ignored. Swap it in for the
+    // duration of the print and always put the original back.
+    const previousTitle = document.title
+    let titleChanged = false
+    const restoreTitle = () => {
+        window.removeEventListener('afterprint', restoreTitle)
+        if (!titleChanged) return
+        titleChanged = false
+        document.title = previousTitle
+    }
     const url = URL.createObjectURL(blob)
     const frame = document.createElement('iframe')
     frame.title = title
@@ -38,11 +72,23 @@ export function printPdf(blob, title) {
     frame.style.cssText = 'position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;border:0'
     frame.src = url
     frame.onload = () => {
+        if (title) {
+            document.title = title
+            titleChanged = true
+            window.addEventListener('afterprint', restoreTitle)
+            try {
+                frame.contentWindow?.addEventListener('afterprint', restoreTitle)
+            } catch {
+                // The PDF viewer frame may refuse listeners; the top-level
+                // afterprint and the cleanup timeout still restore the title.
+            }
+        }
         frame.contentWindow?.focus()
         frame.contentWindow?.print()
     }
     document.body.appendChild(frame)
     window.setTimeout(() => {
+        restoreTitle()
         URL.revokeObjectURL(url)
         frame.remove()
     }, 60_000)
