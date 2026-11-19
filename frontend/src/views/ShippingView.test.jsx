@@ -5,6 +5,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import ShippingView, { defaultPickupSchedule, printPdf } from './ShippingView'
 import { deferred, jsonResponse, mockFetch } from '../test/http'
 import { renderWithProviders } from '../test/render'
+import { printPdf as formattingPrintPdf } from './shipping/formatting'
+
+// Pass-through spy: every test still runs the real printPdf unless it stubs a
+// single call. The label-email tests stub it so the popup flow does not depend
+// on how the runtime's Response/Blob/iframe handling behaves in jsdom.
+vi.mock('./shipping/formatting', async importOriginal => {
+    const actual = await importOriginal()
+    return { ...actual, printPdf: vi.fn(actual.printPdf) }
+})
 
 function draft(overrides = {}) {
     return {
@@ -243,12 +252,13 @@ describe('ShippingView', () => {
 
     function installBatchEmailFetch(emailHandler) {
         installPrintSupport()
+        vi.mocked(formattingPrintPdf).mockImplementationOnce(() => {})
         const emailRequest = vi.fn()
         mockFetch((url, init = {}) => {
             if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
             if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ status: 'created', courier_draft_id: 'ship-1' })] })
             if (url === '/api/shipping/labels/batch') {
-                return new Response(new Blob(['%PDF-batch'], { type: 'application/pdf' }))
+                return new Response('%PDF-batch', { headers: { 'Content-Type': 'application/pdf' } })
             }
             if (url === '/api/shipping/labels/batch/email') {
                 emailRequest(url, init)
