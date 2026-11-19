@@ -241,6 +241,93 @@ describe('ShippingView', () => {
         expect(JSON.parse(batchRequest.mock.calls[0][1].body)).toEqual({ draft_ids: ['draft-1'] })
     })
 
+    function installBatchEmailFetch(emailHandler) {
+        installPrintSupport()
+        const emailRequest = vi.fn()
+        mockFetch((url, init = {}) => {
+            if (url === '/api/shipping/apaczka-services') return jsonResponse({ services: [] })
+            if (url === '/api/shipping/drafts') return jsonResponse({ drafts: [draft({ status: 'created', courier_draft_id: 'ship-1' })] })
+            if (url === '/api/shipping/labels/batch') {
+                return new Response(new Blob(['%PDF-batch'], { type: 'application/pdf' }))
+            }
+            if (url === '/api/shipping/labels/batch/email') {
+                emailRequest(url, init)
+                return emailHandler(init)
+            }
+            throw new Error(`Unexpected request: ${init.method || 'GET'} ${url}`)
+        })
+        return emailRequest
+    }
+
+    async function printBatch() {
+        renderWithProviders(<ShippingView />)
+        await screen.findByText('Anna Nowak')
+        await userEvent.click(screen.getByRole('checkbox', { name: 'Wybierz przesyłkę 1001' }))
+        await userEvent.click(screen.getByRole('button', { name: 'Drukuj etykiety (1)' }))
+        return screen.findByRole('dialog', { name: 'Wysłać etykiety mailem?' })
+    }
+
+    it('offers to email the batch sheet to the default address after printing', async () => {
+        const emailRequest = installBatchEmailFetch(() => jsonResponse({ sent: true, mocked: false, to_address: 'gryzlo@onet.pl' }))
+
+        const dialog = await printBatch()
+
+        expect(within(dialog).getByLabelText('Adres e-mail')).toHaveValue('gryzlo@onet.pl')
+        expect(emailRequest).not.toHaveBeenCalled()
+    })
+
+    it('sends the edited address when the operator clicks Wyślij', async () => {
+        const emailRequest = installBatchEmailFetch(() => jsonResponse({ sent: true, mocked: false, to_address: 'magazyn@example.com' }))
+
+        const dialog = await printBatch()
+        const input = within(dialog).getByLabelText('Adres e-mail')
+        await userEvent.clear(input)
+        await userEvent.type(input, 'magazyn@example.com')
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Wyślij' }))
+
+        await waitFor(() => expect(emailRequest).toHaveBeenCalledOnce())
+        expect(JSON.parse(emailRequest.mock.calls[0][1].body)).toEqual({
+            draft_ids: ['draft-1'],
+            to_address: 'magazyn@example.com',
+        })
+        expect(await screen.findByText('Etykiety wysłane na magazyn@example.com.')).toBeInTheDocument()
+        expect(screen.queryByRole('dialog', { name: 'Wysłać etykiety mailem?' })).not.toBeInTheDocument()
+    })
+
+    it('sends nothing when the operator clicks Nie wysyłaj', async () => {
+        const emailRequest = installBatchEmailFetch(() => jsonResponse({ sent: true }))
+
+        const dialog = await printBatch()
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Nie wysyłaj' }))
+
+        expect(screen.queryByRole('dialog', { name: 'Wysłać etykiety mailem?' })).not.toBeInTheDocument()
+        expect(emailRequest).not.toHaveBeenCalled()
+    })
+
+    it('shows the API error for an invalid address and keeps the popup open', async () => {
+        installBatchEmailFetch(() => jsonResponse(
+            { detail: [{ loc: ['body', 'to_address'], msg: 'Value error, Nieprawidłowy adres e-mail' }] },
+            { status: 422 },
+        ))
+
+        const dialog = await printBatch()
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Wyślij' }))
+
+        expect(await within(dialog).findByText('Nie wysłano: Nieprawidłowy adres e-mail')).toBeInTheDocument()
+    })
+
+    it('shows an SMTP failure from the API', async () => {
+        installBatchEmailFetch(() => jsonResponse(
+            { detail: 'Nie udało się wysłać maila: relay denied' },
+            { status: 502 },
+        ))
+
+        const dialog = await printBatch()
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Wyślij' }))
+
+        expect(await within(dialog).findByText('Nie wysłano: Nie udało się wysłać maila: relay denied')).toBeInTheDocument()
+    })
+
     it('shows Apaczka shipping service match status and source', async () => {
         const { getUpdateDraftCalls } = installShippingFetch({
             apaczkaServices: [

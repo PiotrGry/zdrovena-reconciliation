@@ -26,6 +26,7 @@ import {
 } from './shippingTable'
 import { DraftRow } from './shipping/DraftRow'
 import { PickupScheduleModal } from './shipping/PickupScheduleModal'
+import { LabelEmailModal } from './shipping/LabelEmailModal'
 import { defaultPickupSchedule, hasFixedApaczkaPickupWindows } from './shipping/pickupSchedule'
 import { apiErrorMessage, syncErrorCount, syncSummary } from './shipping/syncSummary'
 import { batchSheetTitle, labelSheetTitle, printPdf, sortValue } from './shipping/formatting'
@@ -55,6 +56,8 @@ export default function ShippingView() {
     const [bulkProgress, setBulkProgress] = useState(null)
     const [bulkPickupModal, setBulkPickupModal] = useState(false)
     const [bulkExecuteModal, setBulkExecuteModal] = useState(null)
+    // Draft ids of the last printed batch sheet, while the email offer is open.
+    const [labelEmailDraftIds, setLabelEmailDraftIds] = useState(null)
     const [expandAll, setExpandAll] = useState(null)
     const [apaczkaServices, setApaczkaServices] = useState([])
     const [syncing, setSyncing] = useState(false)
@@ -441,6 +444,7 @@ export default function ShippingView() {
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
             printPdf(await res.blob(), batchSheetTitle())
             setSelectedDraftIds(new Set())
+            setLabelEmailDraftIds(selected.map(draft => draft.id))
         } catch (error) {
             pushToast({ kind: 'error', msg: `Błąd drukowania etykiet: ${error.message}` })
         } finally {
@@ -710,6 +714,20 @@ export default function ShippingView() {
                     title="Zamów podjazd kuriera (wszystkie zaznaczone)"
                     onConfirm={handleBulkPickup}
                     onCancel={() => setBulkPickupModal(false)}
+                />
+            )}
+
+            {labelEmailDraftIds && (
+                <LabelEmailModal
+                    draftIds={labelEmailDraftIds}
+                    getToken={getToken}
+                    onClose={() => setLabelEmailDraftIds(null)}
+                    onSent={result => {
+                        setLabelEmailDraftIds(null)
+                        pushToast(result?.mocked
+                            ? { kind: 'info', msg: `Tryb testowy — mail do ${result.to_address} nie został wysłany.` }
+                            : { kind: 'success', msg: `Etykiety wysłane na ${result?.to_address}.` })
+                    }}
                 />
             )}
 
