@@ -6340,7 +6340,13 @@ class TestTrackingAssignedCoversEveryPath:
                 "zdrovena.common.inpost.InPostClient.get_shipment",
                 return_value={"id": "ship-77", "tracking_number": "620DONE"},
             ):
-                with patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as create:
+                with (
+                    patch("zdrovena.common.inpost.InPostClient.create_kurier_shipment") as create,
+                    patch(
+                        "zdrovena.common.inpost.InPostClient.list_dispatch_orders",
+                        return_value=[],
+                    ),
+                ):
                     resp = client.post(f"/api/shipping/drafts/{draft['id']}/confirm")
 
         assert resp.status_code == 200, resp.text
@@ -6349,6 +6355,42 @@ class TestTrackingAssignedCoversEveryPath:
         assert updated["status"] == "created"
         assert updated["tracking_number"] == "620DONE"
         assert updated["shipment_origin"] == "system"
+        assert not updated["pickup_ordered"]
+
+    def test_inpost_confirm_picks_up_a_pickup_ordered_in_the_inpost_app(self, client, store):
+        """#552: a courier booked in the InPost app while the waybill was pending
+        shows up on "Sprawdź status", so the portal stops offering a second one."""
+        draft = _seed_origin_draft(store)
+        store.update_draft(
+            draft["id"], {"status": "pending_confirmation", "courier_draft_id": "ship-77"}
+        )
+
+        with (
+            patch("zdrovena.api.shipping_execution_composition.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.inpost.InPostClient.get_shipment",
+                return_value={"id": "ship-77", "tracking_number": "620DONE"},
+            ),
+            patch(
+                "zdrovena.common.inpost.InPostClient.list_dispatch_orders",
+                return_value=[
+                    {"id": 11, "status": "canceled", "shipments": [{"id": "ship-77"}]},
+                    {"id": 12, "status": "sent", "shipments": [{"id": "ship-77"}]},
+                ],
+            ),
+            patch("zdrovena.common.inpost.InPostClient.create_dispatch_order") as create_dispatch,
+            patch("zdrovena.common.inpost.InPostClient.cancel_dispatch_order") as cancel_dispatch,
+        ):
+            resp = client.post(f"/api/shipping/drafts/{draft['id']}/confirm")
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["pickup_ordered"] is True
+        updated = store.get_draft(draft["id"])
+        assert updated["status"] == "created"
+        assert updated["pickup_ordered"] is True
+        assert updated["dispatch_order_id"] == "12"
+        create_dispatch.assert_not_called()
+        cancel_dispatch.assert_not_called()
 
     def test_inpost_confirm_refreshes_all_parcels_and_preserves_pickup(self, client, store):
         draft = _seed_origin_draft(store)

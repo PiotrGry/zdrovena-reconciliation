@@ -245,6 +245,18 @@ def _run_cycle(args: argparse.Namespace) -> None:
     except Exception:
         logger.exception("InPost pending resolution failed")
 
+    # A pickup booked in the InPost app or InPost Manager never passes through
+    # the portal, so without this the draft keeps offering "Zamów podjazd" and
+    # invites a duplicate. Runs after the resolver so drafts it just promoted to
+    # created are checked in the same cycle. Read only.
+    try:
+        from zdrovena.api.routers.inpost_pickup_poller import sync_inpost_pickups_once
+
+        pickup_stats = sync_inpost_pickups_once(shipping_store=shipping_store)
+        logger.info("InPost pickup sync complete: %s", pickup_stats)
+    except Exception:
+        logger.exception("InPost pickup sync failed")
+
     # Apaczka assigns the pickup number after order_send returns, so execution's
     # one read can come back empty. This is what fills it in — the operator needs
     # that id when a collection goes wrong, not when they remember to click.
