@@ -869,8 +869,13 @@ export interface paths {
          *     the timestamps into the legacy ``allegro_fulfillment_status`` /
          *     ``allegro_marked_processed_*`` fields.
          *
+         *     For Shopify drafts the order is fulfilled in Shopify too, with the same
+         *     line split as the automatic path (``shopify_fulfillment_composition``): the
+         *     water notified with tracking, the deposit silent. Fulfillment ids an earlier
+         *     automatic run stored on the draft are reused, never created twice.
+         *
          *     Re-running this endpoint is safe: if the draft is already fulfilled we
-         *     return 200 without hitting Allegro again.
+         *     return 200 without hitting Allegro or Shopify again.
          */
         post: operations["mark_fulfilled_api_shipping_drafts__draft_id__mark_fulfilled_post"];
         delete?: never;
@@ -942,6 +947,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/shipping/labels/batch/email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Email the merged batch label sheet
+         * @description Email exactly the sheet ``POST /shipping/labels/batch`` prints (#543).
+         */
+        post: operations["email_batch_labels_api_shipping_labels_batch_email_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/shipping/sync": {
         parameters: {
             query?: never;
@@ -995,6 +1020,13 @@ export interface components {
             services: components["schemas"]["ApaczkaServiceModel"][];
         } & {
             [key: string]: unknown;
+        };
+        /** BatchLabelEmailRequest */
+        BatchLabelEmailRequest: {
+            /** Draft Ids */
+            draft_ids: string[];
+            /** To Address */
+            to_address: string;
         };
         /** Body_batch_labels_api_shipping_labels_batch_post */
         Body_batch_labels_api_shipping_labels_batch_post: {
@@ -3973,6 +4005,74 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    email_batch_labels_api_shipping_labels_batch_email_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchLabelEmailRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description No draft_ids, too many, or unsupported courier */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description None of the drafts exist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description One or more labels are not ready yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid email address */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description SMTP delivery failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description SMTP not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

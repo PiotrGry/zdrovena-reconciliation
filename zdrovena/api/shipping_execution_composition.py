@@ -15,6 +15,7 @@ from typing import Any, NoReturn
 
 from fastapi import HTTPException, status
 
+from zdrovena.api import shopify_fulfillment_composition
 from zdrovena.api.shipping_draft_composition import emit_tracking_assigned
 from zdrovena.common.events import log_event
 from zdrovena.common.exceptions import MissingSecretError
@@ -525,6 +526,9 @@ def _run_allegro_delivery(
         else ""
     )
     active_command_id: str | None = None
+    # The carrier Allegro hands the parcel to; Shopify's tracking_info needs the
+    # real one, not "Allegro Delivery" (#541).
+    allegro_carrier_id: str | None = draft.get("allegro_carrier_id") or None
 
     def ordered_shipments() -> list[dict[str, str]]:
         return [
@@ -544,6 +548,7 @@ def _run_allegro_delivery(
             "status": status_value,
             "pickup_ordered": False,
             "allegro_command_id": active_command_id,
+            "allegro_carrier_id": allegro_carrier_id,
             "error": None,
         }
 
@@ -592,7 +597,9 @@ def _run_allegro_delivery(
             return shipment_result("pending_confirmation")
 
         shipment = client.get_ship_with_allegro_shipment(shipment_id)
-        _carrier_id, waybill = client.extract_shipment_waybill(shipment)
+        carrier_id, waybill = client.extract_shipment_waybill(shipment)
+        if carrier_id and not allegro_carrier_id:
+            allegro_carrier_id = str(carrier_id)
         shipment_checkpoint.update(
             {
                 "id": str(shipment_id),
@@ -860,7 +867,7 @@ def execute_shipping_draft(
             pickup_to=effective_pickup_window.to_time,
         )
 
-    return execution_workflow.execute_draft(
+    result = execution_workflow.execute_draft(
         draft_id,
         repository,
         build_preview=build_preview,
@@ -873,6 +880,9 @@ def execute_shipping_draft(
         preview_fingerprint=preview_fingerprint,
         failure_dlq_entry_id=failure_dlq_entry_id,
     )
+    # Synchronous carriers have the tracking number now: hand it to Shopify
+    # (#541, behind SHOPIFY_AUTO_FULFILL). Never raises — the label exists.
+    return shopify_fulfillment_composition.auto_fulfill_and_refresh(draft_id, repository, result)
 
 
 @dataclass(frozen=True)
@@ -949,7 +959,10 @@ def _confirm_pending_inpost(
     from zdrovena.api.routers.inpost_pickup_poller import sync_inpost_pickup_for_draft
 
     sync_inpost_pickup_for_draft({**draft, **patch}, shipping_store=repository, client=client)
-    return ConfirmationResult(repository.get_draft(draft_id) or patch)
+    current = repository.get_draft(draft_id) or patch
+    return ConfirmationResult(
+        shopify_fulfillment_composition.auto_fulfill_and_refresh(draft_id, repository, current)
+    )
 
 
 def confirm_shipping_draft(
@@ -1050,4 +1063,8 @@ def confirm_shipping_draft(
     updated = repository.get_draft(draft_id)
     if updated:
         push_tracking_to_allegro(updated)
-    return ConfirmationResult(updated or patch)
+    return ConfirmationResult(
+        shopify_fulfillment_composition.auto_fulfill_and_refresh(
+            draft_id, repository, updated or patch
+        )
+    )

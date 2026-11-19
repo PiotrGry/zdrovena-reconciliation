@@ -6030,6 +6030,112 @@ class TestBatchLabels:
         )
 
 
+class TestBatchLabelEmail:
+    """#543: POST /shipping/labels/batch/email sends the printed sheet."""
+
+    class _FakeSMTP:
+        sent: ClassVar[list[Any]] = []
+
+        def __init__(self, host, port, timeout=None):
+            self.host = host
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def login(self, user, password):
+            self.user = user
+
+        def send_message(self, msg):
+            type(self).sent.append(msg)
+
+    @pytest.fixture(autouse=True)
+    def _live_mail_mode(self, monkeypatch):
+        monkeypatch.setattr(execution_composition, "MOCK_COURIER", False)
+        monkeypatch.delenv("PROVIDER_MODE", raising=False)
+        for var in ("APP_ENV", "DEPLOY_ENV", "AZURE_ENV", "ENV"):
+            monkeypatch.delenv(var, raising=False)
+        self._FakeSMTP.sent = []
+        monkeypatch.setattr("zdrovena.month_closing.email_service.smtplib.SMTP_SSL", self._FakeSMTP)
+
+    def _post(self, client, store, to_address="gryzlo@onet.pl", label=None):
+        TestBatchLabels()._seed(store, "e-1", courier_draft_id="cd-1")
+        TestBatchLabels()._seed(store, "e-2", courier_draft_id="cd-2")
+        moment = datetime(2026, 8, 26, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
+        with (
+            patch("zdrovena.api.routers.shipping.deps.get_secret", return_value="tok"),
+            patch(
+                "zdrovena.common.inpost.InPostClient.get_label",
+                return_value=label or TestBatchLabels._valid_pdf(),
+            ),
+            patch("zdrovena.api.routers.shipping.labels._now_warsaw", return_value=moment),
+        ):
+            return client.post(
+                "/api/shipping/labels/batch/email",
+                json={"draft_ids": ["e-1", "e-2"], "to_address": to_address},
+            )
+
+    def test_sends_one_email_with_the_sheet_attached(self, client, store):
+        resp = self._post(client, store, to_address="  ktos@example.com ")
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"sent": True, "mocked": False, "to_address": "ktos@example.com"}
+        assert len(self._FakeSMTP.sent) == 1
+        msg = self._FakeSMTP.sent[0]
+        assert msg["Subject"] == "Etykiety"
+        assert msg["To"] == "ktos@example.com"
+        parts = [p for p in msg.walk() if p.get_content_disposition() == "attachment"]
+        assert len(parts) == 1
+        assert parts[0].get_filename() == "zdrovena_portal_260826.pdf"
+        assert parts[0].get_content_type() == "application/pdf"
+        payload = parts[0].get_payload(decode=True)
+        assert payload[:4] == b"%PDF"
+        assert _pdf_title(payload) == "zdrovena_portal_260826"
+        body = next(p for p in msg.walk() if p.get_content_type() == "text/plain")
+        assert body.get_payload(decode=True).decode() == (
+            "W załączniku etykiety z dnia 26.08.2026 (2 szt.)."
+        )
+
+    @pytest.mark.parametrize(
+        "bad", ["", "not-an-email", "a@b", "a b@example.com", "x@example.com\nBcc: y@z.pl"]
+    )
+    def test_rejects_invalid_address(self, client, store, bad):
+        resp = self._post(client, store, to_address=bad)
+
+        assert resp.status_code == 422
+        assert self._FakeSMTP.sent == []
+
+    def test_smtp_failure_is_reported(self, client, store, monkeypatch):
+        import smtplib
+
+        def boom(self, msg):
+            raise smtplib.SMTPException("relay denied")
+
+        monkeypatch.setattr(self._FakeSMTP, "send_message", boom)
+        resp = self._post(client, store)
+
+        assert resp.status_code == 502
+        assert "relay denied" in resp.json()["detail"]
+
+    @pytest.mark.parametrize(
+        "env", [("MOCK_COURIER", None), ("PROVIDER_MODE", "fake"), ("APP_ENV", "staging")]
+    )
+    def test_test_modes_never_send(self, client, store, monkeypatch, env):
+        name, value = env
+        if name == "MOCK_COURIER":
+            monkeypatch.setattr(execution_composition, "MOCK_COURIER", True)
+        else:
+            monkeypatch.setenv(name, value)
+        resp = self._post(client, store)
+
+        assert resp.status_code == 200
+        assert resp.json()["sent"] is False
+        assert resp.json()["mocked"] is True
+        assert self._FakeSMTP.sent == []
+
+
 class TestSingleLabelNotReady:
     def test_inpost_business_error_maps_to_409(self, client, store):
         from zdrovena.common.shipping_exceptions import InPostBusinessError

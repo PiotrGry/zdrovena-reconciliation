@@ -16,13 +16,13 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 
 from zdrovena.api import shipping_execution_composition as execution_composition
+from zdrovena.api import shopify_fulfillment_composition
 from zdrovena.api.auth import Principal, require_shipment_mgr_or_above
 from zdrovena.api.deps import ShippingStoreDep, StorageDep
 from zdrovena.api.models import (
     MarkFulfilledResponse,
     ShipmentActionResponse,
 )
-from zdrovena.api.routers.shipping import deps
 from zdrovena.common.shipping_exceptions import (
     AllegroAuthError,
     AllegroBusinessError,
@@ -34,95 +34,6 @@ from zdrovena.shipping.application.execution import workflow as execution_workfl
 logger = logging.getLogger("zdrovena.api.routers.shipping.execution")
 
 router = APIRouter(tags=["shipping"])
-
-
-_SHOPIFY_COURIER_COMPANY: dict[str, str] = {
-    "inpost": "InPost",
-    "apaczka": "Apaczka",
-    "allegro_delivery": "Allegro Delivery",
-    "allegro": "Allegro Delivery",
-}
-
-
-_SHOPIFY_COURIER_TRACKING_URL: dict[str, str] = {
-    "inpost": "https://inpost.pl/sledzenie-przesylek?number={number}",
-}
-
-
-def _sync_shopify_fulfillment(
-    order_id: str,
-    tracking_number: str | None,
-    courier: str | None,
-) -> dict[str, Any]:
-    """Create a Shopify fulfillment for a completed order via the FulfillmentOrder API.
-
-    Non-blocking: caller decides whether to surface failures as warnings or errors.
-    Returns a result dict with "created", "skipped", or "error" key.
-    """
-    import requests
-
-    shopify_token = deps.get_secret("shopify_admin_token", required=False)
-    if not shopify_token:
-        return {"skipped": "shopify_not_configured"}
-
-    allowed_domains = deps._allowed_shopify_domains()
-    if not allowed_domains:
-        return {"skipped": "no_shopify_domain"}
-
-    shop_domain = next(iter(allowed_domains))
-    headers = {
-        "X-Shopify-Access-Token": shopify_token,
-        "Content-Type": "application/json",
-    }
-    base = f"https://{shop_domain}/admin/api/2024-01"
-
-    # Step 1: find open fulfillment orders (the modern Shopify fulfillment model)
-    fo_resp = requests.get(
-        f"{base}/orders/{order_id}/fulfillment_orders.json",
-        headers=headers,
-        timeout=15,
-    )
-    fo_resp.raise_for_status()
-    open_fo_ids = [
-        fo["id"]
-        for fo in fo_resp.json().get("fulfillment_orders", [])
-        if fo.get("status") == "open"
-    ]
-    if not open_fo_ids:
-        return {"skipped": "no_open_fulfillment_orders"}
-
-    # Step 2: create fulfillment with tracking info
-    courier_key = (courier or "").lower()
-    tracking_company = _SHOPIFY_COURIER_COMPANY.get(courier_key, courier or "")
-    tracking_url_tpl = _SHOPIFY_COURIER_TRACKING_URL.get(courier_key)
-    tracking_url = (
-        tracking_url_tpl.format(number=tracking_number)
-        if tracking_url_tpl and tracking_number
-        else None
-    )
-
-    payload: dict[str, Any] = {
-        "fulfillment": {
-            "line_items_by_fulfillment_order": [
-                {"fulfillment_order_id": fo_id} for fo_id in open_fo_ids
-            ],
-            "notify_customer": True,
-        }
-    }
-    if tracking_number:
-        tracking_info: dict[str, Any] = {"number": tracking_number, "company": tracking_company}
-        if tracking_url:
-            tracking_info["url"] = tracking_url
-        payload["fulfillment"]["tracking_info"] = tracking_info
-
-    f_resp = requests.post(f"{base}/fulfillments.json", headers=headers, json=payload, timeout=15)
-    f_resp.raise_for_status()
-    fulfillment = f_resp.json().get("fulfillment", {})
-    return {
-        "created": True,
-        "shopify_fulfillment_id": str(fulfillment.get("id", "")),
-        "tracking_number": tracking_number,
-    }
 
 
 @router.get(
@@ -265,8 +176,13 @@ def mark_fulfilled(
     the timestamps into the legacy ``allegro_fulfillment_status`` /
     ``allegro_marked_processed_*`` fields.
 
+    For Shopify drafts the order is fulfilled in Shopify too, with the same
+    line split as the automatic path (``shopify_fulfillment_composition``): the
+    water notified with tracking, the deposit silent. Fulfillment ids an earlier
+    automatic run stored on the draft are reused, never created twice.
+
     Re-running this endpoint is safe: if the draft is already fulfilled we
-    return 200 without hitting Allegro again.
+    return 200 without hitting Allegro or Shopify again.
     """
     draft = shipping_store.get_draft(draft_id)
     if not draft:
@@ -337,21 +253,15 @@ def mark_fulfilled(
     shipping_store.update_draft(draft_id, patch)
 
     shopify_side_effect: dict[str, Any] | None = None
-    is_shopify = draft.get("source") == "shopify"
-    if is_shopify:
-        shopify_order_id = str(
-            draft.get("external_order_id") or draft.get("shopify_order_id") or ""
+    if draft.get("source") == "shopify" and (
+        draft.get("external_order_id") or draft.get("shopify_order_id")
+    ):
+        # Same split as the automatic path (#541): water notified with
+        # tracking, deposit silent. Ids stored on the draft by an earlier
+        # automatic run are reused, never fulfilled a second time.
+        shopify_side_effect = shopify_fulfillment_composition.sync_draft_with_shopify(
+            {**draft, **patch}, shipping_store
         )
-        if shopify_order_id:
-            try:
-                shopify_side_effect = _sync_shopify_fulfillment(
-                    order_id=shopify_order_id,
-                    tracking_number=draft.get("tracking_number"),
-                    courier=draft.get("courier"),
-                )
-            except Exception as exc:
-                logger.exception("Shopify fulfillment sync failed for draft %s", draft_id)
-                shopify_side_effect = {"error": str(exc)}
 
     return {
         "status": "marked_fulfilled",

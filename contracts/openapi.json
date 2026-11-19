@@ -50,6 +50,28 @@
         "title": "ApaczkaServicesResponse",
         "type": "object"
       },
+      "BatchLabelEmailRequest": {
+        "properties": {
+          "draft_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Draft Ids",
+            "type": "array"
+          },
+          "to_address": {
+            "maxLength": 254,
+            "title": "To Address",
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft_ids",
+          "to_address"
+        ],
+        "title": "BatchLabelEmailRequest",
+        "type": "object"
+      },
       "Body_batch_labels_api_shipping_labels_batch_post": {
         "properties": {
           "draft_ids": {
@@ -5242,7 +5264,7 @@
     },
     "/api/shipping/drafts/{draft_id}/mark-fulfilled": {
       "post": {
-        "description": "Idempotent operator action to mark the draft as fulfilled.\n\nA draft only represents \"we intend to ship\", not \"we shipped\". The operator\nconfirms via the UI once the parcel actually leaves — this endpoint sets the\nlocal ``fulfillment_status=\"fulfilled\"`` flag (with ``fulfilled_at`` /\n``fulfilled_by``) for every draft, regardless of source.\n\nFor Allegro drafts we additionally invoke\n``AllegroClient.mark_order_processed(external_order_id, status=\"SENT\")`` to\nmove the order to ``SENT`` on Allegro's side (the parcel has left), and mirror\nthe timestamps into the legacy ``allegro_fulfillment_status`` /\n``allegro_marked_processed_*`` fields.\n\nRe-running this endpoint is safe: if the draft is already fulfilled we\nreturn 200 without hitting Allegro again.",
+        "description": "Idempotent operator action to mark the draft as fulfilled.\n\nA draft only represents \"we intend to ship\", not \"we shipped\". The operator\nconfirms via the UI once the parcel actually leaves — this endpoint sets the\nlocal ``fulfillment_status=\"fulfilled\"`` flag (with ``fulfilled_at`` /\n``fulfilled_by``) for every draft, regardless of source.\n\nFor Allegro drafts we additionally invoke\n``AllegroClient.mark_order_processed(external_order_id, status=\"SENT\")`` to\nmove the order to ``SENT`` on Allegro's side (the parcel has left), and mirror\nthe timestamps into the legacy ``allegro_fulfillment_status`` /\n``allegro_marked_processed_*`` fields.\n\nFor Shopify drafts the order is fulfilled in Shopify too, with the same\nline split as the automatic path (``shopify_fulfillment_composition``): the\nwater notified with tracking, the deposit silent. Fulfillment ids an earlier\nautomatic run stored on the draft are reused, never created twice.\n\nRe-running this endpoint is safe: if the draft is already fulfilled we\nreturn 200 without hitting Allegro or Shopify again.",
         "operationId": "mark_fulfilled_api_shipping_drafts__draft_id__mark_fulfilled_post",
         "parameters": [
           {
@@ -5487,6 +5509,63 @@
           }
         ],
         "summary": "Fetch and merge labels for several drafts into one printable PDF",
+        "tags": [
+          "shipping"
+        ]
+      }
+    },
+    "/api/shipping/labels/batch/email": {
+      "post": {
+        "description": "Email exactly the sheet ``POST /shipping/labels/batch`` prints (#543).",
+        "operationId": "email_batch_labels_api_shipping_labels_batch_email_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchLabelEmailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Email Batch Labels Api Shipping Labels Batch Email Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "No draft_ids, too many, or unsupported courier"
+          },
+          "404": {
+            "description": "None of the drafts exist"
+          },
+          "409": {
+            "description": "One or more labels are not ready yet"
+          },
+          "422": {
+            "description": "Invalid email address"
+          },
+          "502": {
+            "description": "SMTP delivery failed"
+          },
+          "503": {
+            "description": "SMTP not configured"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Email the merged batch label sheet",
         "tags": [
           "shipping"
         ]

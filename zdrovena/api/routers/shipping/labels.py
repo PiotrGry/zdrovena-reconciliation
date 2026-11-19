@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import re
+import tempfile
 import unicodedata
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import (
@@ -17,11 +20,13 @@ from fastapi import (
     Query,
 )
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field, field_validator
 
 from zdrovena.api import shipping_execution_composition as execution_composition
 from zdrovena.api.auth import Principal, require_viewer_or_above
 from zdrovena.api.deps import ShippingStoreDep, StorageDep
 from zdrovena.api.routers.shipping import deps
+from zdrovena.common.appenv import resolve_app_env
 from zdrovena.common.shipping_exceptions import (
     AllegroAuthError,
     AllegroBusinessError,
@@ -31,6 +36,12 @@ from zdrovena.common.shipping_exceptions import (
     ZdrovenaShippingError,
 )
 from zdrovena.shipping.domain.labels import WARSAW, batch_label_title, single_label_title
+
+#: Sender identity for the label email; same Zoho SMTP account as damage mail.
+LABEL_EMAIL_FROM = "info@wodahumio.pl"
+LABEL_EMAIL_SUBJECT = "Etykiety"
+
+_EMAIL_RE = re.compile(r"^[^@\s,;<>\"]+@[^@\s,;<>\"]+\.[^@\s,;<>\".]{2,}$")
 
 logger = logging.getLogger("zdrovena.api.routers.shipping.labels")
 
@@ -144,28 +155,13 @@ def _titled_pdf(pdfs: list[bytes], title: str) -> bytes:
         return pdfs[0]
 
 
-@router.post(
-    "/shipping/labels/batch",
-    summary="Fetch and merge labels for several drafts into one printable PDF",
-    responses={
-        400: {"description": "No draft_ids, too many, or unsupported courier"},
-        404: {"description": "None of the drafts exist"},
-        409: {"description": "One or more labels are not ready yet"},
-    },
-)
-def batch_labels(
-    shipping_store: ShippingStoreDep,
-    storage: StorageDep,
-    principal: Annotated[Principal, Depends(require_viewer_or_above)],
-    draft_ids: Annotated[list[str], Body(embed=True)],
-) -> StreamingResponse:
-    """Merge the labels of the given drafts into one PDF (R5-B).
+def _build_batch_sheet(
+    draft_ids: list[str], shipping_store: Any, storage: Any
+) -> tuple[bytes, str]:
+    """Build the merged, titled batch sheet and return ``(pdf, title)``.
 
-    Drafts are grouped by courier (each fetched via the same path as the single
-    label endpoint), then concatenated in the request order. Fails deterministically:
-      * empty / oversized ``draft_ids`` → 400
-      * a not-yet-ready label → 409 listing the offending drafts
-      * an unknown draft id → 404 listing them
+    Shared by the print and the email endpoints so the emailed attachment is
+    exactly the sheet the operator printed, not a second rendering path.
     """
     if not draft_ids:
         raise HTTPException(status_code=400, detail="draft_ids must not be empty")
@@ -218,11 +214,133 @@ def batch_labels(
         )
 
     title = batch_label_title(_now_warsaw())
+    return _titled_pdf(pdfs, title), title
+
+
+@router.post(
+    "/shipping/labels/batch",
+    summary="Fetch and merge labels for several drafts into one printable PDF",
+    responses={
+        400: {"description": "No draft_ids, too many, or unsupported courier"},
+        404: {"description": "None of the drafts exist"},
+        409: {"description": "One or more labels are not ready yet"},
+    },
+)
+def batch_labels(
+    shipping_store: ShippingStoreDep,
+    storage: StorageDep,
+    principal: Annotated[Principal, Depends(require_viewer_or_above)],
+    draft_ids: Annotated[list[str], Body(embed=True)],
+) -> StreamingResponse:
+    """Merge the labels of the given drafts into one PDF (R5-B).
+
+    Drafts are grouped by courier (each fetched via the same path as the single
+    label endpoint), then concatenated in the request order. Fails deterministically:
+      * empty / oversized ``draft_ids`` → 400
+      * a not-yet-ready label → 409 listing the offending drafts
+      * an unknown draft id → 404 listing them
+    """
+    del principal
+    sheet, title = _build_batch_sheet(draft_ids, shipping_store, storage)
     return StreamingResponse(
-        io.BytesIO(_titled_pdf(pdfs, title)),
+        io.BytesIO(sheet),
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{_label_filename(title)}"'},
     )
+
+
+class BatchLabelEmailRequest(BaseModel):
+    draft_ids: list[str]
+    to_address: str = Field(max_length=254)
+
+    @field_validator("to_address")
+    @classmethod
+    def _valid_email(cls, value: str) -> str:
+        address = value.strip()
+        if not _EMAIL_RE.match(address):
+            raise ValueError("Nieprawidłowy adres e-mail")
+        return address
+
+
+def _email_side_effects_disabled() -> bool:
+    """True where no real mail may leave the app: mocked couriers, fake
+    providers (staging/E2E) or an explicit staging environment."""
+    if execution_composition.MOCK_COURIER:
+        return True
+    if os.getenv("PROVIDER_MODE", "").strip().lower() == "fake":
+        return True
+    return resolve_app_env() == "staging"
+
+
+def _send_label_email(
+    *, to_address: str, subject: str, body: str, attachment_name: str, pdf: bytes
+) -> None:
+    """Send the sheet through the Zoho SMTP path used by month-close reports.
+
+    Mirrors ``_send_email_with_configured_zoho_smtp`` in the damage router,
+    extended with one attachment. Single seam patched by tests.
+    """
+    from zdrovena.common.config import KEYCHAIN_SERVICE_ZOHO_SMTP
+    from zdrovena.month_closing.config import ZOHO_EMAIL
+    from zdrovena.month_closing.email_service import EmailService
+
+    smtp_password = deps.get_secret(KEYCHAIN_SERVICE_ZOHO_SMTP, required=False)
+    if not smtp_password:
+        raise HTTPException(status_code=503, detail="Hasło SMTP Zoho nie jest skonfigurowane")
+    with tempfile.TemporaryDirectory(prefix="zdrovena-labels-") as tmp:
+        path = Path(tmp) / attachment_name
+        path.write_bytes(pdf)
+        EmailService(
+            smtp_password=smtp_password,
+            sender_email=ZOHO_EMAIL,
+            from_email=LABEL_EMAIL_FROM,
+        ).send_report(to_address, subject, body, attachments=[path])
+
+
+@router.post(
+    "/shipping/labels/batch/email",
+    summary="Email the merged batch label sheet",
+    responses={
+        400: {"description": "No draft_ids, too many, or unsupported courier"},
+        404: {"description": "None of the drafts exist"},
+        409: {"description": "One or more labels are not ready yet"},
+        422: {"description": "Invalid email address"},
+        502: {"description": "SMTP delivery failed"},
+        503: {"description": "SMTP not configured"},
+    },
+)
+def email_batch_labels(
+    shipping_store: ShippingStoreDep,
+    storage: StorageDep,
+    principal: Annotated[Principal, Depends(require_viewer_or_above)],
+    payload: BatchLabelEmailRequest,
+) -> dict[str, Any]:
+    """Email exactly the sheet ``POST /shipping/labels/batch`` prints (#543)."""
+    del principal
+    sheet, title = _build_batch_sheet(payload.draft_ids, shipping_store, storage)
+    count = len(payload.draft_ids)
+    day = _now_warsaw().strftime("%d.%m.%Y")
+    body = f"W załączniku etykiety z dnia {day} ({count} szt.)."
+    attachment_name = _label_filename(title)
+
+    if _email_side_effects_disabled():
+        logger.info("Test mode: skipping label email to %s (%d labels)", payload.to_address, count)
+        return {"sent": False, "mocked": True, "to_address": payload.to_address}
+
+    try:
+        _send_label_email(
+            to_address=payload.to_address,
+            subject=LABEL_EMAIL_SUBJECT,
+            body=body,
+            attachment_name=attachment_name,
+            pdf=sheet,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Label email to %s failed", payload.to_address)
+        raise HTTPException(status_code=502, detail=f"Nie udało się wysłać maila: {exc}") from exc
+    return {"sent": True, "mocked": False, "to_address": payload.to_address}
 
 
 @router.get(
