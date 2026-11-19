@@ -869,8 +869,13 @@ export interface paths {
          *     the timestamps into the legacy ``allegro_fulfillment_status`` /
          *     ``allegro_marked_processed_*`` fields.
          *
+         *     For Shopify drafts the order is fulfilled in Shopify too, with the same
+         *     line split as the automatic path (``shopify_fulfillment_composition``): the
+         *     water notified with tracking, the deposit silent. Fulfillment ids an earlier
+         *     automatic run stored on the draft are reused, never created twice.
+         *
          *     Re-running this endpoint is safe: if the draft is already fulfilled we
-         *     return 200 without hitting Allegro again.
+         *     return 200 without hitting Allegro or Shopify again.
          */
         post: operations["mark_fulfilled_api_shipping_drafts__draft_id__mark_fulfilled_post"];
         delete?: never;
