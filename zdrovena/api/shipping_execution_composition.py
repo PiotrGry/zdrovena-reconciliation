@@ -943,6 +943,12 @@ def _confirm_pending_inpost(
         tracking_number=patch.get("tracking_number"),
         courier_draft_id=patch.get("courier_draft_id") or draft.get("courier_draft_id"),
     )
+    # The operator may already have booked the courier in the InPost app while
+    # the waybill was pending; pick that up now rather than offering a second
+    # pickup until the scheduled cycle notices. Read only, never raises.
+    from zdrovena.api.routers.inpost_pickup_poller import sync_inpost_pickup_for_draft
+
+    sync_inpost_pickup_for_draft({**draft, **patch}, shipping_store=repository, client=client)
     return ConfirmationResult(repository.get_draft(draft_id) or patch)
 
 
