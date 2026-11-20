@@ -867,7 +867,11 @@ def _run_headless_steps(
 
     # Step 4 — click the link. The click may open a tab or start the download itself.
     downloads: list = []
-    on_download = downloads.append
+
+    def on_download(download) -> None:
+        # A plain function: Playwright cannot register a bound builtin such as list.append
+        # ("'builtin_function_or_method' object has no attribute '_pw_impl_instance_'", PoC E1).
+        downloads.append(download)
     context = page.context
 
     def _watch(p) -> None:
