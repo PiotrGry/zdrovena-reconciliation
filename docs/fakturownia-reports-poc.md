@@ -121,3 +121,30 @@ The flow is `zdrovena/month_closing/fakturownia_v7m.py` (`run_v7m_report`). It u
 - when the verification page appears, stop with a clear error and a notification instead of guessing.
 
 Reading the code from the mailbox stays an option if E7 shows the code comes back regularly.
+
+## E6: Docker (2026-11-20)
+
+Image: `scripts/poc/Dockerfile.poc`, based on `mcr.microsoft.com/playwright/python:v1.65.1-noble` with uv 0.11.6 and the `report` extra; **2.9 GB**. It ran with a copy of the trusted profile mounted at `/profile` and `--shm-size=1g`.
+
+| Report | Runs | Duration | Peak memory* |
+|---|---|---|---|
+| JPK_FA | 5/5 | 4.7–5.9 s | ~970 MB |
+| VAT register | 5/5 | 4.9–8.8 s | ~890 MB |
+| JPK_V7M | 5/5 (after a fix; 2/3 before) | 15.9–18.2 s | ~1,000 MB |
+
+\* Summed VmHWM over the browser processes, an upper bound. **Sizing for the job: 1 vCPU and 2 GiB is enough. One run of all three reports takes under 40 s.**
+
+No `gov.pl` request in any E6 run.
+
+**Fixes found on the way:**
+- `.dockerignore` excluded `scripts/`. `!scripts/poc/` is now allowed. The production Dockerfile copies nothing from `scripts/`, so its image does not change.
+- JPK_V7M: the tax-office dropdown did not open on the first click while the page still animated (E6 run 20261120T195627Z). The flow now opens it up to three times. Opening it only shows the list.
+
+## Requirement from the operator (2026-11-20)
+
+**When the job cannot log in, the operator must get a clear error.** Not a silent run without files. Today the module already raises distinct, readable errors for:
+- wrong credentials ("Invalid credentials for …");
+- an account without access ("Account … has no access to …");
+- the verification page ("… verification …", with a screenshot).
+
+The production job (#584) must turn each of these into a failed run with that message and notify the operator. A login failure must never look like "reports missing".

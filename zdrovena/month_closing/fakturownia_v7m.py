@@ -146,10 +146,16 @@ def run_v7m_report(
         if not page.get_by_text(taxpayer.tax_office, exact=True).first.is_visible():
             # The label, not the bare input: the input has no text, and the allowlist checks text.
             field = page.get_by_text("Urząd skarbowy", exact=True).first
-            fr._click_allowlisted(field, fr.V7_TAX_OFFICE_FIELD, force=True)
-            option = _wait_visible(
-                page, lambda: page.get_by_text(taxpayer.tax_office, exact=True), step_timeout_ms
-            )
+            # The dropdown sometimes does not open while the page still animates (PoC E6 run 1):
+            # opening it again is harmless, it only shows the list.
+            option = None
+            for _ in range(3):
+                fr._click_allowlisted(field, fr.V7_TAX_OFFICE_FIELD, force=True)
+                option = _wait_visible(
+                    page, lambda: page.get_by_text(taxpayer.tax_office, exact=True), 5_000
+                )
+                if option is not None:
+                    break
             if option is None:
                 raise fr.ReportControlMissing(fr.V7_TAX_OFFICE_OPTION.name, taxpayer.tax_office)
             fr._click_allowlisted(option, fr.V7_TAX_OFFICE_OPTION, force=True)
