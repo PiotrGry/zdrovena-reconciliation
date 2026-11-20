@@ -19,9 +19,10 @@ import logging
 import os
 import re
 import time
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
+
+from defusedxml import ElementTree as ET  # the file comes from outside: no entity expansion
 
 from zdrovena.month_closing import fakturownia_reports as fr
 
