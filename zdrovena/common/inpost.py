@@ -639,6 +639,44 @@ class InPostClient:
         logger.info("InPost dispatch order created: id=%s", data.get("id"))
         return data
 
+    def list_dispatch_orders(
+        self,
+        *,
+        per_page: int = 100,
+        max_pages: int = 10,
+    ) -> list[dict[str, Any]]:
+        """List the organisation's dispatch orders (courier pickups). Read-only.
+
+        ShipX answers ``GET /v1/organizations/{id}/dispatch_orders`` with the
+        usual collection envelope (``items``, ``count``, ``page``,
+        ``per_page``); each item carries ``id``, ``status`` and ``shipments``
+        (``[{"id", "href", "tracking_number"}]``). This includes pickups booked
+        outside the portal — in the InPost app or InPost Manager — which is why
+        the pickup sync reads it.
+
+        ``max_pages`` bounds the walk so a large history cannot turn one cycle
+        into an unbounded crawl (10 pages of 100 covers far more pickups than
+        are ever open at once).
+        """
+        url = f"{_BASE}/v1/organizations/{self._org_id}/dispatch_orders"
+        orders: list[dict[str, Any]] = []
+        for page in range(1, max_pages + 1):
+            resp = self._request(
+                "GET",
+                url,
+                action="list_dispatch_orders",
+                params={"page": page, "per_page": per_page},
+            )
+            payload = resp.json() or {}
+            items = payload.get("items") or []
+            orders.extend(item for item in items if isinstance(item, dict))
+            count = payload.get("count")
+            if len(items) < per_page:
+                break
+            if isinstance(count, int) and page * per_page >= count:
+                break
+        return orders
+
     # ── Cancel ────────────────────────────────────────────────────────────────
 
     def get_shipment(self, shipment_id: str) -> dict[str, Any]:
