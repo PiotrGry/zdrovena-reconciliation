@@ -31,6 +31,7 @@ from playwright.sync_api import sync_playwright
 from scripts.poc.fakturownia_poc_evidence import EVIDENCE_ROOT, Evidence, peak_rss_mb
 from scripts.poc.fakturownia_poc_safety import TEST_BASE_URL, HostLock, check_base_url
 from zdrovena.month_closing import fakturownia_reports as fr
+from zdrovena.month_closing import fakturownia_v7m as v7
 from zdrovena.month_closing.config import (
     FAKTUROWNIA_JOB_WAIT_MS,
     FAKTUROWNIA_REPORTS,
@@ -124,7 +125,21 @@ def close_context(context, ev: Evidence, lock: HostLock, guard) -> dict:
 def cmd_run(args) -> int:
     check_base_url(TEST_BASE_URL)
     load_test_credentials()
-    rpt = next(r for r in FAKTUROWNIA_REPORTS if r.get("headless_flow") == args.report)
+    rpt = next((r for r in FAKTUROWNIA_REPORTS if r.get("headless_flow") == args.report), None)
+    if args.report == "jpk_v7m":
+        # Made-up taxpayer data: the PoC runs on the test account only (operator's decision, E3).
+        os.environ.setdefault(
+            v7.TAXPAYER_ENV,
+            json.dumps(
+                {
+                    "tax_office": "URZĄD SKARBOWY W BOLESŁAWCU",
+                    "first_name": "Jan",
+                    "last_name": "Testowy",
+                    "birth_date": "1980-01-01",
+                    "email": "jan.testowy@example.com",
+                }
+            ),
+        )
     date_from, date_to = month_range(args.month)
     failures = 0
     for index in range(args.runs):
@@ -137,15 +152,26 @@ def cmd_run(args) -> int:
                 login, password = fr._get_credentials()
                 fr._login(page, login, password, base_url=TEST_BASE_URL, verification_wait_ms=None)
                 fr._dismiss_newsletter_popup(page)
-                path = fr.run_headless_report(
-                    page,
-                    rpt,
-                    date_from,
-                    date_to,
-                    ev.dir,
-                    base_url=TEST_BASE_URL,
-                    job_wait_ms=FAKTUROWNIA_JOB_WAIT_MS,
-                    step_timeout_ms=15_000,
+                path = (
+                    v7.run_v7m_report(
+                        page,
+                        args.month,
+                        ev.dir,
+                        base_url=TEST_BASE_URL,
+                        taxpayer=v7.load_taxpayer(),
+                        job_wait_ms=FAKTUROWNIA_JOB_WAIT_MS,
+                    )
+                    if args.report == "jpk_v7m"
+                    else fr.run_headless_report(
+                        page,
+                        rpt,
+                        date_from,
+                        date_to,
+                        ev.dir,
+                        base_url=TEST_BASE_URL,
+                        job_wait_ms=FAKTUROWNIA_JOB_WAIT_MS,
+                        step_timeout_ms=15_000,
+                    )
                 )
                 files = [f"{path.name} ({path.stat().st_size} B)"]
             except Exception as exc:  # recorded, the next run still happens
@@ -272,7 +298,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run")
     run.add_argument("--experiment", required=True)
-    run.add_argument("--report", required=True, choices=sorted(fr.HEADLESS_FLOWS))
+    run.add_argument("--report", required=True, choices=[*sorted(fr.HEADLESS_FLOWS), "jpk_v7m"])
     run.add_argument("--runs", type=int, default=1)
     run.add_argument("--month", required=True)
     run.add_argument("--profile", type=Path)

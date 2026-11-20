@@ -632,6 +632,35 @@ PRINT_PDF = AllowedControl(
     roles=("button",),
     label_re=re.compile(r"^\s*drukuj do pdf\s*$", re.IGNORECASE),
 )
+# JPK_V7M (accounting module, PoC E3, 2026-11-20). "Wyślij do Ministerstwa Finansów" is never on this
+# list, and the guard disables it on the page.
+V7_NEW_REPORT = AllowedControl(
+    name="przycisk 'Nowy raport' (JPK V7)",
+    roles=("button",),
+    label_re=re.compile(r"^\s*nowy raport\s*$", re.IGNORECASE),
+)
+V7_TAX_OFFICE_FIELD = AllowedControl(
+    name="pole 'Urząd skarbowy' (JPK V7)",
+    label_re=re.compile(r"^\s*urząd skarbowy", re.IGNORECASE),
+)
+V7_TAX_OFFICE_OPTION = AllowedControl(
+    name="opcja urzędu skarbowego (JPK V7)",
+    label_re=re.compile(r"^\s*urząd skarbowy\b.+", re.IGNORECASE),
+)
+V7_STATEMENT = AllowedControl(
+    name="oświadczenie 'potwierdzam zapoznanie się z treścią … pouczeń' (JPK V7)",
+    label_re=re.compile(r"^\s*potwierdzam zapoznanie si[eę] z treści[aą]", re.IGNORECASE),
+)
+V7_GENERATE_XML = AllowedControl(
+    name="przycisk 'zapisz i generuj xml' (JPK V7)",
+    roles=("button",),
+    label_re=re.compile(r"^\s*zapisz i generuj xml\s*$", re.IGNORECASE),
+)
+V7_DOWNLOAD_XML = AllowedControl(
+    name="przycisk 'pobierz xml' (JPK V7)",
+    roles=("button",),
+    label_re=re.compile(r"^\s*pobierz xml\s*$", re.IGNORECASE),
+)
 DISMISS_NEWSLETTER = AllowedControl(
     name="przycisk 'Nie, dziękuję' (popup 'Bądź na bieżąco!')",
     roles=("button", "link"),
@@ -643,6 +672,12 @@ ALLOWED_CONTROLS: tuple[AllowedControl, ...] = (
     EXPORT_XML,
     VAT_REGISTER_DOWNLOAD,
     PRINT_PDF,
+    V7_NEW_REPORT,
+    V7_TAX_OFFICE_FIELD,
+    V7_TAX_OFFICE_OPTION,
+    V7_STATEMENT,
+    V7_GENERATE_XML,
+    V7_DOWNLOAD_XML,
     DISMISS_NEWSLETTER,
 )
 
@@ -698,7 +733,9 @@ def _first_visible(locator):
     return None
 
 
-def _click_allowlisted(locator, control: AllowedControl, *, timeout_ms: int = 10_000) -> None:
+def _click_allowlisted(
+    locator, control: AllowedControl, *, timeout_ms: int = 10_000, force: bool = False
+) -> None:
     """Click ``locator`` only if it is ``control`` and nothing that sends or subscribes."""
     if control not in ALLOWED_CONTROLS:
         raise NoSendViolation(f"{control.name} is not on the click allowlist")
@@ -717,7 +754,9 @@ def _click_allowlisted(locator, control: AllowedControl, *, timeout_ms: int = 10
         href = locator.get_attribute("href") or ""
         if not control.href_re.search(href.split("?")[0].split("#")[0]):
             raise NoSendViolation(f"href {href!r} does not match {control.name}")
-    locator.click(timeout=timeout_ms)
+    # force: Material dropdowns in the accounting module keep animating, so Playwright's
+    # actionability wait times out although the click lands (PoC E3). The checks above still run.
+    locator.click(timeout=timeout_ms, force=force)
 
 
 def _dismiss_newsletter_popup(page) -> bool:

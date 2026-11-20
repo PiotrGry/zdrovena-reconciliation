@@ -84,3 +84,22 @@ The walk runs are 20261120T184122Z through 20261120T193638Z (`*-E3-walk`). The o
 **What this means for automation:**
 - A full V7 run needs the taxpayer data and the ticked legal statement. The statement is a declaration by a person, so an unattended production job must not tick it.
 - Downloading the XML of a report that a person has already generated needs only "pobierz xml", which is safe to automate.
+
+### E3, automatic (2026-11-20)
+
+**Operator's decision (2026-11-20): V7 is fully automatic.** The production job creates the report, fills the taxpayer data from configuration (`FAKTUROWNIA_V7_TAXPAYER`), ticks the statement on the operator's behalf, generates and downloads the XML. The operator was told before deciding that the statement is a declaration under the Tax Penal Code. Sending to the Ministry of Finance stays impossible: the link is not on the allowlist, the guard disables it, and every `gov.pl` request is aborted.
+
+The flow is `zdrovena/month_closing/fakturownia_v7m.py` (`run_v7m_report`). It uses six allowlisted controls: "Nowy raport", the tax-office field and option, the statement, "zapisz i generuj xml" and "pobierz xml".
+- It fills only empty taxpayer fields.
+- It refuses to run when the wizard shows a month other than the requested one. The month picker was not checked; the default, the previous month, is what month close needs.
+- It checks the file: it must be `JPK_V7M`, for the requested year and month, with `CelZlozenia` = 1.
+
+**Result: 3 of 3 runs passed** (20261120T194727Z, …194742Z, …194758Z): 15.5–15.9 s, about 1 GB peak, `JPK_V7M.xml` of 7,911 B. Each run made exactly six allowlisted clicks, never clicked the send link, and made no `gov.pl` request.
+
+**Defects found on the way:**
+- The tax-office input has no text, so the allowlist refused to click it (`label '' does not match`), which is the guard working. The flow now clicks the field's label.
+- A "pobierz xml" click made while the page re-rendered after generating was lost: no request (run 20261120T194552Z). The flow now waits until the button is enabled, clicks without force, and tries once more. It is a download-only control.
+
+**Side effect to know about:** every run creates a new report on Księgosoft's server (reports 179092, 179115–179117 and later on the test account). The production job therefore makes one report per run. Repeated runs for one month leave several reports. They are not filings, but they show in the accounting module.
+
+**Not covered yet:** an offline fake of the accounting module for CI. This moves to the production job (#584).
