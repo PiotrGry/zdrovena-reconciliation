@@ -51,6 +51,12 @@ def test_extra_static_hosts_match_exactly_or_as_subdomain():
     assert host_allowed("evilgstatic.com", extra=("gstatic.com",)) is False
 
 
+def test_fakturownia_assets_are_allowed_and_trackers_are_not():
+    assert host_allowed("assets2.firmlet.com") is True
+    for host in ("widgets.intum.net", "browser.sentry-cdn.com", "www.googletagmanager.com"):
+        assert host_allowed(host) is False
+
+
 class _Route:
     def __init__(self, url):
         self.request = type("R", (), {"url": url, "method": "GET", "resource_type": "document"})()

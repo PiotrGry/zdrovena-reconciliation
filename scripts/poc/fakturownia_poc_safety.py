@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 TEST_HOST = "piotrgryzlo.fakturownia.pl"
 TEST_BASE_URL = f"https://{TEST_HOST}"
 # Static hosts the test account's pages need, filled from the first run's aborted list (Task 5).
-EXTRA_HOSTS: tuple[str, ...] = ()
+# assets2.firmlet.com serves Fakturownia's own JavaScript; without it the report job modal never polls (E1, 2026-11-20).
+# Left blocked: widgets.intum.net (widgets), browser.sentry-cdn.com, www.googletagmanager.com.
+EXTRA_HOSTS: tuple[str, ...] = ("firmlet.com",)
 
 
 def check_base_url(url: str) -> str:

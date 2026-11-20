@@ -24,7 +24,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from scripts.poc.fakturownia_poc_evidence import EVIDENCE_ROOT, Evidence
+from scripts.poc.fakturownia_poc_evidence import EVIDENCE_ROOT, Evidence, peak_rss_mb
 from scripts.poc.fakturownia_poc_safety import TEST_BASE_URL, HostLock, check_base_url
 from zdrovena.month_closing import fakturownia_reports as fr
 from zdrovena.month_closing.config import (
@@ -107,9 +107,10 @@ def open_context(playwright, ev: Evidence, profile: Path | None):
 
 
 def close_context(context, ev: Evidence, lock: HostLock, guard) -> dict:
+    peak = peak_rss_mb()  # before close: the browser processes are gone afterwards
     context.tracing.stop(path=str(ev.dir / "trace.zip"))
     context.close()
-    return {"aborted_by_lock": lock.aborted, "aborted_by_guard": guard.blocked}
+    return {"aborted_by_lock": lock.aborted, "aborted_by_guard": guard.blocked, "peak_rss_mb": peak}
 
 
 def cmd_run(args) -> int:
