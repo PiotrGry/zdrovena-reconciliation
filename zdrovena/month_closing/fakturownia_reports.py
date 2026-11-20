@@ -4,25 +4,207 @@ zdrovena.month_closing.fakturownia_reports – Auto-download Fakturownia reports
 Downloads JPK_FA, JPK_V7M, and VAT Sales Register from Fakturownia's web UI
 using Playwright. These reports are only available via the browser interface.
 
-Flow:
-1. Login at /login (form POST)
-2. For each report: navigate with submitted=true, wait for job, click download link
-3. Save native XML/PDF files to output directory
+Two modes:
+
+* Unattended (``FAKTUROWNIA_REPORT_HEADLESS=1``): JPK_FA and the VAT sales register
+  are generated and downloaded in a headless browser along the path verified by
+  hand (open form → "Generuj raport" → job modal link "Gotowe" → "Eksportuj do
+  XML"). Reports without such a flow (JPK_V7M) are left for manual download.
+* Manual fallback (flag unset): a visible browser with the report sidebar.
+
+Both modes use a persistent profile per host (``~/.zdrovena/fakturownia_profile/<host>``)
+and the no-send guard: requests to the tax office hosts are aborted and every
+control that could file or sign anything is disabled before any page loads.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse, urlunparse
+
+from zdrovena.month_closing.config import (
+    FAKTUROWNIA_BLOCKED_HOST_SUFFIXES,
+    FAKTUROWNIA_SEND_CONTROL_PATTERN,
+    FAKTUROWNIA_WEB_BASE_URL_DEFAULT,
+)
 
 logger = logging.getLogger("zdrovena.month_closing.fakturownia_reports")
 
-BASE_URL = "https://zdrovena.fakturownia.pl"
+BASE_URL = FAKTUROWNIA_WEB_BASE_URL_DEFAULT
 LOGIN_URL = f"{BASE_URL}/login"
 DL_LINK_SEL = "#job_download_link a[href*='/jobs/']"
+JOB_RESULT_LINK_SEL = "a[href*='/jobs/'][href$='/result']"
+
+SEND_CONTROL_RE = re.compile(FAKTUROWNIA_SEND_CONTROL_PATTERN, re.IGNORECASE)
+# The newsletter popup's accept button. Never clicked; listed so the allowlist
+# check refuses it even if a selector were ever to match it by accident.
+_NEWSLETTER_ACCEPT_RE = re.compile(r"tak,?\s*ch[eę]tnie", re.IGNORECASE)
+
+
+def _web_base_url() -> str:
+    from zdrovena.month_closing.config import fakturownia_web_base_url
+
+    return fakturownia_web_base_url()
+
+
+def map_to_web_base(url: str, base_url: str) -> str:
+    """Point a configured Fakturownia URL at the configured web host.
+
+    Report URLs in ``FAKTUROWNIA_REPORTS`` name ``zdrovena.fakturownia.pl``; any
+    ``*.fakturownia.pl`` host is replaced by ``base_url``'s scheme and host, a
+    relative URL is resolved against it, and other hosts are left alone.
+    """
+    base = urlparse(base_url)
+    parsed = urlparse(url)
+    if not parsed.netloc:
+        return urljoin(base_url.rstrip("/") + "/", url)
+    host = (parsed.hostname or "").lower()
+    if host == "fakturownia.pl" or host.endswith(".fakturownia.pl"):
+        return urlunparse(parsed._replace(scheme=base.scheme, netloc=base.netloc))
+    return url
+
+
+# ─── No-send guard ───────────────────────────────────────────────────────────
+
+
+def is_blocked_host(host: str | None) -> bool:
+    """True when ``host`` is, or ends with, one of the tax office host suffixes."""
+    if not host:
+        return False
+    normalized = host.strip().lower().rstrip(".")
+    return any(normalized.endswith(suffix) for suffix in FAKTUROWNIA_BLOCKED_HOST_SUFFIXES)
+
+
+def is_blocked_url(url: str) -> bool:
+    try:
+        return is_blocked_host(urlparse(url).hostname)
+    except ValueError:
+        return False
+
+
+def is_send_control_text(text: str | None) -> bool:
+    """True when a control's label looks like sending, signing or filing."""
+    return bool(text) and SEND_CONTROL_RE.search(text or "") is not None
+
+
+def _no_send_init_script() -> str:
+    """JS run in every document before page scripts: makes send controls inert."""
+    import json
+
+    pattern = json.dumps(FAKTUROWNIA_SEND_CONTROL_PATTERN)
+    return """(() => {
+  if (window.__zdvNoSendGuard) return;
+  window.__zdvNoSendGuard = true;
+  const RE = new RegExp(__ZDV_SEND_PATTERN__, "iu");
+  const SEL = 'button, a, input[type="submit"], input[type="button"], input[type="image"], '
+    + '[role="button"], [role="link"], [role="menuitem"]';
+  const label = (el) => [
+    el.textContent || "", el.value || "", el.getAttribute("aria-label") || "",
+    el.getAttribute("title") || "", el.getAttribute("alt") || "",
+  ].join(" ");
+  const isSend = (el) => !!el && el.nodeType === 1 && el.matches(SEL) && RE.test(label(el));
+  const block = (el) => {
+    if (el.getAttribute("data-zdv-blocked") === "1") return;
+    el.setAttribute("data-zdv-blocked", "1");
+    try { el.disabled = true; } catch (e) {}
+    el.setAttribute("disabled", "disabled");
+    el.setAttribute("aria-disabled", "true");
+    el.style.setProperty("pointer-events", "none", "important");
+    if (el.hasAttribute("href")) {
+      el.setAttribute("data-zdv-href", el.getAttribute("href"));
+      el.removeAttribute("href");
+    }
+    el.removeAttribute("formaction");
+    el.removeAttribute("onclick");
+  };
+  const scan = (root) => {
+    if (!root || !root.querySelectorAll) return;
+    if (root.nodeType === 1 && isSend(root)) block(root);
+    root.querySelectorAll(SEL).forEach((el) => { if (isSend(el)) block(el); });
+  };
+  const cancel = (ev) => {
+    const path = ev.composedPath ? ev.composedPath() : [ev.target];
+    for (const node of path) {
+      if (isSend(node) || (node && node.nodeType === 1
+          && node.getAttribute("data-zdv-blocked") === "1")) {
+        block(node);
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        return;
+      }
+    }
+  };
+  for (const type of ["click", "auxclick", "dblclick", "mousedown", "mouseup",
+                      "pointerdown", "pointerup", "touchstart"]) {
+    window.addEventListener(type, cancel, true);
+  }
+  window.addEventListener("submit", (ev) => {
+    if (ev.submitter && isSend(ev.submitter)) {
+      block(ev.submitter);
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+    }
+  }, true);
+  const observer = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      const el = m.target.nodeType === 1 ? m.target : m.target.parentElement;
+      if (el) {
+        const owner = el.closest(SEL);
+        if (owner && isSend(owner)) block(owner);
+        if (m.type === "childList") {
+          m.addedNodes.forEach((n) => { if (n.nodeType === 1) scan(n); });
+        }
+      }
+    }
+  });
+  observer.observe(document, {
+    childList: true, subtree: true, characterData: true,
+    attributes: true, attributeFilter: ["value", "aria-label", "title", "alt"],
+  });
+  scan(document);
+  document.addEventListener("DOMContentLoaded", () => scan(document));
+})();""".replace("__ZDV_SEND_PATTERN__", pattern)
+
+
+class NoSendGuard:
+    """Context-wide request filter: aborts every request to a tax office host."""
+
+    def __init__(self) -> None:
+        self.blocked: list[str] = []
+
+    def handle_route(self, route) -> None:
+        url = route.request.url
+        if is_blocked_url(url):
+            self.blocked.append(url)
+            logger.warning("No-send guard: aborted request to %s", url)
+            route.abort("blockedbyclient")
+            return
+        if "consentmanager" in url:
+            route.abort()
+            return
+        route.fallback()
+
+    def handle_websocket(self, ws) -> None:
+        self.blocked.append(ws.url)
+        logger.warning("No-send guard: refused websocket to %s", ws.url)
+        ws.close()
+
+
+def install_no_send_guard(context) -> NoSendGuard:
+    """Install the guard on a browser context. Call before any page loads."""
+    guard = NoSendGuard()
+    context.route("**/*", guard.handle_route)
+    route_ws = getattr(context, "route_web_socket", None)
+    if callable(route_ws):
+        route_ws(is_blocked_url, guard.handle_websocket)
+    context.add_init_script(script=_no_send_init_script())
+    return guard
 
 
 def _get_credentials() -> tuple[str, str]:
@@ -126,6 +308,26 @@ def _download_reports_with_playwright(
         logger.warning("Playwright not installed — skipping auto-download")
         return []
 
+    from zdrovena.month_closing.config import (
+        FAKTUROWNIA_JOB_WAIT_MS,
+        fakturownia_profile_dir,
+        fakturownia_report_headless,
+        fakturownia_verification_wait_ms,
+    )
+
+    unattended = fakturownia_report_headless()
+    if unattended:
+        runnable = [r for r in reports if r.get("headless_flow") in HEADLESS_FLOWS]
+        for rpt in reports:
+            if rpt not in runnable:
+                logger.warning(
+                    "%s: no unattended flow — download it manually (manual fallback remains)",
+                    rpt["name"],
+                )
+        if not runnable:
+            return []
+        reports = runnable
+
     try:
         login, password = _get_credentials()
     except Exception as exc:
@@ -134,15 +336,32 @@ def _download_reports_with_playwright(
     output_dir.mkdir(parents=True, exist_ok=True)
     downloaded: list[tuple[dict, Path]] = []
 
-    # Manual-session reports require a visible browser window.
-    if any(r.get("use_wizard_navigation") for r in reports):
-        headless = False
+    base_url = _web_base_url()
+    verification_wait_ms = fakturownia_verification_wait_ms()
+    headless = _resolve_headless(
+        reports,
+        headless,
+        unattended=unattended,
+        verification_wait_ms=verification_wait_ms,
+    )
+    profile_dir = fakturownia_profile_dir(base_url)
 
-    logger.info("Launching browser (headless=%s) for Fakturownia reports...", headless)
+    logger.info(
+        "Launching browser (headless=%s, unattended=%s, profile=%s) for Fakturownia reports...",
+        headless,
+        unattended,
+        profile_dir,
+    )
 
     with Stealth().use_sync(sync_playwright()) as pw:
         try:
-            browser = pw.chromium.launch(headless=headless)
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            context = pw.chromium.launch_persistent_context(
+                str(profile_dir),
+                headless=headless,
+                accept_downloads=True,
+                service_workers="block",
+            )
         except Exception as exc:
             logger.warning("Unable to launch Playwright browser — skipping auto-download: %s", exc)
             if "Executable doesn't exist" in str(exc):
@@ -151,70 +370,571 @@ def _download_reports_with_playwright(
                     ".venv/bin/python -m playwright install chromium"
                 )
             return []
-        context = browser.new_context(accept_downloads=True)
-        page = context.new_page()
-
-        page.route("**/*consentmanager*", lambda route: route.abort())
 
         try:
-            _login(page, login, password)
-        except Exception as exc:
-            logger.error("Fakturownia login failed: %s", exc)
-            browser.close()
-            return []
+            # Before any page loads: nothing may reach the tax office from here on.
+            install_no_send_guard(context)
+            page = context.pages[0] if context.pages else context.new_page()
 
-        # Separate wizard reports (combined sidebar session) from legacy reports
-        wizard_reports = [r for r in reports if r.get("use_wizard_navigation")]
-        legacy_reports = [r for r in reports if not r.get("use_wizard_navigation")]
-
-        # All three standard reports use wizard navigation — run them together
-        if wizard_reports:
             try:
-                results = _run_all_wizard_reports(
-                    page, wizard_reports, date_from, date_to, output_dir, timeout
+                _login(
+                    page,
+                    login,
+                    password,
+                    base_url=base_url,
+                    verification_wait_ms=verification_wait_ms,
                 )
-                downloaded.extend(results)
             except Exception as exc:
-                logger.warning("Combined wizard session failed: %s", exc)
+                logger.error("Fakturownia login failed: %s", exc)
+                return []
 
-        # Legacy non-wizard reports (if any remain)
-        for rpt in legacy_reports:
+            if unattended:
+                for rpt in reports:
+                    try:
+                        path = run_headless_report(
+                            page,
+                            rpt,
+                            date_from,
+                            date_to,
+                            output_dir,
+                            base_url=base_url,
+                            job_wait_ms=FAKTUROWNIA_JOB_WAIT_MS,
+                            step_timeout_ms=timeout,
+                        )
+                        downloaded.append((rpt, path))
+                    except Exception as exc:
+                        logger.warning("%s: unattended download failed: %s", rpt["name"], exc)
+                return downloaded
+
+            # Separate wizard reports (combined sidebar session) from legacy reports
+            wizard_reports = [r for r in reports if r.get("use_wizard_navigation")]
+            legacy_reports = [r for r in reports if not r.get("use_wizard_navigation")]
+
+            # All three standard reports use wizard navigation — run them together
+            if wizard_reports:
+                try:
+                    results = _run_all_wizard_reports(
+                        page, wizard_reports, date_from, date_to, output_dir, timeout
+                    )
+                    downloaded.extend(results)
+                except Exception as exc:
+                    logger.warning("Combined wizard session failed: %s", exc)
+
+            # Legacy non-wizard reports (if any remain)
+            for rpt in legacy_reports:
+                try:
+                    path = _download_one_report(page, rpt, date_from, date_to, output_dir, timeout)
+                    if path:
+                        downloaded.append((rpt, path))
+                except Exception as exc:
+                    logger.warning("Failed to download %s: %s", rpt["name"], exc)
+        finally:
             try:
-                path = _download_one_report(page, rpt, date_from, date_to, output_dir, timeout)
-                if path:
-                    downloaded.append((rpt, path))
-            except Exception as exc:
-                logger.warning("Failed to download %s: %s", rpt["name"], exc)
-
-        browser.close()
+                context.close()
+            except Exception:
+                pass
 
     return downloaded
 
 
-def _login(page, login: str, password: str) -> None:
-    """Login to Fakturownia. Raises on failure."""
-    logger.info("Logging in to Fakturownia...")
-    page.goto(LOGIN_URL, wait_until="domcontentloaded")
-    page.wait_for_selector("[name='user_session[login]']", timeout=10_000)
-    page.fill("[name='user_session[login]']", login)
+def _resolve_headless(
+    reports: list[dict],
+    headless: bool,
+    *,
+    unattended: bool,
+    verification_wait_ms: int | None,
+) -> bool:
+    """Whether the browser runs without a window.
+
+    Unattended mode is headless even for wizard reports; the one exception is a
+    configured verification wait, which needs a window to type the code into.
+    Without the flag, manual-session (wizard) reports need a visible window.
+    """
+    if unattended:
+        return verification_wait_ms is None
+    if any(r.get("use_wizard_navigation") for r in reports):
+        return False
+    return headless
+
+
+def _url_path(url: str) -> str:
+    try:
+        return urlparse(url).path.rstrip("/") or "/"
+    except ValueError:
+        return ""
+
+
+def _is_login_url(url: str) -> bool:
+    path = _url_path(url)
+    return path == "/login" or path.startswith("/login/")
+
+
+def _is_verification_url(url: str) -> bool:
+    return _url_path(url).startswith("/login/verification")
+
+
+def _login(
+    page,
+    login: str,
+    password: str,
+    *,
+    base_url: str | None = None,
+    verification_wait_ms: int | None = None,
+) -> None:
+    """Make sure the browser session is logged in to Fakturownia. Raises on failure.
+
+    Three cases: the login form (filled and submitted); an already logged-in
+    profile (``/login`` redirects away, the form is skipped); and the
+    ``/login/verification`` page, which fails with a readable error unless
+    ``verification_wait_ms`` allows a person to type the code in the window.
+    """
+    base = (base_url or _web_base_url()).rstrip("/")
+    logger.info("Logging in to Fakturownia (%s)...", base)
+    page.goto(f"{base}/login", wait_until="domcontentloaded")
+
+    if not _is_login_url(page.url):
+        logger.info("Already logged in (profile session) → %s", page.url)
+        return
+    if _is_verification_url(page.url):
+        _await_verification(page, base, verification_wait_ms)
+        return
+
+    form_field = "[name='user_session[login]']"
+    try:
+        page.wait_for_selector(form_field, timeout=10_000)
+    except Exception as exc:
+        if not _is_login_url(page.url):
+            logger.info("Already logged in (late redirect) → %s", page.url)
+            return
+        if _is_verification_url(page.url):
+            _await_verification(page, base, verification_wait_ms)
+            return
+        raise RuntimeError(f"Fakturownia login form not found at {page.url}") from exc
+
+    page.fill(form_field, login)
     page.fill("[name='user_session[password]']", password)
     page.click("[name='commit']", force=True)
 
     try:
         page.wait_for_url(
-            lambda url: "login" not in url,
+            lambda url: not _is_login_url(url) or _is_verification_url(url),
             wait_until="domcontentloaded",
             timeout=10_000,
         )
     except Exception as e:
         content = page.content()
         if "Nie masz uprawnień do tego konta!" in content:
-            raise RuntimeError(f"Account '{login}' has no access to {BASE_URL}") from e
+            raise RuntimeError(f"Account '{login}' has no access to {base}") from e
         if "Login/Hasło nie są poprawne" in content:
             raise RuntimeError(f"Invalid credentials for '{login}'") from e
         raise RuntimeError(f"Login timed out. URL: {page.url}") from e
 
+    if _is_verification_url(page.url):
+        _await_verification(page, base, verification_wait_ms)
+        return
+
     logger.info("Login OK → %s", page.url)
+
+
+def _await_verification(page, base: str, wait_ms: int | None) -> None:
+    """Handle Fakturownia's ``/login/verification`` (code sent to the account owner)."""
+    if not wait_ms:
+        raise RuntimeError(
+            "Fakturownia asks for a login verification code "
+            f"({base}/login/verification) and the unattended download cannot type it. "
+            "Run once with FAKTUROWNIA_VERIFICATION_WAIT_MS=180000 (a browser window "
+            "opens), type the code there; the persistent profile then remembers the "
+            "device for later unattended runs."
+        )
+    logger.warning(
+        "Fakturownia asks for a verification code — type it in the browser window "
+        "(waiting up to %d s)",
+        wait_ms // 1000,
+    )
+    print(
+        f"\n  🔐  Fakturownia verification: type the code in the browser window "
+        f"(waiting up to {wait_ms // 1000} s)...\n"
+    )
+    try:
+        page.wait_for_url(
+            lambda url: not _is_login_url(url),
+            wait_until="domcontentloaded",
+            timeout=wait_ms,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Fakturownia verification code was not entered within {wait_ms // 1000} s "
+            f"(still at {page.url})"
+        ) from exc
+    logger.info("Verification OK → %s", page.url)
+
+
+# ─── Unattended report flows ─────────────────────────────────────────────────
+
+
+class ReportFlowError(RuntimeError):
+    """The unattended flow could not produce the report file."""
+
+
+class ReportControlMissing(ReportFlowError):
+    """A control the flow needs is not on the page; names the control."""
+
+    def __init__(self, control: str, detail: str = "") -> None:
+        self.control = control
+        self.detail = detail
+        message = f"control not found: {control}"
+        super().__init__(f"{message} ({detail})" if detail else message)
+
+
+class NoSendViolation(ReportFlowError):
+    """The flow was about to click a control outside the allowlist."""
+
+
+@dataclass(frozen=True)
+class AllowedControl:
+    """A control the unattended flow may click: everything else stays untouched."""
+
+    name: str
+    roles: tuple[str, ...] = ()
+    label_re: re.Pattern[str] | None = None
+    css: str | None = None
+    href_re: re.Pattern[str] | None = None
+
+
+GENERATE_REPORT = AllowedControl(
+    name="przycisk 'Generuj raport'",
+    roles=("button",),
+    label_re=re.compile(r"^\s*generuj raport\s*$", re.IGNORECASE),
+)
+JOB_RESULT_LINK = AllowedControl(
+    name=f"link wyniku joba 'Gotowe' ({JOB_RESULT_LINK_SEL})",
+    css=JOB_RESULT_LINK_SEL,
+    href_re=re.compile(r"/jobs/[^/?#]+/result$"),
+)
+EXPORT_XML = AllowedControl(
+    name="przycisk 'Eksportuj do XML'",
+    roles=("button", "link", "menuitem"),
+    label_re=re.compile(r"^\s*eksport(?:uj)? do xml\s*$", re.IGNORECASE),
+)
+VAT_REGISTER_DOWNLOAD = AllowedControl(
+    name="przycisk pobrania rejestru VAT ('Eksportuj do PDF' / 'Pobierz PDF')",
+    roles=("button", "link", "menuitem"),
+    label_re=re.compile(
+        r"^\s*(?:eksport(?:uj)? do pdf|pobierz(?: pdf| raport)?|drukuj do pdf)\s*$",
+        re.IGNORECASE,
+    ),
+)
+DISMISS_NEWSLETTER = AllowedControl(
+    name="przycisk 'Nie, dziękuję' (popup 'Bądź na bieżąco!')",
+    roles=("button", "link"),
+    label_re=re.compile(r"^\s*nie,?\s*dzi[eę]kuj[eę]\s*$", re.IGNORECASE),
+)
+ALLOWED_CONTROLS: tuple[AllowedControl, ...] = (
+    GENERATE_REPORT,
+    JOB_RESULT_LINK,
+    EXPORT_XML,
+    VAT_REGISTER_DOWNLOAD,
+    DISMISS_NEWSLETTER,
+)
+
+
+@dataclass(frozen=True)
+class HeadlessFlow:
+    """One report's unattended path: generate → job link → export control."""
+
+    generate: AllowedControl
+    export: AllowedControl
+    file_kind: str  # "xml" | "pdf" — checked on the downloaded bytes
+
+
+HEADLESS_FLOWS: dict[str, HeadlessFlow] = {
+    # Verified by hand on the test account (2026-11-20).
+    "jpk_fa": HeadlessFlow(generate=GENERATE_REPORT, export=EXPORT_XML, file_kind="xml"),
+    # Same pattern; the VAT register controls were not checked by hand. Clicking the
+    # job link may download the PDF directly, otherwise the export control is used.
+    "vat_register": HeadlessFlow(
+        generate=GENERATE_REPORT, export=VAT_REGISTER_DOWNLOAD, file_kind="pdf"
+    ),
+}
+
+_ELEMENT_LABEL_JS = (
+    "el => [el.innerText || el.textContent || '', el.value || '', "
+    "el.getAttribute('aria-label') || '', el.getAttribute('title') || '']"
+)
+
+
+def _control_locator(page, control: AllowedControl):
+    """All elements on ``page`` that ``control`` describes (possibly none)."""
+    if control.css:
+        return page.locator(control.css)
+    locator = None
+    for role in control.roles:
+        candidate = page.get_by_role(role, name=control.label_re)
+        locator = candidate if locator is None else locator.or_(candidate)
+    if locator is None:
+        raise ValueError(f"control {control.name} has neither css nor roles")
+    return locator
+
+
+def _first_visible(locator):
+    try:
+        count = locator.count()
+    except Exception:
+        return None
+    for i in range(count):
+        item = locator.nth(i)
+        try:
+            if item.is_visible():
+                return item
+        except Exception:
+            continue
+    return None
+
+
+def _click_allowlisted(locator, control: AllowedControl, *, timeout_ms: int = 10_000) -> None:
+    """Click ``locator`` only if it is ``control`` and nothing that sends or subscribes."""
+    if control not in ALLOWED_CONTROLS:
+        raise NoSendViolation(f"{control.name} is not on the click allowlist")
+    raw = locator.evaluate(_ELEMENT_LABEL_JS) or []
+    parts = [" ".join(str(p).split()) for p in ([raw] if isinstance(raw, str) else raw)]
+    parts = [p for p in parts if p]
+    label = " | ".join(parts)
+    # Every part counts for refusing (a title "Wyślij" is enough); one is enough to match.
+    if any(is_send_control_text(p) or _NEWSLETTER_ACCEPT_RE.search(p) for p in parts):
+        raise NoSendViolation(f"refusing to click {label!r} (expected {control.name})")
+    if locator.get_attribute("data-zdv-blocked") == "1":
+        raise NoSendViolation(f"refusing to click guarded control {label!r}")
+    if control.label_re is not None and not any(control.label_re.search(p) for p in parts):
+        raise NoSendViolation(f"label {label!r} does not match {control.name}")
+    if control.href_re is not None:
+        href = locator.get_attribute("href") or ""
+        if not control.href_re.search(href.split("?")[0].split("#")[0]):
+            raise NoSendViolation(f"href {href!r} does not match {control.name}")
+    locator.click(timeout=timeout_ms)
+
+
+def _dismiss_newsletter_popup(page) -> bool:
+    """Close the "Bądź na bieżąco!" popup with "Nie, dziękuję". Never accepts it."""
+    try:
+        button = _first_visible(_control_locator(page, DISMISS_NEWSLETTER))
+        if button is None:
+            return False
+        logger.info("Dismissing newsletter popup ('Nie, dziękuję')")
+        _click_allowlisted(button, DISMISS_NEWSLETTER, timeout_ms=5_000)
+        page.wait_for_timeout(200)
+        return True
+    except NoSendViolation:
+        raise
+    except Exception as exc:
+        logger.debug("Newsletter popup dismissal failed: %s", exc)
+        return False
+
+
+def _fill_report_dates(page, date_from: str, date_to: str) -> None:
+    """Best effort: put the period into the form's date fields when they exist."""
+    for suffix, value in (("date_from", date_from), ("date_to", date_to)):
+        field = page.locator(
+            f"input[name='{suffix}'], input[name$='[{suffix}]'], input#{suffix}"
+        ).first
+        try:
+            if field.count() and field.is_visible() and field.is_editable():
+                field.fill(value, timeout=3_000)
+        except Exception as exc:
+            logger.debug("Could not fill %s: %s", suffix, exc)
+
+
+def _screenshot_beside(page, output_path: Path) -> Path | None:
+    shot = output_path.with_name(output_path.name + ".error.png")
+    try:
+        page.screenshot(path=str(shot), full_page=True)
+        return shot
+    except Exception as exc:
+        logger.debug("Screenshot failed: %s", exc)
+        return None
+
+
+def _check_report_bytes(data: bytes, kind: str) -> str | None:
+    """Why ``data`` is not a ``kind`` report, or ``None`` when it looks right."""
+    if len(data) < 100:
+        return f"file too small ({len(data)} bytes)"
+    head = data[:4096].lstrip(b"\xef\xbb\xbf \t\r\n")
+    if kind == "xml":
+        if not head.startswith(b"<") or b"<html" in head[:512].lower():
+            return "not an XML document"
+    elif kind == "pdf" and not head.startswith(b"%PDF"):
+        return "not a PDF document"
+    return None
+
+
+def run_headless_report(
+    page,
+    rpt: dict,
+    date_from: str,
+    date_to: str,
+    output_dir: Path,
+    *,
+    base_url: str,
+    job_wait_ms: int,
+    step_timeout_ms: int,
+) -> Path:
+    """Generate and download one report without a person. Raises ReportFlowError.
+
+    1. open the report form, 2. click "Generuj raport", 3. wait for the job modal's
+    result link, 4. click that link (a real click, never goto/fetch), 5. click the
+    export control inside ``expect_download`` and save the file. A missing control
+    raises ReportControlMissing naming it, with a screenshot beside the output file.
+    """
+    flow = HEADLESS_FLOWS[rpt["headless_flow"]]
+    name = rpt["name"]
+    output_path = output_dir / rpt["dest_name"]
+    active = [page]
+    try:
+        _run_headless_steps(
+            page,
+            rpt,
+            flow,
+            date_from,
+            date_to,
+            output_path,
+            active,
+            base_url=base_url,
+            job_wait_ms=job_wait_ms,
+            step_timeout_ms=step_timeout_ms,
+        )
+    except Exception as exc:
+        shot = _screenshot_beside(active[-1], output_path)
+        where = f"; screenshot: {shot}" if shot else ""
+        if isinstance(exc, ReportControlMissing):
+            context = "; ".join(p for p in (exc.detail, f"{name}, page {active[-1].url}") if p)
+            raise ReportControlMissing(exc.control, f"{context}{where}") from exc
+        if isinstance(exc, NoSendViolation):
+            raise NoSendViolation(f"{name}: {exc}{where}") from exc
+        raise ReportFlowError(f"{name}: {exc}{where}") from exc
+    finally:
+        for extra in active[1:]:
+            try:
+                extra.close()
+            except Exception:
+                pass
+    logger.info("%s: saved %s (%d bytes)", name, output_path, output_path.stat().st_size)
+    return output_path
+
+
+def _run_headless_steps(
+    page,
+    rpt: dict,
+    flow: HeadlessFlow,
+    date_from: str,
+    date_to: str,
+    output_path: Path,
+    active: list,
+    *,
+    base_url: str,
+    job_wait_ms: int,
+    step_timeout_ms: int,
+) -> None:
+    name = rpt["name"]
+    params = f"?date_from={date_from}&date_to={date_to}&currency_convert_to_main=false"
+    form_url = _build_report_url(
+        map_to_web_base(rpt["url"], base_url),
+        params,
+        append_date_params=rpt.get("append_date_params", True),
+    )
+
+    # Step 1 — open the report form.
+    logger.info("%s: opening report form %s", name, form_url)
+    page.goto(form_url, wait_until="domcontentloaded")
+    if _is_login_url(page.url):
+        raise ReportFlowError(f"redirected to login ({page.url}) — session lost")
+    _dismiss_newsletter_popup(page)
+    _fill_report_dates(page, date_from, date_to)
+
+    # Step 2 — "Generuj raport".
+    generate = _first_visible(_control_locator(page, flow.generate))
+    if generate is None:
+        _dismiss_newsletter_popup(page)
+        generate = _first_visible(_control_locator(page, flow.generate))
+    if generate is None:
+        raise ReportControlMissing(flow.generate.name)
+    _click_allowlisted(generate, flow.generate)
+
+    # Step 3 — wait for the job modal's "Gotowe" result link.
+    link = _poll(page, lambda: _first_visible(_control_locator(page, JOB_RESULT_LINK)), job_wait_ms)
+    if link is None:
+        raise ReportControlMissing(
+            JOB_RESULT_LINK.name, f"not shown within {job_wait_ms // 1000} s"
+        )
+
+    # Step 4 — click the link. The click may open a tab or start the download itself.
+    downloads: list = []
+    on_download = downloads.append
+    context = page.context
+
+    def _watch(p) -> None:
+        p.on("download", on_download)
+        active.append(p)
+
+    page.on("download", on_download)
+    context.on("page", _watch)
+    try:
+        _click_allowlisted(link, JOB_RESULT_LINK)
+
+        # Step 5 — export control inside expect_download (or the link's own download).
+        deadline = time.monotonic() + step_timeout_ms / 1000.0
+        download = None
+        while download is None and time.monotonic() < deadline:
+            if downloads:
+                download = downloads[0]
+                break
+            current = active[-1]
+            try:
+                current.wait_for_load_state("domcontentloaded", timeout=5_000)
+            except Exception:
+                pass
+            _dismiss_newsletter_popup(current)
+            export = _first_visible(_control_locator(current, flow.export))
+            if export is not None:
+                remaining = max(1_000, int((deadline - time.monotonic()) * 1000))
+                with current.expect_download(timeout=remaining) as info:
+                    _click_allowlisted(export, flow.export)
+                download = info.value
+                break
+            current.wait_for_timeout(250)
+    finally:
+        try:
+            page.remove_listener("download", on_download)
+        except Exception:
+            pass
+        try:
+            context.remove_listener("page", _watch)
+        except Exception:
+            pass
+
+    if download is None:
+        raise ReportControlMissing(
+            flow.export.name, f"not shown within {step_timeout_ms // 1000} s of the job link"
+        )
+
+    tmp_path = output_path.with_name(output_path.name + ".part")
+    download.save_as(str(tmp_path))
+    problem = _check_report_bytes(tmp_path.read_bytes(), flow.file_kind)
+    if problem:
+        tmp_path.unlink(missing_ok=True)
+        raise ReportFlowError(f"downloaded {download.suggested_filename!r} — {problem}")
+    os.replace(tmp_path, output_path)
+
+
+def _poll(page, probe: Callable, timeout_ms: int):
+    """Call ``probe`` until it returns something, dismissing the popup in between."""
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while True:
+        found = probe()
+        if found is not None:
+            return found
+        if time.monotonic() >= deadline:
+            return None
+        _dismiss_newsletter_popup(page)
+        page.wait_for_timeout(250)
 
 
 def _download_one_report(
@@ -239,7 +959,9 @@ def _download_one_report(
     params = (
         f"?date_from={date_from}&date_to={date_to}&submitted=true&currency_convert_to_main=false"
     )
-    target_url = _build_report_url(url, params, append_date_params=append_date_params)
+    target_url = _build_report_url(
+        map_to_web_base(url, _web_base_url()), params, append_date_params=append_date_params
+    )
     logger.info("Loading report page: %s %s", name, target_url)
     page.goto(target_url, wait_until="domcontentloaded")
     page.wait_for_timeout(2000)
@@ -672,7 +1394,9 @@ def _run_all_wizard_reports(
             f"?date_from={date_from}&date_to={date_to}"
             f"&submitted=true&currency_convert_to_main=false"
         )
-        nav_url = _build_report_url(url, params, append_date_params=append)
+        nav_url = _build_report_url(
+            map_to_web_base(url, _web_base_url()), params, append_date_params=append
+        )
         reports_data.append((name, nav_url, dest_name))
         output_paths.append(output_dir / dest_name)
 
@@ -1201,7 +1925,7 @@ def _download_via_job_url(page, selector: str, output_path: Path, *, timeout_ms:
         return False
     if not href:
         return False
-    download_url = href if href.startswith("http") else f"{BASE_URL}{href}"
+    download_url = href if href.startswith("http") else map_to_web_base(href, _web_base_url())
     try:
         response = page.context.request.get(download_url, timeout=30_000)
     except Exception as exc:
