@@ -7,6 +7,10 @@ The walk reads one command per line from the command file (appended by Claude), 
 writes a screenshot and controls.json to the run folder:
   goto <path>        open a path on the test host
   click <exact text> click the first visible control with exactly this text (send controls stay disabled)
+  clicksub <text>    click the first visible element whose text contains this text
+  fill <label>|<v>   fill a field found by its label
+  select <label>|<o> open a dropdown found by its label and pick an option
+  check <label>      tick a checkbox found by its label
   code <digits>      type a verification code and submit
   wait <ms>          wait
   quit
@@ -33,7 +37,7 @@ from zdrovena.month_closing.config import (
     fakturownia_profile_dir,
 )
 
-CONTROLS_JS = """() => [...document.querySelectorAll('button, a, input[type=submit], input[type=button], [role=button], [role=menuitem]')]
+CONTROLS_JS = """() => [...document.querySelectorAll('button, a, input[type=submit], input[type=button], [role=button], [role=menuitem], [role=option], [role=combobox]')]
   .filter(el => el.offsetParent !== null)
   .map(el => ({tag: el.tagName, text: (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().slice(0, 80),
                href: el.getAttribute('href'), disabled: el.disabled === true || el.style.pointerEvents === 'none'}))"""
@@ -223,6 +227,23 @@ def cmd_walk(args) -> int:
                         saved = ev.dir / download.value.suggested_filename
                         download.value.save_as(saved)
                         print(f"downloaded {saved.name} ({saved.stat().st_size} B)")
+                elif (
+                    verb == "clicksub"
+                ):  # clicksub <text part>: same send-control check, text need not be exact
+                    if fr.is_send_control_text(arg):
+                        raise RuntimeError(f"refused: {arg!r} looks like a send control")
+                    page.get_by_text(arg, exact=False).first.click(timeout=10_000)
+                elif verb == "fill":  # fill <label>|<value>
+                    label, _, value = arg.partition("|")
+                    page.get_by_label(label, exact=False).first.fill(value, timeout=10_000)
+                elif (
+                    verb == "select"
+                ):  # select <label>|<option text>: material dropdown, then the option
+                    label, _, option = arg.partition("|")
+                    page.get_by_label(label, exact=False).first.click(timeout=10_000)
+                    page.get_by_role("option", name=option).first.click(timeout=10_000)
+                elif verb == "check":  # check <label text>
+                    page.get_by_label(arg, exact=False).first.check(timeout=10_000)
                 elif verb == "code":
                     page.fill("input[name*='code'], input[type='text']", arg)
                     page.keyboard.press("Enter")

@@ -56,3 +56,31 @@ All runs used the test account `https://piotrgryzlo.fakturownia.pl`. Evidence is
 - **Clicks:** two per run, both allowlisted: "Drukuj do PDF" and the job link.
 - **No-send guard:** it aborted nothing.
 - **Driver defect:** the PoC driver re-wrapped the click logger on every run without restoring it. So the click logs of the E1 runs and of the first four E2 runs above also hold the clicks of the later runs. Fixed. Runs 20261120T184001Z and 20261120T184005Z show exactly two clicks each. All logged clicks, before and after the fix, were allowlisted controls.
+
+## E3: JPK_V7M (2026-11-20, supervised walk on the test account)
+
+The walk runs are 20261120T184122Z through 20261120T193638Z (`*-E3-walk`). The operator approved each step with an unknown effect. The taxpayer data was made up, with the operator's approval, on the test account only.
+
+**What the wizard does:**
+
+1. The page is `/accounting/app/reports/jpk_vat`, titled "JPK V7 (JPK VAT z deklaracją)". It belongs to the accounting module, which is served by Księgosoft: assets from `assets.ksiegosoft.pl`, and the API at `<account>.ksiegosoft.pl/api/v1`. The form takes Firma, "Za miesiąc", "Cel złożenia" (złożenie) and "Wariant formularza" (JPK V7 (3)). It has one button, **Nowy raport**. There was no list of earlier reports.
+2. **"Nowy raport" creates a saved report on Księgosoft's server**: `POST /api/v1/reports/generate`, a job, then report `179092` at `/accounting/app/reports/jpk_vat/179092`. This is what the wizard leaves behind: every "Nowy raport" makes a new report record.
+3. The report page has these sections:
+   - "Dane identyfikacyjne Podatnika": tax office, person or entity, NIP, first name, last name, date of birth, e-mail, phone;
+   - "Nagłówek";
+   - "Deklaracja": tax due 153 PLN;
+   - "Ewidencja sprzedaży VAT": 13 rows;
+   - "Ewidencja zakupów VAT": 0 rows;
+   - "Pouczenia", with the required checkbox "potwierdzam zapoznanie się z treścią i akceptację poniższych pouczeń" (Tax Penal Code).
+4. **"zapisz i generuj xml"** stays effectively disabled until all of these are set: tax office, first name, last name, date of birth (`yyyy-mm-dd`), **e-mail**, and the ticked statement. The app checks the form when the statement is ticked. The button is "zapisz i generuj xml"; next to it is "zapisz zmiany". "Zapisz zmiany" did not keep the taxpayer data across a reload.
+5. After "zapisz i generuj xml" (`PUT` the report, then `POST …/add_output` and a job), the page shows **"pobierz xml"** and **"Wyślij do Ministerstwa Finansów"**. **The guard disabled the send link** on the real page (`disabled=true` in controls.json). No request to any `gov.pl` host was made in any E3 run.
+6. **"pobierz xml"** calls `GET /api/v1/reports/<id>/output_url?output_kind=xml&disposition=attachment`, which redirects to a presigned S3 link in Księgosoft's bucket (`https://s3.eu-west-1.amazonaws.com/files.ksiegosoft.pl/…`). The file is `piotrgryzlo_jpk_v7_<timestamp>.xml`, 7,911 B. It is `JPK_V7M (3)` with `VAT-7 (23)`, `CelZlozenia` 1, `KodUrzedu` 0202, 2026-10.
+7. A report that already has its XML shows "pobierz xml" straight after a reload, with no regeneration.
+
+**Safety-layer changes from E3:**
+- The lock now allows `assets.ksiegosoft.pl` and the test account's `piotrgryzlo.ksiegosoft.pl`. The production host `zdrovena.ksiegosoft.pl` stays blocked, and a test proves it.
+- The lock allows Księgosoft's S3 bucket only by exact URL prefix (`https://s3.eu-west-1.amazonaws.com/files.ksiegosoft.pl/`). Other buckets on the same host stay blocked, and a test proves it.
+
+**What this means for automation:**
+- A full V7 run needs the taxpayer data and the ticked legal statement. The statement is a declaration by a person, so an unattended production job must not tick it.
+- Downloading the XML of a report that a person has already generated needs only "pobierz xml", which is safe to automate.

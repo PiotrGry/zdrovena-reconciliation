@@ -17,7 +17,13 @@ TEST_BASE_URL = f"https://{TEST_HOST}"
 # Static hosts the test account's pages need, filled from the first run's aborted list (Task 5).
 # assets2.firmlet.com serves Fakturownia's own JavaScript; without it the report job modal never polls (E1, 2026-11-20).
 # Left blocked: widgets.intum.net (widgets), browser.sentry-cdn.com, www.googletagmanager.com.
-EXTRA_HOSTS: tuple[str, ...] = ("firmlet.com",)
+# assets.ksiegosoft.pl serves the accounting module (JPK_V7M wizard); without it the page stays empty (E3).
+# Only that host: other ksiegosoft.pl hosts stay blocked until a walk shows the page needs them.
+# piotrgryzlo.ksiegosoft.pl is the test account's accounting module; never the production one.
+EXTRA_HOSTS: tuple[str, ...] = ("firmlet.com", "assets.ksiegosoft.pl", "piotrgryzlo.ksiegosoft.pl")
+# Files served from shared hosts are allowed by exact URL prefix, never by host: the JPK_V7M XML is a
+# presigned S3 link into Ksiegosoft's bucket (E3). Any other bucket on the same S3 host stays blocked.
+EXTRA_URL_PREFIXES: tuple[str, ...] = ("https://s3.eu-west-1.amazonaws.com/files.ksiegosoft.pl/",)
 
 
 def check_base_url(url: str) -> str:
@@ -48,13 +54,18 @@ def host_allowed(host: str, *, extra: tuple[str, ...] = EXTRA_HOSTS) -> bool:
 class HostLock:
     """Playwright route handler: fall through for allowed hosts, abort and record the rest."""
 
-    def __init__(self, extra: tuple[str, ...] = EXTRA_HOSTS) -> None:
+    def __init__(
+        self, extra: tuple[str, ...] = EXTRA_HOSTS, prefixes: tuple[str, ...] = EXTRA_URL_PREFIXES
+    ) -> None:
         self.extra = extra
+        self.prefixes = prefixes
         self.aborted: list[dict] = []
 
     def handle_route(self, route) -> None:
         request = route.request
-        if host_allowed(urlparse(request.url).hostname or "", extra=self.extra):
+        if host_allowed(urlparse(request.url).hostname or "", extra=self.extra) or any(
+            request.url.startswith(prefix) for prefix in self.prefixes
+        ):
             route.fallback()
             return
         self.aborted.append(

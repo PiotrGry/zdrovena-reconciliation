@@ -53,6 +53,10 @@ def test_extra_static_hosts_match_exactly_or_as_subdomain():
 
 def test_fakturownia_assets_are_allowed_and_trackers_are_not():
     assert host_allowed("assets2.firmlet.com") is True
+    assert host_allowed("assets.ksiegosoft.pl") is True
+    assert host_allowed("api.ksiegosoft.pl") is False
+    assert host_allowed("piotrgryzlo.ksiegosoft.pl") is True
+    assert host_allowed("zdrovena.ksiegosoft.pl") is False
     for host in ("widgets.intum.net", "browser.sentry-cdn.com", "www.googletagmanager.com"):
         assert host_allowed(host) is False
 
@@ -84,3 +88,15 @@ def test_lock_aborts_and_records_everything_outside_the_allowlist():
     assert other.result[0] == "abort"
     assert gov.result[0] == "abort"
     assert [entry["url"] for entry in lock.aborted] == [other.request.url, gov.request.url]
+
+
+def test_files_on_shared_hosts_are_allowed_by_exact_prefix_only():
+    lock = HostLock()
+    ours = _Route("https://s3.eu-west-1.amazonaws.com/files.ksiegosoft.pl/abc?X-Amz-Signature=1")
+    other_bucket = _Route("https://s3.eu-west-1.amazonaws.com/someone-else/abc")
+    look_alike = _Route("https://s3.eu-west-1.amazonaws.com/files.ksiegosoft.pl.evil/abc")
+    for route in (ours, other_bucket, look_alike):
+        lock.handle_route(route)
+    assert ours.result == ("fallback",)
+    assert other_bucket.result[0] == "abort"
+    assert look_alike.result[0] == "abort"
