@@ -166,4 +166,4 @@ The production job (#584) must turn each of these into a failed run with that me
 - The allowlist never selected it: the clicks.jsonl of every V7 run lists only the six V7 controls.
 - The JPK_FA results page currently shows no link to a government site.
 
-**Across the whole PoC:** 53 run folders and 3984 logged requests, of which **4** went to any `gov.pl` host (the count includes the five deliberate attempts above). Each of those was aborted.
+**Across the whole PoC:** 53 run folders and 3984 logged requests, of which **4** were to a `gov.pl` host: exactly the four deliberate gov.pl attempts above, all aborted. No other run made a request to a `gov.pl` host.
