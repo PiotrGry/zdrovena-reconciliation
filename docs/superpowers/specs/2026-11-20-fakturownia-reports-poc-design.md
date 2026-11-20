@@ -38,22 +38,33 @@ Production code changes only when an experiment shows the module is wrong. Each 
 Two alternatives were rejected:
 
 - Building the PoC inside month close: experiments would mix with production code.
-- Recording only (`playwright codegen`): it cannot answer the login, container and Azure questions. Recording is still used for the first pass over the VAT register and JPK_V7M (E2, E3).
+- Recording only (`playwright codegen`): it cannot answer the login, container and Azure questions. The first pass over the VAT register and JPK_V7M is a supervised headless walk instead (E2, E3).
 
 ## Safety layer (the PoC driver, on top of the module's guard)
 
 1. **Test-account lock.** The driver refuses to start unless the base URL is exactly the test host. It routes every request through an allowlist: the test host plus the static hosts the pages need, which are listed in the first run and then fixed in the driver. Everything else is aborted and logged. Any `*.gov.pl` host (Ministry of Finance, e-Deklaracje, KSeF) is aborted even if it is on the allowlist.
 2. **Clicks from an allowlist only.** Each report has its own list of allowed controls (text and role). The driver clicks nothing else. The module's init script still disables any control matching `wy[sś]lij|wy[sś]y[lł]k|podpisz|e-?deklarac|do urz[eę]du|do mf\b`, including controls added later.
 3. **Every click is logged.** The log records the control text, the page URL and a screenshot, so any run can be audited afterwards.
-4. **JPK_V7M is gated by the operator.** Before any automatic V7M run, one manual pass is recorded with the operator watching. The operator approves the exact steps, and only those go into the allowlist. The module's existing `_try_v7_generate_then_download` and `_auto_fill_jpk_v7m` are not used until then.
+4. **JPK_V7M is gated by the operator.** Before any automatic V7M run, one supervised pass is made (see "Supervised passes" below). The operator approves the exact steps, and only those go into the allowlist. The module's existing `_try_v7_generate_then_download` and `_auto_fill_jpk_v7m` are not used until then.
+
+## Supervised passes (the operator has no visible browser)
+
+The operator works over SSH on a TTY, so nobody watches a visible browser. A supervised pass (E2, E3) is a headless walk run by Claude, one step at a time:
+
+- After each step there is a screenshot and a list of the visible controls.
+- The walk stops before any control whose effect is not known.
+- The screenshots go to a private Artifact page, which the operator opens on a laptop or phone.
+- The operator approves the next step in the terminal.
+
+If Fakturownia asks for the e-mailed verification code, the operator reads it from their mailbox and types it in the terminal. The driver then enters it.
 
 ## Experiments
 
 | # | What | Where | Answers |
 |---|---|---|---|
 | E1 | JPK_FA unattended, 5 runs in a row, a new process each time, same profile | this machine | 1, 6 |
-| E2 | VAT sales register: one recorded manual pass, then automatic, 5 runs | this machine | 2, 6 |
-| E3 | JPK_V7M: a recorded manual pass with the operator watching, approval of the steps, then automatic, 3 runs. Before and after each run, the list of declarations in Fakturownia is recorded. | this machine | 3 |
+| E2 | VAT sales register: one supervised pass, then automatic, 5 runs | this machine | 2, 6 |
+| E3 | JPK_V7M: a supervised pass, the operator's approval of the steps, then automatic, 3 runs. Before and after each run, the list of declarations in Fakturownia is recorded. | this machine | 3 |
 | E4 | Login: (a) new profile, (b) reused profile, (c) profile copied into a container. Each verification e-mail is recorded: sender, subject, format, address. | this machine, Docker | 4 |
 | E5 | Guard: unit tests, and a check on the real pages. All aborted requests are listed, downloads still work, and a click outside the allowlist raises. | local | 5 |
 | E6 | E1–E3 inside the official Playwright Python image | Docker, local | 6, part of 4 |
