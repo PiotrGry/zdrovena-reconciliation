@@ -103,3 +103,21 @@ The flow is `zdrovena/month_closing/fakturownia_v7m.py` (`run_v7m_report`). It u
 **Side effect to know about:** every run creates a new report on Księgosoft's server (reports 179092, 179115–179117 and later on the test account). The production job therefore makes one report per run. Repeated runs for one month leave several reports. They are not filings, but they show in the accounting module.
 
 **Not covered yet:** an offline fake of the accounting module for CI. This moves to the production job (#584).
+
+## E4: login and the verification code (2026-11-20)
+
+| When | Browser | Code asked? |
+|---|---|---|
+| Morning, first ever automated login from pepus-pc | new persistent profile | **yes**, by e-mail; the operator typed it in |
+| E1–E3 (about 40 runs) | the same profile | no |
+| Evening, the operator by hand | a new incognito window on another machine | **no** |
+| E4a, run 20261120T…-E4a-jpk_fa | a brand-new empty profile on pepus-pc | **no**: login form, `POST /login`, straight in |
+
+**Conclusion:** the code is not tied to the browser profile or device. Fakturownia asks for it on logins it finds unusual: most likely the first login from an IP address or location it has not seen, which is what the morning run was. A cleared profile alone does not trigger it.
+
+**For production:** the job will log in from Azure's data-centre IP addresses, which Fakturownia has never seen. E7 is the test that decides whether that triggers the code, and how often (first run only, or every run from a new outbound IP). Until then, the plan for the job:
+- keep the profile on Azure Files;
+- give the job a fixed outbound IP (NAT gateway), so it looks like one known place;
+- when the verification page appears, stop with a clear error and a notification instead of guessing.
+
+Reading the code from the mailbox stays an option if E7 shows the code comes back regularly.
