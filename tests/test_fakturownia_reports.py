@@ -13,6 +13,18 @@ from zdrovena.month_closing.fakturownia_reports import _get_credentials
 from zdrovena.month_closing.preflight import PreflightChecker
 
 
+@pytest.fixture(autouse=True)
+def _isolated_report_env(tmp_path, monkeypatch):
+    """Keep browser profiles out of $HOME and the operator's mode flags out of tests."""
+    monkeypatch.setenv("FAKTUROWNIA_PROFILE_DIR", str(tmp_path / "profiles"))
+    for name in (
+        "FAKTUROWNIA_REPORT_HEADLESS",
+        "FAKTUROWNIA_WEB_BASE_URL",
+        "FAKTUROWNIA_VERIFICATION_WAIT_MS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 def _make_checker(tmp_path: Path) -> tuple[PreflightChecker, Path]:
     inbox = tmp_path / "inbox"
     inbox.mkdir()
@@ -319,7 +331,7 @@ class TestDownloadFakturowniaReportsContract:
         fake_page = MagicMock()
         fake_context.new_page.return_value = fake_page
         fake_browser.new_context.return_value = fake_context
-        fake_pw.chromium.launch.return_value = fake_browser
+        fake_pw.chromium.launch_persistent_context.return_value = fake_context
         fake_stealth_cm.__enter__.return_value = fake_pw
         fake_stealth_cm.__exit__.return_value = False
 
@@ -380,7 +392,7 @@ class TestDownloadFakturowniaReportsContract:
         fake_page = MagicMock()
         fake_context.new_page.return_value = fake_page
         fake_browser.new_context.return_value = fake_context
-        fake_pw.chromium.launch.return_value = fake_browser
+        fake_pw.chromium.launch_persistent_context.return_value = fake_context
         fake_stealth_cm.__enter__.return_value = fake_pw
         fake_stealth_cm.__exit__.return_value = False
 
@@ -814,7 +826,9 @@ class TestDownloadFakturowniaReportsContract:
 
         fake_stealth_cm = MagicMock()
         fake_pw = MagicMock()
-        fake_pw.chromium.launch.side_effect = RuntimeError("Executable doesn't exist")
+        fake_pw.chromium.launch_persistent_context.side_effect = RuntimeError(
+            "Executable doesn't exist"
+        )
         fake_stealth_cm.__enter__.return_value = fake_pw
         fake_stealth_cm.__exit__.return_value = False
 
