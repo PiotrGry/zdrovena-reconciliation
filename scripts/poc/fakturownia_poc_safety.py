@@ -1,0 +1,62 @@
+"""Test-account lock for the Fakturownia PoC (zdrovena#583).
+
+The PoC must never reach the production account or any tax office. This lock
+runs before the module's own no-send guard: only the test host and the static
+hosts listed in EXTRA_HOSTS may load, and *.gov.pl never may.
+"""
+
+from __future__ import annotations
+
+import logging
+from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
+
+TEST_HOST = "piotrgryzlo.fakturownia.pl"
+TEST_BASE_URL = f"https://{TEST_HOST}"
+# Static hosts the test account's pages need, filled from the first run's aborted list (Task 5).
+EXTRA_HOSTS: tuple[str, ...] = ()
+
+
+def check_base_url(url: str) -> str:
+    """Return the test base URL, or exit: the PoC never runs against another account."""
+    parsed = urlparse(url.strip())
+    if (
+        parsed.scheme != "https"
+        or (parsed.hostname or "").lower() != TEST_HOST
+        or parsed.path not in ("", "/")
+    ):
+        raise SystemExit(
+            f"Refusing to run: the PoC runs only against {TEST_BASE_URL}, not {url!r}."
+        )
+    return TEST_BASE_URL
+
+
+def _matches(host: str, suffix: str) -> bool:
+    return host == suffix or host.endswith(f".{suffix}")
+
+
+def host_allowed(host: str, *, extra: tuple[str, ...] = EXTRA_HOSTS) -> bool:
+    host = (host or "").lower().rstrip(".")
+    if not host or _matches(host, "gov.pl"):
+        return False
+    return host == TEST_HOST or any(_matches(host, item.lower()) for item in extra)
+
+
+class HostLock:
+    """Playwright route handler: fall through for allowed hosts, abort and record the rest."""
+
+    def __init__(self, extra: tuple[str, ...] = EXTRA_HOSTS) -> None:
+        self.extra = extra
+        self.aborted: list[dict] = []
+
+    def handle_route(self, route) -> None:
+        request = route.request
+        if host_allowed(urlparse(request.url).hostname or "", extra=self.extra):
+            route.fallback()
+            return
+        self.aborted.append(
+            {"url": request.url, "method": request.method, "type": request.resource_type}
+        )
+        logger.info("PoC lock: aborted %s", request.url)
+        route.abort("blockedbyclient")
