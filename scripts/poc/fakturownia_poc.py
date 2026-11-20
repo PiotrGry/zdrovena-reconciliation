@@ -75,6 +75,9 @@ def month_range(month: str) -> tuple[str, str]:
     )
 
 
+_ORIGINAL_CLICK = fr._click_allowlisted
+
+
 def open_context(playwright, ev: Evidence, profile: Path | None):
     os.environ["FAKTUROWNIA_WEB_BASE_URL"] = TEST_BASE_URL
     context = playwright.chromium.launch_persistent_context(
@@ -92,7 +95,7 @@ def open_context(playwright, ev: Evidence, profile: Path | None):
         "request", lambda request: ev.request({"url": request.url, "method": request.method})
     )
     context.tracing.start(screenshots=True, snapshots=True)
-    original = fr._click_allowlisted
+    original = _ORIGINAL_CLICK  # never a wrapper from an earlier run: clicks go to this run's evidence only
 
     def logged_click(locator, control, **kwargs):
         page = locator.page
@@ -108,6 +111,7 @@ def open_context(playwright, ev: Evidence, profile: Path | None):
 
 def close_context(context, ev: Evidence, lock: HostLock, guard) -> dict:
     peak = peak_rss_mb()  # before close: the browser processes are gone afterwards
+    fr._click_allowlisted = _ORIGINAL_CLICK
     context.tracing.stop(path=str(ev.dir / "trace.zip"))
     context.close()
     return {"aborted_by_lock": lock.aborted, "aborted_by_guard": guard.blocked, "peak_rss_mb": peak}

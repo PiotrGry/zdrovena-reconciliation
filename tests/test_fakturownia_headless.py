@@ -266,18 +266,28 @@ def _page(body: str) -> bytes:
     return f"<!doctype html><html><head><meta charset='utf-8'></head><body>{body}</body></html>".encode()
 
 
-def _report_form(kind: str, job_id: int) -> bytes:
+def _report_form(
+    kind: str, job_id: int, *, start: str = "Generuj raport", link: str = "Gotowe"
+) -> bytes:
+    # The VAT register (PoC E2): "Generuj raport" only shows the table; "Drukuj do PDF" starts
+    # the job, and its modal offers "Pobierz".
+    extra = (
+        ""
+        if start == "Generuj raport"
+        else '<input type="button" value="Generuj raport" onclick="window.__table = true">'
+    )
     return _page(
         f"""
 <h1>Raport {kind}</h1>
 <form id="f" onsubmit="event.preventDefault(); startJob()">
   <input name="date_from"><input name="date_to">
-  <input type="submit" name="commit" value="Generuj raport">
+  {extra}
+  <input type="submit" name="commit" value="{start}">
 </form>
 <button id="send-on-form" onclick="fetch('/sent')">Wyślij do urzędu</button>
 <div id="modal" style="display:none">
   <p>Raport w przygotowaniu…</p>
-  <a id="done" href="/jobs/{job_id}/result">Gotowe</a>
+  <a id="done" href="/jobs/{job_id}/result">{link}</a>
 </div>
 <script>
   function startJob() {{
@@ -401,7 +411,10 @@ def _make_handler(state: FakeFakturownia):
             elif path == "/reports/jpk_fa":
                 self._send(200, _report_form("jpk_fa", 42))
             elif path == "/reports/income_tax_records":
-                self._send(200, _report_form("income_tax_records", 43))
+                self._send(
+                    200,
+                    _report_form("income_tax_records", 43, start="Drukuj do PDF", link="Pobierz"),
+                )
             elif path == "/jobs/42/result":
                 self._send(
                     200,

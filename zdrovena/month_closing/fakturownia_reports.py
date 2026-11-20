@@ -624,6 +624,14 @@ VAT_REGISTER_DOWNLOAD = AllowedControl(
         re.IGNORECASE,
     ),
 )
+# VAT sales register (checked on the test account, PoC E2, 2026-11-20): "Generuj raport" only
+# reloads the page with the table. "Drukuj do PDF" starts a job whose modal offers a "Pobierz"
+# link to /jobs/<id>/result, and clicking that link downloads the PDF.
+PRINT_PDF = AllowedControl(
+    name="przycisk 'Drukuj do PDF'",
+    roles=("button",),
+    label_re=re.compile(r"^\s*drukuj do pdf\s*$", re.IGNORECASE),
+)
 DISMISS_NEWSLETTER = AllowedControl(
     name="przycisk 'Nie, dziękuję' (popup 'Bądź na bieżąco!')",
     roles=("button", "link"),
@@ -634,6 +642,7 @@ ALLOWED_CONTROLS: tuple[AllowedControl, ...] = (
     JOB_RESULT_LINK,
     EXPORT_XML,
     VAT_REGISTER_DOWNLOAD,
+    PRINT_PDF,
     DISMISS_NEWSLETTER,
 )
 
@@ -650,11 +659,9 @@ class HeadlessFlow:
 HEADLESS_FLOWS: dict[str, HeadlessFlow] = {
     # Verified by hand on the test account (2026-11-20).
     "jpk_fa": HeadlessFlow(generate=GENERATE_REPORT, export=EXPORT_XML, file_kind="xml"),
-    # Same pattern; the VAT register controls were not checked by hand. Clicking the
-    # job link may download the PDF directly, otherwise the export control is used.
-    "vat_register": HeadlessFlow(
-        generate=GENERATE_REPORT, export=VAT_REGISTER_DOWNLOAD, file_kind="pdf"
-    ),
+    # Verified on the test account (PoC E2): "Drukuj do PDF" → job modal → "Pobierz" link,
+    # whose click downloads the PDF. The export control stays as a fallback.
+    "vat_register": HeadlessFlow(generate=PRINT_PDF, export=VAT_REGISTER_DOWNLOAD, file_kind="pdf"),
 }
 
 _ELEMENT_LABEL_JS = (
@@ -872,6 +879,7 @@ def _run_headless_steps(
         # A plain function: Playwright cannot register a bound builtin such as list.append
         # ("'builtin_function_or_method' object has no attribute '_pw_impl_instance_'", PoC E1).
         downloads.append(download)
+
     context = page.context
 
     def _watch(p) -> None:
