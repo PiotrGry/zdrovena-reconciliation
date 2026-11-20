@@ -148,3 +148,22 @@ No `gov.pl` request in any E6 run.
 - the verification page ("… verification …", with a screenshot).
 
 The production job (#584) must turn each of these into a failed run with that message and notify the operator. A login failure must never look like "reports missing".
+
+## E5: no-send guard on the real pages (2026-11-20)
+
+**Direct check** (run 20261120T200032Z-E5-guard). In the PoC's browser context, with the module's guard and the PoC lock both installed:
+
+| Attempt | Outcome |
+|---|---|
+| open https://e-deklaracje.mf.gov.pl/ | aborted (`net::ERR_BLOCKED_BY_CLIENT`) |
+| open https://www.podatki.gov.pl/ | aborted |
+| open https://ksef.mf.gov.pl/ | aborted |
+| `fetch` POST to e-deklaracje from page JavaScript, as a send button would do | blocked ("Failed to fetch") |
+| open the production account https://zdrovena.fakturownia.pl/login | aborted by the PoC lock |
+
+**On the real pages:**
+- After "zapisz i generuj xml", the JPK_V7M page shows **"Wyślij do Ministerstwa Finansów"**, and the guard's init script disabled it (`disabled=true` in the walk's controls.json).
+- The allowlist never selected it: the clicks.jsonl of every V7 run lists only the six V7 controls.
+- The JPK_FA results page currently shows no link to a government site.
+
+**Across the whole PoC:** 53 run folders and 3984 logged requests, of which **4** went to any `gov.pl` host (the count includes the five deliberate attempts above). Each of those was aborted.
