@@ -118,7 +118,9 @@ def test_host_allowed(host, allowed):
 
 
 def test_gov_hosts_stay_blocked_even_when_listed():
-    assert host_allowed("e-deklaracje.mf.gov.pl", extra=("e-deklaracje.mf.gov.pl", "gov.pl")) is False
+    assert (
+        host_allowed("e-deklaracje.mf.gov.pl", extra=("e-deklaracje.mf.gov.pl", "gov.pl")) is False
+    )
 
 
 def test_extra_static_hosts_match_exactly_or_as_subdomain():
@@ -187,8 +189,14 @@ EXTRA_HOSTS: tuple[str, ...] = ()
 def check_base_url(url: str) -> str:
     """Return the test base URL, or exit: the PoC never runs against another account."""
     parsed = urlparse(url.strip())
-    if parsed.scheme != "https" or (parsed.hostname or "").lower() != TEST_HOST or parsed.path not in ("", "/"):
-        raise SystemExit(f"Refusing to run: the PoC runs only against {TEST_BASE_URL}, not {url!r}.")
+    if (
+        parsed.scheme != "https"
+        or (parsed.hostname or "").lower() != TEST_HOST
+        or parsed.path not in ("", "/")
+    ):
+        raise SystemExit(
+            f"Refusing to run: the PoC runs only against {TEST_BASE_URL}, not {url!r}."
+        )
     return TEST_BASE_URL
 
 
@@ -215,7 +223,9 @@ class HostLock:
         if host_allowed(urlparse(request.url).hostname or "", extra=self.extra):
             route.fallback()
             return
-        self.aborted.append({"url": request.url, "method": request.method, "type": request.resource_type})
+        self.aborted.append(
+            {"url": request.url, "method": request.method, "type": request.resource_type}
+        )
         logger.info("PoC lock: aborted %s", request.url)
         route.abort("blockedbyclient")
 ```
@@ -256,7 +266,9 @@ def test_run_folder_holds_jsonl_logs_and_a_summary(tmp_path):
     ev.finish(outcome="ok", files=["JPK_FA.xml"], extra={"aborted": 0})
     assert ev.dir.parent == tmp_path
     assert ev.dir.name.endswith("-E1-jpk_fa")
-    assert [json.loads(line)["url"] for line in (ev.dir / "requests.jsonl").read_text().splitlines()] == ["https://piotrgryzlo.fakturownia.pl/a"]
+    assert [
+        json.loads(line)["url"] for line in (ev.dir / "requests.jsonl").read_text().splitlines()
+    ] == ["https://piotrgryzlo.fakturownia.pl/a"]
     assert json.loads((ev.dir / "clicks.jsonl").read_text())["control"] == "Generuj raport"
     run = json.loads((ev.dir / "run.json").read_text())
     assert run["experiment"] == "E1" and run["outcome"] == "ok" and run["files"] == ["JPK_FA.xml"]
@@ -365,7 +377,14 @@ class Evidence:
         page.screenshot(path=str(path), full_page=True)
         return path
 
-    def finish(self, *, outcome: str, files: list[str] | None = None, error: str | None = None, extra: dict | None = None) -> dict:
+    def finish(
+        self,
+        *,
+        outcome: str,
+        files: list[str] | None = None,
+        error: str | None = None,
+        extra: dict | None = None,
+    ) -> dict:
         run = {
             "experiment": self.experiment,
             "report": self.report,
@@ -434,7 +453,11 @@ from playwright.sync_api import sync_playwright
 from scripts.poc.fakturownia_poc_evidence import EVIDENCE_ROOT, Evidence
 from scripts.poc.fakturownia_poc_safety import TEST_BASE_URL, HostLock, check_base_url
 from zdrovena.month_closing import fakturownia_reports as fr
-from zdrovena.month_closing.config import FAKTUROWNIA_JOB_WAIT_MS, FAKTUROWNIA_REPORTS, fakturownia_profile_dir
+from zdrovena.month_closing.config import (
+    FAKTUROWNIA_JOB_WAIT_MS,
+    FAKTUROWNIA_REPORTS,
+    fakturownia_profile_dir,
+)
 
 CONTROLS_JS = """() => [...document.querySelectorAll('button, a, input[type=submit], input[type=button], [role=button], [role=menuitem]')]
   .filter(el => el.offsetParent !== null)
@@ -444,35 +467,65 @@ CONTROLS_JS = """() => [...document.querySelectorAll('button, a, input[type=subm
 
 def load_test_credentials() -> None:
     """Test login and password from Key Vault into this process's environment; never printed."""
-    for env, secret in (("FAKTUROWNIA_LOGIN", "fakturownia-test-login"), ("FAKTUROWNIA_PASSWORD", "fakturownia-test-password")):
+    for env, secret in (
+        ("FAKTUROWNIA_LOGIN", "fakturownia-test-login"),
+        ("FAKTUROWNIA_PASSWORD", "fakturownia-test-password"),
+    ):
         if not os.environ.get(env):
             os.environ[env] = subprocess.run(
-                ["az", "keyvault", "secret", "show", "--vault-name", "zdrovenakv", "-n", secret, "--query", "value", "-o", "tsv"],
-                check=True, capture_output=True, text=True,
+                [
+                    "az",
+                    "keyvault",
+                    "secret",
+                    "show",
+                    "--vault-name",
+                    "zdrovenakv",
+                    "-n",
+                    secret,
+                    "--query",
+                    "value",
+                    "-o",
+                    "tsv",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
             ).stdout.strip()
 
 
 def month_range(month: str) -> tuple[str, str]:
     year, mon = (int(part) for part in month.split("-"))
-    return f"{year:04d}-{mon:02d}-01", f"{year:04d}-{mon:02d}-{calendar.monthrange(year, mon)[1]:02d}"
+    return (
+        f"{year:04d}-{mon:02d}-01",
+        f"{year:04d}-{mon:02d}-{calendar.monthrange(year, mon)[1]:02d}",
+    )
 
 
 def open_context(playwright, ev: Evidence, profile: Path | None):
     os.environ["FAKTUROWNIA_WEB_BASE_URL"] = TEST_BASE_URL
     context = playwright.chromium.launch_persistent_context(
-        str(profile or fakturownia_profile_dir(TEST_BASE_URL)), headless=True, accept_downloads=True, locale="pl-PL",
+        str(profile or fakturownia_profile_dir(TEST_BASE_URL)),
+        headless=True,
+        accept_downloads=True,
+        locale="pl-PL",
     )
     lock = HostLock()
-    context.route("**/*", lock.handle_route)          # registered first, so it runs after the module guard
-    guard = fr.install_no_send_guard(context)          # runs first: aborts tax-office hosts, then falls back to the lock
-    context.on("request", lambda request: ev.request({"url": request.url, "method": request.method}))
+    context.route("**/*", lock.handle_route)  # registered first, so it runs after the module guard
+    guard = fr.install_no_send_guard(
+        context
+    )  # runs first: aborts tax-office hosts, then falls back to the lock
+    context.on(
+        "request", lambda request: ev.request({"url": request.url, "method": request.method})
+    )
     context.tracing.start(screenshots=True, snapshots=True)
     original = fr._click_allowlisted
 
     def logged_click(locator, control, **kwargs):
         page = locator.page
         ev.click({"control": control.name, "url": page.url, "at": time.time()})
-        ev.screenshot(page, "before-" + "".join(c if c.isalnum() else "_" for c in control.name)[:40])
+        ev.screenshot(
+            page, "before-" + "".join(c if c.isalnum() else "_" for c in control.name)[:40]
+        )
         return original(locator, control, **kwargs)
 
     fr._click_allowlisted = logged_click
@@ -501,15 +554,35 @@ def cmd_run(args) -> int:
                 login, password = fr._get_credentials()
                 fr._login(page, login, password, base_url=TEST_BASE_URL, verification_wait_ms=None)
                 fr._dismiss_newsletter_popup(page)
-                path = fr.run_headless_report(page, rpt, date_from, date_to, ev.dir, base_url=TEST_BASE_URL,
-                                              job_wait_ms=FAKTUROWNIA_JOB_WAIT_MS, step_timeout_ms=15_000)
+                path = fr.run_headless_report(
+                    page,
+                    rpt,
+                    date_from,
+                    date_to,
+                    ev.dir,
+                    base_url=TEST_BASE_URL,
+                    job_wait_ms=FAKTUROWNIA_JOB_WAIT_MS,
+                    step_timeout_ms=15_000,
+                )
                 files = [f"{path.name} ({path.stat().st_size} B)"]
             except Exception as exc:  # recorded, the next run still happens
                 outcome, error, failures = "error", f"{type(exc).__name__}: {exc}", failures + 1
                 ev.screenshot(page, "error")
             extra = close_context(context, ev, lock, guard)
         run = ev.finish(outcome=outcome, files=files, error=error, extra=extra)
-        print(json.dumps({"run": index + 1, "dir": str(ev.dir), **{k: run[k] for k in ("outcome", "duration_s", "peak_rss_mb", "files", "error")}}, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "run": index + 1,
+                    "dir": str(ev.dir),
+                    **{
+                        k: run[k]
+                        for k in ("outcome", "duration_s", "peak_rss_mb", "files", "error")
+                    },
+                },
+                ensure_ascii=False,
+            )
+        )
     return 1 if failures else 0
 
 
@@ -532,7 +605,13 @@ def cmd_walk(args) -> int:
 
         def snapshot(label: str) -> None:
             shot = ev.screenshot(page, label)
-            (ev.dir / f"{ev.steps:02d}-controls.json").write_text(json.dumps({"url": page.url, "controls": page.evaluate(CONTROLS_JS)}, ensure_ascii=False, indent=1))
+            (ev.dir / f"{ev.steps:02d}-controls.json").write_text(
+                json.dumps(
+                    {"url": page.url, "controls": page.evaluate(CONTROLS_JS)},
+                    ensure_ascii=False,
+                    indent=1,
+                )
+            )
             print(f"step {ev.steps}: {page.url} -> {shot.name}", flush=True)
 
         snapshot("start")
@@ -553,8 +632,14 @@ def cmd_walk(args) -> int:
                 elif verb == "click":
                     if fr.is_send_control_text(arg):
                         raise RuntimeError(f"refused: {arg!r} looks like a send control")
-                    with page.expect_download(timeout=15_000) if arg.startswith("download:") else _nullcontext() as download:
-                        page.get_by_text(arg.removeprefix("download:"), exact=True).first.click(timeout=10_000)
+                    with (
+                        page.expect_download(timeout=15_000)
+                        if arg.startswith("download:")
+                        else _nullcontext() as download
+                    ):
+                        page.get_by_text(arg.removeprefix("download:"), exact=True).first.click(
+                            timeout=10_000
+                        )
                     if download is not None:
                         saved = ev.dir / download.value.suggested_filename
                         download.value.save_as(saved)
