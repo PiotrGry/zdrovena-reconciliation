@@ -81,6 +81,8 @@ FAKTUROWNIA_REPORTS: list[dict] = [
         "url": "https://zdrovena.fakturownia.pl/reports/jpk_fa?kind=jpk_fa&query_date_kind=transaction_date&form_variant=4",
         "download_button_texts": ["Eksport do XML", "Export do XML"],
         "use_wizard_navigation": True,
+        # Unattended flow (FAKTUROWNIA_REPORT_HEADLESS=1), see fakturownia_reports.HEADLESS_FLOWS.
+        "headless_flow": "jpk_fa",
     },
     {
         "name": "JPK_V7M",
@@ -100,6 +102,7 @@ FAKTUROWNIA_REPORTS: list[dict] = [
         # captures the S3 PDF URL via page.on("response") and re-fetches it.
         "url": "https://zdrovena.fakturownia.pl/reports/income_tax_records",
         "use_wizard_navigation": True,
+        "headless_flow": "vat_register",
     },
 ]
 
@@ -108,6 +111,71 @@ FAKTUROWNIA_REPORTS: list[dict] = [
 FAKTUROWNIA_REPORT_RUNTIME = "playwright"
 FAKTUROWNIA_REPORT_TIMEOUT_MS = 120_000
 FAKTUROWNIA_REPORT_DOWNLOAD_SELECTOR = "#job_download_link a[href*='/jobs/']"
+
+# ─── Unattended (headless) report download ────────────────────────────────────
+# The env vars are read at call time, not import time, so one process (and the
+# tests) can switch them without reloading the module.
+
+FAKTUROWNIA_WEB_BASE_URL_DEFAULT = "https://zdrovena.fakturownia.pl"
+# How long the job modal may take to show its "Gotowe" link (verified path: step 3).
+FAKTUROWNIA_JOB_WAIT_MS = 120_000
+FAKTUROWNIA_PROFILE_ROOT_DEFAULT = Path.home() / ".zdrovena" / "fakturownia_profile"
+
+# No-send guard. A request to any host equal to or ending with one of these is
+# aborted, and a control whose text matches the pattern is made unclickable.
+# Downloading reports must never be able to file anything with the tax office.
+FAKTUROWNIA_BLOCKED_HOST_SUFFIXES: tuple[str, ...] = (
+    "mf.gov.pl",
+    "podatki.gov.pl",
+    "ksef.gov.pl",
+    "e-deklaracje.gov.pl",
+)
+FAKTUROWNIA_SEND_CONTROL_PATTERN = (
+    r"wy[sś]lij|wy[sś]y[lł]k|podpisz|e-?deklarac|do urz[eę]du|do mf\b"
+)
+
+_TRUTHY = ("1", "true", "yes", "on")
+
+
+def fakturownia_web_base_url() -> str:
+    """Fakturownia web UI origin (``FAKTUROWNIA_WEB_BASE_URL``), without a trailing slash."""
+    value = os.environ.get("FAKTUROWNIA_WEB_BASE_URL", "").strip()
+    return (value or FAKTUROWNIA_WEB_BASE_URL_DEFAULT).rstrip("/")
+
+
+def fakturownia_report_headless() -> bool:
+    """``FAKTUROWNIA_REPORT_HEADLESS=1`` selects the unattended download flow."""
+    return os.environ.get("FAKTUROWNIA_REPORT_HEADLESS", "").strip().lower() in _TRUTHY
+
+
+def fakturownia_verification_wait_ms() -> int | None:
+    """Milliseconds to wait for a verification code typed by hand, or ``None``.
+
+    Unset, empty, non-numeric or non-positive means: do not wait, fail with a
+    readable error instead.
+    """
+    raw = os.environ.get("FAKTUROWNIA_VERIFICATION_WAIT_MS", "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def fakturownia_profile_dir(base_url: str) -> Path:
+    """Persistent browser profile for one Fakturownia host.
+
+    ``~/.zdrovena/fakturownia_profile/<host>``; ``FAKTUROWNIA_PROFILE_DIR`` overrides
+    the root. A port is kept in the name (``127.0.0.1_8080``) so hosts never share
+    cookies.
+    """
+    from urllib.parse import urlparse
+
+    root_env = os.environ.get("FAKTUROWNIA_PROFILE_DIR", "").strip()
+    root = Path(root_env).expanduser() if root_env else FAKTUROWNIA_PROFILE_ROOT_DEFAULT
+    netloc = urlparse(base_url).netloc or "default"
+    safe = "".join(ch if ch.isalnum() or ch in ".-" else "_" for ch in netloc.lower())
+    return root / safe
 
 
 def expected_report_extension(rpt: dict) -> str:

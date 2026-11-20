@@ -5,6 +5,25 @@
 
 ### Added
 
+- **month-close**: JPK_FA i rejestr sprzedaży VAT pobierają się z Fakturowni bez
+  człowieka (#579). `FAKTUROWNIA_REPORT_HEADLESS=1` uruchamia przeglądarkę bez okna i
+  przechodzi ręcznie zweryfikowaną ścieżkę: formularz → „Generuj raport" → link
+  „Gotowe" z modala joba (klik, nie `goto`) → „Eksportuj do XML" w `expect_download`.
+  Rejestr VAT idzie tym samym wzorcem; jego kontrolek nikt nie sprawdził ręcznie, więc
+  brak kontroli kończy się błędem z jej nazwą i zrzutem ekranu obok pliku wyjściowego.
+  JPK_V7M nie ma takiej ścieżki i zostaje do ręcznego pobrania. Bez flagi działa
+  dotychczasowa sesja z paskiem bocznym.
+
+  Strażnik „nic do urzędu" stoi na kontekście przeglądarki, zanim załaduje się
+  jakakolwiek strona: requesty do `mf.gov.pl`, `podatki.gov.pl`, `ksef.gov.pl` i
+  `e-deklaracje.gov.pl` (z subdomenami) są przerywane, a przyciski i linki
+  „wyślij/wysyłka/podpisz/e-deklaracje/do urzędu/do MF" są wyłączane, także te
+  dodane później. Flow klika wyłącznie kontrolki z listy dozwolonych; popup „Bądź na
+  bieżąco!" zamyka „Nie, dziękuję". Profil przeglądarki jest trwały per host
+  (`~/.zdrovena/fakturownia_profile/<host>`), host z `FAKTUROWNIA_WEB_BASE_URL`;
+  strona `/login/verification` kończy się czytelnym błędem, chyba że
+  `FAKTUROWNIA_VERIFICATION_WAIT_MS` daje czas na wpisanie kodu w oknie.
+
 - **shipping**: Zdarzenia w logach niosą numery, po których operator faktycznie szuka.
   Numer śledzenia nie trafiał do Log Analytics w ogóle: ShipX zwraca `tracking_number=null`
   przy tworzeniu przesyłki i dopisuje go dopiero przy potwierdzeniu, a zdarzenie
