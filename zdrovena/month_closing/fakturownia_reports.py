@@ -620,9 +620,48 @@ VAT_REGISTER_DOWNLOAD = AllowedControl(
     name="przycisk pobrania rejestru VAT ('Eksportuj do PDF' / 'Pobierz PDF')",
     roles=("button", "link", "menuitem"),
     label_re=re.compile(
-        r"^\s*(?:eksport(?:uj)? do pdf|pobierz(?: pdf| raport)?|drukuj do pdf)\s*$",
+        # Not "Drukuj do PDF": that starts the job (PRINT_PDF). As an export fallback it would start
+        # a second job while the first download is still arriving.
+        r"^\s*(?:eksport(?:uj)? do pdf|pobierz(?: pdf| raport)?)\s*$",
         re.IGNORECASE,
     ),
+)
+# VAT sales register (checked on the test account, PoC E2, 2026-11-20): "Generuj raport" only
+# reloads the page with the table. "Drukuj do PDF" starts a job whose modal offers a "Pobierz"
+# link to /jobs/<id>/result, and clicking that link downloads the PDF.
+PRINT_PDF = AllowedControl(
+    name="przycisk 'Drukuj do PDF'",
+    roles=("button",),
+    label_re=re.compile(r"^\s*drukuj do pdf\s*$", re.IGNORECASE),
+)
+# JPK_V7M (accounting module, PoC E3, 2026-11-20). "Wyślij do Ministerstwa Finansów" is never on this
+# list, and the guard disables it on the page.
+V7_NEW_REPORT = AllowedControl(
+    name="przycisk 'Nowy raport' (JPK V7)",
+    roles=("button",),
+    label_re=re.compile(r"^\s*nowy raport\s*$", re.IGNORECASE),
+)
+V7_TAX_OFFICE_FIELD = AllowedControl(
+    name="pole 'Urząd skarbowy' (JPK V7)",
+    label_re=re.compile(r"^\s*urząd skarbowy", re.IGNORECASE),
+)
+V7_TAX_OFFICE_OPTION = AllowedControl(
+    name="opcja urzędu skarbowego (JPK V7)",
+    label_re=re.compile(r"^\s*urząd skarbowy\b.+", re.IGNORECASE),
+)
+V7_STATEMENT = AllowedControl(
+    name="oświadczenie 'potwierdzam zapoznanie się z treścią … pouczeń' (JPK V7)",
+    label_re=re.compile(r"^\s*potwierdzam zapoznanie si[eę] z treści[aą]", re.IGNORECASE),
+)
+V7_GENERATE_XML = AllowedControl(
+    name="przycisk 'zapisz i generuj xml' (JPK V7)",
+    roles=("button",),
+    label_re=re.compile(r"^\s*zapisz i generuj xml\s*$", re.IGNORECASE),
+)
+V7_DOWNLOAD_XML = AllowedControl(
+    name="przycisk 'pobierz xml' (JPK V7)",
+    roles=("button",),
+    label_re=re.compile(r"^\s*pobierz xml\s*$", re.IGNORECASE),
 )
 DISMISS_NEWSLETTER = AllowedControl(
     name="przycisk 'Nie, dziękuję' (popup 'Bądź na bieżąco!')",
@@ -634,6 +673,13 @@ ALLOWED_CONTROLS: tuple[AllowedControl, ...] = (
     JOB_RESULT_LINK,
     EXPORT_XML,
     VAT_REGISTER_DOWNLOAD,
+    PRINT_PDF,
+    V7_NEW_REPORT,
+    V7_TAX_OFFICE_FIELD,
+    V7_TAX_OFFICE_OPTION,
+    V7_STATEMENT,
+    V7_GENERATE_XML,
+    V7_DOWNLOAD_XML,
     DISMISS_NEWSLETTER,
 )
 
@@ -650,11 +696,9 @@ class HeadlessFlow:
 HEADLESS_FLOWS: dict[str, HeadlessFlow] = {
     # Verified by hand on the test account (2026-11-20).
     "jpk_fa": HeadlessFlow(generate=GENERATE_REPORT, export=EXPORT_XML, file_kind="xml"),
-    # Same pattern; the VAT register controls were not checked by hand. Clicking the
-    # job link may download the PDF directly, otherwise the export control is used.
-    "vat_register": HeadlessFlow(
-        generate=GENERATE_REPORT, export=VAT_REGISTER_DOWNLOAD, file_kind="pdf"
-    ),
+    # Verified on the test account (PoC E2): "Drukuj do PDF" → job modal → "Pobierz" link,
+    # whose click downloads the PDF. The export control stays as a fallback.
+    "vat_register": HeadlessFlow(generate=PRINT_PDF, export=VAT_REGISTER_DOWNLOAD, file_kind="pdf"),
 }
 
 _ELEMENT_LABEL_JS = (
@@ -691,7 +735,9 @@ def _first_visible(locator):
     return None
 
 
-def _click_allowlisted(locator, control: AllowedControl, *, timeout_ms: int = 10_000) -> None:
+def _click_allowlisted(
+    locator, control: AllowedControl, *, timeout_ms: int = 10_000, force: bool = False
+) -> None:
     """Click ``locator`` only if it is ``control`` and nothing that sends or subscribes."""
     if control not in ALLOWED_CONTROLS:
         raise NoSendViolation(f"{control.name} is not on the click allowlist")
@@ -710,7 +756,9 @@ def _click_allowlisted(locator, control: AllowedControl, *, timeout_ms: int = 10
         href = locator.get_attribute("href") or ""
         if not control.href_re.search(href.split("?")[0].split("#")[0]):
             raise NoSendViolation(f"href {href!r} does not match {control.name}")
-    locator.click(timeout=timeout_ms)
+    # force: Material dropdowns in the accounting module keep animating, so Playwright's
+    # actionability wait times out although the click lands (PoC E3). The checks above still run.
+    locator.click(timeout=timeout_ms, force=force)
 
 
 def _dismiss_newsletter_popup(page) -> bool:
@@ -867,7 +915,12 @@ def _run_headless_steps(
 
     # Step 4 — click the link. The click may open a tab or start the download itself.
     downloads: list = []
-    on_download = downloads.append
+
+    def on_download(download) -> None:
+        # A plain function: Playwright cannot register a bound builtin such as list.append
+        # ("'builtin_function_or_method' object has no attribute '_pw_impl_instance_'", PoC E1).
+        downloads.append(download)
+
     context = page.context
 
     def _watch(p) -> None:

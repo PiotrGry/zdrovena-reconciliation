@@ -12,6 +12,7 @@ dependencies = [
     "keyring>=25.3.0",
     "python-dotenv>=1.0.1",
     "xlrd>=2.0.1",
+    "defusedxml>=0.7.1",
 ]
 
 [project.optional-dependencies]

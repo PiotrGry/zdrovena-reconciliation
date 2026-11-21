@@ -5,6 +5,7 @@ tests/
 e2e/
 frontend/
 scripts/
+!scripts/poc/
 docs/
 infra/
 surowe_kwiecien_2026_HUMIO/
