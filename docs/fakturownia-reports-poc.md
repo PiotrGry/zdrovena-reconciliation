@@ -167,3 +167,34 @@ The production job (#584) must turn each of these into a failed run with that me
 - The JPK_FA results page currently shows no link to a government site.
 
 **Across the whole PoC:** 53 run folders and 3984 logged requests, of which **4** were to a `gov.pl` host: exactly the four deliberate gov.pl attempts above, all aborted. No other run made a request to a `gov.pl` host.
+
+## E7: Azure Container Apps Job (2026-11-21)
+
+These were temporary resources, approved by the operator and removed after the runs:
+- the job `poc-fakturownia` in `zdrovena-cae` (static IP 20.215.91.48);
+- the image `fakturownia-poc` in `zdrovenaacr`;
+- a temporary AcrPull role assignment for the job's identity.
+
+The job was manual, with 1 vCPU and 2 GiB. The image pull took 31 s (1.19 GB compressed).
+
+| Run | Profile | Result |
+|---|---|---|
+| E7, execution poc-fakturownia-mtpwsnz | new, empty | **all three stopped at `/login/verification`**, with the clear error "Fakturownia asks for a login verification code … the unattended download cannot type it" |
+| E7b, execution poc-fakturownia-4y8auaf | a copy of the profile verified on pepus-pc | **all three passed**: JPK_FA 11.0 s, VAT register 8.6 s, JPK_V7M 23.3 s |
+
+**Conclusion, together with E4:**
+
+| Login from | New profile | Verified profile |
+|---|---|---|
+| a known IP (pepus-pc) | no code (E4a) | no code (E1–E6) |
+| an unknown IP (Azure) | **code** (E7) | no code (E7b) |
+
+Fakturownia asks for the code only when both the IP and the browser are unknown. A browser profile that passed verification once is trusted from a new IP.
+
+**For the production job (#584):**
+1. **Keep the verified profile in persistent storage** and reuse it on every run.
+   - `zdrovenafiles` does not allow key-based access, and an Azure Files mount in Container Apps needs a key. E7's attempt to link it failed, and the link was removed at once.
+   - Options: a small dedicated storage account for the profile with key access, or the profile as an archive in blob storage, read and written with the job's managed identity at the start and end of a run.
+2. **Seeding:** the profile is verified once, by a person typing the code. Then it is uploaded.
+3. **When the code is asked anyway** (the trust expires, or Fakturownia changes its rules), the run fails with the clear error above and notifies the operator. This is the operator's requirement. The operator then re-seeds the profile.
+4. **Secrets:** a profile holds session cookies. It belongs in protected storage, never in an image. E7b's image with a profile was a one-off and was deleted.
