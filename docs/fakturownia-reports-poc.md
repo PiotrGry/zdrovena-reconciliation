@@ -4,6 +4,23 @@ PoC for zdrovena#583. Design: `docs/superpowers/specs/2026-11-20-fakturownia-rep
 
 All runs used the test account `https://piotrgryzlo.fakturownia.pl`. Evidence is in `~/.zdrovena/poc-runs/<run>/` on pepus-pc and is not committed.
 
+## Answers (2026-11-21)
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Does JPK_FA work unattended, again and again? | **Yes.** 5/5 locally, 5/5 in Docker, 1/1 in Azure. 5–11 s. Needed a fix of #580's download listener. |
+| 2 | VAT sales register: controls, job, PDF? | "Drukuj do PDF" → job → "Pobierz" → PDF. 5/5 locally, 5/5 in Docker, 1/1 in Azure. The flow is fixed accordingly. |
+| 3 | JPK_V7M: what does it leave behind, and can the XML be downloaded without a send step? | Every "Nowy raport" creates a saved report. The XML needs the taxpayer data and the ticked statement, and "pobierz xml" downloads it with no send step. **Fully automatic by the operator's decision**: 3/3 locally, 5/5 in Docker, 1/1 in Azure. |
+| 4 | When is the verification code asked? Does it carry to a container or Azure? | Only when **both** the IP and the browser profile are unknown. A verified profile works from Azure (E7b). An empty profile from Azure is stopped (E7), with a clear error. |
+| 5 | Does the guard hold on the real pages? | **Yes.** "Wyślij do Ministerstwa Finansów" was disabled on the real page. Direct attempts to reach e-deklaracje, podatki.gov.pl and KSeF were aborted. No other `gov.pl` request in 4,000 logged requests. |
+| 6 | Time and memory? | All three reports in under 45 s. About 1 GB peak (an upper bound). 1 vCPU and 2 GiB are enough. Image 2.9 GB (1.19 GB compressed). |
+
+**Decisions for the production job (#584):**
+- a persistent verified profile, kept in storage reachable with the job's identity (not `zdrovenafiles` via an Azure Files key, which that account forbids);
+- a clear failed run plus a notification on any login problem;
+- V7 fully automatic, with sending impossible;
+- CI runs the Chromium tests.
+
 ## E1: JPK_FA unattended (2026-11-20)
 
 **Result: 5 of 5 runs passed**, headless, with the persistent profile from the morning's manual check.

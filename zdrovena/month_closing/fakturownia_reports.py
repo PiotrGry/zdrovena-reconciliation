@@ -620,7 +620,9 @@ VAT_REGISTER_DOWNLOAD = AllowedControl(
     name="przycisk pobrania rejestru VAT ('Eksportuj do PDF' / 'Pobierz PDF')",
     roles=("button", "link", "menuitem"),
     label_re=re.compile(
-        r"^\s*(?:eksport(?:uj)? do pdf|pobierz(?: pdf| raport)?|drukuj do pdf)\s*$",
+        # Not "Drukuj do PDF": that starts the job (PRINT_PDF). As an export fallback it would start
+        # a second job while the first download is still arriving.
+        r"^\s*(?:eksport(?:uj)? do pdf|pobierz(?: pdf| raport)?)\s*$",
         re.IGNORECASE,
     ),
 )

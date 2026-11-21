@@ -80,3 +80,9 @@ def test_the_send_link_seen_after_generating_is_never_clickable():
     label = "Wyślij do Ministerstwa Finansów"
     assert fr.is_send_control_text(label)
     assert not any(c.label_re and c.label_re.search(label) for c in fr.ALLOWED_CONTROLS)
+
+
+def test_print_pdf_starts_the_vat_job_and_is_never_the_export_fallback():
+    assert fr.PRINT_PDF.label_re.search("Drukuj do PDF")
+    assert not fr.VAT_REGISTER_DOWNLOAD.label_re.search("Drukuj do PDF")
+    assert fr.VAT_REGISTER_DOWNLOAD.label_re.search("Pobierz")
