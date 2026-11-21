@@ -59,7 +59,8 @@ def load_taxpayer(environ: dict[str, str] | None = None) -> V7Taxpayer:
         raise ValueError(f"{TAXPAYER_ENV} lacks {', '.join(missing)}")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", data["birth_date"]):
         raise ValueError("birth_date must be yyyy-mm-dd")
-    if not fr.V7_TAX_OFFICE_OPTION.label_re.search(data["tax_office"]):
+    office_re = fr.V7_TAX_OFFICE_OPTION.label_re
+    if office_re is None or not office_re.search(data["tax_office"]):
         raise ValueError("tax_office must be the option text, e.g. 'URZĄD SKARBOWY W BOLESŁAWCU'")
     return V7Taxpayer(**{name: str(data[name]).strip() for name in fields})
 

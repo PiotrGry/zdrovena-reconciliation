@@ -125,7 +125,8 @@ def close_context(context, ev: Evidence, lock: HostLock, guard) -> dict:
 def cmd_run(args) -> int:
     check_base_url(TEST_BASE_URL)
     load_test_credentials()
-    rpt = next((r for r in FAKTUROWNIA_REPORTS if r.get("headless_flow") == args.report), None)
+    # JPK_V7M has its own flow (fakturownia_v7m) and no headless_flow entry, so it gets an empty dict.
+    rpt: dict = next((r for r in FAKTUROWNIA_REPORTS if r.get("headless_flow") == args.report), {})
     if args.report == "jpk_v7m":
         # Made-up taxpayer data: the PoC runs on the test account only (operator's decision, E3).
         os.environ.setdefault(
